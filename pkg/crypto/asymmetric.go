@@ -3,14 +3,18 @@ package crypto
 import (
 	"crypto/ecdh"
 	"crypto/mlkem"
+	"crypto/rand"
 	"crypto/sha512"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 
 	"golang.org/x/crypto/hkdf"
 )
+
+const seedSize = 32
 
 func GenerateMLKEMKeypair() (*mlkem.DecapsulationKey1024, *mlkem.EncapsulationKey1024, error) {
 	priv, err := mlkem.GenerateKey1024()
@@ -23,7 +27,7 @@ func GenerateMLKEMKeypair() (*mlkem.DecapsulationKey1024, *mlkem.EncapsulationKe
 
 func GenerateX25519Keypair() (*ecdh.PrivateKey, *ecdh.PublicKey, error) {
 	curve := ecdh.X25519()
-	priv, err := curve.GenerateKey(nil) // nil = crypto/rand.Reader
+	priv, err := curve.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -31,13 +35,60 @@ func GenerateX25519Keypair() (*ecdh.PrivateKey, *ecdh.PublicKey, error) {
 	return priv, pub, nil
 }
 
+func X25519Encapsulate(seed []byte, senderPriv *ecdh.PrivateKey, recipientPub *ecdh.PublicKey) ([]byte, error) {
+	if len(seed) != seedSize {
+		return nil, errors.New("seed must be 32 bytes")
+	}
+
+	shared, err := senderPriv.ECDH(recipientPub)
+	if err != nil {
+		return nil, err
+	}
+
+	mask := make([]byte, seedSize)
+	hkdfReader := hkdf.New(sha512.New, shared, nil, []byte("x25519-shared-seed-wrap"))
+	if _, err := io.ReadFull(hkdfReader, mask); err != nil {
+		return nil, err
+	}
+
+	ciphertext := make([]byte, seedSize)
+	for i := 0; i < seedSize; i++ {
+		ciphertext[i] = seed[i] ^ mask[i]
+	}
+	return ciphertext, nil
+}
+
+func X25519Decapsulate(ciphertext []byte, recipientPriv *ecdh.PrivateKey, senderPub *ecdh.PublicKey) ([]byte, error) {
+	if len(ciphertext) != seedSize {
+		return nil, errors.New("ciphertext must be 32 bytes")
+	}
+
+	shared, err := recipientPriv.ECDH(senderPub)
+	if err != nil {
+		return nil, err
+	}
+
+	mask := make([]byte, seedSize)
+	hkdfReader := hkdf.New(sha512.New, shared, nil, []byte("x25519-shared-seed-wrap"))
+	if _, err := io.ReadFull(hkdfReader, mask); err != nil {
+		return nil, err
+	}
+
+	seed := make([]byte, seedSize)
+	for i := range seedSize {
+		seed[i] = ciphertext[i] ^ mask[i]
+	}
+
+	return seed, nil
+}
+
 func ValidateSeed(s []byte) error {
 	if len(s) == 0 {
 		return errors.New("shared seed must not be empty")
 	}
 
-	if len(s) < 64 {
-		return errors.New("shared seed too small ")
+	if len(s) < seedSize {
+		return fmt.Errorf("shared seed too small: %v", len(s))
 	}
 
 	return nil

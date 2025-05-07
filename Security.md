@@ -38,11 +38,70 @@ The symmetric encryption key (KEK) is derived using **HKDF** over the combined s
 
 ---
 
-## Key Derivation
+## Protocol Flow (v0) — With Fingerprint Ownership & Direction
+
+This section outlines the handshake process used to establish a secure file transfer session between two peers using ephemeral key exchange and fingerprint verification. The flow is designed to:
+
+- Break key derivation symmetry deterministically
+- Avoid interactive negotiation
+- Use out-of-band verification of peer identity via fingerprints
+
+### Roles
+
+- **Initiator**: The peer that connects second (after receiving the fingerprint)
+- **Responder**: The peer that connects first and generates the fingerprint
+
+---
+
+### Step-by-Step Flow
+
+#### 1. Responder (Alice) connects first
+
+- Alice generates ephemeral public/private key pairs for:
+  - **X25519** (classical ECDH)
+  - **ML-KEM-1024** (post-quantum KEM)
+- Alice computes a deterministic fingerprint over her public keys using `ProtocolFingerprintV0`
+- She publishes:
+  - Her public keys
+  - Her fingerprint
+  - Any relay-specific session metadata
+- Alice **shares her fingerprint out-of-band** with Bob (e.g., via Signal or QR code)
+
+---
+
+#### 2. Initiator (Bob) connects second
+
+- Bob downloads Alice's public keys and fingerprint from the relay
+- Bob recomputes Alice’s fingerprint locally and compares it to the out-of-band fingerprint
+
+- Bob downloads Alice's public keys and fingerprint from the relay
+- Bob recomputes Alice’s fingerprint locally and compares it to the out-of-band fingerprint
+- If they match:
+  - Bob generates two random secrets (e.g., `seed1`, `seed2`)
+  - Bob encrypts the secrets:
+    - `ctMLKEM = Kyber.Encapsulate(seed1, Alice's ML-KEM pub)`
+    - `ctDH = X25519.Encrypt(seed2, Alice's pub key)` — or just use seed2 with DH directly
+  - Bob prepares his message:
+    - Bob's ephemeral public keys (X25519, ML-KEM)
+    - `ctKEM` and `ctDH`
+  - Bob sends this to Alice via the relay
+  - Bob also sends his own **public key fingerprint** to Alice **out-of-band** for identity verification
+
+---
+
+#### 3. Responder (Alice) receives Bob's key material
+
+
+- Alice verifies the fingerprint matches Bob's out-of-band value
+- Alice computes:
+  - `sharedKEM = Kyber.Decapsulate(ctKyber, her private key)`
+  - `sharedX = X25519(seed2, Alice's private key)`
+- Alice then derives the KEK:
 
 ```
-DeriveChaCha20Key(sharedSecrets ...[]byte) ([]byte, error)
+Session_KEK = HKDF(sharedX || sharedKEM)
 ```
+
 
 ## Chunk Size and Limitations
 
@@ -56,7 +115,7 @@ DeriveChaCha20Key(sharedSecrets ...[]byte) ([]byte, error)
 
 ### ⚠️ Critical Warning: Nonce Reuse Across Session
 
-If a nonce is **ever reused with the same encryption key**, **ChaCha20-Poly1305 fails catastrophically** — leading to:
+If a nonce is **ever reused with the same encryption key**, **ChaCha20-Poly1305 fails catastrophically** - leading to:
 
 - Plaintext leakage (via keystream reuse)
 - Forgery potential
