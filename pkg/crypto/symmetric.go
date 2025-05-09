@@ -10,9 +10,8 @@ import (
 )
 
 const KeySize = chacha20poly1305.KeySize
-const EncOverhead = chacha20poly1305.NonceSize + chacha20poly1305.Overhead
-const BlockSize = 2 << 16 // On linux cp works with blocks of 128KiB, we use double.
-// For Windows and macOS; bigger blocks yield in better speeds. Might optimize later ad-hoc block conversion.
+const EncOverhead = uint64(chacha20poly1305.NonceSize + chacha20poly1305.Overhead)
+const BlockSize = uint64(2 << 16) // On linux cp works with blocks of 128KiB, we use double.
 
 // Encrypt encrypts plainText using KEK with ChaCha20-Poly1305.
 // Returns [nonce | ciphertext+MAC], or error.
@@ -31,14 +30,13 @@ func Encrypt(kek, plainText []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// No additional data (AAD).
-	cipherText := aead.Seal(nil, nonce, plainText, nil)
+	// The nonce is not hardcoded, I just generated it in the previous line.
+	cipherText := aead.Seal(nil, nonce, plainText, nil) // #nosec G407
 
 	result := make([]byte, len(nonce)+len(cipherText))
 	copy(result, nonce)
 	copy(result[chacha20poly1305.NonceSize:], cipherText)
 
-	// Return nonce | ciphertext | MAC
 	return result, nil
 }
 
@@ -49,7 +47,7 @@ func Decrypt(kek, input []byte) ([]byte, error) {
 		return nil, errors.New("invalid key size")
 	}
 
-	if len(input) < EncOverhead {
+	if uint64(len(input)) < EncOverhead {
 		return nil, errors.New("input too short")
 	}
 
@@ -69,7 +67,6 @@ func Decrypt(kek, input []byte) ([]byte, error) {
 	return plainText, nil
 }
 
-// Given a plaintext size, compute ciphertext size (total output size after encryption)
 func EncryptedSize(plainSize uint64) uint64 {
 	fullChunks := plainSize / BlockSize
 	lastChunkSize := plainSize % BlockSize
@@ -82,7 +79,6 @@ func EncryptedSize(plainSize uint64) uint64 {
 	return cipherSize
 }
 
-// Given a ciphertext size, compute expected plaintext size
 func DecryptedSize(cipherSize uint64) (uint64, error) {
 	if cipherSize < EncOverhead {
 		return 0, errors.New("ciphertext too small")
@@ -103,7 +99,6 @@ func DecryptedSize(cipherSize uint64) (uint64, error) {
 	return fullChunks * BlockSize, nil
 }
 
-// Method to stream encrytped chunked file.
 func EncryptChunked(kek []byte, r io.Reader, w io.Writer, plainSize uint64) error {
 	buf := make([]byte, BlockSize)
 	var totalRead uint64
@@ -112,7 +107,7 @@ func EncryptChunked(kek []byte, r io.Reader, w io.Writer, plainSize uint64) erro
 		toRead := BlockSize
 		remaining := plainSize - totalRead
 		if remaining < uint64(toRead) {
-			toRead = int(remaining)
+			toRead = remaining
 		}
 
 		n, err := io.ReadFull(r, buf[:toRead])
@@ -146,12 +141,11 @@ func DecryptChunked(kek []byte, r io.Reader, w io.Writer, cipherSize uint64) err
 		toRead := BlockSize + EncOverhead
 		remaining := cipherSize - totalRead
 		if remaining < uint64(toRead) {
-			toRead = int(remaining)
+			toRead = remaining
 		}
 
 		n, err := io.ReadFull(r, chunkBuf[:toRead])
 		if err == io.EOF && n == 0 {
-			// Clean end of stream
 			break
 		}
 		if err != nil {
