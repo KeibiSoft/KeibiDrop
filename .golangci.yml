@@ -1,0 +1,25 @@
+run:
+  timeout: 3m
+  tests: true
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - errcheck
+    - gofmt
+    - gocritic
+    - revive
+    - typecheck
+    - ineffassign
+    - gosec
+
+linters-settings:
+  revive:
+    ignore-generated-header: true
+    severity: warning
+
+issues:
+  exclude-use-default: false
