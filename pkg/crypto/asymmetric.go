@@ -154,3 +154,11 @@ func ProtocolFingerprintV0(pubkeys map[string][]byte) (string, error) {
 	sum := sha512.Sum512(concat)
 	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
+
+type OwnKeys struct {
+	MlKemPrivate *mlkem.DecapsulationKey1024
+	MlKemPublic  *mlkem.EncapsulationKey1024
+
+	X25519Private *ecdh.PrivateKey
+	X25519Public  *ecdh.PublicKey
+}
