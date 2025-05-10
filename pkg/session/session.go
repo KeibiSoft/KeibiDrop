@@ -13,6 +13,7 @@ const (
 	SessionStateVerified  = "verified"
 	SessionStateConnected = "connected"
 	SessionStateError     = "error"
+	SessionStateExpired   = "expired"
 )
 
 // Session represents the state of a P2P connection between Alice and Bob.
