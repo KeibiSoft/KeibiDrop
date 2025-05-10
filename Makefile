@@ -3,3 +3,6 @@ lint:
 
 sec:
 	gosec ./...
+
+build:
+	go build cmd/keibidrop.go
