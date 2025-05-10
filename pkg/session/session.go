@@ -74,7 +74,8 @@ func (s *Session) IsExpired() bool {
 
 // MarkError marks the session as errored and closes any open connections.
 func (s *Session) MarkError(err error) {
-	s.State = SessionStateError
+	// We're in an error path; failing here is pointless. If you want strict handling, log it instead.
+	_ = s.Transition(SessionStateError) // errors ignored to prevent panic
 	s.Err = err
 
 	if s.Session != nil {
