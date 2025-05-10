@@ -10,12 +10,6 @@ import (
 	"time"
 )
 
-// PeerHandshakeMessage defines the JSON payload sent by Bob to Alice.
-type PeerHandshakeMessage struct {
-	Fingerprint string            `json:"fingerprint"`
-	PublicKeys  map[string]string `json:"public_keys"` // base64 encoded
-}
-
 // StartListener starts a TCP listener on the given port and waits for Bob.
 // It will block until Bob connects and sends valid keys that match the expected fingerprint.
 func StartListener(session *Session, port int) error {
@@ -34,9 +28,10 @@ func StartListener(session *Session, port int) error {
 	logger.Info("Listening for peer", "addr", addr)
 	conn, err := ln.Accept()
 	if err != nil {
-		logger.Error("Accept failed", "err", err)
+		logger.Error("Failed to accept", "err", err)
 		return fmt.Errorf("failed to accept connection: %w", err)
 	}
+	// TODO: Use the handshake.
 	session.ConnIn = conn
 	logger.Info("Connection accepted", "remote", conn.RemoteAddr().String())
 

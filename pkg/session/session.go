@@ -29,8 +29,7 @@ type Session struct {
 	KEK []byte
 
 	// TCP connections
-	ConnIn  net.Conn // connection accepted by Alice from Bob
-	ConnOut net.Conn // connection from Alice to Bob (once verified)
+	Session *SessionSockets
 
 	// Session state and lifecycle
 	State       string
@@ -41,6 +40,19 @@ type Session struct {
 	Deadline time.Time
 
 	logger log15.Logger
+}
+
+// SessionSockets holds a duplex connection for peer communication.
+type SessionSockets struct {
+	Inbound  *SecureConn // Bob -> Alice
+	Outbound *SecureConn // Alice -> Bob
+}
+
+func NewSessionSockets(connIn, connOut net.Conn, kekIn, kekOut []byte) *SessionSockets {
+	return &SessionSockets{
+		Inbound:  NewSecureConn(connIn, kekIn),
+		Outbound: NewSecureConn(connOut, kekOut),
+	}
 }
 
 // NewSession initializes a new session with a timeout deadline.
@@ -63,11 +75,14 @@ func (s *Session) IsExpired() bool {
 func (s *Session) MarkError(err error) {
 	s.State = SessionStateError
 	s.Err = err
-	if s.ConnIn != nil {
-		s.ConnIn.Close()
-	}
-	if s.ConnOut != nil {
-		s.ConnOut.Close()
+
+	if s.Session != nil {
+		if s.Session.Inbound != nil {
+			s.Session.Inbound.Close()
+		}
+		if s.Session.Outbound != nil {
+			s.Session.Outbound.Close()
+		}
 	}
 }
 
@@ -78,5 +93,9 @@ func (s *Session) IsVerified() bool {
 
 // ReadyForEncryption returns true when both connections and KEK are set.
 func (s *Session) ReadyForEncryption() bool {
-	return s.State == SessionStateConnected && s.KEK != nil && s.ConnIn != nil && s.ConnOut != nil
+	return s.State == SessionStateConnected &&
+		s.KEK != nil &&
+		s.Session != nil &&
+		s.Session.Inbound != nil &&
+		s.Session.Outbound != nil
 }
