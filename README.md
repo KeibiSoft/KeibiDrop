@@ -8,6 +8,14 @@ This would not have been possible without the **technical knowledge** I’ve gai
 
 ---
 
+## Contributing & Legal
+
+Want to contribute? Great—but please read the [CONTRIBUTING.md](./CONTRIBUTING.md) first. All commits must be signed (`git commit -S`) and by doing so, you agree to the terms outlined in our [Developer Certificate of Origin](./DCO.txt).
+
+For information about how we (don’t) use your data, see the [Privacy Policy](./privacy.md).  
+
+---
+
 ### LICENSE
 
 This project is licensed under the Mozilla Public License 2.0.
