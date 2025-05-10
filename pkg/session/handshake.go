@@ -50,7 +50,9 @@ func PerformUnsecureInboundHandshake(session *Session, conn net.Conn) error {
 	// Wait for user to confirm out-of-band fingerprint
 	logger.Info("Peer fingerprint verified, awaiting user confirmation")
 	// In real UI, this would be blocking for user approval
-	session.State = SessionStateVerified
+	if err := session.Transition(SessionStateVerified); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -88,5 +90,9 @@ func PerformUnsecureOutboundHandshake(session *Session, remoteAddr string, seeds
 
 // UpgradeToSecureConn wraps an existing net.Conn after KEK is negotiated.
 func UpgradeToSecureConn(conn net.Conn, kek []byte) *SecureConn {
+	/* After KEK Derivation completes succesfully: */
+	// if err := session.Transition(SessionStateConnected); err != nil {
+	// 	return err
+	// }
 	return NewSecureConn(conn, kek)
 }

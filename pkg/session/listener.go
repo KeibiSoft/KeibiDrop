@@ -71,7 +71,9 @@ func StartListener(session *Session, port int) error {
 
 	logger.Info("Peer verified", "fingerprint", computedFingerprint)
 	_, _ = conn.Write([]byte("OK\n"))
-	session.State = SessionStateVerified
+	if err := session.Transition(SessionStateVerified); err != nil {
+		return err
+	}
 	return nil
 }
 
