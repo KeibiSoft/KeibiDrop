@@ -32,8 +32,18 @@ func StartListener(session *Session, port int) error {
 		return fmt.Errorf("failed to accept connection: %w", err)
 	}
 	// TODO: Use the handshake.
-	session.ConnIn = conn
-	logger.Info("Connection accepted", "remote", conn.RemoteAddr().String())
+	err = PerformUnsecureInboundHandshake(session, conn)
+	if err != nil {
+		session.MarkError(fmt.Errorf("inbound hanshake failed: %w", err))
+		conn.Close()
+		return err
+	}
+	session.Session.Inbound.conn = conn
+	logger.Info("Connection accepted", "remote", session.Session.Inbound.conn.RemoteAddr().String())
+
+	if err := session.ValidatePeer(); err != nil {
+		return err
+	}
 
 	// Read handshake message
 	decoder := json.NewDecoder(conn)
