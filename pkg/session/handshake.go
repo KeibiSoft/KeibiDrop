@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
 // PeerHandshakeMessage defines the JSON payload sent during handshake.
@@ -88,11 +90,73 @@ func PerformUnsecureOutboundHandshake(session *Session, remoteAddr string, seeds
 	return conn, nil
 }
 
-// UpgradeToSecureConn wraps an existing net.Conn after KEK is negotiated.
-func UpgradeToSecureConn(conn net.Conn, kek []byte) *SecureConn {
-	/* After KEK Derivation completes succesfully: */
-	// if err := session.Transition(SessionStateConnected); err != nil {
-	// 	return err
-	// }
-	return NewSecureConn(conn, kek)
+// FinalizeInboundSession completes the inbound session setup after peer is verified.
+// It decapsulates seeds, derives the KEK, wraps the net.Conn in SecureConn, and finalizes state.
+func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string]string) error {
+	logger := session.logger.New("phase", "inbound-finalize")
+
+	// === Pre-check: make sure peer is verified ===
+	if err := session.ValidatePeer(); err != nil {
+		return fmt.Errorf("cannot finalize session: peer not verified: %w", err)
+	}
+
+	// === Step 1: Decode base64-encoded ciphertexts ===
+	ctKEM_b64, ok1 := encSeeds["mlkem"]
+	ctXDH_b64, ok2 := encSeeds["x25519"]
+	if !ok1 || !ok2 {
+		return fmt.Errorf("missing encapsulated seeds (mlkem or x25519)")
+	}
+
+	ctKEM, err := base64.StdEncoding.DecodeString(ctKEM_b64)
+	if err != nil {
+		return fmt.Errorf("failed to decode mlkem ciphertext: %w", err)
+	}
+
+	ctXDH, err := base64.StdEncoding.DecodeString(ctXDH_b64)
+	if err != nil {
+		return fmt.Errorf("failed to decode x25519 ciphertext: %w", err)
+	}
+
+	// === Step 2: Decapsulate both secrets ===
+	sharedKEM, err := session.OwnKeys.MlKemPrivate.Decapsulate(ctKEM)
+	if err != nil {
+		return fmt.Errorf("mlkem decapsulation failed: %w", err)
+	}
+
+	// Deserialize peer's X25519 pubkey from []byte to *ecdh.PublicKey
+	curve := session.OwnKeys.X25519Private.Curve()
+	pubKeyBytes := session.PeerPubKeys["x25519"]
+	if pubKeyBytes == nil {
+		return fmt.Errorf("missing peer x25519 public key")
+	}
+	peerPubKey, err := curve.NewPublicKey(pubKeyBytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse peer x25519 pubkey: %w", err)
+	}
+
+	seed2, err := kbc.X25519Decapsulate(ctXDH, session.OwnKeys.X25519Private, peerPubKey)
+	if err != nil {
+		return fmt.Errorf("x25519 decapsulation failed: %w", err)
+	}
+
+	// === Step 3: Derive KEK ===
+	kek, err := kbc.DeriveChaCha20Key(seed2, sharedKEM)
+	if err != nil {
+		return fmt.Errorf("KEK derivation failed: %w", err)
+	}
+	session.KEK = kek
+
+	// === Step 4: Upgrade connection to SecureConn ===
+	secure := NewSecureConn(conn, kek)
+	session.Session = &SessionSockets{
+		Inbound: secure,
+	}
+
+	// === Step 5: Transition to connected state ===
+	if err := session.Transition(SessionStateConnected); err != nil {
+		return fmt.Errorf("failed to transition to connected state: %w", err)
+	}
+
+	logger.Info("Inbound session finalized and secured")
+	return nil
 }
