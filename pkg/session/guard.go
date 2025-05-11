@@ -23,7 +23,7 @@ func (s *Session) Transition(next SessionState) error {
 	validNext := allowedTransitions[s.State]
 	for _, state := range validNext {
 		if state == next {
-			s.logger.Info("Session state transition", "from", s.State, "to", next)
+			logger.Info("Session state transition", "from", s.State, "to", next)
 			s.State = next
 			return nil
 		}
