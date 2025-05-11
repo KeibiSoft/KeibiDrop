@@ -8,12 +8,14 @@ import (
 	"github.com/inconshreveable/log15"
 )
 
+type SessionState string
+
 const (
-	SessionStatePending   = "pending"
-	SessionStateVerified  = "verified"
-	SessionStateConnected = "connected"
-	SessionStateError     = "error"
-	SessionStateExpired   = "expired"
+	SessionStatePending   SessionState = "pending"
+	SessionStateVerified  SessionState = "verified"
+	SessionStateConnected SessionState = "connected"
+	SessionStateError     SessionState = "error"
+	SessionStateExpired   SessionState = "expired"
 )
 
 // Session represents the state of a P2P connection between Alice and Bob.
@@ -33,7 +35,7 @@ type Session struct {
 	Session *SessionSockets
 
 	// Session state and lifecycle
-	State       string
+	State       SessionState
 	Established time.Time
 	Err         error
 
