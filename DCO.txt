@@ -1,0 +1,25 @@
+Developer Certificate of Origin
+Version 1.1 – KeibiSoft Edition
+
+By submitting a signed commit to this project, I certify that:
+
+1. The contribution was created in whole or in part by me, and I have the right to submit it under the license indicated in the project; or
+
+2. The contribution is based upon previous work that, to the best of my knowledge, is covered under an appropriate open source license and I have the right under that license to submit that work with modifications, whether created in whole or in part by me, under the same project license; or
+
+3. The contribution was provided directly to me by some other person who certified (1) or (2), and I have not modified it.
+
+4. I understand and agree that this project and the contribution are public and that a record of the contribution (including all personal information such as commit metadata) is maintained indefinitely and may be redistributed consistent with the project’s license(s).
+
+5. If the contribution includes AI-assisted code:
+   - I actively directed its creation (e.g., by writing prompts, reviewing output, and integrating it manually)
+   - I understand the code and have verified its correctness
+   - I take full responsibility for the contribution as if I had written it entirely by hand
+
+6. If my contribution modifies or improves code originally written by **KeibiSoft SRL**, I grant KeibiSoft SRL the right to relicense that contribution under other licenses (including commercial licenses), in addition to MPL 2.0.
+
+---
+
+By submitting a commit signed with `git commit -S`, you agree to the terms above.
+
+No manual `Signed-off-by:` line is required.
