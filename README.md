@@ -1,6 +1,25 @@
 # KeibiDrop
 
-Ephemeral end-to-end encrypted file transfer client with post-quantum security guarantees.
+KeibiDrop is an ephemeral, zero-trust file transfer tool designed for direct peer-to-peer exchange over untrusted networks.
+
+It uses modern post-quantum cryptography (ML-KEM + X25519) and symmetric encryption (ChaCha20-Poly1305) to ensure that only the intended recipient can decrypt the file.
+
+The sender and receiver perform a secure key exchange via a short-lived relay server, after which all communication is encrypted end-to-end.
+
+⚙️ Usage example, CLI + GUI instructions coming soon.  
+📷 Screenshots and GIFs will be added after the v1 transport is finalized.
+
+---
+
+## Disclaimer
+
+This project was developed with prior experience in the relevant technologies and domain.
+To accelerate development and ship faster, I made extensive use of **GPT-4o (in Monday mode)** - for brainstorming, scaffolding, and drafting code.
+Every line was reviewed, corrected, and adapted by me, with multiple rounds of validation to ensure accuracy and quality.
+
+This would not have been possible without the **technical knowledge** I’ve gained without relying on AI and the ability to critically evaluate and refine its output.
+
+---
 
 ## Inspiration
 
@@ -11,6 +30,8 @@ This project was loosely inspired by:
 
 I haven’t used these tools directly, but I liked the ideas they explored and wanted to build something in that direction, using my own design and implementation.
 
+---
+
 ## Features
 
 - Post-quantum hybrid key exchange using ML-KEM-1024 and X25519
@@ -20,23 +41,27 @@ I haven’t used these tools directly, but I liked the ideas they explored and w
 - No persistent metadata or tracking
 - Designed for use over untrusted relays
 
+---
+
 ## Repository Structure
 
 ```md
+cmd/ # Main entry point
+pkg/crypto/ # Cryptographic primitives
+go.mod # Module definition
+go.sum # Dependencies
+Security.md # Protocol-level cryptographic design
+```
 
-cmd/            # Main entry point
-pkg/crypto/     # Cryptographic primitives
-go.mod          # Module definition
-go.sum          # Dependencies
-Security.md     # Protocol-level cryptographic design
-
-````
+---
 
 ## Build
 
 ```bash
 go build -o keibidrop ./cmd
-````
+```
+
+---
 
 ## Test
 
@@ -44,9 +69,7 @@ go build -o keibidrop ./cmd
 go test ./pkg/...
 ```
 
-## Usage
-
-TBD – integration instructions to follow based on transport and UI stack.
+---
 
 ## Cryptographic Summary
 
@@ -57,13 +80,13 @@ TBD – integration instructions to follow based on transport and UI stack.
 
 See [`Security.md`](./Security.md) for a complete protocol overview.
 
-## Disclaimer
+---
 
-This project was developed with prior experience in the relevant technologies and domain.
-To accelerate development and ship faster, I made extensive use of **GPT-4o (in Monday mode)** - for brainstorming, scaffolding, and drafting code.
-Every line was reviewed, corrected, and adapted by me, with multiple rounds of validation to ensure accuracy and quality.
+## Contributing & Legal
 
-This would not have been possible without the **technical knowledge*- I’ve gained without relying on AI and the ability to critically evaluate and refine its output.
+Want to contribute? Great—but please read the [CONTRIBUTING.md](./CONTRIBUTING.md) first. All commits must be signed (`git commit -S`) and by doing so, you agree to the terms outlined in our [Developer Certificate of Origin](./DCO.txt).
+
+For information about how we (don’t) use your data, see the [Privacy Policy](./privacy.md).
 
 ---
 
@@ -74,6 +97,8 @@ This project is licensed under the Mozilla Public License 2.0.
 See the LICENSE file for details.
 
 This open-source release is the community edition.
+
+---
 
 ### Enterprise Edition Available
 
