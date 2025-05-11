@@ -5,7 +5,7 @@ import (
 )
 
 // Valid transitions: from → list of allowed targets
-var allowedTransitions = map[string][]string{
+var allowedTransitions = map[SessionState][]SessionState{
 	SessionStatePending:   {SessionStateVerified, SessionStateError, SessionStateExpired},
 	SessionStateVerified:  {SessionStateConnected, SessionStateError, SessionStateExpired},
 	SessionStateConnected: {SessionStateError, SessionStateExpired},
@@ -14,7 +14,7 @@ var allowedTransitions = map[string][]string{
 }
 
 // Transition safely updates the session state, if allowed.
-func (s *Session) Transition(next string) error {
+func (s *Session) Transition(next SessionState) error {
 	if s.State == next {
 		return nil
 	}
