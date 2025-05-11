@@ -1,0 +1,42 @@
+@startuml
+!pragma useVerticalIf on
+hide footbox
+title KeibiDrop Session Handshake (v0 - Hybrid PQ + Classical)
+
+actor Alice << Responder >>
+participant Relay << Untrusted Server >>
+actor Bob << Initiator >>
+
+' === ROOM CREATION ===
+Alice -> Alice : Generate ephemeral keys:\n- MLKEM (PK_A1)\n- X25519 (PK_A2)
+Alice -> Relay : Register Room:\n{ PKs, Fingerprint, Inbound Port, IP }
+Relay -> Alice : OK
+
+' === FINGERPRINT OUT-OF-BAND SHARING ===
+Alice -> Bob : Send Fingerprint (via Signal)
+Bob -> Alice : Send Fingerprint (via Signal)
+
+' === JOIN FLOW ===
+Bob -> Bob : Generate ephemeral keys:\n- MLKEM (PK_B1)\n- X25519 (PK_B2)
+Bob -> Relay : Join Room (using Alice’s fingerprint)
+Relay -> Bob : { Alice’s PKs, Inbound Port, IP }
+
+Bob -> Bob : Verify Alice's fingerprint == out-of-band
+Bob -> Bob : Derive outbound shared secrets:
+Bob -> Bob : - Encapsulate: ct_MLKEM = Enc(PK_A1, seed1)
+Bob -> Bob : - Encrypt seed2 via X25519 with PK_A2
+Bob -> Alice : Send:\n{ PK_Bs, ct_MLKEM, Enc(seed2), IP, Port }
+
+' === ALICE HANDLES BOB'S JOIN ===
+Alice -> Alice : Verify Bob’s fingerprint
+Alice -> Alice : Derive inbound shared secrets:\n- Decapsulate ct_MLKEM\n- Decrypt seed2
+Alice -> Alice : Derive Session Key = HKDF(seed1, seed2)
+Alice -> Bob : Encrypted OK
+
+Alice -> Alice : Generate Session Key for Bob
+Alice -> Bob : Encrypt and Send session key to Bob
+
+Bob -> Bob : If fingerprint + session key OK\n→ Upgrade to Secure
+Bob -> Alice : Encrypted OK
+
+@enduml
