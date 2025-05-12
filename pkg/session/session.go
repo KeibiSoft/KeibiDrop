@@ -29,7 +29,8 @@ type Session struct {
 	PeerPubKeys     map[string][]byte // "x25519", "mlkem"
 
 	// Symmetric session key
-	KEK []byte
+	SEKInbound  []byte
+	SEKOutbound []byte
 
 	// TCP connections
 	Session *SessionSockets
@@ -51,10 +52,10 @@ type SessionSockets struct {
 	Outbound *SecureConn // Alice -> Bob
 }
 
-func NewSessionSockets(connIn, connOut net.Conn, kekIn, kekOut []byte) *SessionSockets {
+func NewSessionSockets(connIn, connOut net.Conn, sekIn, sekOut []byte) *SessionSockets {
 	return &SessionSockets{
-		Inbound:  NewSecureConn(connIn, kekIn),
-		Outbound: NewSecureConn(connOut, kekOut),
+		Inbound:  NewSecureConn(connIn, sekIn),
+		Outbound: NewSecureConn(connOut, sekOut),
 	}
 }
 
@@ -95,10 +96,11 @@ func (s *Session) IsVerified() bool {
 	return s.State == SessionStateVerified || s.State == SessionStateConnected
 }
 
-// ReadyForEncryption returns true when both connections and KEK are set.
+// ReadyForEncryption returns true when both connections and SEKs are set.
 func (s *Session) ReadyForEncryption() bool {
 	return s.State == SessionStateConnected &&
-		s.KEK != nil &&
+		s.SEKInbound != nil &&
+		s.SEKOutbound != nil &&
 		s.Session != nil &&
 		s.Session.Inbound != nil &&
 		s.Session.Outbound != nil

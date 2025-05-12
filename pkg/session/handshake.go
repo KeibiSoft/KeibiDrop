@@ -1,6 +1,7 @@
 package session
 
 import (
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -18,7 +19,6 @@ type PeerHandshakeMessage struct {
 }
 
 // TODO: Check out-of-band fingerprints.
-// TODO: Add proper uniform logger.Error messages/ logger.Info("Success")
 
 // PerformUnsecureInboundHandshake handles the first plaintext connection from Bob to Alice.
 func PerformUnsecureInboundHandshake(session *Session, conn net.Conn) error {
@@ -27,15 +27,19 @@ func PerformUnsecureInboundHandshake(session *Session, conn net.Conn) error {
 	// Read JSON
 	var msg PeerHandshakeMessage
 	if err := json.NewDecoder(conn).Decode(&msg); err != nil {
+		logger.Error("Failed to decode request", "error", err)
 		return fmt.Errorf("invalid handshake format: %w", err)
 	}
 
 	// Compute and compare fingerprint
 	computed, err := ComputeFingerprintFromBase64Keys(msg.PublicKeys)
 	if err != nil {
+		logger.Error("Failed to compute fingerprint", "error", err)
 		return fmt.Errorf("fingerprint computation failed: %w", err)
 	}
-	if computed != session.ExpectedPeerFingerprint {
+
+	if subtle.ConstantTimeCompare([]byte(computed), []byte(session.ExpectedPeerFingerprint)) == 0 {
+		logger.Error("Fingerprint missmatch")
 		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computed, session.ExpectedPeerFingerprint)
 	}
 
@@ -44,6 +48,7 @@ func PerformUnsecureInboundHandshake(session *Session, conn net.Conn) error {
 	for k, v := range msg.PublicKeys {
 		decoded, err := base64.StdEncoding.DecodeString(v)
 		if err != nil {
+			logger.Error("Faield to base64 decode public key", "error", err)
 			return fmt.Errorf("invalid base64 key for %s: %w", k, err)
 		}
 		session.PeerPubKeys[k] = decoded
@@ -55,6 +60,7 @@ func PerformUnsecureInboundHandshake(session *Session, conn net.Conn) error {
 	if err := session.Transition(SessionStateVerified); err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -83,7 +89,11 @@ func PerformUnsecureOutboundHandshake(session *Session, remoteAddr string, seeds
 	}
 
 	if err := json.NewEncoder(conn).Encode(msg); err != nil {
-		conn.Close()
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Error on closed connection", "error", err2)
+		}
+		logger.Error("Failed write message", "error", err)
 		return nil, fmt.Errorf("failed to send handshake: %w", err)
 	}
 
@@ -91,12 +101,13 @@ func PerformUnsecureOutboundHandshake(session *Session, remoteAddr string, seeds
 }
 
 // FinalizeInboundSession completes the inbound session setup after peer is verified.
-// It decapsulates seeds, derives the KEK, wraps the net.Conn in SecureConn, and finalizes state.
+// It decapsulates seeds, derives the SEKInbound, wraps the net.Conn in SecureConn, and finalizes state.
 func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string]string) error {
 	logger := session.logger.New("phase", "inbound-finalize")
 
 	// === Pre-check: make sure peer is verified ===
 	if err := session.ValidatePeer(); err != nil {
+		logger.Error("Failed to validate peer", "error", err)
 		return fmt.Errorf("cannot finalize session: peer not verified: %w", err)
 	}
 
@@ -104,50 +115,59 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	ctKEM_b64, ok1 := encSeeds["mlkem"]
 	ctXDH_b64, ok2 := encSeeds["x25519"]
 	if !ok1 || !ok2 {
+		logger.Error("Missing ecnapsulated seeds", "mlkem-present", ok1, "x25519-present", ok2)
 		return fmt.Errorf("missing encapsulated seeds (mlkem or x25519)")
 	}
 
 	ctKEM, err := base64.StdEncoding.DecodeString(ctKEM_b64)
 	if err != nil {
+		logger.Error("Failed to decode mlkem seed", "error", err)
 		return fmt.Errorf("failed to decode mlkem ciphertext: %w", err)
 	}
 
 	ctXDH, err := base64.StdEncoding.DecodeString(ctXDH_b64)
 	if err != nil {
+		logger.Error("Failed to decode x25519 seed", "error", err)
 		return fmt.Errorf("failed to decode x25519 ciphertext: %w", err)
 	}
 
 	// === Step 2: Decapsulate both secrets ===
 	sharedKEM, err := session.OwnKeys.MlKemPrivate.Decapsulate(ctKEM)
 	if err != nil {
+		logger.Error("Failed to decapsulate mlkem seed", "error", err)
 		return fmt.Errorf("mlkem decapsulation failed: %w", err)
 	}
 
 	// Deserialize peer's X25519 pubkey from []byte to *ecdh.PublicKey
 	curve := session.OwnKeys.X25519Private.Curve()
+
 	pubKeyBytes := session.PeerPubKeys["x25519"]
 	if pubKeyBytes == nil {
+		logger.Error("Failed to find peer x25519 public key")
 		return fmt.Errorf("missing peer x25519 public key")
 	}
 	peerPubKey, err := curve.NewPublicKey(pubKeyBytes)
 	if err != nil {
+		logger.Error("Failed to decore peer public key", "error", err)
 		return fmt.Errorf("failed to parse peer x25519 pubkey: %w", err)
 	}
 
 	seed2, err := kbc.X25519Decapsulate(ctXDH, session.OwnKeys.X25519Private, peerPubKey)
 	if err != nil {
+		logger.Error("Failed to decapsulate x25519 seed", "error", err)
 		return fmt.Errorf("x25519 decapsulation failed: %w", err)
 	}
 
 	// === Step 3: Derive KEK ===
-	kek, err := kbc.DeriveChaCha20Key(seed2, sharedKEM)
+	sek, err := kbc.DeriveChaCha20Key(seed2, sharedKEM)
 	if err != nil {
-		return fmt.Errorf("KEK derivation failed: %w", err)
+		logger.Error("Failed to derive SEK", "error", err)
+		return fmt.Errorf("SEK derivation failed: %w", err)
 	}
-	session.KEK = kek
+	session.SEKInbound = sek
 
 	// === Step 4: Upgrade connection to SecureConn ===
-	secure := NewSecureConn(conn, kek)
+	secure := NewSecureConn(conn, sek)
 	session.Session = &SessionSockets{
 		Inbound: secure,
 	}
