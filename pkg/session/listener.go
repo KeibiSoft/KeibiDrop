@@ -62,7 +62,7 @@ func StartListener(session *Session, port int) error {
 }
 
 func decodeBase64(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
+	return base64.RawURLEncoding.DecodeString(s)
 }
 
 func ComputeFingerprintFromBase64Keys(pubKeys map[string]string) (string, error) {
