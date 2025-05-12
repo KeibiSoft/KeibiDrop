@@ -15,7 +15,7 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 
   - Use a hybrid model for session lifecycle control:
     - All state changes go through `Transition(to string)`
-    - Sensitive actions (e.g., KEK derivation, file transfer) must call `Validate*()` guards
+    - Sensitive actions (e.g., SEK derivation, file transfer) must call `Validate*()` guards
 
 - **Rationale:**
 
