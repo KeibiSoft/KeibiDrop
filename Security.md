@@ -91,24 +91,21 @@ This section outlines the handshake process used to establish a secure file tran
 
 #### 3. Responder (Alice) receives Bob's key material
 
-
 - Alice verifies the fingerprint matches Bob's out-of-band value
 - Alice computes:
   - `sharedKEM = Kyber.Decapsulate(ctKyber, her private key)`
   - `sharedX = X25519(seed2, Alice's private key)`
 - Alice then derives the KEK:
 
-```
+```md
 Session_KEK = HKDF(sharedX || sharedKEM)
 ```
-
 
 ## Chunk Size and Limitations
 
 - The encryption operates on **fixed-size blocks of 256 KiB**.
 - Each chunk is encrypted independently using **ChaCha20-Poly1305 AEAD**, which ensures **confidentiality** and **integrity** of each chunk.
 - The output format for each encrypted block is:
-
 
 - Nonces are generated randomly **per chunk** using a cryptographically secure RNG (`crypto/rand`).
 - Each nonce is **prepended** to the ciphertext and must be **unique for the lifetime of the KEK**.
@@ -132,7 +129,6 @@ That includes **all files, across both directions, during that session**. This l
 ### ❗ Implication
 
 If this system ever encrypts more than ~1 PB with the same session key, the probability of a **nonce collision becomes non-negligible**. Beyond that point, **all guarantees of confidentiality collapse**.
-
 
 ### ⚠️ Known Limitation
 
