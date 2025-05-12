@@ -121,7 +121,7 @@ func deriveKeyInternal(hash func() hash.Hash, label string, size int, secrets ..
 
 // DeriveChaCha20Key derives a 32-byte symmetric key using SHA-512 over the given secrets.
 func DeriveChaCha20Key(sharedSecrets ...[]byte) ([]byte, error) {
-	return deriveKeyInternal(sha512.New, "KeibiDrop-ChaCha20-Poly1305-KEK", KeySize, sharedSecrets...)
+	return deriveKeyInternal(sha512.New, "KeibiDrop-ChaCha20-Poly1305-SEK", KeySize, sharedSecrets...)
 }
 
 func Fingerprint(pub []byte) string {
@@ -161,4 +161,78 @@ type OwnKeys struct {
 
 	X25519Private *ecdh.PrivateKey
 	X25519Public  *ecdh.PublicKey
+}
+
+func (ok *OwnKeys) Validate() error {
+	if ok.MlKemPrivate == nil || ok.MlKemPublic == nil || ok.X25519Private == nil || ok.X25519Public == nil {
+		return fmt.Errorf("nil keys")
+	}
+
+	return nil
+}
+
+func (ok *OwnKeys) Fingerprint() (string, error) {
+	if ok.MlKemPublic == nil || ok.X25519Public == nil {
+		return "", fmt.Errorf("no registered pks")
+	}
+
+	pks := map[string][]byte{
+		"x25519": ok.X25519Public.Bytes(),
+		"mlkem":  ok.MlKemPublic.Bytes(),
+	}
+
+	return ProtocolFingerprintV0(pks)
+}
+
+type PeerKeys struct {
+	MlKemPublic  *mlkem.EncapsulationKey1024
+	X25519Public *ecdh.PublicKey
+}
+
+func (pk *PeerKeys) Fingerprint() (string, error) {
+	if pk.MlKemPublic == nil || pk.X25519Public == nil {
+		return "", fmt.Errorf("no registered pks")
+	}
+
+	pks := map[string][]byte{
+		"x25519": pk.X25519Public.Bytes(),
+		"mlkem":  pk.MlKemPublic.Bytes(),
+	}
+
+	return ProtocolFingerprintV0(pks)
+}
+
+func (pk *PeerKeys) Validate() error {
+	if pk.MlKemPublic == nil || pk.X25519Public == nil {
+		return fmt.Errorf("nil keys")
+	}
+
+	return nil
+}
+
+func ParsePeerKeys(pubMap map[string][]byte) (*PeerKeys, error) {
+	mlkemBytes, ok := pubMap["mlkem"]
+	if !ok {
+		return nil, errors.New("missing mlkem public key")
+	}
+	x25519Bytes, ok := pubMap["x25519"]
+	if !ok {
+		return nil, errors.New("missing x25519 public key")
+	}
+
+	mlkemPub, err := mlkem.NewEncapsulationKey1024(mlkemBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	x25519Curve := ecdh.X25519()
+	x25519Pub, err := x25519Curve.NewPublicKey(x25519Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PeerKeys{
+		MlKemPublic:  mlkemPub,
+		X25519Public: x25519Pub,
+	}, nil
 }

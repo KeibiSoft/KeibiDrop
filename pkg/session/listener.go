@@ -34,10 +34,13 @@ func StartListener(session *Session, port int) error {
 	logger.Info("TCP connection accepted", "remote", conn.RemoteAddr().String())
 
 	// Step 1: Verify peer identity + fingerprint
-	err = PerformUnsecureInboundHandshake(session, conn)
+	err = PerformInboundHandshake(session, conn)
 	if err != nil {
 		session.MarkError(fmt.Errorf("handshake failed: %w", err))
-		conn.Close()
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Failed to close connection", "error", err2)
+		}
 		return err
 	}
 
@@ -45,7 +48,10 @@ func StartListener(session *Session, port int) error {
 	var msg PeerHandshakeMessage
 	if err := json.NewDecoder(conn).Decode(&msg); err != nil {
 		session.MarkError(fmt.Errorf("failed to decode encapsulated seeds: %w", err))
-		conn.Close()
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Failed to close connection", "error", err2)
+		}
 		return err
 	}
 
@@ -53,7 +59,10 @@ func StartListener(session *Session, port int) error {
 	err = FinalizeInboundSession(session, conn, msg.EncSeeds)
 	if err != nil {
 		session.MarkError(fmt.Errorf("session finalization failed: %w", err))
-		conn.Close()
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Failed to close connection", "error", err2)
+		}
 		return err
 	}
 
@@ -62,7 +71,11 @@ func StartListener(session *Session, port int) error {
 }
 
 func decodeBase64(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
+	return base64.RawURLEncoding.DecodeString(s)
+}
+
+func encodeBase64(in []byte) string {
+	return base64.RawURLEncoding.EncodeToString(in)
 }
 
 func ComputeFingerprintFromBase64Keys(pubKeys map[string]string) (string, error) {
