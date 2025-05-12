@@ -37,7 +37,10 @@ func StartListener(session *Session, port int) error {
 	err = PerformInboundHandshake(session, conn)
 	if err != nil {
 		session.MarkError(fmt.Errorf("handshake failed: %w", err))
-		conn.Close()
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Failed to close connection", "error", err2)
+		}
 		return err
 	}
 
@@ -45,7 +48,10 @@ func StartListener(session *Session, port int) error {
 	var msg PeerHandshakeMessage
 	if err := json.NewDecoder(conn).Decode(&msg); err != nil {
 		session.MarkError(fmt.Errorf("failed to decode encapsulated seeds: %w", err))
-		conn.Close()
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Failed to close connection", "error", err2)
+		}
 		return err
 	}
 
@@ -53,7 +59,10 @@ func StartListener(session *Session, port int) error {
 	err = FinalizeInboundSession(session, conn, msg.EncSeeds)
 	if err != nil {
 		session.MarkError(fmt.Errorf("session finalization failed: %w", err))
-		conn.Close()
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Failed to close connection", "error", err2)
+		}
 		return err
 	}
 

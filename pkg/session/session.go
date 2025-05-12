@@ -125,10 +125,10 @@ func (s *Session) MarkError(err error) {
 
 	if s.Session != nil {
 		if s.Session.Inbound != nil {
-			s.Session.Inbound.Close()
+			_ = s.Session.Inbound.Close()
 		}
 		if s.Session.Outbound != nil {
-			s.Session.Outbound.Close()
+			_ = s.Session.Outbound.Close()
 		}
 	}
 }

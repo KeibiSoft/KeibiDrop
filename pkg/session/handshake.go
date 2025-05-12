@@ -206,5 +206,6 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	}
 
 	logger.Info("Inbound session finalized and secured")
+
 	return nil
 }
