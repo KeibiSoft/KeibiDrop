@@ -70,6 +70,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	logger.Info("Peer fingerprint verified, awaiting user confirmation")
 	// In real UI, this would be blocking for user approval
 	if err := session.Transition(SessionStateVerified); err != nil {
+		logger.Error("Failed to transition session state", "error", err)
 		return err
 	}
 
