@@ -34,7 +34,7 @@ func StartListener(session *Session, port int) error {
 	logger.Info("TCP connection accepted", "remote", conn.RemoteAddr().String())
 
 	// Step 1: Verify peer identity + fingerprint
-	err = PerformUnsecureInboundHandshake(session, conn)
+	err = PerformInboundHandshake(session, conn)
 	if err != nil {
 		session.MarkError(fmt.Errorf("handshake failed: %w", err))
 		conn.Close()
@@ -63,6 +63,10 @@ func StartListener(session *Session, port int) error {
 
 func decodeBase64(s string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(s)
+}
+
+func encodeBase64(in []byte) string {
+	return base64.RawURLEncoding.EncodeToString(in)
 }
 
 func ComputeFingerprintFromBase64Keys(pubKeys map[string]string) (string, error) {

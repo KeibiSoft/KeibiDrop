@@ -2,7 +2,6 @@ package session
 
 import (
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -18,10 +17,8 @@ type PeerHandshakeMessage struct {
 	EncSeeds    map[string]string `json:"enc_seeds"`   // optional for key encapsulation
 }
 
-// TODO: Check out-of-band fingerprints.
-
-// PerformUnsecureInboundHandshake handles the first plaintext connection from Bob to Alice.
-func PerformUnsecureInboundHandshake(session *Session, conn net.Conn) error {
+// PerformInboundHandshake handles the first plaintext connection from Bob to Alice.
+func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	if session == nil || conn == nil {
 		return fmt.Errorf("nil pointer deference")
 	}
@@ -79,13 +76,32 @@ func PerformUnsecureInboundHandshake(session *Session, conn net.Conn) error {
 	return nil
 }
 
-// PerformUnsecureOutboundHandshake connects Alice to Bob and sends her handshake.
-func PerformUnsecureOutboundHandshake(session *Session, remoteAddr string, seeds map[string][]byte) (net.Conn, error) {
-	if session == nil {
+// PerformOutboundHandshake connects Alice to Bob and sends her handshake.
+func PerformOutboundHandshake(session *Session, remoteAddr string) (net.Conn, error) {
+	if session == nil || session.OwnKeys == nil || session.PeerPubKeys == nil {
 		return nil, fmt.Errorf("nil pointer deference")
 	}
 
+	seed1 := kbc.GenerateSeed()
+
 	logger := session.logger.New("phase", "outbound-handshake")
+
+	encSeed1X25519, err := kbc.X25519Encapsulate(seed1, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
+	if err != nil {
+		logger.Error("Failed to encaspulate curve 25519 seed", "error", err)
+		return nil, err
+	}
+
+	seed2, encSeed2MLKEM := session.PeerPubKeys.MlKemPublic.Encapsulate()
+
+	outboundKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
+	if err != nil {
+		logger.Error("Faield to derive outbound key", "error", err)
+		return nil, err
+	}
+
+	session.SEKOutbound = outboundKey
+
 	conn, err := net.DialTimeout("tcp", remoteAddr, 15*time.Second)
 	if err != nil {
 		logger.Error("Failed to dial", "addr", remoteAddr, "error", err)
@@ -93,12 +109,13 @@ func PerformUnsecureOutboundHandshake(session *Session, remoteAddr string, seeds
 	}
 
 	pubKeys := map[string]string{
-		"x25519": base64.RawURLEncoding.EncodeToString(session.OwnKeys.X25519Public.Bytes()),
-		"mlkem":  base64.RawURLEncoding.EncodeToString(session.OwnKeys.MlKemPublic.Bytes()),
+		"x25519": encodeBase64(session.OwnKeys.X25519Public.Bytes()),
+		"mlkem":  encodeBase64(session.OwnKeys.MlKemPublic.Bytes()),
 	}
-	encSeeds := make(map[string]string)
-	for k, seed := range seeds {
-		encSeeds[k] = base64.RawURLEncoding.EncodeToString(seed)
+
+	encSeeds := map[string]string{
+		"mlkem":  encodeBase64(encSeed2MLKEM),
+		"x25519": encodeBase64(encSeed1X25519),
 	}
 
 	msg := PeerHandshakeMessage{
@@ -115,6 +132,9 @@ func PerformUnsecureOutboundHandshake(session *Session, remoteAddr string, seeds
 		logger.Error("Failed write message", "error", err)
 		return nil, fmt.Errorf("failed to send handshake: %w", err)
 	}
+
+	// TODO: Upgrade the connection to use the SEKOutbound and Read from the connection; must say "OK".
+	// TODO: If fail, drop the connection.
 
 	return conn, nil
 }
@@ -160,14 +180,14 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 		return fmt.Errorf("mlkem decapsulation failed: %w", err)
 	}
 
-	seed2, err := kbc.X25519Decapsulate(ctXDH, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
+	seed1, err := kbc.X25519Decapsulate(ctXDH, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
 	if err != nil {
 		logger.Error("Failed to decapsulate x25519 seed", "error", err)
 		return fmt.Errorf("x25519 decapsulation failed: %w", err)
 	}
 
 	// === Step 3: Derive KEK ===
-	sek, err := kbc.DeriveChaCha20Key(seed2, sharedKEM)
+	sek, err := kbc.DeriveChaCha20Key(seed1, sharedKEM)
 	if err != nil {
 		logger.Error("Failed to derive SEK", "error", err)
 		return fmt.Errorf("SEK derivation failed: %w", err)

@@ -16,7 +16,7 @@ func RandomBytes(size int) ([]byte, error) {
 }
 
 func GenerateSeed() []byte {
-	res, _ := RandomBytes(64)
+	res, _ := RandomBytes(seedSize)
 	return res
 }
 
