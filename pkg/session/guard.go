@@ -71,17 +71,12 @@ func (s *Session) ValidatePeer() error {
 		return err
 	}
 
-	if len(s.PeerPubKeys) == 0 {
-		err := fmt.Errorf("missing peer public keys")
-		logger.Error("Session not ready: missing public keys", "error", err)
+	err := s.PeerPubKeys.Validate()
+	if err != nil {
+		logger.Error("Failed to validate peer public keys", "error", err)
 		return err
 	}
 
-	if s.PeerFingerprint == "" {
-		err := fmt.Errorf("missing peer fingerprint")
-		logger.Error("Session not ready: missing fingerprint", "error", err)
-		return err
-	}
 	return nil
 }
 
