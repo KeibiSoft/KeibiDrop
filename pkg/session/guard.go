@@ -42,11 +42,17 @@ func (s *Session) ValidateReady() error {
 		logger.Error("Session not ready: wrong state", "state", s.State, "error", err)
 		return err
 	}
-	if s.KEK == nil {
-		err := fmt.Errorf("KEK not derived")
-		logger.Error("Session not ready: missing KEK", "error", err)
+	if s.SEKInbound == nil {
+		err := fmt.Errorf("inbound SEK not derived")
+		logger.Error("Session not ready: missing inbound SEK", "error", err)
 		return err
 	}
+	if s.SEKOutbound == nil {
+		err := fmt.Errorf("outbound SEK not derived")
+		logger.Error("Session not ready: missing outbound SEK", "error", err)
+		return err
+	}
+
 	if s.Session == nil || s.Session.Inbound == nil || s.Session.Outbound == nil {
 		err := fmt.Errorf("secure connections not initialized")
 		logger.Error("Session not ready: SecureConn missing", "error", err)
@@ -64,16 +70,13 @@ func (s *Session) ValidatePeer() error {
 		logger.Error("Session not ready: wrong state", "error", err)
 		return err
 	}
-	if len(s.PeerPubKeys) == 0 {
-		err := fmt.Errorf("missing peer public keys")
-		logger.Error("Session not ready: missing public keys", "error", err)
+
+	err := s.PeerPubKeys.Validate()
+	if err != nil {
+		logger.Error("Failed to validate peer public keys", "error", err)
 		return err
 	}
-	if s.PeerFingerprint == "" {
-		err := fmt.Errorf("missing peer fingerprint")
-		logger.Error("Session not ready: missing fingerprint", "error", err)
-		return err
-	}
+
 	return nil
 }
 
