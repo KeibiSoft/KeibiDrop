@@ -2,22 +2,28 @@
 
 KeibiDrop is an ephemeral, zero-trust file transfer tool designed for direct peer-to-peer exchange over untrusted networks.
 
+> In simple terms: You can connect two computers. Open the mountpoint folder.  
+> Drag files into the mountpoint to make them visible between the computers. Double-click a file.  
+> Edit instantly, or save it to your system, or do whatever.  
+> **No cloud. No sync. Just an encrypted duplex connection.**
+> It also works from the terminal/command line.
+
 It uses modern post-quantum cryptography (ML-KEM + X25519) and symmetric encryption (ChaCha20-Poly1305) to ensure that only the intended recipient can decrypt the file.
 
 The sender and receiver perform a secure key exchange via a short-lived relay server, after which all communication is encrypted end-to-end.
 
 ⚙️ Usage example, CLI + GUI instructions coming soon.  
-📷 Screenshots and GIFs will be added after the v1 transport is finalized.
+📷 Screenshots and GIFs will be added after the v0 transport is finalized.
 
 ---
 
 ## Disclaimer
 
 This project was developed with prior experience in the relevant technologies and domain.
-To accelerate development and ship faster, I made extensive use of **GPT-4o (in Monday mode)** - for brainstorming, scaffolding, and drafting code.
-Every line was reviewed, corrected, and adapted by me, with multiple rounds of validation to ensure accuracy and quality.
+To accelerate development and ship faster, we made extensive use of **GPT-4o (in Monday mode)** - for brainstorming, scaffolding, and drafting code.
+Every line was reviewed, corrected, and adapted by us, with multiple rounds of validation to ensure accuracy and quality.
 
-This would not have been possible without the **technical knowledge** I’ve gained without relying on AI and the ability to critically evaluate and refine its output.
+This would not have been possible without the **technical knowledge** We’ve gained without relying on AI and the ability to critically evaluate and refine its output.
 
 ---
 
