@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/ui"
 )
 
@@ -26,6 +27,8 @@ func main() {
 	}
 
 	fmt.Println("Connecting to relay:", parsedURL.String())
+
+	common.PrintBanner()
 
 	ui.Launch()
 
