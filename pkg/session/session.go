@@ -72,7 +72,7 @@ func InitSession(logger log15.Logger) (*Session, error) {
 
 	ownFingerprint, err := ownKeys.Fingerprint()
 	if err != nil {
-		logger.Error("Faield to compute fingerprint", "error", err)
+		logger.Error("Failed to compute fingerprint", "error", err)
 		return nil, err
 	}
 
