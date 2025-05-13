@@ -23,7 +23,7 @@ func StartListener(session *Session, port int) error {
 	defer ln.Close()
 
 	deadline := time.Now().Add(10 * time.Minute)
-	_ = ln.(*net.TCPListener).SetDeadline(deadline) // enforce timeout on Accept
+	_ = ln.(*net.TCPListener).SetDeadline(deadline)
 
 	logger.Info("Listening for peer", "addr", addr)
 	conn, err := ln.Accept()
@@ -31,52 +31,51 @@ func StartListener(session *Session, port int) error {
 		logger.Error("Failed to accept", "err", err)
 		return fmt.Errorf("failed to accept connection: %w", err)
 	}
-	// TODO: Use the handshake.
-	session.ConnIn = conn
-	logger.Info("Connection accepted", "remote", conn.RemoteAddr().String())
+	logger.Info("TCP connection accepted", "remote", conn.RemoteAddr().String())
 
-	// Read handshake message
-	decoder := json.NewDecoder(conn)
-	var msg PeerHandshakeMessage
-	if err := decoder.Decode(&msg); err != nil {
-		session.MarkError(fmt.Errorf("invalid handshake message: %w", err))
-		logger.Error("Invalid handshake message", "err", err)
-		return err
-	}
-
-	computedFingerprint, err := ComputeFingerprintFromBase64Keys(msg.PublicKeys)
+	// Step 1: Verify peer identity + fingerprint
+	err = PerformInboundHandshake(session, conn)
 	if err != nil {
-		session.MarkError(fmt.Errorf("failed to compute fingerprint: %w", err))
-		logger.Error("Fingerprint computation failed", "err", err)
+		session.MarkError(fmt.Errorf("handshake failed: %w", err))
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Failed to close connection", "error", err2)
+		}
 		return err
 	}
 
-	if computedFingerprint != session.ExpectedPeerFingerprint {
-		session.MarkError(errors.New("fingerprint mismatch"))
-		logger.Warn("Fingerprint mismatch", "expected", session.ExpectedPeerFingerprint, "got", computedFingerprint)
-		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computedFingerprint, session.ExpectedPeerFingerprint)
-	}
-
-	session.PeerFingerprint = msg.Fingerprint
-	session.PeerPubKeys = make(map[string][]byte)
-	for k, v := range msg.PublicKeys {
-		decoded, err := decodeBase64(v)
-		if err != nil {
-			session.MarkError(fmt.Errorf("invalid base64 key for %s: %w", k, err))
-			logger.Error("Base64 decode failed", "key", k, "err", err)
-			return err
+	// Step 2: Decode the full handshake message (again) to extract encapsulated seeds
+	var msg PeerHandshakeMessage
+	if err := json.NewDecoder(conn).Decode(&msg); err != nil {
+		session.MarkError(fmt.Errorf("failed to decode encapsulated seeds: %w", err))
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Failed to close connection", "error", err2)
 		}
-		session.PeerPubKeys[k] = decoded
+		return err
 	}
 
-	logger.Info("Peer verified", "fingerprint", computedFingerprint)
-	_, _ = conn.Write([]byte("OK\n"))
-	session.State = SessionStateVerified
+	// Step 3: Derive KEK and secure the connection
+	err = FinalizeInboundSession(session, conn, msg.EncSeeds)
+	if err != nil {
+		session.MarkError(fmt.Errorf("session finalization failed: %w", err))
+		err2 := conn.Close()
+		if err2 != nil {
+			logger.Error("Failed to close connection", "error", err2)
+		}
+		return err
+	}
+
+	logger.Info("Inbound session fully established and encrypted")
 	return nil
 }
 
 func decodeBase64(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
+	return base64.RawURLEncoding.DecodeString(s)
+}
+
+func encodeBase64(in []byte) string {
+	return base64.RawURLEncoding.EncodeToString(in)
 }
 
 func ComputeFingerprintFromBase64Keys(pubKeys map[string]string) (string, error) {
