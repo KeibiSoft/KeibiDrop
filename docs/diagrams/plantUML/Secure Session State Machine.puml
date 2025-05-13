@@ -1,0 +1,26 @@
+@startuml Secure Session State Machine
+title Secure Session State Machine
+
+skinparam ranksep 40
+skinparam nodesep 40
+left to right direction
+
+[*] --> Pending
+
+state Pending {
+  Pending --> Verified : Handshake OK
+  Pending --> Error : Invalid Input
+  Pending --> Expired : Timeout
+}
+
+Verified --> Connected : SEK derived\nSecureConn upgraded
+Verified --> Error : Verification Failed
+Verified --> Expired : Timeout
+
+Connected --> Expired : Inactivity Timeout
+Connected --> Error : Runtime Failure
+
+Error --> [*]
+Expired --> [*]
+
+@enduml

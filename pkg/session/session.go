@@ -8,38 +8,84 @@ import (
 	"github.com/inconshreveable/log15"
 )
 
+type SessionState string
+
 const (
-	SessionStatePending   = "pending"
-	SessionStateVerified  = "verified"
-	SessionStateConnected = "connected"
-	SessionStateError     = "error"
+	SessionInit           SessionState = "init"
+	SessionStatePending   SessionState = "pending"
+	SessionStateVerified  SessionState = "verified"
+	SessionStateConnected SessionState = "connected"
+	SessionStateError     SessionState = "error"
+	SessionStateExpired   SessionState = "expired"
 )
 
 // Session represents the state of a P2P connection between Alice and Bob.
 type Session struct {
-	// Known fingerprint of the expected peer, shared out-of-band
+	// Known fingerprint of the expected peer, shared out-of-band.
 	ExpectedPeerFingerprint string
 
-	OwnKeys kbc.OwnKeys
-	// Populated after receiving peer keys
-	PeerFingerprint string
-	PeerPubKeys     map[string][]byte // "x25519", "mlkem"
+	OwnKeys        *kbc.OwnKeys
+	OwnFingerprint string
 
-	// Symmetric session key
-	KEK []byte
+	// Populated after receiving peer keys.
+	PeerPubKeys *kbc.PeerKeys // "x25519", "mlkem"
 
-	// TCP connections
+	// Symmetric session key.
+	SEKInbound  []byte
+	SEKOutbound []byte
+
+	// Peer-to-peer TCP connections.
 	Session *SessionSockets
 
 	// Session state and lifecycle
-	State       string
+	State       SessionState
 	Established time.Time
-	Err         error
+
+	Err error
 
 	// Internal timeout deadline
 	Deadline time.Time
 
 	logger log15.Logger
+}
+
+func InitSession(logger log15.Logger) (*Session, error) {
+	logger = logger.New("service", "session")
+	kemDecapsulate, kemEncapsulate, err := kbc.GenerateMLKEMKeypair()
+	if err != nil {
+		logger.Error("Failed to generate session mlkem keys", "error", err)
+		return nil, err
+	}
+
+	ecdPriv, ecdPub, err := kbc.GenerateX25519Keypair()
+	if err != nil {
+		logger.Error("Failed to generate session x25519 keys", "error", err)
+		return nil, err
+	}
+
+	ownKeys := kbc.OwnKeys{
+		MlKemPrivate:  kemDecapsulate,
+		MlKemPublic:   kemEncapsulate,
+		X25519Private: ecdPriv,
+		X25519Public:  ecdPub,
+	}
+
+	ownFingerprint, err := ownKeys.Fingerprint()
+	if err != nil {
+		logger.Error("Faield to compute fingerprint", "error", err)
+		return nil, err
+	}
+
+	return &Session{
+		logger:         logger,
+		OwnKeys:        &ownKeys,
+		OwnFingerprint: ownFingerprint,
+		State:          SessionInit,
+	}, nil
+}
+
+func (s *Session) GetFingerPrint() string {
+	return s.OwnFingerprint
 }
 
 // SessionSockets holds a duplex connection for peer communication.
@@ -48,10 +94,10 @@ type SessionSockets struct {
 	Outbound *SecureConn // Alice -> Bob
 }
 
-func NewSessionSockets(connIn, connOut net.Conn, kekIn, kekOut []byte) *SessionSockets {
+func NewSessionSockets(connIn, connOut net.Conn, sekIn, sekOut []byte) *SessionSockets {
 	return &SessionSockets{
-		Inbound:  NewSecureConn(connIn, kekIn),
-		Outbound: NewSecureConn(connOut, kekOut),
+		Inbound:  NewSecureConn(connIn, sekIn),
+		Outbound: NewSecureConn(connOut, sekOut),
 	}
 }
 
@@ -73,15 +119,16 @@ func (s *Session) IsExpired() bool {
 
 // MarkError marks the session as errored and closes any open connections.
 func (s *Session) MarkError(err error) {
-	s.State = SessionStateError
+	// We're in an error path; failing here is pointless. If you want strict handling, log it instead.
+	_ = s.Transition(SessionStateError) // errors ignored to prevent panic
 	s.Err = err
 
 	if s.Session != nil {
 		if s.Session.Inbound != nil {
-			s.Session.Inbound.Close()
+			_ = s.Session.Inbound.Close()
 		}
 		if s.Session.Outbound != nil {
-			s.Session.Outbound.Close()
+			_ = s.Session.Outbound.Close()
 		}
 	}
 }
@@ -91,10 +138,11 @@ func (s *Session) IsVerified() bool {
 	return s.State == SessionStateVerified || s.State == SessionStateConnected
 }
 
-// ReadyForEncryption returns true when both connections and KEK are set.
+// ReadyForEncryption returns true when both connections and SEKs are set.
 func (s *Session) ReadyForEncryption() bool {
 	return s.State == SessionStateConnected &&
-		s.KEK != nil &&
+		s.SEKInbound != nil &&
+		s.SEKOutbound != nil &&
 		s.Session != nil &&
 		s.Session.Inbound != nil &&
 		s.Session.Outbound != nil

@@ -1,0 +1,78 @@
+@startuml
+!pragma useVerticalIf on
+hide footbox
+title KeibiDrop Full-Duplex Secure Handshake
+
+actor Alice <<Responder>>
+participant Relay <<Hosted by KeibiSoft>>
+actor Bob <<Initiator>>
+
+== STEP 1: Alice prepares ==
+Alice -> Alice : Generate ephemeral keys:\n- PK_A1 (MLKEM), PK_A2 (X25519)
+Alice -> Alice : Compute FP_A = fingerprint(PK_A1 || PK_A2)
+Alice -> Relay : RegisterRoom(PK_A1, PK_A2, FP_A, Port_Alice, IP_Alice)
+Relay --> Alice : OK
+
+== STEP 2: Alice sends fingerprint ==
+Alice -> Bob : Send FP_A (via Signal, QR, etc.)
+
+== STEP 3: Bob prepares ==
+Bob -> Bob : Generate ephemeral keys:\n- PK_B1 (MLKEM), PK_B2 (X25519)
+Bob -> Bob : Start TCP listener on Port_Bob
+Bob -> Relay : JoinRoom(FP_A)
+Relay --> Bob : { PK_A1, PK_A2, IP_Alice, Port_Alice }
+
+Bob -> Bob : Compute FP_A' = fingerprint(PK_A1 || PK_A2)
+alt FP_A' == FP_A
+  Bob -> Bob : Generate secrets: seed1, seed2
+  Bob -> Bob : ct1 = MLKEM.Enc(seed1, PK_A1)\nct2 = X25519.Enc(seed2, PK_A2)
+  Bob -> Alice : Connect to Alice @ Port_Alice
+  Bob -> Alice : Send handshake:\n{ PK_B1, PK_B2, FP_B, ct1, ct2, Port_Bob, IP_Bob }
+else
+  Bob -> Bob : Abort (FP mismatch)
+end
+
+== STEP 4: Alice handles inbound ==
+Alice -> Alice : Compute FP_B' = fingerprint(PK_B1 || PK_B2)
+alt FP_B' == FP_B
+  Alice -> Alice : seed1' = MLKEM.Dec(ct1), seed2' = X25519.Dec(ct2)
+  Alice -> Alice : SEKInbound = HKDF(seed1', seed2')
+  Alice -> Alice : Wrap inbound conn from Bob → SecureConn_inbound
+  Alice -> Bob : Send Encrypted("OK") using SEKInbound
+  Alice -> Alice : Derive SEKOutbound = HKDF(seed1', seed2') [same as SEKInbound]
+  Alice -> Bob : Connect to Bob @ Port_Bob
+  Alice -> Bob : Wrap outbound conn → SecureConn_outbound
+  Alice -> Bob : Wait for Encrypted("OK") from Bob
+  alt OK decrypted
+    Alice -> Alice : Transition → Connected
+  else
+    Alice -> Alice : Abort (auth fail)
+  end
+else
+  Alice -> Alice : Abort (FP mismatch)
+end
+
+== STEP 5: Bob finalizes ==
+Bob -> Bob : Derive SEK = HKDF(seed1, seed2)
+Bob -> Bob : Wrap outbound conn to Alice → SecureConn_outbound
+Bob -> Bob : Wait for Encrypted("OK") from Alice
+alt OK decrypted
+  Bob -> Alice : Send Encrypted("OK") over SecureConn_inbound
+  Bob -> Bob : Accept Alice's connection @ Port_Bob
+  Bob -> Bob : Wrap inbound conn → SecureConn_inbound
+  Bob -> Bob : Transition → Connected
+else
+  Bob -> Bob : Abort (auth fail)
+end
+
+== Secure Session Established ==
+note over Alice, Bob
+SessionSockets:
+- Alice.Inbound ← Bob (SEKInbound)
+- Alice.Outbound → Bob (SEKOutbound)
+- Bob.Outbound → Alice (SEKOutbound)
+- Bob.Inbound ← Alice (SEKInbound)
+Both parties: SessionState = Connected
+end note
+
+@enduml
