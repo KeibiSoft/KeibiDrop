@@ -1,5 +1,3 @@
-# KeibiDrop
-
 ```text
 ██╗  ██╗███████╗██╗██████╗ ██╗██████╗ ██████╗  ██████╗ ██████╗ 
 ██║ ██╔╝██╔════╝██║██╔══██╗██║██╔══██╗██╔══██╗██╔═══██╗██╔══██╗
@@ -9,7 +7,11 @@
 ╚═╝  ╚═╝╚══════╝╚═╝╚═════╝ ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝     
 ```
 
-KeibiDrop is an ephemeral, zero-trust file transfer tool designed for direct peer-to-peer exchange over untrusted networks.
+# KeibiDrop
+
+KeibiDrop is an ephemeral, zero-trust file transfer tool for direct peer-to-peer exchange over untrusted networks.
+Although traffic is fully end-to-end encrypted, your IP is visible to the peer and the relay. If they’re hostile, they know where to send packets. Or drones. Or worse: lawyers.
+
 
 > In simple terms: You can connect two computers. Open the mountpoint folder.  
 > Drag files into the mountpoint to make them visible between the computers. Double-click a file.  
