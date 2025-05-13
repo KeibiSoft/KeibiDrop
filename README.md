@@ -43,6 +43,24 @@ I haven’t used these tools directly, but I liked the ideas they explored and w
 
 ---
 
+## ⚠️ Networking Requirements
+
+KeibiDrop uses **direct P2P communication over IPv6**. This simplifies connection setup and avoids reliance on third-party STUN/TURN servers, preserving metadata privacy and minimizing external dependencies.
+
+### In order for a session to connect successfully:
+
+- Both peers must have **globally routable IPv6 addresses**.
+- Both peers must be able to **accept inbound TCP connections** on the advertised port.
+- **Firewalls must allow these inbound connections**. (Check your router and OS firewall.)
+- **NAT traversal is not supported** — KeibiDrop does **not** use STUN, TURN, or UPnP.
+
+> If your system is not reachable via IPv6, KeibiDrop will not work.  
+> You can test your IPv6 connectivity at: [https://test-ipv6.com](https://test-ipv6.com)
+
+This approach avoids leaking IP metadata to third-party STUN servers, aligning with KeibiDrop’s privacy-first design. However, this also limits compatibility in restrictive or NATed IPv4-only networks.
+
+---
+
 ## Repository Structure
 
 ```md
