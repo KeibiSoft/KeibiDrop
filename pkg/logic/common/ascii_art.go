@@ -4,6 +4,11 @@ import (
 	"fmt"
 )
 
+var (
+	Version    = "0.0.0"
+	CommitHash = "dev" // default fallback
+)
+
 const keibiLogo = `
 ██╗  ██╗███████╗██╗██████╗ ██╗██████╗ ██████╗  ██████╗ ██████╗ 
 ██║ ██╔╝██╔════╝██║██╔══██╗██║██╔══██╗██╔══██╗██╔═══██╗██╔══██╗
@@ -13,6 +18,17 @@ const keibiLogo = `
 ╚═╝  ╚═╝╚══════╝╚═╝╚═════╝ ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝     
 `
 
+const help = `
+help - print this help message
+fingerprint - returns the current fingerprint
+room register - registers a room - returns the fingerprint
+room add <fingerprint> - add access to peer to the room
+room join <fingerprint> - joins a room
+reset - resets the connection - generates new keys, and a new fingerprint
+exit - exit
+`
+
 func PrintBanner() {
 	fmt.Printf("%v", keibiLogo)
+	fmt.Printf("\n\nVersion: %v;\nGit Commit Hash: %v \n%v\n\n", Version, CommitHash, help)
 }
