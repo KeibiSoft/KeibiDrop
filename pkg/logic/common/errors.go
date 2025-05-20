@@ -19,6 +19,7 @@ var (
 	ErrServerError            = errors.New("server error")
 	ErrTemporaryRetry         = errors.New("temporary network issue")
 	ErrTimeoutReached         = errors.New("timeout reached")
+	ErrFingerprintMismatch    = errors.New("fingerprint missmatch")
 )
 
 func RegisterErrorMapper(statusCode int, err error) error {
