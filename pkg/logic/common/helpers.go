@@ -51,7 +51,7 @@ func ValidateFingerprint(fp string) error {
 	return nil
 }
 
-func PostJSONWithURL(client *http.Client, endpoint *url.URL, payload interface{}, mapError ErrorMapperFunc) (*http.Response, error) {
+func PostJSONWithURL(client *http.Client, endpoint *url.URL, headers map[string]string, payload interface{}, mapError ErrorMapperFunc) (*http.Response, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, mapError(0, fmt.Errorf("failed to marshal JSON: %w", err))

@@ -38,49 +38,6 @@ func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
 	return nil
 }
 
-func (kd *KeibiDrop) RegisterRoomToRelay() error {
-	logger := kd.logger.New("method", "register-room-to-relay")
-	if kd.relayClient == nil || kd.session == nil || kd.session.OwnKeys == nil {
-		logger.Warn("Nil pointer deference")
-		return ErrNilPointer
-	}
-
-	ownFp := kd.session.OwnFingerprint
-
-	pkMap, err := kd.session.OwnKeys.ExportPubKeysAsMap()
-	if err != nil {
-		logger.Error("Failed to export own keys", "error", err)
-		return err
-	}
-
-	peerReg := PeerRegistration{
-		Fingerprint: ownFp,
-		Listen: &ConnectionHint{
-			IPv6:  true,
-			IP:    kd.localIPv6IP,
-			Proto: "tcp",
-			Port:  kd.inboundPort,
-		},
-		PublicKeys: pkMap,
-		Timestamp:  time.Now().UnixNano(),
-	}
-
-	resp, err := PostJSONWithURL(kd.relayClient, kd.relayEndoint, peerReg, RegisterErrorMapper)
-	if err != nil {
-		logger.Error("Failed to register", "error", err)
-		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
-		return err
-	}
-
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
-		logger.Warn("We got a weird status code", "code", resp.StatusCode)
-	}
-
-	logger.Info("Success")
-
-	return nil
-}
-
 func (kd *KeibiDrop) CreateRoom() error {
 	logger := kd.logger.New("method", "create-room")
 	if kd.session == nil {
@@ -89,7 +46,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 	}
 	// This is the "Alice" flow
 
-	err := kd.RegisterRoomToRelay()
+	err := kd.registerRoomToRelay()
 	if err != nil {
 		return err
 	}
@@ -148,7 +105,47 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 
 	// This is the "Bob" flow
 
-	// TODO: Exact reverse flow from the above method.
+	sec := 0
+	for {
+		if sec >= 10*60-5 {
+			logger.Error("Timeout reached", "error", ErrTimeoutReached)
+			return ErrTimeoutReached
+		}
+		if kd.session.ExpectedPeerFingerprint == "" {
+			sec++
+			time.Sleep(time.Second)
+			continue
+		}
+		break
+	}
+
+	err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint)
+	if err != nil {
+		return err
+	}
+
+	// TODO: Correct logic.
+	conn2, err := session.PerformOutboundHandshake(kd.session, "remoteAddr")
+	if err != nil {
+		logger.Error("Failed to perform outbound handshake", "error", err)
+		return err
+	}
+
+	// This should be added to the connection in the session in the above stuff.
+	_ = conn2
+
+	// TODO: Add retries - this is blocking.
+	conn, err := kd.listener.Accept()
+	if err != nil {
+		logger.Error("Failed to accept", "error", err)
+		return err
+	}
+
+	err = session.PerformInboundHandshake(kd.session, conn)
+	if err != nil {
+		logger.Error("Failed to perform inbound handhsake", "error", err)
+		return err
+	}
 
 	logger.Info("Success", "fingerprint", fp)
 	return nil
