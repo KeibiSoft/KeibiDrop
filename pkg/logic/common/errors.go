@@ -18,6 +18,7 @@ var (
 	ErrInvalidFingerprint     = errors.New("invalid fingerprint format")
 	ErrServerError            = errors.New("server error")
 	ErrTemporaryRetry         = errors.New("temporary network issue")
+	ErrTimeoutReached         = errors.New("timeout reached")
 )
 
 func RegisterErrorMapper(statusCode int, err error) error {
