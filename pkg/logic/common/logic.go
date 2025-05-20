@@ -1,6 +1,10 @@
 package common
 
-import "time"
+import (
+	"time"
+
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+)
 
 func (kd *KeibiDrop) ExportFingerprint() (string, error) {
 	logger := kd.logger.New("method", "export-fingerprint")
@@ -85,6 +89,52 @@ func (kd *KeibiDrop) CreateRoom() error {
 	}
 	// This is the "Alice" flow
 
+	err := kd.RegisterRoomToRelay()
+	if err != nil {
+		return err
+	}
+
+	// Get input to for expected fingerprint.
+
+	elapsed := 0
+	for {
+		if elapsed >= 10*60-5 {
+			logger.Error("Timeout reached", "error", ErrTimeoutReached)
+			return ErrTimeoutReached
+		}
+		if kd.session.ExpectedPeerFingerprint == "" {
+			time.Sleep(time.Second)
+			elapsed++
+			continue
+		}
+		break
+	}
+
+	// Listen for the Bob Connection.
+
+	// TODO: Add retries
+	conn, err := kd.listener.Accept()
+	if err != nil {
+		logger.Error("Failed to accept", "error", err)
+		return err
+	}
+
+	// TODO: Add uniform error, use errors.Is(err, ErrCustomDefinedError) to do the retry logic.
+	err = session.PerformInboundHandshake(kd.session, conn)
+	if err != nil {
+		return err
+	}
+
+	// TODO: Add the port for inbound bob.
+	upgConn, err := session.PerformOutboundHandshake(kd.session, conn.RemoteAddr().String())
+	if err != nil {
+		return err
+	}
+
+	_ = upgConn // This conn should be added in the session in the above method.
+
+	// From now on we use HTTP with JSON for data exchange.
+
 	logger.Info("Success")
 	return nil
 }
@@ -97,6 +147,9 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 	}
 
 	// This is the "Bob" flow
+
+	// TODO: Exact reverse flow from the above method.
+
 	logger.Info("Success", "fingerprint", fp)
 	return nil
 }
