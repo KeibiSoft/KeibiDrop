@@ -32,7 +32,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		Fingerprint: ownFp,
 		Listen: &ConnectionHint{
 			IPv6:  true,
-			IP:    kd.localIPv6IP,
+			IP:    kd.LocalIPv6IP,
 			Proto: "tcp",
 			Port:  kd.inboundPort,
 		},
@@ -40,7 +40,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		Timestamp:  time.Now().UnixNano(),
 	}
 
-	resp, err := PostJSONWithURL(kd.relayClient, kd.relayEndoint, map[string]string{"Authorization": "Bearer " + ownFp}, peerReg, RegisterErrorMapper)
+	resp, err := PostJSONWithURL(kd.relayClient, kd.RelayEndoint, map[string]string{"Authorization": "Bearer " + ownFp}, peerReg, RegisterErrorMapper)
 	if err != nil {
 		logger.Error("Failed to register", "error", err)
 		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
@@ -74,7 +74,7 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		return ErrNilPointer
 	}
 
-	resp, err := GetJSONWithURL(kd.relayClient, kd.relayEndoint, map[string]string{"Authorization": "Bearer " + outOfBandFingerPrint}, RegisterErrorMapper)
+	resp, err := GetJSONWithURL(kd.relayClient, kd.RelayEndoint, map[string]string{"Authorization": "Bearer " + outOfBandFingerPrint}, RegisterErrorMapper)
 	if err != nil {
 		logger.Error("Failed to register", "error", err)
 		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
@@ -159,7 +159,7 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		return ErrInvalidIP
 	}
 
-	kd.peerIPv6IP = peerReg.Listen.IP
+	kd.PeerIPv6IP = peerReg.Listen.IP
 
 	logger.Info("Success")
 
