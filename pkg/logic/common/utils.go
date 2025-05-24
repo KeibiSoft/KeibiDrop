@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/crypto"
@@ -37,8 +38,6 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		Timestamp:  time.Now().UnixNano(),
 	}
 
-	// TODO: Add Authorization: Bearer <fingerprint>
-
 	resp, err := PostJSONWithURL(kd.relayClient, kd.relayEndoint, map[string]string{"Authorization": "Bearer " + ownFp}, peerReg, RegisterErrorMapper)
 	if err != nil {
 		logger.Error("Failed to register", "error", err)
@@ -46,11 +45,20 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		return err
 	}
 
+	// Server reached its limit. Retry in 10 minutes or later.
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		logger.Warn("Relay server at full capacity retry in 10 minutes")
+		return ErrRelayAtFullCapacityRetryLater
+	}
+
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		logger.Warn("We got a weird status code", "code", resp.StatusCode)
 	}
 
 	_ = resp.Body.Close()
+
+	// A1 digital
+	// Aiven - Database as a service
 
 	logger.Info("Success")
 
@@ -69,6 +77,11 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		logger.Error("Failed to register", "error", err)
 		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
 		return err
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		logger.Warn("Not found")
+		return ErrNotFound
 	}
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {

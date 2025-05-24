@@ -1,10 +1,12 @@
 package session
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
+	"time"
 
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
@@ -77,13 +79,16 @@ type SecureConn struct {
 	conn net.Conn
 	r    *SecureReader
 	w    *SecureWriter
+
+	readBuf *bytes.Buffer
 }
 
 func NewSecureConn(conn net.Conn, kek []byte) *SecureConn {
 	return &SecureConn{
-		conn: conn,
-		r:    NewSecureReader(conn, kek),
-		w:    NewSecureWriter(conn, kek),
+		conn:    conn,
+		r:       NewSecureReader(conn, kek),
+		w:       NewSecureWriter(conn, kek),
+		readBuf: bytes.NewBuffer(nil),
 	}
 }
 
@@ -111,4 +116,43 @@ func (s *SecureConn) RemoteAddr() net.Addr {
 // LocalAddr returns the local network address.
 func (s *SecureConn) LocalAddr() net.Addr {
 	return s.conn.LocalAddr()
+}
+
+func (s *SecureConn) Read(p []byte) (int, error) {
+	// Serve leftover decrypted data first
+	if s.readBuf.Len() > 0 {
+		return s.readBuf.Read(p)
+	}
+
+	// Nothing buffered, read and decrypt a full new message
+	msg, err := s.r.Read()
+	if err != nil {
+		return 0, err
+	}
+
+	s.readBuf.Write(msg)
+	return s.readBuf.Read(p)
+}
+
+func (s *SecureConn) Write(p []byte) (int, error) {
+	n, err := s.w.Write(p)
+	if err != nil {
+		return 0, err
+	}
+	if n != len(p) {
+		return n, io.ErrShortWrite
+	}
+	return n, nil
+}
+
+func (s *SecureConn) SetDeadline(t time.Time) error {
+	return s.conn.SetDeadline(t)
+}
+
+func (s *SecureConn) SetReadDeadline(t time.Time) error {
+	return s.conn.SetReadDeadline(t)
+}
+
+func (s *SecureConn) SetWriteDeadline(t time.Time) error {
+	return s.conn.SetWriteDeadline(t)
 }

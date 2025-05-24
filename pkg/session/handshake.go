@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -78,27 +79,26 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 }
 
 // PerformOutboundHandshake connects Alice to Bob and sends her handshake.
-func PerformOutboundHandshake(session *Session, remoteAddr string) (net.Conn, error) {
+func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 	if session == nil || session.OwnKeys == nil || session.PeerPubKeys == nil {
-		return nil, fmt.Errorf("nil pointer deference")
+		return fmt.Errorf("nil pointer dereference")
 	}
-
-	seed1 := kbc.GenerateSeed()
 
 	logger := session.logger.New("phase", "outbound-handshake")
 
+	seed1 := kbc.GenerateSeed()
 	encSeed1X25519, err := kbc.X25519Encapsulate(seed1, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
 	if err != nil {
-		logger.Error("Failed to encaspulate curve 25519 seed", "error", err)
-		return nil, err
+		logger.Error("Failed to encapsulate x25519 seed", "error", err)
+		return err
 	}
 
 	seed2, encSeed2MLKEM := session.PeerPubKeys.MlKemPublic.Encapsulate()
 
 	outboundKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
 	if err != nil {
-		logger.Error("Faield to derive outbound key", "error", err)
-		return nil, err
+		logger.Error("Failed to derive outbound key", "error", err)
+		return err
 	}
 
 	session.SEKOutbound = outboundKey
@@ -106,7 +106,7 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) (net.Conn, er
 	conn, err := net.DialTimeout("tcp", remoteAddr, 15*time.Second)
 	if err != nil {
 		logger.Error("Failed to dial", "addr", remoteAddr, "error", err)
-		return nil, fmt.Errorf("failed to connect to %s: %w", remoteAddr, err)
+		return fmt.Errorf("failed to connect to %s: %w", remoteAddr, err)
 	}
 
 	pubKeys := map[string]string{
@@ -126,18 +126,26 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) (net.Conn, er
 	}
 
 	if err := json.NewEncoder(conn).Encode(msg); err != nil {
-		err2 := conn.Close()
-		if err2 != nil {
-			logger.Error("Error on closed connection", "error", err2)
-		}
-		logger.Error("Failed write message", "error", err)
-		return nil, fmt.Errorf("failed to send handshake: %w", err)
+		_ = conn.Close()
+		logger.Error("Failed to send handshake", "error", err)
+		return fmt.Errorf("failed to send handshake: %w", err)
 	}
 
-	// TODO: Upgrade the connection to use the SEKOutbound and Read from the connection; must say "OK".
-	// TODO: If fail, drop the connection.
+	// Await confirmation from Bob that he's happy
+	ack := make([]byte, 2)
+	if _, err := io.ReadFull(conn, ack); err != nil || string(ack) != "OK" {
+		_ = conn.Close()
+		logger.Error("Did not receive 'OK' from peer", "got", string(ack), "error", err)
+		return fmt.Errorf("handshake rejected or invalid response")
+	}
 
-	return conn, nil
+	logger.Info("Peer confirmed handshake upgrading to encrypted connection")
+
+	// Upgrade to SecureConn
+	secure := NewSecureConn(conn, session.SEKOutbound)
+	session.Session.Outbound = secure
+
+	return nil
 }
 
 // FinalizeInboundSession completes the inbound session setup after peer is verified.
