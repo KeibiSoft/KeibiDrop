@@ -8,14 +8,16 @@ import (
 	"net"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
 // PeerHandshakeMessage defines the JSON payload sent during handshake.
 type PeerHandshakeMessage struct {
-	Fingerprint string            `json:"fingerprint"`
-	PublicKeys  map[string]string `json:"public_keys"` // base64 encoded
-	EncSeeds    map[string]string `json:"enc_seeds"`   // optional for key encapsulation
+	Fingerprint  string            `json:"fingerprint"`
+	PublicKeys   map[string]string `json:"public_keys"` // base64 encoded
+	EncSeeds     map[string]string `json:"enc_seeds"`   // optional for key encapsulation
+	OutboundPort int               `json:"port"`
 }
 
 // PerformInboundHandshake handles the first plaintext connection from Bob to Alice.
@@ -120,9 +122,10 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 	}
 
 	msg := PeerHandshakeMessage{
-		Fingerprint: session.ExpectedPeerFingerprint,
-		PublicKeys:  pubKeys,
-		EncSeeds:    encSeeds,
+		Fingerprint:  session.ExpectedPeerFingerprint,
+		PublicKeys:   pubKeys,
+		EncSeeds:     encSeeds,
+		OutboundPort: config.OutboundPort,
 	}
 
 	if err := json.NewEncoder(conn).Encode(msg); err != nil {
