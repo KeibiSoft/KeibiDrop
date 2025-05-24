@@ -7,8 +7,11 @@ lint:
 sec:
 	gosec -exclude-generated ./... 
 
-build:
+build-gui:
 	go build -ldflags="-X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.Version=$(VERSION) -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.CommitHash=$(COMMIT)" cmd/keibidrop.go
+
+build-cli:
+	go build -ldflags="-X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.Version=$(VERSION) -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.CommitHash=$(COMMIT)" cmd/cli/keibidrop-cli.go
 
 install-proto:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
