@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"time"
 )
@@ -67,6 +68,10 @@ func StartListener(session *Session, port int) error {
 	}
 
 	logger.Info("Inbound session fully established and encrypted")
+
+	// Wrap the now-upgraded conn in singleConnListener
+	session.GRPCListener = &singleConnListener{conn: session.Session.Inbound}
+
 	return nil
 }
 
@@ -107,4 +112,26 @@ func sha512Sum(data []byte) []byte {
 	h := sha512.New()
 	h.Write(data)
 	return h.Sum(nil)
+}
+
+// We use this one for the GRPC encrypted connetion.
+type singleConnListener struct {
+	conn net.Conn
+	used bool
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	if l.used {
+		return nil, io.EOF
+	}
+	l.used = true
+	return l.conn, nil
+}
+
+func (l *singleConnListener) Close() error {
+	return l.conn.Close()
+}
+
+func (l *singleConnListener) Addr() net.Addr {
+	return l.conn.LocalAddr()
 }
