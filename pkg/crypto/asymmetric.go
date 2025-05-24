@@ -184,6 +184,20 @@ func (ok *OwnKeys) Fingerprint() (string, error) {
 	return ProtocolFingerprintV0(pks)
 }
 
+func (ok *OwnKeys) ExportPubKeysAsMap() (map[string]string, error) {
+	err := ok.Validate()
+	if err != nil {
+		return nil, err
+	}
+
+	res := map[string]string{
+		"x25519": base64.RawURLEncoding.EncodeToString(ok.X25519Public.Bytes()),
+		"mlkem":  base64.RawURLEncoding.EncodeToString(ok.MlKemPublic.Bytes()),
+	}
+
+	return res, nil
+}
+
 type PeerKeys struct {
 	MlKemPublic  *mlkem.EncapsulationKey1024
 	X25519Public *ecdh.PublicKey
