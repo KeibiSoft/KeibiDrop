@@ -2,8 +2,8 @@ package service
 
 import (
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
-
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+
 	"github.com/inconshreveable/log15"
 )
 

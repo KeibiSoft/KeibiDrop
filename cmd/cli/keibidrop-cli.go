@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/fatih/color"
@@ -176,7 +177,7 @@ func main() {
 	relayURL := initRelay()
 	logger := log15.New("component", "cli")
 
-	kd, err := common.NewKeibiDrop(logger, relayURL, common.InboundPort)
+	kd, err := common.NewKeibiDrop(logger, relayURL, config.InboundPort)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		os.Exit(1)
