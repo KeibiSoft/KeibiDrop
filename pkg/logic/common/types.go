@@ -18,6 +18,8 @@ type KeibiDrop struct {
 
 	session *session.Session
 
+	peerIPv6IP string
+
 	localIPv6IP string
 	inboundPort int
 	listener    net.Listener
