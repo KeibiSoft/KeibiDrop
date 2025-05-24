@@ -4,6 +4,7 @@ import (
 	"net"
 	"time"
 
+	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/inconshreveable/log15"
 )
@@ -36,6 +37,9 @@ type Session struct {
 
 	// Peer-to-peer TCP connections.
 	Session *SessionSockets
+
+	GRPCListener net.Listener
+	GRPCClient   bindings.KeibiServiceClient
 
 	// Session state and lifecycle
 	State       SessionState
@@ -72,7 +76,7 @@ func InitSession(logger log15.Logger) (*Session, error) {
 
 	ownFingerprint, err := ownKeys.Fingerprint()
 	if err != nil {
-		logger.Error("Faield to compute fingerprint", "error", err)
+		logger.Error("Failed to compute fingerprint", "error", err)
 		return nil, err
 	}
 
