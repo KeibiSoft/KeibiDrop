@@ -24,7 +24,7 @@ func Launch() {
 		log.Printf("failed to open logo file: %v", err)
 		return
 	}
-	defer logoFile.Close()
+	defer func() { _ = logoFile.Close() }()
 
 	img, err := png.Decode(logoFile)
 	if err != nil {
