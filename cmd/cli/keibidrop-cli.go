@@ -120,6 +120,7 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 		{Text: "help", Description: "Show help message"},
 		{Text: "version", Description: "Show banner, version and commit hash"},
 		{Text: "show", Description: "Show local or peer info"},
+		{Text: "show relay", Description: "Show the connected relay URL"},
 		{Text: "register", Description: "Register peer fingerprint"},
 		{Text: "create", Description: "Create a room"},
 		{Text: "join", Description: "Join a room by fingerprint"},
@@ -141,6 +142,7 @@ show fingerprint             Show your fingerprint
 show ip                      Show your IP
 show peer fingerprint        Show peer's fingerprint
 show peer ip                 Show peer's IP
+show relay                   Show the currently connected relay URL
 register peer <fingerprint> Register a peer's fingerprint
 create                       Create a room
 join <fingerprint>           Join a room by peer fingerprint
@@ -171,6 +173,8 @@ func handleShow(kd *common.KeibiDrop, what string) {
 		fmt.Println("Peer fingerprint:", pfp)
 	case "peer ip":
 		fmt.Println("Peer IP:", kd.PeerIPv6IP)
+	case "relay":
+		fmt.Println("Relay:", kd.RelayEndoint)
 	default:
 		fmt.Println("Unknown show command.")
 	}
