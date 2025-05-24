@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -93,7 +94,15 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
-	err = session.PerformOutboundHandshake(kd.session, conn.RemoteAddr().String())
+	addr, ok := conn.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		logger.Error("Failed to cast tcp address", "error", err)
+		return err
+	}
+
+	ip := addr.IP.String()
+
+	err = session.PerformOutboundHandshake(kd.session, net.JoinHostPort(ip, strconv.Itoa(kd.session.PeerPort)))
 	if err != nil {
 		return err
 	}
@@ -130,7 +139,7 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 		return err
 	}
 
-	err = session.PerformOutboundHandshake(kd.session, "remoteAddr")
+	err = session.PerformOutboundHandshake(kd.session, net.JoinHostPort(kd.peerIPv6IP, strconv.Itoa(kd.session.PeerPort)))
 	if err != nil {
 		logger.Error("Failed to perform outbound handshake", "error", err)
 		return err
