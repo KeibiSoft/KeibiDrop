@@ -2,15 +2,40 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"net/url"
 	"os"
 	"strings"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/fatih/color"
+	"github.com/inconshreveable/log15"
 )
 
-func executor(in string) {
+type cliContext struct {
+	kd *common.KeibiDrop
+}
+
+func getenv(key, fallback string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return fallback
+}
+
+func initRelay() *url.URL {
+	relayURL := getenv("KEIBIDROP_RELAY", "https://keibidroprelay.keibisoft.com")
+	parsedURL, err := url.Parse(relayURL)
+	if err != nil {
+		log.Fatalf("invalid KEIBIDROP_RELAY URL: %v", err)
+	}
+
+	fmt.Println("Connecting to relay:", parsedURL.String())
+	return parsedURL
+}
+
+func (c *cliContext) executor(in string) {
 	in = strings.TrimSpace(in)
 	args := strings.Fields(in)
 	if len(args) == 0 {
@@ -84,7 +109,7 @@ func executor(in string) {
 	}
 }
 
-func completer(d prompt.Document) []prompt.Suggest {
+func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 	s := []prompt.Suggest{
 		{Text: "help", Description: "Show help message"},
 		{Text: "version", Description: "Show banner, version and commit hash"},
@@ -148,12 +173,24 @@ func pullFile(remote, local string) {
 func deleteFile(path string) { fmt.Println("[TODO] Unshared:", path) }
 
 func main() {
+	relayURL := initRelay()
+	logger := log15.New("component", "cli")
+
+	kd, err := common.NewKeibiDrop(logger, relayURL, common.InboundPort)
+	if err != nil {
+		logger.Error("Failed to start keibidrop", "error", err)
+		os.Exit(1)
+	}
+	ctx := &cliContext{kd: kd}
+
 	common.PrintBanner()
+
 	p := prompt.New(
-		executor,
-		completer,
+		ctx.executor,
+		ctx.completer,
 		prompt.OptionPrefix("keibidrop> "),
 		prompt.OptionTitle("keibidrop-cli"),
 	)
+
 	p.Run()
 }

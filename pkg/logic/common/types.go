@@ -11,6 +11,9 @@ import (
 	"github.com/inconshreveable/log15"
 )
 
+const InboundPort = 26431
+const OutboundPort = 26432
+
 type KeibiDrop struct {
 	logger       log15.Logger
 	relayClient  *http.Client
