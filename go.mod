@@ -4,6 +4,8 @@ go 1.24.3
 
 require (
 	fyne.io/fyne/v2 v2.6.1
+	github.com/c-bata/go-prompt v0.2.6
+	github.com/fatih/color v1.18.0
 	github.com/inconshreveable/log15 v2.16.0+incompatible
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/crypto v0.38.0
@@ -34,8 +36,11 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-runewidth v0.0.9 // indirect
+	github.com/mattn/go-tty v0.0.3 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/nicksnyder/go-i18n/v2 v2.5.1 // indirect
+	github.com/pkg/term v1.2.0-beta.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rymdport/portal v0.4.1 // indirect
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
