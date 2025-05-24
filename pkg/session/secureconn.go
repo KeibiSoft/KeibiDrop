@@ -29,6 +29,7 @@ func (s *SecureWriter) Write(p []byte) (int, error) {
 		return 0, fmt.Errorf("encryption failed: %w", err)
 	}
 
+	//#nosec:G115 // safe cast, no TCP stream frame will be 5GB.
 	length := uint32(len(encrypted))
 	head := make([]byte, lengthHeaderSize)
 	binary.BigEndian.PutUint32(head, length)
