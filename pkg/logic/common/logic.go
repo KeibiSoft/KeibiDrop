@@ -107,6 +107,18 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
+	err = kd.startGRPCServer()
+	if err != nil {
+		logger.Error("Failed to start gRPC server", "error", err)
+		return err
+	}
+
+	err = kd.connectGRPCClient()
+	if err != nil {
+		logger.Error("Failed to start gRPC client", "error", err)
+		return err
+	}
+
 	logger.Info("Success")
 	return nil
 }
@@ -155,6 +167,18 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 	err = session.PerformInboundHandshake(kd.session, conn)
 	if err != nil {
 		logger.Error("Failed to perform inbound handhsake", "error", err)
+		return err
+	}
+
+	err = kd.startGRPCServer()
+	if err != nil {
+		logger.Error("Failed to start gRPC server", "error", err)
+		return err
+	}
+
+	err = kd.connectGRPCClient()
+	if err != nil {
+		logger.Error("Failed to start gRPC client", "error", err)
 		return err
 	}
 
