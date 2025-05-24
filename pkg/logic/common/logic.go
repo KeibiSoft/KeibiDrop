@@ -33,7 +33,7 @@ func (kd *KeibiDrop) ExportFingerprint() (string, error) {
 }
 
 func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
-	logger := kd.logger.New("method", "add-per-fingerprint")
+	logger := kd.logger.New("method", "add-peer-fingerprint")
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -48,6 +48,16 @@ func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
 	kd.session.ExpectedPeerFingerprint = fp
 
 	return nil
+}
+
+func (kd *KeibiDrop) GetPeerFingerprint() (string, error) {
+	logger := kd.logger.New("method", "get-peer-fingerprint")
+	if kd.session == nil {
+		logger.Warn("Nil pointer deference")
+		return "", ErrNilPointer
+	}
+
+	return kd.session.ExpectedPeerFingerprint, nil
 }
 
 func (kd *KeibiDrop) CreateRoom() error {
@@ -151,7 +161,7 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 		return err
 	}
 
-	err = session.PerformOutboundHandshake(kd.session, net.JoinHostPort(kd.peerIPv6IP, strconv.Itoa(kd.session.PeerPort)))
+	err = session.PerformOutboundHandshake(kd.session, net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort)))
 	if err != nil {
 		logger.Error("Failed to perform outbound handshake", "error", err)
 		return err

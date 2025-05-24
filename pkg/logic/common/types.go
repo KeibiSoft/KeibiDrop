@@ -14,13 +14,13 @@ import (
 type KeibiDrop struct {
 	logger       log15.Logger
 	relayClient  *http.Client
-	relayEndoint *url.URL
+	RelayEndoint *url.URL
 
 	session *session.Session
 
-	peerIPv6IP string
+	PeerIPv6IP string
 
-	localIPv6IP string
+	LocalIPv6IP string
 	inboundPort int
 	listener    net.Listener
 }
@@ -52,9 +52,9 @@ func NewKeibiDrop(logger log15.Logger, relayURL *url.URL, inboundPort int) (*Kei
 	kd := &KeibiDrop{
 		logger:       logger,
 		relayClient:  client,
-		relayEndoint: relayURL,
+		RelayEndoint: relayURL,
 		session:      session,
-		localIPv6IP:  ipv6,
+		LocalIPv6IP:  ipv6,
 		inboundPort:  inboundPort,
 		listener:     listener,
 	}

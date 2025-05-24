@@ -37,6 +37,11 @@ func initRelay() *url.URL {
 }
 
 func (c *cliContext) executor(in string) {
+	if c.kd == nil {
+		fmt.Println("Error: KeibiDrop not initialized")
+		return
+	}
+
 	in = strings.TrimSpace(in)
 	args := strings.Fields(in)
 	if len(args) == 0 {
@@ -55,7 +60,7 @@ func (c *cliContext) executor(in string) {
 			fmt.Println("Usage: show <fingerprint|ip|peer fingerprint|peer ip>")
 			return
 		}
-		handleShow(strings.Join(args[1:], " "))
+		handleShow(c.kd, strings.Join(args[1:], " "))
 
 	case "register":
 		if len(args) != 3 || args[1] != "peer" {
@@ -147,16 +152,25 @@ delete <filepath>            Unshare a file or folder
 exit                         Quit the CLI`)
 }
 
-func handleShow(what string) {
+func handleShow(kd *common.KeibiDrop, what string) {
+	if kd == nil {
+		fmt.Println("Error: KeibiDrop not initialized")
+	}
 	switch what {
 	case "fingerprint":
-		fmt.Println("[TODO] Your fingerprint is: <fingerprint>")
+		fp, err := kd.ExportFingerprint()
+		if err != nil {
+			fmt.Println("Error:", err)
+		} else {
+			fmt.Println("Your fingerprint:", fp)
+		}
 	case "ip":
-		fmt.Println("[TODO] Your IP is: <ip>")
+		fmt.Println("Your IP:", kd.LocalIPv6IP)
 	case "peer fingerprint":
-		fmt.Println("[TODO] Peer fingerprint is: <peer fingerprint>")
+		pfp, _ := kd.GetPeerFingerprint()
+		fmt.Println("Peer fingerprint:", pfp)
 	case "peer ip":
-		fmt.Println("[TODO] Peer IP is: <peer ip>")
+		fmt.Println("Peer IP:", kd.PeerIPv6IP)
 	default:
 		fmt.Println("Unknown show command.")
 	}
