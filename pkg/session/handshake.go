@@ -8,14 +8,16 @@ import (
 	"net"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
 // PeerHandshakeMessage defines the JSON payload sent during handshake.
 type PeerHandshakeMessage struct {
-	Fingerprint string            `json:"fingerprint"`
-	PublicKeys  map[string]string `json:"public_keys"` // base64 encoded
-	EncSeeds    map[string]string `json:"enc_seeds"`   // optional for key encapsulation
+	Fingerprint  string            `json:"fingerprint"`
+	PublicKeys   map[string]string `json:"public_keys"` // base64 encoded
+	EncSeeds     map[string]string `json:"enc_seeds"`   // optional for key encapsulation
+	OutboundPort int               `json:"port"`
 }
 
 // PerformInboundHandshake handles the first plaintext connection from Bob to Alice.
@@ -65,7 +67,13 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computed, session.ExpectedPeerFingerprint)
 	}
 
+	if msg.OutboundPort < 26000 || msg.OutboundPort > 27000 {
+		logger.Warn("Provided outbound port is out of known range, defaulting to config", "provided-port", msg.OutboundPort, "default-to", config.OutboundPort)
+		msg.OutboundPort = config.OutboundPort
+	}
+
 	session.PeerPubKeys = peerKeys
+	session.PeerPort = msg.OutboundPort
 
 	// Wait for user to confirm out-of-band fingerprint
 	logger.Info("Peer fingerprint verified, awaiting user confirmation")
@@ -120,9 +128,10 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 	}
 
 	msg := PeerHandshakeMessage{
-		Fingerprint: session.ExpectedPeerFingerprint,
-		PublicKeys:  pubKeys,
-		EncSeeds:    encSeeds,
+		Fingerprint:  session.ExpectedPeerFingerprint,
+		PublicKeys:   pubKeys,
+		EncSeeds:     encSeeds,
+		OutboundPort: config.OutboundPort,
 	}
 
 	if err := json.NewEncoder(conn).Encode(msg); err != nil {

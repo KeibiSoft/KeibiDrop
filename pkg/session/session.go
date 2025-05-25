@@ -36,7 +36,8 @@ type Session struct {
 	SEKOutbound []byte
 
 	// Peer-to-peer TCP connections.
-	Session *SessionSockets
+	Session  *SessionSockets
+	PeerPort int
 
 	GRPCListener net.Listener
 	GRPCClient   bindings.KeibiServiceClient

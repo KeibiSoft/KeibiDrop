@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -32,7 +33,7 @@ func (kd *KeibiDrop) ExportFingerprint() (string, error) {
 }
 
 func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
-	logger := kd.logger.New("method", "add-per-fingerprint")
+	logger := kd.logger.New("method", "add-peer-fingerprint")
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -47,6 +48,16 @@ func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
 	kd.session.ExpectedPeerFingerprint = fp
 
 	return nil
+}
+
+func (kd *KeibiDrop) GetPeerFingerprint() (string, error) {
+	logger := kd.logger.New("method", "get-peer-fingerprint")
+	if kd.session == nil {
+		logger.Warn("Nil pointer deference")
+		return "", ErrNilPointer
+	}
+
+	return kd.session.ExpectedPeerFingerprint, nil
 }
 
 func (kd *KeibiDrop) CreateRoom() error {
@@ -93,8 +104,28 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
-	err = session.PerformOutboundHandshake(kd.session, conn.RemoteAddr().String())
+	addr, ok := conn.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		logger.Error("Failed to cast tcp address", "error", err)
+		return err
+	}
+
+	ip := addr.IP.String()
+
+	err = session.PerformOutboundHandshake(kd.session, net.JoinHostPort(ip, strconv.Itoa(kd.session.PeerPort)))
 	if err != nil {
+		return err
+	}
+
+	err = kd.startGRPCServer()
+	if err != nil {
+		logger.Error("Failed to start gRPC server", "error", err)
+		return err
+	}
+
+	err = kd.connectGRPCClient()
+	if err != nil {
+		logger.Error("Failed to start gRPC client", "error", err)
 		return err
 	}
 
@@ -130,7 +161,7 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 		return err
 	}
 
-	err = session.PerformOutboundHandshake(kd.session, "remoteAddr")
+	err = session.PerformOutboundHandshake(kd.session, net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort)))
 	if err != nil {
 		logger.Error("Failed to perform outbound handshake", "error", err)
 		return err
@@ -146,6 +177,18 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 	err = session.PerformInboundHandshake(kd.session, conn)
 	if err != nil {
 		logger.Error("Failed to perform inbound handhsake", "error", err)
+		return err
+	}
+
+	err = kd.startGRPCServer()
+	if err != nil {
+		logger.Error("Failed to start gRPC server", "error", err)
+		return err
+	}
+
+	err = kd.connectGRPCClient()
+	if err != nil {
+		logger.Error("Failed to start gRPC client", "error", err)
 		return err
 	}
 
