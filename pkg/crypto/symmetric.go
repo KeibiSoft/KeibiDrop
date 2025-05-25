@@ -118,6 +118,8 @@ func EncryptChunked(kek []byte, r io.Reader, w io.Writer, plainSize uint64) erro
 		if n == 0 {
 			break
 		}
+
+		//#nosec:G115 // n comes from io.ReadFull and will never be negative.
 		totalRead += uint64(n)
 
 		encryptedChunk, err := Encrypt(kek, buf[:n])
@@ -152,6 +154,7 @@ func DecryptChunked(kek []byte, r io.Reader, w io.Writer, cipherSize uint64) err
 			return fmt.Errorf("failed to read chunk: %w", err)
 		}
 
+		//#nosec:G115 // n comes from io.ReadFull and will never be negative.
 		totalRead += uint64(n)
 
 		plainText, err := Decrypt(kek, chunkBuf[:n])

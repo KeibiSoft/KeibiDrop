@@ -8,6 +8,7 @@ import (
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/ui"
+	"github.com/inconshreveable/log15"
 )
 
 func getenv(key, fallback string) string {
@@ -30,12 +31,5 @@ func main() {
 
 	common.PrintBanner()
 
-	ui.Launch()
-
-	// TODO: Alice flow begins here
-	// - Generate keypair (or load existing)
-	// - Create fingerprint
-	// - Encode public keys as base64
-	// - POST to relay server
-	// - Log/display the returned fingerprint for Bob
+	ui.Launch(log15.New("component", "GUI"))
 }

@@ -21,7 +21,6 @@ func StartListener(session *Session, port int) error {
 		logger.Error("Failed to listen", "addr", addr, "err", err)
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
-	defer ln.Close()
 
 	deadline := time.Now().Add(10 * time.Minute)
 	_ = ln.(*net.TCPListener).SetDeadline(deadline)
@@ -32,6 +31,7 @@ func StartListener(session *Session, port int) error {
 		logger.Error("Failed to accept", "err", err)
 		return fmt.Errorf("failed to accept connection: %w", err)
 	}
+
 	logger.Info("TCP connection accepted", "remote", conn.RemoteAddr().String())
 
 	// Step 1: Verify peer identity + fingerprint
@@ -102,7 +102,10 @@ func ComputeFingerprintFromBase64Keys(pubKeys map[string]string) (string, error)
 	mlkemHash := sha512Sum(mlkemBytes)
 	curveHash := sha512Sum(curveBytes)
 
-	combined := append(mlkemHash, curveHash...)
+	combined := make([]byte, 2*sha512.Size)
+	copy(combined[:sha512.Size], mlkemHash)
+	copy(combined[sha512.Size:], curveHash)
+
 	totalHash := sha512Sum(combined)
 
 	return base64.StdEncoding.EncodeToString(totalHash), nil

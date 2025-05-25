@@ -5,9 +5,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
@@ -30,7 +32,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		Fingerprint: ownFp,
 		Listen: &ConnectionHint{
 			IPv6:  true,
-			IP:    kd.localIPv6IP,
+			IP:    kd.LocalIPv6IP,
 			Proto: "tcp",
 			Port:  kd.inboundPort,
 		},
@@ -38,7 +40,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		Timestamp:  time.Now().UnixNano(),
 	}
 
-	resp, err := PostJSONWithURL(kd.relayClient, kd.relayEndoint, map[string]string{"Authorization": "Bearer " + ownFp}, peerReg, RegisterErrorMapper)
+	resp, err := PostJSONWithURL(kd.relayClient, kd.RelayEndoint, map[string]string{"Authorization": "Bearer " + ownFp}, peerReg, RegisterErrorMapper)
 	if err != nil {
 		logger.Error("Failed to register", "error", err)
 		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
@@ -72,7 +74,7 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		return ErrNilPointer
 	}
 
-	resp, err := GetJSONWithURL(kd.relayClient, kd.relayEndoint, map[string]string{"Authorization": "Bearer " + outOfBandFingerPrint}, RegisterErrorMapper)
+	resp, err := GetJSONWithURL(kd.relayClient, kd.RelayEndoint, map[string]string{"Authorization": "Bearer " + outOfBandFingerPrint}, RegisterErrorMapper)
 	if err != nil {
 		logger.Error("Failed to register", "error", err)
 		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
@@ -99,6 +101,12 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	err = json.Unmarshal(res, peerReg)
 	if err != nil {
 		logger.Error("Failed to unmarshal the response", "error", err)
+		return err
+	}
+
+	if peerReg.Listen == nil {
+		logger.Error("Invalid listen details")
+		return ErrInvalidResponse
 	}
 
 	if subtle.ConstantTimeCompare([]byte(peerReg.Fingerprint), []byte(outOfBandFingerPrint)) != 1 {
@@ -140,8 +148,25 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	}
 
 	kd.session.PeerPubKeys = peerKeys
+	if peerReg.Listen.Port < 26000 || peerReg.Listen.Port > 27000 {
+		logger.Warn("Provided outbound port is out of known range, defaulting to config", "provided-port", peerReg.Listen.Port, "default-to", config.OutboundPort)
+		peerReg.Listen.Port = config.OutboundPort
+	}
+
+	kd.session.PeerPort = peerReg.Listen.Port
+	if !isValidIPv6(peerReg.Listen.IP) {
+		logger.Warn("Invalid peer IP", "got", peerReg.Listen.IP, "error", ErrInvalidIP)
+		return ErrInvalidIP
+	}
+
+	kd.PeerIPv6IP = peerReg.Listen.IP
 
 	logger.Info("Success")
 
 	return nil
+}
+
+func isValidIPv6(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	return ip != nil && ip.To4() == nil && !ip.IsLoopback() && !ip.IsPrivate()
 }

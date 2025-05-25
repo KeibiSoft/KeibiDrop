@@ -22,6 +22,8 @@ var (
 	ErrFingerprintMismatch           = errors.New("fingerprint missmatch")
 	ErrRelayAtFullCapacityRetryLater = errors.New("relay at full capacity, retry later")
 	ErrNotFound                      = errors.New("not found")
+	ErrInvalidResponse               = errors.New("invalid response")
+	ErrInvalidIP                     = errors.New("invalid IP")
 )
 
 func RegisterErrorMapper(statusCode int, err error) error {
