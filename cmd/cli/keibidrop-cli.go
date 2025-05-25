@@ -67,44 +67,44 @@ func (c *cliContext) executor(in string) {
 			fmt.Println("Usage: register peer <fingerprint>")
 			return
 		}
-		registerPeer(args[2])
+		registerPeer(c.kd, args[2])
 
 	case "create":
-		createRoom()
+		createRoom(c.kd)
 
 	case "join":
 		if len(args) != 2 {
 			fmt.Println("Usage: join <peer fingerprint>")
 			return
 		}
-		joinRoom(args[1])
+		joinRoom(c.kd, args[1])
 
 	case "reset":
-		resetSession()
+		resetSession(c.kd)
 
 	case "add":
 		if len(args) != 2 {
 			fmt.Println("Usage: add <filepath>")
 			return
 		}
-		addFile(args[1])
+		addFile(c.kd, args[1])
 
 	case "list":
-		listFiles()
+		listFiles(c.kd)
 
 	case "pull":
 		if len(args) != 3 {
 			fmt.Println("Usage: pull <remote path> <local path>")
 			return
 		}
-		pullFile(args[1], args[2])
+		pullFile(c.kd, args[1], args[2])
 
 	case "delete":
 		if len(args) != 2 {
 			fmt.Println("Usage: delete <filepath>")
 			return
 		}
-		deleteFile(args[1])
+		deleteFile(c.kd, args[1])
 
 	case "exit", "quit":
 		fmt.Println("Goodbye.")
@@ -180,16 +180,53 @@ func handleShow(kd *common.KeibiDrop, what string) {
 	}
 }
 
-func registerPeer(fp string) { fmt.Println("[TODO] Registered peer fingerprint:", fp) }
-func createRoom()            { fmt.Println("[TODO] Room created.") }
-func joinRoom(fp string)     { fmt.Println("[TODO] Joined room with:", fp) }
-func resetSession()          { fmt.Println("[TODO] Session reset and keys rotated.") }
-func addFile(p string)       { fmt.Println("[TODO] Added to shared list:", p) }
-func listFiles()             { fmt.Println("[TODO] Listing shared files...") }
-func pullFile(remote, local string) {
+func registerPeer(kd *common.KeibiDrop, fp string) {
+	err := kd.AddPeerFingerprint(fp)
+	if err != nil {
+		fmt.Println("Error: ", err)
+	} else {
+		fmt.Println("Peer registed: ", fp)
+	}
+}
+func createRoom(kd *common.KeibiDrop) {
+	err := kd.CreateRoom()
+	if err != nil {
+		fmt.Println("Error: ", err)
+	} else {
+		fmt.Println("Room created and peer connected: ", kd.PeerIPv6IP)
+	}
+}
+
+func joinRoom(kd *common.KeibiDrop, fp string) {
+	err := kd.JoinRoom(fp)
+	if err != nil {
+		fmt.Println("Error: ", err)
+	} else {
+		fmt.Printf("Room: %v, joined successfully", kd.PeerIPv6IP)
+	}
+}
+
+func resetSession(kd *common.KeibiDrop) {
+	kd.ResetSession()
+	fmt.Println("Session reset")
+}
+
+func addFile(kd *common.KeibiDrop, p string) {
+	_ = kd
+	fmt.Println("[TODO] Added to shared list:", p)
+}
+func listFiles(kd *common.KeibiDrop) {
+	_ = kd
+	fmt.Println("[TODO] Listing shared files...")
+}
+func pullFile(kd *common.KeibiDrop, remote, local string) {
+	_ = kd
 	fmt.Printf("[TODO] Pulled '%s' to '%s'\n", remote, local)
 }
-func deleteFile(path string) { fmt.Println("[TODO] Unshared:", path) }
+func deleteFile(kd *common.KeibiDrop, path string) {
+	_ = kd
+	fmt.Println("[TODO] Unshared:", path)
+}
 
 func main() {
 	relayURL := initRelay()
