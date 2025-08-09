@@ -19,7 +19,13 @@ type FS struct {
 	host *winfuse.FileSystemHost
 }
 
-func (fs *FS) Mount(mountPoint string, isSecond bool) error {
+func NewFS(logger log15.Logger) *FS {
+	return &FS{
+		logger: logger,
+	}
+}
+
+func (fs *FS) Mount(mountPoint string, isSecond bool) {
 	cleanMountPoint := filepath.Clean(mountPoint)
 
 	nodeGen := NewNodeIDGen(isSecond)
@@ -55,8 +61,6 @@ func (fs *FS) Mount(mountPoint string, isSecond bool) error {
 	fs.host = host
 
 	fs.host.Mount(cleanMountPoint, nil)
-
-	return nil
 }
 
 func (fs *FS) Unmount() {
