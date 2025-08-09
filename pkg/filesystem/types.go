@@ -16,6 +16,12 @@ import (
 // but in the sense that Dir{} is mapped to the underlying one
 // and all the children of the underlying one are mapped inside our Dir{}.
 
+// Note: I use a tree hierarchy, not the most efficient way when it comes to lookups.
+// I might flatten it in the future.
+// Root -> Dir -> Dir -> File
+//    | -> File
+//    | -> Dir -> File
+
 type Dir struct {
 	logger log15.Logger
 

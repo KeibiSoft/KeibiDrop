@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -133,7 +134,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 		return 0
 	}
 
-	dir, f = d.lookup(path)
+	dir, f = d.lookup(path, fh)
 	if dir != nil {
 		return dir.Getattr(path, stat, fh)
 	}
@@ -164,7 +165,52 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 	return winfuse.ENOENT
 }
 
-func (d *Dir) lookup(path string) (*Dir, *File) {
+func (d *Dir) lookup(path string, fh uint64) (*Dir, *File) {
+	splitPath := filepath.SplitList(path)
+	return d.findNode(splitPath, fh)
+}
+
+func (d *Dir) findNode(pathSegments []string, fh uint64) (*Dir, *File) {
+	if len(pathSegments) == 0 {
+		return nil, nil
+	}
+
+	if len(pathSegments) == 1 {
+		if d.Name == pathSegments[0] && d.Inode == fh {
+			return d, nil
+		}
+	}
+
+	d.fcl.RLock()
+	f, ok := d.FileChildren[fh]
+	d.fcl.RUnlock()
+	if ok {
+		return nil, f
+	}
+
+	d.dcl.RLock()
+	dir, ok := d.DirChildren[fh]
+	d.dcl.RUnlock()
+	if ok {
+		return dir, nil
+	}
+
+	// This recursion will hurt you all!
+	// The monster of bloatware is real!
+	d.dcl.RLock()
+	// I could just defer here the dcl.RUnlock()
+	// But my mind doesn't want to think about it now.
+	// No need to keep the lock until the recursion finishes
+	// With the risk that it might get deleted.
+	// However the call stack is first Lookup then Delete.
+	// Always.
+	for _, dir := range d.DirChildren {
+		if dir.Name == pathSegments[0] {
+			d.dcl.RUnlock()
+			return dir.findNode(pathSegments[1:], fh)
+		}
+	}
+	d.dcl.RUnlock()
 
 	return nil, nil
 }
@@ -206,6 +252,40 @@ func (d *Dir) Opendir(path string) (int, uint64) {
 
 func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) int {
 	d.logger.Debug("Readdir", "path", path, "inode", d.Inode)
+
+	dir, _ := d.lookup(path, fh)
+	if dir == nil {
+		return winfuse.ENOENT
+	}
+
+	curAttr := &winfuse.Stat_t{}
+	errNo := dir.Getattr(dir.RelativePath, curAttr, dir.Inode)
+	if errNo == 0 {
+		fill(".", curAttr, 0)
+	}
+
+	if dir.Parent != nil {
+		errNo := dir.Getattr(dir.Parent.RelativePath, curAttr, dir.Parent.Inode)
+		if errNo == 0 {
+			fill("..", curAttr, 0)
+		}
+	} else {
+		fill("..", nil, 0)
+	}
+
+	dir.dcl.RLock()
+	for _, cdir := range dir.DirChildren {
+		dir.Getattr(cdir.RelativePath, curAttr, cdir.Inode)
+		fill(cdir.Name, curAttr, int64(cdir.Inode)) // The cast makes me :'|  I promise I will fix it in the future.
+	}
+	dir.dcl.RUnlock()
+
+	dir.fcl.RLock()
+	for _, f := range dir.FileChildren {
+		dir.Getattr(f.RelativePath, curAttr, f.Inode)
+		fill(f.Name, curAttr, int64(f.Inode)) // Another one, but realistically, who is gonna use 1<<31 Inodes to overflow.
+	}
+	dir.fcl.RUnlock()
 
 	return 0
 }
