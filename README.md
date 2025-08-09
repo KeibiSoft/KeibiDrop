@@ -12,12 +12,7 @@
 KeibiDrop is an ephemeral file transfer tool for direct peer-to-peer exchange over untrusted networks.
 Although traffic is fully end-to-end encrypted, your IP is visible to the peer and the relay. If they’re hostile, they know where to send packets. Or drones. Or worse: ~lawyers~ marketing ads.
 
-
-> In simple terms: You can connect two computers. Open the mountpoint folder.  
-> Drag files into the mountpoint to make them visible between the computers. Double-click a file.  
-> Edit instantly, or save it to your system, or do whatever.  
-> **No cloud. No sync. Just an encrypted duplex connection.**
-> It also works from the terminal/command line.
+> In simple terms: "Dropbox" your files in real time between devices without uploading to a server.
 
 It uses modern post-quantum cryptography (ML-KEM + X25519) and symmetric encryption (ChaCha20-Poly1305) to ensure that only the intended recipient can decrypt the file.
 
@@ -31,7 +26,7 @@ The sender and receiver perform a secure key exchange via a short-lived relay se
 ## Disclaimer
 
 This project was developed with prior experience in the relevant technologies and domain.
-To accelerate development and ship faster, we made extensive use of **GPT-4o (in Monday mode)** - for brainstorming, scaffolding, and drafting code.
+To accelerate development and ship faster, we made extensive use of **GPT-4o (in Monday mode)** for brainstorming, scaffolding, drafting code, and scoring some dopamine kicks while developing.
 Every line was reviewed, corrected, and adapted by us, with multiple rounds of validation to ensure accuracy and quality.
 
 This would not have been possible without the **technical knowledge** We’ve gained without relying on AI and the ability to critically evaluate and refine its output.
@@ -119,7 +114,7 @@ See [`Security.md`](./Security.md) for a complete protocol overview.
 
 ## Contributing & Legal
 
-Want to contribute? Great—but please read the [CONTRIBUTING.md](./CONTRIBUTING.md) first. All commits must be signed (`git commit -S`) and by doing so, you agree to the terms outlined in our [Developer Certificate of Origin](./DCO.txt).
+Want to contribute? Great, but please read the [CONTRIBUTING.md](./CONTRIBUTING.md) first. All commits must be signed (`git commit -S`) and by doing so, you agree to the terms outlined in our [Developer Certificate of Origin](./DCO.txt).
 
 For information about how we (don’t) use your data, see the [Privacy Policy](./privacy.md).
 

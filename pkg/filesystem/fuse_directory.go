@@ -1,7 +1,9 @@
 package filesystem
 
 import (
+	"os"
 	"strings"
+	"time"
 
 	"github.com/pkg/xattr"
 	winfuse "github.com/winfsp/cgofuse/fuse"
@@ -51,9 +53,115 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 	_ = logger
 	_ = name
 
-	// continue here:
+	uid, gid, _ := winfuse.Getcontext()
+	stat.Uid = uid
+	stat.Gid = gid
 
-	return 0
+	if path == d.Name || fh == d.Inode {
+		logger.Debug("Ching")
+		now := winfuse.NewTimespec(time.Now())
+		stat.Atim = now
+		stat.Birthtim = now
+		stat.Blksize = FilesystemBlockSize
+		stat.Blocks = 1000 // TODO
+		stat.Ctim = now
+		stat.Ino = d.Inode
+		stat.Mode = 0600
+		stat.Mtim = now
+		stat.Nlink = 0 // TODO
+		stat.Rdev = 0  // TODO
+		stat.Flags = 0
+	}
+
+	// Find file.
+
+	d.fcl.RLock()
+	f, ok := d.FileChildren[fh]
+	d.fcl.RUnlock()
+	if ok {
+		// TODO: Add logic for locally present or remote edits or w/e.
+
+		logger.Info("Real path of file", "path", f.RealPathOfFile)
+		finfo, err := os.Stat(f.RealPathOfFile)
+		if err != nil {
+			logger.Error("Failed to us stat the file", "real-path", f.RealPathOfFile, "error", err)
+			return int(convertOsErrToSyscallErrno("stat", err))
+		}
+
+		stat.Atim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Birthtim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Blksize = FilesystemBlockSize
+		stat.Blocks = 1000 // TODO
+		stat.Ctim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Ino = fh
+		stat.Mode = 0700
+		stat.Mtim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Nlink = 0
+		stat.Rdev = 0 // TODO
+		stat.Flags = 0
+		stat.Size = finfo.Size()
+
+		return 0
+	}
+
+	// Find directory.
+
+	d.dcl.RLock()
+	dir, ok := d.DirChildren[fh]
+	d.dcl.RUnlock()
+	if ok {
+		logger.Info("Real path of dir", "path", dir.RealPathOfFile)
+		finfo, err := os.Stat(dir.RealPathOfFile)
+		if err != nil {
+			logger.Error("Failed to us stat the file", "real-path", dir.RealPathOfFile, "error", err)
+			return int(convertOsErrToSyscallErrno("stat", err))
+		}
+
+		stat.Atim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Birthtim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Blksize = FilesystemBlockSize
+		stat.Blocks = 1000 // TODO
+		stat.Ctim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Ino = fh
+		stat.Mode = 0700
+		stat.Mtim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Nlink = 0
+		stat.Rdev = 0 // TODO
+		stat.Flags = 0
+		stat.Size = finfo.Size()
+
+		return 0
+	}
+
+	dir, f = d.lookup(path)
+	if dir != nil {
+		return dir.Getattr(path, stat, fh)
+	}
+	if f != nil {
+		logger.Info("Real path of file", "path", f.RealPathOfFile)
+		finfo, err := os.Stat(f.RealPathOfFile)
+		if err != nil {
+			logger.Error("Failed to us stat the file", "real-path", f.RealPathOfFile, "error", err)
+			return int(convertOsErrToSyscallErrno("stat", err))
+		}
+
+		stat.Atim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Birthtim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Blksize = FilesystemBlockSize
+		stat.Blocks = 1000 // TODO
+		stat.Ctim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Ino = fh
+		stat.Mode = 0700
+		stat.Mtim = winfuse.NewTimespec(finfo.ModTime())
+		stat.Nlink = 0
+		stat.Rdev = 0 // TODO
+		stat.Flags = 0
+		stat.Size = finfo.Size()
+
+		return 0
+	}
+
+	return winfuse.ENOENT
 }
 
 func (d *Dir) lookup(path string) (*Dir, *File) {
@@ -62,50 +170,74 @@ func (d *Dir) lookup(path string) (*Dir, *File) {
 }
 
 func (d *Dir) Init() {
+	d.logger.Debug("Init", "inode", d.Inode)
+
 }
 
 func (d *Dir) Link(oldpath string, newpath string) int {
+	d.logger.Debug("Link", "oldPath", oldpath, "newPath", newpath, "inode", d.Inode)
+
 	return winfuse.ENOTSUP
 }
 
 func (d *Dir) Mkdir(path string, mode uint32) int {
+	d.logger.Debug("Mkdir", "path", path, "inode", d.Inode)
+
 	return 0
 }
 
 func (d *Dir) Mknod(path string, mode uint32, dev uint64) int {
+	d.logger.Debug("Mknod", "path", path, "inode", d.Inode)
+
 	return winfuse.ENOTSUP
 }
 
 func (d *Dir) Open(path string, flags int) (int, uint64) {
+	d.logger.Debug("Open", "path", path, "inode", d.Inode)
+
 	return 0, 0
 }
 
 func (d *Dir) Opendir(path string) (int, uint64) {
+	d.logger.Debug("Opendir", "path", path, "inode", d.Inode)
+
 	return 0, 0
 }
 
 func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) int {
+	d.logger.Debug("Readdir", "path", path, "inode", d.Inode)
+
 	return 0
 }
 
 func (d *Dir) Readlink(path string) (int, string) {
+	d.logger.Debug("Readlink", "path", path, "inode", d.Inode)
+
 	return winfuse.ENOTSUP, ""
 }
 
 func (d *Dir) Release(path string, fh uint64) int {
+	d.logger.Debug("Release", "path", path, "inode", d.Inode, "fh", fh)
+
 	return 0
 }
 
 func (d *Dir) Releasedir(path string, fh uint64) int {
+	d.logger.Debug("Releasedir", "path", path, "inode", d.Inode, "fh", fh)
+
 	return 0
 }
 
 // Mac OS High Level apps use Rename SWAP, which is really fun from my experience.
 func (d *Dir) Rename(oldpath string, newpath string) int {
+	d.logger.Debug("Rename", "oldpath", oldpath, "newpath", newpath, "inode", d.Inode)
+
 	return 0
 }
 
 func (d *Dir) Rmdir(path string) int {
+	d.logger.Debug("Rmdir", "path", path, "inode", d.Inode)
+
 	return 0
 }
 
@@ -139,37 +271,50 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) int {
 
 	stat.Namemax = uint64(255) // We allow only 256 characters in the name.
 
+	logger.Info("Statfs", "stat", stat, "inode", d.Inode)
+
 	return 0
 }
 
 func (d *Dir) Symlink(target string, newpath string) int {
+	d.logger.Debug("Symlink", "target", target, "newpath", newpath, "inode", d.Inode)
+
 	return 0
 }
 
 // Note: On windows open does not have a truncate flag,
 // thus Open is immediately followed by Truncate.
 func (d *Dir) Truncate(path string, size int64, fh uint64) int {
+	d.logger.Debug("Truncate", "path", path, "size", size, "inode", d.Inode, "fh", fh)
 	return 0
 }
 
 // Unlink removes a file.
 func (d *Dir) Unlink(path string) int {
+	d.logger.Debug("Unlink", "path", path, "inode", d.Inode)
+
 	return 0
 }
 
 // Utimens changes the access and modification times of a file.
 // Note: I do not care about it :^D for this version.
 func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) int {
+	d.logger.Debug("Utimens", "path", path, "inode", d.Inode)
+
 	return winfuse.ENOTSUP
 }
 
 // The method returns the number of bytes written.
 func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
+	d.logger.Debug("Write", "path", path, "inode", d.Inode, "fh", fh)
+
 	return 0
 }
 
 // The method returns the number of bytes read.
 func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
+	d.logger.Debug("Read", "path", path, "inode", d.Inode, "fh", fh)
+
 	return 0
 }
 
@@ -185,9 +330,9 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 // people will just meme with ACLs and not bother with "download date" of files in the Xattr,
 // and LARP some success metric of we "inreased security to 80%" because of this is "how you measure it".
 //
-// My decision is to just support them the mounted filesystem level.
-// If the underlying filesystem has xattrs, good for them, they wont be mapped
-// to the mounted one, nor shared between peers.
+// My decision is to just support them at the mounted filesystem level.
+// If the underlying filesystem has xattrs, good for them, they wont be mapped to the mounted one,
+// nor shared between peers.
 
 func (d *Dir) Removexattr(path string, name string) int {
 	logger := d.logger.New("method", "remove-xattr")
