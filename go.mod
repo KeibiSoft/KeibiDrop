@@ -7,8 +7,11 @@ require (
 	github.com/c-bata/go-prompt v0.2.6
 	github.com/fatih/color v1.18.0
 	github.com/inconshreveable/log15 v2.16.0+incompatible
+	github.com/pkg/xattr v0.4.12
 	github.com/stretchr/testify v1.10.0
+	github.com/winfsp/cgofuse v1.6.0
 	golang.org/x/crypto v0.38.0
+	golang.org/x/sys v0.33.0
 	google.golang.org/grpc v1.72.1
 	google.golang.org/protobuf v1.36.6
 )
@@ -48,7 +51,6 @@ require (
 	github.com/yuin/goldmark v1.7.8 // indirect
 	golang.org/x/image v0.24.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/term v0.32.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250218202821-56aae31c358a // indirect

@@ -8,10 +8,10 @@ The system establishes a **post-quantum resilient, ephemeral, peer-to-peer encry
 
 ## Threat Model
 
-- The relay server is **untrusted**.
-- Attackers may control the network, but not the local devices.
-- Key authenticity is verified **out-of-band via fingerprint exchange**.
-- The goal is to ensure **confidentiality, integrity, and authenticity** of all transferred files, even in the presence of **active attackers**.
+* The relay server is **untrusted**.
+* Attackers may control the network, but not the local devices.
+* Key authenticity is verified **out-of-band via fingerprint exchange**.
+* The goal is to ensure **confidentiality, integrity, and authenticity** of all transferred files, even in the presence of **active attackers**.
 
 ---
 
@@ -21,20 +21,29 @@ The system establishes a **post-quantum resilient, ephemeral, peer-to-peer encry
 
 The protocol uses a **hybrid approach** combining:
 
-| Algorithm | Purpose | Security Level |
-|----------|--------|----------------|
+| Algorithm       | Purpose                  | Security Level       |
+| --------------- | ------------------------ | -------------------- |
 | **ML-KEM-1024** | Post-quantum KEM (Kyber) | ≥ AES-256 equivalent |
-| **X25519** | Classical ECDH | ~AES-128 equivalent |
+| **X25519**      | Classical ECDH           | \~AES-128 equivalent |
 
 Each party generates **ephemeral key pairs** for both schemes during each session.
 
 ### Symmetric Encryption
 
-| Algorithm | Purpose |
-|----------|---------|
+| Algorithm             | Purpose                           |
+| --------------------- | --------------------------------- |
 | **ChaCha20-Poly1305** | AEAD encryption for file transfer |
 
 The symmetric encryption key (KEK) is derived using **HKDF** over the combined shared secrets from ML-KEM and X25519.
+
+Transport-layer security between peers is protected using **ChaCha20-Poly1305 with AEAD**.
+
+Two independent bidirectional gRPC channels are established:
+
+* **Inbound**: Alice acts as a gRPC server; Bob connects and sends requests.
+* **Outbound**: Alice acts as a gRPC client; Bob accepts connections and serves.
+
+Each connection uses a separate symmetric session key and runs over its own secure channel.
 
 ---
 
@@ -42,14 +51,14 @@ The symmetric encryption key (KEK) is derived using **HKDF** over the combined s
 
 This section outlines the handshake process used to establish a secure file transfer session between two peers using ephemeral key exchange and fingerprint verification. The flow is designed to:
 
-- Break key derivation symmetry deterministically
-- Avoid interactive negotiation
-- Use out-of-band verification of peer identity via fingerprints
+* Break key derivation symmetry deterministically
+* Avoid interactive negotiation
+* Use out-of-band verification of peer identity via fingerprints
 
 ### Roles
 
-- **Initiator**: The peer that connects second (after receiving the fingerprint)
-- **Responder**: The peer that connects first and generates the fingerprint
+* **Initiator**: The peer that connects second (after receiving the fingerprint)
+* **Responder**: The peer that connects first and generates the fingerprint
 
 ---
 
@@ -57,99 +66,109 @@ This section outlines the handshake process used to establish a secure file tran
 
 #### 1. Responder (Alice) connects first
 
-- Alice generates ephemeral public/private key pairs for:
-  - **X25519** (classical ECDH)
-  - **ML-KEM-1024** (post-quantum KEM)
-- Alice computes a deterministic fingerprint over her public keys using `ProtocolFingerprintV0`
-- She publishes:
-  - Her public keys
-  - Her fingerprint
-  - Any relay-specific session metadata
-- Alice **shares her fingerprint out-of-band** with Bob (e.g., via Signal or QR code)
+* Alice generates ephemeral public/private key pairs for:
+
+  * **X25519** (classical ECDH)
+  * **ML-KEM-1024** (post-quantum KEM)
+* Alice computes a deterministic fingerprint over her public keys using `ProtocolFingerprintV0`
+* She publishes:
+
+  * Her public keys
+  * Her fingerprint
+  * Any relay-specific session metadata
+* Alice **shares her fingerprint out-of-band** with Bob (e.g., via Signal or QR code)
 
 ---
 
 #### 2. Initiator (Bob) connects second
 
-- Bob downloads Alice's public keys and fingerprint from the relay
-- Bob recomputes Alice’s fingerprint locally and compares it to the out-of-band fingerprint
+* Bob downloads Alice's public keys and fingerprint from the relay
+* Bob recomputes Alice’s fingerprint locally and compares it to the out-of-band fingerprint
+* If they match:
 
-- Bob downloads Alice's public keys and fingerprint from the relay
-- Bob recomputes Alice’s fingerprint locally and compares it to the out-of-band fingerprint
-- If they match:
-  - Bob generates two random secrets (e.g., `seed1`, `seed2`)
-  - Bob encrypts the secrets:
-    - `ctMLKEM = Kyber.Encapsulate(seed1, Alice's ML-KEM pub)`
-    - `ctDH = X25519.Encrypt(seed2, Alice's pub key)` — or just use seed2 with DH directly
-  - Bob prepares his message:
-    - Bob's ephemeral public keys (X25519, ML-KEM)
-    - `ctKEM` and `ctDH`
-  - Bob sends this to Alice via the relay
-  - Bob also sends his own **public key fingerprint** to Alice **out-of-band** for identity verification
+  * Bob generates two random secrets (e.g., `seed1`, `seed2`)
+  * Bob encrypts the secrets:
+
+    * `ctMLKEM = Kyber.Encapsulate(seed1, Alice's ML-KEM pub)`
+    * `ctDH = X25519.Encrypt(seed2, Alice's pub key)` — or just use seed2 with DH directly
+  * Bob prepares his message:
+
+    * Bob's ephemeral public keys (X25519, ML-KEM)
+    * `ctKEM` and `ctDH`
+  * Bob sends this to Alice via the relay
+  * Bob also sends his own **public key fingerprint** to Alice **out-of-band** for identity verification
 
 ---
 
 #### 3. Responder (Alice) receives Bob's key material
 
-- Alice verifies the fingerprint matches Bob's out-of-band value
-- Alice computes:
-  - `sharedKEM = Kyber.Decapsulate(ctKyber, her private key)`
-  - `sharedX = X25519(seed2, Alice's private key)`
-- Alice then derives the KEK:
+* Alice verifies the fingerprint matches Bob's out-of-band value
+* Alice computes:
+
+  * `sharedKEM = Kyber.Decapsulate(ctKyber, her private key)`
+  * `sharedX = X25519(seed2, Alice's private key)`
+* Alice then derives the KEK:
 
 ```md
 Session_KEK = HKDF(sharedX || sharedKEM)
 ```
 
-## Chunk Size and Limitations
+## Stream Encryption and Limitations
 
-- The encryption operates on **fixed-size blocks of 256 KiB**.
-- Each chunk is encrypted independently using **ChaCha20-Poly1305 AEAD**, which ensures **confidentiality** and **integrity** of each chunk.
-- The output format for each encrypted block is:
+The system now uses **ChaCha20-Poly1305 AEAD encryption applied at the transport stream layer**, not at the file or chunk level. This encryption is layered beneath the gRPC framing logic, meaning:
 
-- Nonces are generated randomly **per chunk** using a cryptographically secure RNG (`crypto/rand`).
-- Each nonce is **prepended** to the ciphertext and must be **unique for the lifetime of the KEK**.
+* File contents are passed over a **secure, AEAD-encrypted duplex stream**.
+* Encryption is **connection-oriented**, rather than chunk-based.
+* Each connection has its own **ephemeral symmetric session key** and independent AEAD state.
 
-### ⚠️ Critical Warning: Nonce Reuse Across Session
+Encryption is handled transparently within the gRPC transport layer using authenticated stream wrappers written in Go. Data is encrypted continuously and decrypted on the fly as it flows across the connection.
 
-If a nonce is **ever reused with the same encryption key**, **ChaCha20-Poly1305 fails catastrophically** - leading to:
+This model simplifies the handling of large files, avoids intermediate buffering and chunking logic, and ensures **confidentiality and integrity of the transport stream itself**.
 
-- Plaintext leakage (via keystream reuse)
-- Forgery potential
-- Complete loss of security for the affected chunks
+---
 
-This system currently derives **one KEK per session**, which is then used to encrypt **all files in that session**.
+### ⚠️ Critical Warning: Nonce Reuse in AEAD Stream Encryption
 
-Therefore, the effective security limit is:
+ChaCha20-Poly1305 requires a **unique nonce** for every message encrypted with a given key. Reusing a nonce with the same key causes **catastrophic failure** of the cipher, including:
 
-> **2³² total encrypted chunks per session (~1 petabyte with 256 KB blocks).**
+* Plaintext recovery (via keystream reuse)
+* Forgery potential
+* Complete loss of confidentiality for the stream
 
-That includes **all files, across both directions, during that session**. This limit is inherited from the size of the 96-bit nonce space and the statistical collision probability of random generation.
+In the new stream model, **nonces are managed at the stream connection level**, not per file or chunk. The encryption layer uses either:
 
-### ❗ Implication
+* A deterministic nonce sequence (e.g., counter-based)
+* Or a randomized nonce generation scheme with collision safeguards
 
-If this system ever encrypts more than ~1 PB with the same session key, the probability of a **nonce collision becomes non-negligible**. Beyond that point, **all guarantees of confidentiality collapse**.
+Each stream uses a **separate symmetric key**, and nonces are not shared between the inbound and outbound connections. Specifically:
 
-### ⚠️ Known Limitation
+* Alice ⇐ Bob: Encrypted using session key A and AEAD instance A
+* Alice ⇒ Bob: Encrypted using session key B and AEAD instance B
 
-While each chunk is authenticated individually, the system **does not currently provide integrity guarantees across the full stream**. This means:
+This ensures that even bidirectional traffic during a session does **not risk nonce reuse**, since keys and nonce domains are disjoint.
 
-> If a malicious actor **removes or reorders entire encrypted blocks** along a clean boundary (i.e., 256 KB), the receiving side **will not detect it**.
+---
 
-This is acceptable for now, as files are generally hash-verified or user-checked post-transfer. However, a future version may implement:
+### 🧬 Implication
 
-- A **Merkle tree** over chunk hashes
-- A **running MAC** over chunk boundaries
-- Or an **end-of-stream signed digest**
+Because nonces are now associated with the transport stream (not file content), the primary limitation is:
+
+> **The lifetime of the stream key must not exceed the safe number of AEAD invocations.**
+
+For ChaCha20-Poly1305, this is approximately:
+
+> **2³² encryptions per key**, regardless of total bytes transferred.
+
+While that is sufficient for most practical sessions, key rotation is strongly advised for long-lived or high-throughput connections.
+
+---
 
 ### 🔧 Future TODOs
 
-- 🔁 Switch to **deterministic nonce generation** (e.g., counter-based or chunk-index-derived nonces) to eliminate collision risk.
-- 🔑 Rotate KEK per file, or per N chunks, to reset nonce space safely.
-- 📈 Implement high-watermark nonce tracking to enforce safe limits.
-- ❗ Add **cross-block integrity** or final digest verification
-- ⏳ Optionally include block number as part of AEAD AAD for better tamper detection
-- 🔐 Support authenticated stream resumption (for partial file recovery)
+* ♻️ Switch to **counter-based nonces** per stream if not already used
+* 🔑 Implement periodic session rekeying for long-lived connections
+* 📈 Track and enforce AEAD usage limits (e.g., max packets or bytes per key)
+* 🔐 Support stream resumption via authenticated key+offset resync
 
 ---
 
@@ -157,11 +176,11 @@ This is acceptable for now, as files are generally hash-verified or user-checked
 
 This design currently offers:
 
-- Ephemeral key exchange with **post-quantum and classical hybrid** security
-- Per-chunk **authenticated encryption**
-- Deterministic and tamper-detectable fingerprints for peer validation
-- Efficient **streaming mode** suited for file transfer over any transport.
+* Ephemeral key exchange with **post-quantum and classical hybrid** security
+* Per-connection **authenticated stream encryption**
+* Deterministic and tamper-detectable fingerprints for peer validation
+* Efficient **streaming mode** suited for file transfer over any transport
 
-**Cross-chunk stream authentication is not yet implemented.** The system ensures chunk-level security but assumes trusted handling of the full stream at the application layer.
+**Cross-stream integrity is not yet implemented beyond message-level AEAD and gRPC guarantees.** The system assumes trusted handling of the full stream at the application layer.
 
-For most use cases, this provides strong encryption with reasonable performance and deployability. Future improvements will focus on tightening stream integrity guarantees.
+For most use cases, this provides strong encryption with reasonable performance and deployability. Future improvements will focus on tightening stream integrity guarantees and rekeying policies.
