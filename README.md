@@ -55,6 +55,15 @@ I haven’t used these tools directly, but I liked the ideas they explored and w
 
 ---
 
+## ⚠️ Requirements
+
+- **macOS**: [macFUSE](https://macfuse.github.io/)
+- **Windows**: [WinFsp](https://winfsp.dev/)
+- **Linux**: fuse3 (usually preinstalled)
+- **All platforms**: Requires `cgo` (due to `cgofuse` from WinFsp)
+
+---
+
 ## ⚠️ Networking Requirements
 
 KeibiDrop uses **direct P2P communication over IPv6**. This simplifies connection setup and avoids reliance on third-party STUN/TURN servers, preserving metadata privacy and minimizing external dependencies.
