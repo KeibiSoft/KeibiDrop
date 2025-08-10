@@ -34,9 +34,9 @@ func (fs *FS) Mount(mountPoint string, isSecond bool) {
 		logger:   fs.logger.New("mount", "root"),
 		Inode:    0,
 		inodeGen: nodeGen,
-		Name:     "/",
+		Name:     cleanMountPoint,
 
-		RelativePath:   ".",
+		RelativePath:   "/",
 		RealPathOfFile: "",
 		IsLocalPresent: true,
 		PeerLastEdit:   0,
