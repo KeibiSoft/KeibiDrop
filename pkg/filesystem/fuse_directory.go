@@ -3,6 +3,7 @@ package filesystem
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/pkg/xattr"
@@ -200,7 +201,8 @@ func (d *Dir) lookup(path string, fh uint64) (*Dir, *File) {
 	if path == "/" {
 		return d.Root, nil
 	}
-	splitPath := filepath.SplitList(path)
+
+	splitPath := strings.Split(path, "/") // filepath.SplitList(path)
 	return d.findNode(splitPath, fh)
 }
 
@@ -282,7 +284,7 @@ func (d *Dir) Mkdir(path string, mode uint32) int {
 	logger := d.logger.New("method", "mkdir", "path", path, "mode", mode)
 	logger.Info("MKDIR CALL")
 
-	splitPath := filepath.SplitList(path)
+	splitPath := strings.Split(path, "/") //filepath.SplitList(path)
 	if len(path) == 0 {
 		logger.Warn("Invalid path")
 		return winfuse.EIO
