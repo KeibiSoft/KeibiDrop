@@ -3,7 +3,7 @@ package filesystem
 import (
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/xattr"
@@ -49,16 +49,30 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 	logger := d.logger.New("method", "get-attr", "path", path, "fh", fh)
 
 	// No worries about slasher vs backslasher generes of movies, cgofuse is our saviour.
-	splitPath := strings.Split(path, "/")
-	name := splitPath[len(splitPath)-1]
-	_ = logger
-	_ = name
+	// splitPath := filepath.SplitList(path)
+	// name := splitPath[len(splitPath)-1]
 
 	uid, gid, _ := winfuse.Getcontext()
 	stat.Uid = uid
 	stat.Gid = gid
 
-	if path == d.Name || fh == d.Inode {
+	if path == "." {
+		logger.Info("Get attr for current dir or parent. Fix later.")
+		now := winfuse.NewTimespec(time.Now())
+		stat.Atim = now
+		stat.Birthtim = now
+		stat.Blksize = FilesystemBlockSize
+		stat.Blocks = 1000 // TODO
+		stat.Ctim = now
+		stat.Ino = d.Inode
+		stat.Mode = 0600
+		stat.Mtim = now
+		stat.Nlink = 0 // TODO
+		stat.Rdev = 0  // TODO
+		stat.Flags = 0
+	}
+
+	if path == "/" || path == d.Name || fh == d.Inode {
 		logger.Debug("Ching")
 		now := winfuse.NewTimespec(time.Now())
 		stat.Atim = now
@@ -72,6 +86,8 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 		stat.Nlink = 0 // TODO
 		stat.Rdev = 0  // TODO
 		stat.Flags = 0
+
+		return 0
 	}
 
 	// Find file.
@@ -166,35 +182,55 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 }
 
 func (d *Dir) lookup(path string, fh uint64) (*Dir, *File) {
+	if path == "/" {
+		return d.Root, nil
+	}
 	splitPath := filepath.SplitList(path)
 	return d.findNode(splitPath, fh)
 }
 
 func (d *Dir) findNode(pathSegments []string, fh uint64) (*Dir, *File) {
+	useFh := fh != 0
+
 	if len(pathSegments) == 0 {
 		return nil, nil
 	}
 
 	if len(pathSegments) == 1 {
-		if d.Name == pathSegments[0] && d.Inode == fh {
-			return d, nil
+		if d.Name == pathSegments[0] {
+			if useFh {
+				if fh == d.Inode {
+					return d, nil
+				}
+			} else {
+				return d, nil
+			}
 		}
 	}
 
+	var ok bool
+	var f *File
+	var dir *Dir
+
+	if !useFh {
+		goto SkipFhUse
+	}
+
 	d.fcl.RLock()
-	f, ok := d.FileChildren[fh]
+	f, ok = d.FileChildren[fh]
 	d.fcl.RUnlock()
 	if ok {
 		return nil, f
 	}
 
 	d.dcl.RLock()
-	dir, ok := d.DirChildren[fh]
+	dir, ok = d.DirChildren[fh]
 	d.dcl.RUnlock()
 	if ok {
 		return dir, nil
 	}
 
+SkipFhUse:
 	// This recursion will hurt you all!
 	// The monster of bloatware is real!
 	d.dcl.RLock()
@@ -228,6 +264,50 @@ func (d *Dir) Link(oldpath string, newpath string) int {
 
 func (d *Dir) Mkdir(path string, mode uint32) int {
 	d.logger.Debug("Mkdir", "path", path, "inode", d.Inode)
+	logger := d.logger.New("method", "mkdir", "path", path, "mode", mode)
+
+	splitPath := filepath.SplitList(path)
+	if len(path) == 0 {
+		logger.Warn("Invalid path")
+		return winfuse.EIO
+	}
+
+	name := splitPath[len(splitPath)-1]
+
+	if len(name) > 255 {
+		logger.Warn("Name too long")
+		return winfuse.E2BIG
+	}
+
+	splitPath = splitPath[:len(splitPath)-1]
+	dir, _ := d.findNode(splitPath, 0)
+	if dir == nil && len(splitPath) != 0 {
+		logger.Warn("Failed to mkdir, intermediary path link is missing")
+		return winfuse.EIO
+	}
+
+	dir.dcl.Lock()
+	inode := dir.inodeGen.Generate()
+	dir.DirChildren[inode] = &Dir{
+		logger:              logger,
+		inodeGen:            dir.inodeGen,
+		fcl:                 sync.RWMutex{},
+		dcl:                 sync.RWMutex{},
+		Name:                name,
+		RelativePath:        path,
+		Inode:               inode,
+		RealPathOfFile:      "",
+		PeerLastEdit:        0,
+		IsLocalPresent:      true,
+		LocalDownloadFolder: "",
+		Parent:              dir,
+		Root:                dir.Root,
+		OpenFileHandlers:    make(map[uint64]*File),
+		OpenMapLock:         sync.RWMutex{},
+		FileChildren:        make(map[uint64]*File),
+		DirChildren:         make(map[uint64]*Dir),
+	}
+	dir.dcl.Unlock()
 
 	return 0
 }
@@ -253,14 +333,20 @@ func (d *Dir) Opendir(path string) (int, uint64) {
 func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) int {
 	d.logger.Debug("Readdir", "path", path, "inode", d.Inode)
 
+	logger := d.logger.New("method", "readdir", "path", path, "fh", fh)
+	logger.Info("ok")
+
 	dir, _ := d.lookup(path, fh)
 	if dir == nil {
+		logger.Info("Enoent")
 		return winfuse.ENOENT
 	}
 
 	curAttr := &winfuse.Stat_t{}
+	logger.Info("We get attr for .")
 	errNo := dir.Getattr(dir.RelativePath, curAttr, dir.Inode)
 	if errNo == 0 {
+		logger.Info("for . it worked")
 		fill(".", curAttr, 0)
 	}
 
@@ -273,19 +359,34 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 		fill("..", nil, 0)
 	}
 
+	logger.Info("Children dir")
+
 	dir.dcl.RLock()
 	for _, cdir := range dir.DirChildren {
-		dir.Getattr(cdir.RelativePath, curAttr, cdir.Inode)
-		fill(cdir.Name, curAttr, int64(cdir.Inode)) // The cast makes me :'|  I promise I will fix it in the future.
+		errNo = dir.Getattr(cdir.RelativePath, curAttr, cdir.Inode)
+		if errNo == 0 {
+			logger.Info("Dir errno 0")
+			fill(cdir.Name, curAttr, int64(cdir.Inode)) // The cast makes me :'|  I promise I will fix it in the future.
+		} else {
+			logger.Warn("Dir eernno", "errno", errNo)
+		}
 	}
 	dir.dcl.RUnlock()
 
+	logger.Info("Children file")
 	dir.fcl.RLock()
 	for _, f := range dir.FileChildren {
-		dir.Getattr(f.RelativePath, curAttr, f.Inode)
-		fill(f.Name, curAttr, int64(f.Inode)) // Another one, but realistically, who is gonna use 1<<31 Inodes to overflow.
+		errNo = dir.Getattr(f.RelativePath, curAttr, f.Inode)
+		if errNo == 0 {
+			logger.Info("File errno 0")
+			fill(f.Name, curAttr, int64(f.Inode)) // Another one, but realistically, who is gonna use 1<<31 Inodes to overflow.
+		} else {
+			logger.Warn("File eernno", "errno", errNo)
+		}
 	}
 	dir.fcl.RUnlock()
+
+	logger.Info("ok")
 
 	return 0
 }
