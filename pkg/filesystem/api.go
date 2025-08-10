@@ -25,7 +25,7 @@ func NewFS(logger log15.Logger) *FS {
 	}
 }
 
-func (fs *FS) Mount(mountPoint string, isSecond bool) {
+func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 	cleanMountPoint := filepath.Clean(mountPoint)
 
 	nodeGen := NewNodeIDGen(isSecond)
@@ -43,7 +43,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool) {
 		Parent:         nil,
 
 		// IDK about this one.
-		LocalDownloadFolder: "maybe",
+		LocalDownloadFolder: filepath.Clean(downloadPath),
 
 		OpenMapLock:      sync.RWMutex{},
 		OpenFileHandlers: make(map[uint64]*File),
