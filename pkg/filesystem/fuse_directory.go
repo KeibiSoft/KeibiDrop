@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/pkg/xattr"
 	winfuse "github.com/winfsp/cgofuse/fuse"
@@ -58,11 +57,18 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 
 	if path == "." {
 		logger.Info("Get attr for current dir or parent. Fix later.")
-		now := winfuse.NewTimespec(time.Now())
+		info, err := os.Stat(d.LocalDownloadFolder)
+		if err != nil {
+			logger.Error("Failed to stat local download path", "download-path", d.LocalDownloadFolder, "error", err)
+			return int(convertOsErrToSyscallErrno("stat", err))
+		}
+
+		blks := info.Size() / FilesystemBlockSize
+		now := winfuse.NewTimespec(info.ModTime())
 		stat.Atim = now
 		stat.Birthtim = now
 		stat.Blksize = FilesystemBlockSize
-		stat.Blocks = 1000 // TODO
+		stat.Blocks = blks
 		stat.Ctim = now
 		stat.Ino = d.Inode
 		stat.Mode = 0600
@@ -74,11 +80,18 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 
 	if path == "/" || path == d.Name || fh == d.Inode {
 		logger.Debug("Ching")
-		now := winfuse.NewTimespec(time.Now())
+		info, err := os.Stat(d.LocalDownloadFolder)
+		if err != nil {
+			logger.Error("Failed to stat local download path", "download-path", d.LocalDownloadFolder, "error", err)
+			return int(convertOsErrToSyscallErrno("stat", err))
+		}
+
+		blks := info.Size() / FilesystemBlockSize
+		now := winfuse.NewTimespec(info.ModTime())
 		stat.Atim = now
 		stat.Birthtim = now
 		stat.Blksize = FilesystemBlockSize
-		stat.Blocks = 1000 // TODO
+		stat.Blocks = blks
 		stat.Ctim = now
 		stat.Ino = d.Inode
 		stat.Mode = 0600
@@ -178,6 +191,8 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 		return 0
 	}
 
+	logger.Info("Very enoent, but this one is correct I guess")
+
 	return winfuse.ENOENT
 }
 
@@ -265,6 +280,7 @@ func (d *Dir) Link(oldpath string, newpath string) int {
 func (d *Dir) Mkdir(path string, mode uint32) int {
 	d.logger.Debug("Mkdir", "path", path, "inode", d.Inode)
 	logger := d.logger.New("method", "mkdir", "path", path, "mode", mode)
+	logger.Info("MKDIR CALL")
 
 	splitPath := filepath.SplitList(path)
 	if len(path) == 0 {
@@ -296,10 +312,10 @@ func (d *Dir) Mkdir(path string, mode uint32) int {
 		Name:                name,
 		RelativePath:        path,
 		Inode:               inode,
-		RealPathOfFile:      "",
+		RealPathOfFile:      filepath.Join(dir.LocalDownloadFolder, name),
 		PeerLastEdit:        0,
 		IsLocalPresent:      true,
-		LocalDownloadFolder: "",
+		LocalDownloadFolder: dir.LocalDownloadFolder,
 		Parent:              dir,
 		Root:                dir.Root,
 		OpenFileHandlers:    make(map[uint64]*File),
@@ -308,6 +324,8 @@ func (d *Dir) Mkdir(path string, mode uint32) int {
 		DirChildren:         make(map[uint64]*Dir),
 	}
 	dir.dcl.Unlock()
+
+	logger.Info("Success")
 
 	return 0
 }
