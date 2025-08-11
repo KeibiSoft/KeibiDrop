@@ -137,13 +137,13 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 func printHelp() {
 	fmt.Println(`
 help                         Show this help message
-version 					 Show banner and version
+version                      Show banner and version
 show fingerprint             Show your fingerprint
 show ip                      Show your IP
 show peer fingerprint        Show peer's fingerprint
 show peer ip                 Show peer's IP
 show relay                   Show the currently connected relay URL
-register peer <fingerprint> Register a peer's fingerprint
+register peer <fingerprint>  Register a peer's fingerprint
 create                       Create a room
 join <fingerprint>           Join a room by peer fingerprint
 reset                        Reset session and rotate keys

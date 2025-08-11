@@ -23,8 +23,8 @@ The protocol uses a **hybrid approach** combining:
 
 | Algorithm       | Purpose                  | Security Level       |
 | --------------- | ------------------------ | -------------------- |
-| **ML-KEM-1024** | Post-quantum KEM (Kyber) | ≥ AES-256 equivalent |
-| **X25519**      | Classical ECDH           | \~AES-128 equivalent |
+| **ML-KEM-1024** | Post-quantum KEM (Kyber) | [Security Category 5](https://nvlpubs.nist.gov/nistpubs/fips/nist.fips.203.pdf) |
+| **X25519**      | Classical ECDH           | No NIST Security Category but [~128-bit is Category 1](https://www.rfc-editor.org/rfc/rfc8031.html#section-4) |
 
 Each party generates **ephemeral key pairs** for both schemes during each session.
 
@@ -105,12 +105,12 @@ This section outlines the handshake process used to establish a secure file tran
 * Alice verifies the fingerprint matches Bob's out-of-band value
 * Alice computes:
 
-  * `sharedKEM = Kyber.Decapsulate(ctKyber, her private key)`
+  * `sharedKEM = Kyber.Decapsulate(ctKyber, Alice's private key)`
   * `sharedX = X25519(seed2, Alice's private key)`
 * Alice then derives the KEK:
 
 ```md
-Session_KEK = HKDF(sharedX || sharedKEM)
+Session_KEK = HKDF(sharedX || sharedKEM) # Where || means concatenation.
 ```
 
 ## Stream Encryption and Limitations
