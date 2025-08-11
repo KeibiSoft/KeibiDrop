@@ -33,16 +33,14 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 		return
 	}
 
-	nodeGen := NewNodeIDGen(isSecond)
-
 	root := &Dir{
-		logger:   fs.logger.New("mount", "root"),
-		Inode:    nodeGen.Generate(),
-		inodeGen: nodeGen,
-		Name:     "",
+		logger: fs.logger.New("mount", "root"),
+		Inode:  0,
+		Name:   "",
 
 		RelativePath:   "/",
 		RealPathOfFile: downloadPath,
+
 		IsLocalPresent: true,
 		PeerLastEdit:   0,
 		Parent:         nil,
@@ -55,13 +53,18 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 
 		fcl:          sync.RWMutex{},
 		FileChildren: make(map[uint64]*File),
-		dcl:          sync.RWMutex{},
-		DirChildren:  make(map[uint64]*Dir),
+
+		dcl:         sync.RWMutex{},
+		DirChildren: make(map[uint64]*Dir),
+
+		adm:       sync.RWMutex{},
+		AllDirMap: make(map[string]*Dir),
+
+		afm:        sync.RWMutex{},
+		AllFileMap: make(map[string]*File),
 	}
 
 	root.Root = root
-
-	fs.logger.Debug("ROOT", "root", root)
 
 	host := winfuse.NewFileSystemHost(root)
 

@@ -3,6 +3,7 @@ package filesystem
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/pkg/xattr"
@@ -86,10 +87,130 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 	err := syscall.Lstat(cleanPath, &stgo)
 	if err != nil {
 		logger.Error("Failed to lstat path", "clean-path", cleanPath, "error-code", int(convertOsErrToSyscallErrno("lstat", err)), "error", err)
-		return int(convertOsErrToSyscallErrno("lstat", err))
+		cerr := convertOsErrToSyscallErrno("lstat", err)
+		// Path not locally present, thus it is present on remote.
+		if -cerr == syscall.ENOENT {
+			d.adm.RLock()
+			dir, ok := d.AllDirMap[path]
+			if ok && dir.stat != nil {
+				copyFusestatFromFusestat(stat, dir.stat)
+				d.adm.RUnlock()
+				return 0
+			}
+			d.adm.RUnlock()
+
+			d.afm.RLock()
+			f, ok := d.AllFileMap[path]
+			if ok && f.stat != nil {
+				copyFusestatFromFusestat(stat, f.stat)
+				d.afm.RUnlock()
+				return 0
+			}
+			d.afm.RUnlock()
+		}
+		return int(cerr)
 	}
 
+	// Note: We do not use Lampert timestamps, last edit wins.
+
 	copyFusestatFromGostat(stat, &stgo)
+	gtAtim := func(fst, snd winfuse.Timespec) bool {
+		return fst.Time().After(snd.Time())
+	}
+
+	found := false
+
+	d.adm.RLock()
+	dir, ok := d.AllDirMap[path]
+	if ok && dir.stat != nil && gtAtim(dir.stat.Mtim, stat.Mtim) {
+		copyFusestatFromFusestat(stat, dir.stat)
+	}
+	if ok && dir.stat != nil && !gtAtim(dir.stat.Mtim, stat.Mtim) {
+		copyFusestatFromFusestat(stat, dir.stat)
+		dir.NotifyPeer()
+	}
+	if ok {
+		found = ok
+	}
+	d.adm.RUnlock()
+
+	d.afm.RLock()
+	f, ok := d.AllFileMap[path]
+	if ok && f.stat != nil && gtAtim(f.stat.Mtim, stat.Mtim) {
+		copyFusestatFromFusestat(stat, f.stat)
+	}
+	if ok && f.stat != nil && !gtAtim(f.stat.Mtim, stat.Mtim) {
+		copyFusestatFromFusestat(f.stat, stat)
+		f.NotifyPeer()
+	}
+	if ok {
+		found = ok
+	}
+	d.afm.RUnlock()
+
+	// TODO: Sigh, refactor later.
+
+	// File not found in tree.
+
+	// In an ideal world: do not stat again :<.
+	finfo, err := os.Stat(cleanPath)
+	if err != nil {
+		logger.Error("Failed to determine if dir or file", "error", "error")
+		return int(convertOsErrToSyscallErrno("stat", err))
+	}
+
+	if !found {
+		if finfo.IsDir() {
+			dir := &Dir{
+				logger:              logger,
+				fcl:                 sync.RWMutex{},
+				dcl:                 sync.RWMutex{},
+				adm:                 sync.RWMutex{},
+				afm:                 sync.RWMutex{},
+				Inode:               stat.Ino,
+				RelativePath:        path,
+				LocalDownloadFolder: cleanPath, // Maybe remove the last segment?
+				IsLocalPresent:      true,
+				Root:                d,
+				OpenFileHandlers:    make(map[uint64]*File),
+				OpenMapLock:         sync.RWMutex{},
+				PeerLastEdit:        0,
+				FileChildren:        make(map[uint64]*File),
+				DirChildren:         make(map[uint64]*Dir),
+				AllDirMap:           make(map[string]*Dir),
+				AllFileMap:          make(map[string]*File),
+				stat:                &winfuse.Stat_t{},
+			}
+			copyFusestatFromFusestat(dir.stat, stat)
+			d.adm.Lock()
+			d.AllDirMap[path] = dir
+			d.adm.Unlock()
+
+			dir.NotifyPeer()
+		} else {
+			f := &File{
+				logger:          logger,
+				Inode:           stat.Ino,
+				RelativePath:    path,
+				RealPathOfFile:  cleanPath,
+				IsLocalPresent:  true,
+				Root:            d,
+				PeerLastEdit:    0,
+				openFileCounter: OpenFileCounter{},
+				Name:            "TODO", // Maybe not needed.
+				stat:            &winfuse.Stat_t{},
+			}
+			copyFusestatFromFusestat(f.stat, stat)
+
+			d.afm.Lock()
+			d.AllFileMap[path] = f
+			d.afm.Unlock()
+
+			f.NotifyPeer()
+		}
+
+	}
+
 	return 0
 }
 
