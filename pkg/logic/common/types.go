@@ -26,7 +26,7 @@ type KeibiDrop struct {
 }
 
 // Factory-style constructor
-func NewKeibiDrop(logger log15.Logger, relayURL *url.URL, inboundPort int) (*KeibiDrop, error) {
+func NewKeibiDrop(logger log15.Logger, relayURL *url.URL, inboundPort int, defaultOutboundPort int) (*KeibiDrop, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}

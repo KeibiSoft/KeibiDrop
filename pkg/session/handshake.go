@@ -131,7 +131,7 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 		Fingerprint:  session.ExpectedPeerFingerprint,
 		PublicKeys:   pubKeys,
 		EncSeeds:     encSeeds,
-		OutboundPort: config.OutboundPort,
+		OutboundPort: session.DefaultOutboundPort,
 	}
 
 	if err := json.NewEncoder(conn).Encode(msg); err != nil {

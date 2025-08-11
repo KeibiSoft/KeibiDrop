@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
@@ -13,6 +14,10 @@ import (
 	"github.com/fatih/color"
 	"github.com/inconshreveable/log15"
 )
+
+const KEIBIDROP_RELAY_ENV = "KEIBIDROP_RELAY"
+const INBOUND_PORT_ENV = "INBOUND_PORT"
+const OUTBOUND_PORT_ENV = "OUTBOUND_PORT"
 
 type cliContext struct {
 	kd *common.KeibiDrop
@@ -26,7 +31,7 @@ func getenv(key, fallback string) string {
 }
 
 func initRelay() *url.URL {
-	relayURL := getenv("KEIBIDROP_RELAY", "https://keibidroprelay.keibisoft.com")
+	relayURL := getenv(KEIBIDROP_RELAY_ENV, "https://keibidroprelay.keibisoft.com")
 	parsedURL, err := url.Parse(relayURL)
 	if err != nil {
 		log.Fatalf("invalid KEIBIDROP_RELAY URL: %v", err)
@@ -232,7 +237,27 @@ func main() {
 	relayURL := initRelay()
 	logger := log15.New("component", "cli")
 
-	kd, err := common.NewKeibiDrop(logger, relayURL, config.InboundPort)
+	inboundStr := os.Getenv(INBOUND_PORT_ENV)
+	outboundStr := os.Getenv(OUTBOUND_PORT_ENV)
+	inbound := config.InboundPort
+	if inboundStr != "" {
+		inPort, err := strconv.Atoi(inboundStr)
+		if err != nil {
+			logger.Error("Invalid inbound port", "provided", inboundStr)
+			os.Exit(1)
+		}
+		inbound = inPort
+	}
+	outbound := config.OutboundPort
+	if outboundStr != "" {
+		outPort, err := strconv.Atoi(outboundStr)
+		if err != nil {
+			logger.Error("Invalid outbound port", "provided", outboundStr)
+			os.Exit(1)
+		}
+		outbound = outPort
+	}
+	kd, err := common.NewKeibiDrop(logger, relayURL, inbound, outbound)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		os.Exit(1)
