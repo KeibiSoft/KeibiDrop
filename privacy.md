@@ -1,4 +1,4 @@
-# Privacy Policy – KeibiDrop Client
+# Privacy Policy - KeibiDrop Client
 
 Last updated: 10.05.2025
 
@@ -14,7 +14,7 @@ We do not receive or track what you do in the client. You're on your own out the
 
 ---
 
-## 2. End-to-End Encryption
+## 2. End-to-End Encryption (at transport level)
 
 All file transfers are **end-to-end encrypted** between the sender and recipient using modern cryptography (including post-quantum algorithms, where applicable). Only the recipient can decrypt the content.
 
