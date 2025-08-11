@@ -1,10 +1,10 @@
-# Secure Ephemeral File Transfer - Protocol Security Design (v0)
+# Secure Synchronous File Transfer - Protocol Security Design (v0)
 
 This document describes the current cryptographic design and security architecture implemented in the project as of version 0.
 
 ## Overview
 
-The system establishes a **post-quantum resilient, ephemeral, peer-to-peer encrypted file transfer protocol** between two parties (e.g., Alice and Bob) using a hybrid asymmetric key exchange and symmetric encryption.
+The system establishes a **synchronous, peer-to-peer post-quantum resilient file transfer** between two parties (e.g., Alice and Bob) using a hybrid asymmetric key exchange and symmetric encryption.
 
 ## Threat Model
 
