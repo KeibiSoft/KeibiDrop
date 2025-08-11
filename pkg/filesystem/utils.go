@@ -19,5 +19,6 @@ func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 		return syscall.EIO
 	}
 
-	return targetErr
+	// cgoFuse uses -errno
+	return -targetErr
 }
