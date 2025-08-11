@@ -1,6 +1,6 @@
 # Privacy Policy - KeibiDrop Client
 
-Last updated: 10.05.2025
+Last updated: 11.08.2025
 
 KeibiDrop is an open-source peer-to-peer file sharing client developed by **KeibiSoft SRL**. This document outlines the privacy expectations for users of the KeibiDrop client and its default relay infrastructure.
 
@@ -34,7 +34,7 @@ If you use this default relay:
   - Top IPs by request count
   - Country of origin (based on IP geolocation)
 
-This data is not linked to personal identity and is **not shared or sold**. It exists so we can keep the service from turning into a spam tunnel.
+This data is not linked to personal identity and is **not shared or sold**. It exists so we can score `brownie points` and to protect against spam.
 
 If you don’t like this, you’re free to run your own relay or use a trusted one of your choosing.
 
@@ -42,7 +42,7 @@ If you don’t like this, you’re free to run your own relay or use a trusted o
 
 ## 4. No Centralized Logging (Client)
 
-The client itself does not connect to or report back to KeibiSoft. We don’t want your data, and we don’t want to be responsible for it.
+The client itself does not send logging nor file data to KeibiSoft. We don’t want to be responsible for it.
 
 ---
 
