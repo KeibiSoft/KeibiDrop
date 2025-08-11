@@ -29,7 +29,7 @@ This project was developed with prior experience in the relevant technologies an
 To accelerate development and ship faster, we made extensive use of **GPT-4o (in Monday mode)** for brainstorming, scaffolding, drafting code, and scoring some dopamine kicks while developing.
 Every line was reviewed, corrected, and adapted by us, with multiple rounds of validation to ensure accuracy and quality.
 
-This would not have been possible without the **technical knowledge** We’ve gained without relying on AI and the ability to critically evaluate and refine its output.
+This would not have been possible without the **technical knowledge** we’ve gained without relying on AI and the ability to critically evaluate and refine its output.
 
 ---
 
@@ -73,7 +73,7 @@ KeibiDrop uses **direct P2P communication over IPv6**. This simplifies connectio
 - Both peers must have **globally routable IPv6 addresses**.
 - Both peers must be able to **accept inbound TCP connections** on the advertised port.
 - **Firewalls must allow these inbound connections**. (Check your router and OS firewall.)
-- **NAT traversal is not supported** — KeibiDrop does **not** use STUN, TURN, or UPnP.
+- **NAT traversal is not supported** - KeibiDrop does **not** use STUN, TURN, or UPnP.
 
 > If your system is not reachable via IPv6, KeibiDrop will not work.  
 > You can test your IPv6 connectivity at: [https://test-ipv6.com](https://test-ipv6.com)
@@ -87,6 +87,7 @@ This approach avoids leaking IP metadata to third-party STUN servers, aligning w
 ```md
 cmd/ # Main entry point
 pkg/crypto/ # Cryptographic primitives
+pkg/filesystem # FUSE filesystem
 go.mod # Module definition
 go.sum # Dependencies
 Security.md # Protocol-level cryptographic design
