@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/inconshreveable/log15"
+	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
 // The plan is like this:
@@ -25,9 +26,8 @@ import (
 type Dir struct {
 	logger log15.Logger
 
-	inodeGen NodeIDGen
-	Inode    uint64 `json:"inode"` // Inodes must be unique and not re-used.
-	Name     string `json:"name"`
+	Inode uint64 `json:"inode"` // Inodes must be unique and not re-used.
+	Name  string `json:"name"`
 
 	RelativePath   string `json:"relativePath"`      // Relative (to root) path in the mounted filesystem.
 	RealPathOfFile string `json:"pathOnLocalSystem"` // The Path on the local system.
@@ -48,18 +48,29 @@ type Dir struct {
 
 	DirChildren map[uint64]*Dir // {Inode: *Dir}
 	dcl         sync.RWMutex
+
+	adm       sync.RWMutex
+	AllDirMap map[string]*Dir
+
+	afm        sync.RWMutex
+	AllFileMap map[string]*File
+
+	stat *winfuse.Stat_t
+}
+
+func (d *Dir) NotifyPeer() {
+	d.logger.Warn("TODO")
 }
 
 type File struct {
 	logger log15.Logger
 
-	inodeGen NodeIDGen
-
 	Inode uint64 `json:"inode"` // Inodes must be unique and not re-used.
 	Name  string `json:"name"`
 
-	RelativePath   string `json:"relativePath"`      // Relative (to root) path in the mounted filesystem.
-	RealPathOfFile string `json:"pathOnLocalSystem"` // The Path on the local system.
+	RelativePath string `json:"relativePath"` // Relative (to root) path in the mounted filesystem.
+
+	RealPathOfFile string // The Path on the local system.
 
 	Parent *Dir
 	Root   *Dir
@@ -71,16 +82,11 @@ type File struct {
 	IsLocalPresent bool   `json:"isLocalPresent"`
 
 	openFileCounter OpenFileCounter
+
+	stat *winfuse.Stat_t
 }
 
-// Inodes must be unique.
-// But we have a shared filesystem between two people.
-// We shift left Bobs initial state.
-// Note that root is always 0 for both Alice and Bob.
-type NodeIDGen struct {
-	mu    *sync.Mutex
-	state *uint64
-}
+func (f *File) NotifyPeer() {}
 
 // Use it as a singleton only when setting up the filesystem.
 // (In the mount command).
@@ -88,27 +94,6 @@ type NodeIDGen struct {
 // is to not have package global var, just a
 // call chain of functions from the entrypoint of
 // the program.
-
-func NewNodeIDGen(isSecond bool) NodeIDGen {
-	mu := sync.Mutex{}
-	st := uint64(0)
-	/*
-		if isSecond {
-			st = st << 16
-		}
-	*/
-	return NodeIDGen{
-		mu:    &mu,
-		state: &st,
-	}
-}
-
-func (n *NodeIDGen) Generate() uint64 {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	*n.state++
-	return *n.state
-}
 
 // Create and Open calls must have a corresponding Release call.
 type OpenFileCounter struct {

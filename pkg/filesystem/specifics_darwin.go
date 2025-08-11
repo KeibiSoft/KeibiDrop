@@ -79,6 +79,24 @@ func copyFusestatFromGostat(dst *winfuse.Stat_t, src *syscall.Stat_t) {
 	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtimespec.Sec, src.Birthtimespec.Nsec
 }
 
+func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
+	*dst = winfuse.Stat_t{}
+	dst.Dev = src.Dev
+	dst.Ino = src.Ino
+	dst.Mode = src.Mode
+	dst.Nlink = src.Nlink
+	dst.Uid = src.Uid
+	dst.Gid = src.Gid
+	dst.Rdev = src.Rdev
+	dst.Size = src.Size
+	dst.Atim.Sec, dst.Atim.Nsec = src.Atim.Sec, src.Atim.Nsec
+	dst.Mtim.Sec, dst.Mtim.Nsec = src.Mtim.Sec, src.Mtim.Nsec
+	dst.Ctim.Sec, dst.Ctim.Nsec = src.Ctim.Sec, src.Ctim.Nsec
+	dst.Blksize = src.Blksize
+	dst.Blocks = src.Blocks
+	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtim.Sec, src.Birthtim.Nsec
+}
+
 func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
 	return syscall.Statfs(path, stat)
 }
