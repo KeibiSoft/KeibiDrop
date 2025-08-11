@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/inconshreveable/log15"
@@ -27,17 +28,21 @@ func NewFS(logger log15.Logger) *FS {
 
 func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 	cleanMountPoint := filepath.Clean(mountPoint)
+	pt := strings.Split(cleanMountPoint, "/")
+	if len(pt) < 1 {
+		return
+	}
 
 	nodeGen := NewNodeIDGen(isSecond)
 
 	root := &Dir{
 		logger:   fs.logger.New("mount", "root"),
-		Inode:    0,
+		Inode:    nodeGen.Generate(),
 		inodeGen: nodeGen,
-		Name:     cleanMountPoint,
+		Name:     "",
 
 		RelativePath:   "/",
-		RealPathOfFile: "",
+		RealPathOfFile: downloadPath,
 		IsLocalPresent: true,
 		PeerLastEdit:   0,
 		Parent:         nil,
@@ -56,10 +61,18 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 
 	root.Root = root
 
+	fs.logger.Debug("ROOT", "root", root)
+
 	host := winfuse.NewFileSystemHost(root)
+
+	// I think this is windows specific.
+	host.SetCapReaddirPlus(true)
+	// Fuse3 only.
+	host.SetUseIno(true)
 
 	fs.host = host
 
+	// opts := []string{"volname=KeibiDrop", "local"}
 	fs.host.Mount(cleanMountPoint, nil)
 }
 

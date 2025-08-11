@@ -91,11 +91,12 @@ type NodeIDGen struct {
 
 func NewNodeIDGen(isSecond bool) NodeIDGen {
 	mu := sync.Mutex{}
-	st := uint64(1)
-	if isSecond {
-		st = st << 32
-	}
-
+	st := uint64(0)
+	/*
+		if isSecond {
+			st = st << 16
+		}
+	*/
 	return NodeIDGen{
 		mu:    &mu,
 		state: &st,
