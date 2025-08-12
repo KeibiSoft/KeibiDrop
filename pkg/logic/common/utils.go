@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
@@ -40,7 +41,19 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		Timestamp:  time.Now().UnixNano(),
 	}
 
-	resp, err := PostJSONWithURL(kd.relayClient, kd.RelayEndoint, map[string]string{"Authorization": "Bearer " + ownFp}, peerReg, RegisterErrorMapper)
+	path, err := url.JoinPath(kd.RelayEndoint.String(), "register")
+	if err != nil {
+		logger.Error("Failed to add register path", "error", err)
+		return err
+	}
+
+	registerUrl, err := url.Parse(path)
+	if err != nil {
+		logger.Error("Failed to parse url", "error", err)
+		return err
+	}
+
+	resp, err := PostJSONWithURL(kd.relayClient, registerUrl, map[string]string{"Authorization": "Bearer " + ownFp}, peerReg, RegisterErrorMapper)
 	if err != nil {
 		logger.Error("Failed to register", "error", err)
 		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
@@ -59,9 +72,6 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 
 	_ = resp.Body.Close()
 
-	// A1 digital
-	// Aiven - Database as a service
-
 	logger.Info("Success")
 
 	return nil
@@ -74,9 +84,21 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		return ErrNilPointer
 	}
 
-	resp, err := GetJSONWithURL(kd.relayClient, kd.RelayEndoint, map[string]string{"Authorization": "Bearer " + outOfBandFingerPrint}, RegisterErrorMapper)
+	path, err := url.JoinPath(kd.RelayEndoint.String(), "fetch")
 	if err != nil {
-		logger.Error("Failed to register", "error", err)
+		logger.Error("Failed to add fetch path", "error", err)
+		return err
+	}
+
+	fetchUrl, err := url.Parse(path)
+	if err != nil {
+		logger.Error("Failed to parse url", "error", err)
+		return err
+	}
+
+	resp, err := GetJSONWithURL(kd.relayClient, fetchUrl, map[string]string{"Authorization": "Bearer " + outOfBandFingerPrint}, RegisterErrorMapper)
+	if err != nil {
+		logger.Error("Failed to fetch", "error", err)
 		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
 		return err
 	}
