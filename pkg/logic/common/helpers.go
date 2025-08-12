@@ -62,6 +62,9 @@ func PostJSONWithURL(client *http.Client, endpoint *url.URL, headers map[string]
 		return nil, mapError(0, fmt.Errorf("failed to create POST request: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for h, b := range headers {
+		req.Header.Set(h, b)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {

@@ -31,7 +31,7 @@ func NewKeibiDrop(logger log15.Logger, relayURL *url.URL, inboundPort int, defau
 		Timeout: 10 * time.Second,
 	}
 
-	session, err := session.InitSession(logger)
+	session, err := session.InitSession(logger, defaultOutboundPort)
 	if err != nil {
 		logger.Error("Failed to init session", "error", err)
 		return nil, err
