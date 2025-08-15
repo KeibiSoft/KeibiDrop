@@ -4,7 +4,6 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"time"
 
@@ -57,12 +56,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		return fmt.Errorf("fingerprint computation failed: %w", err)
 	}
 
-	if subtle.ConstantTimeCompare([]byte(computed), []byte(session.ExpectedPeerFingerprint)) == 0 {
-		logger.Error("Fingerprint missmatch")
-		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computed, session.ExpectedPeerFingerprint)
-	}
-
-	if subtle.ConstantTimeCompare([]byte(msg.Fingerprint), []byte(session.ExpectedPeerFingerprint)) == 0 {
+	if subtle.ConstantTimeCompare([]byte(computed), []byte(session.ExpectedPeerFingerprint)) != 1 {
 		logger.Error("Fingerprint missmatch")
 		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computed, session.ExpectedPeerFingerprint)
 	}
@@ -76,13 +70,16 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	session.PeerPort = msg.OutboundPort
 
 	// Wait for user to confirm out-of-band fingerprint
-	logger.Info("Peer fingerprint verified, awaiting user confirmation")
-	// In real UI, this would be blocking for user approval
-	if err := session.Transition(SessionStateVerified); err != nil {
-		logger.Error("Failed to transition session state", "error", err)
-		return err
-	}
+	logger.Info("Peer fingerprint verified, awaiting user confirmation", "peer-port", session.PeerPort)
 
+	// TODO: Uncomment this and get permission from User.
+	/*
+		// In real UI, this would be blocking for user approval
+		if err := session.Transition(SessionStateVerified); err != nil {
+			logger.Error("Failed to transition session state", "error", err)
+			return err
+		}
+	*/
 	return nil
 }
 
@@ -131,7 +128,7 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 		Fingerprint:  session.ExpectedPeerFingerprint,
 		PublicKeys:   pubKeys,
 		EncSeeds:     encSeeds,
-		OutboundPort: session.DefaultOutboundPort,
+		OutboundPort: session.DefaultInboundPort,
 	}
 
 	if err := json.NewEncoder(conn).Encode(msg); err != nil {
@@ -140,18 +137,25 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}
 
-	// Await confirmation from Bob that he's happy
-	ack := make([]byte, 2)
-	if _, err := io.ReadFull(conn, ack); err != nil || string(ack) != "OK" {
-		_ = conn.Close()
-		logger.Error("Did not receive 'OK' from peer", "got", string(ack), "error", err)
-		return fmt.Errorf("handshake rejected or invalid response")
-	}
+	// TODO: Review the commented out code.
+	/*
+		// Await confirmation from Bob that he's happy
+		ack := make([]byte, 2)
+		if _, err := io.ReadFull(conn, ack); err != nil || string(ack) != "OK" {
+			_ = conn.Close()
+			logger.Error("Did not receive 'OK' from peer", "got", string(ack), "error", err)
+			return fmt.Errorf("handshake rejected or invalid response")
+		}
 
+
+	*/
 	logger.Info("Peer confirmed handshake upgrading to encrypted connection")
 
 	// Upgrade to SecureConn
 	secure := NewSecureConn(conn, session.SEKOutbound)
+	if session.Session == nil {
+		session.Session = &SessionSockets{}
+	}
 	session.Session.Outbound = secure
 
 	return nil
@@ -214,15 +218,18 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 
 	// === Step 4: Upgrade connection to SecureConn ===
 	secure := NewSecureConn(conn, sek)
-	session.Session = &SessionSockets{
-		Inbound: secure,
+	if session.Session == nil {
+		session.Session = &SessionSockets{}
 	}
+	session.Session.Inbound = secure
 
-	// === Step 5: Transition to connected state ===
-	if err := session.Transition(SessionStateConnected); err != nil {
-		return fmt.Errorf("failed to transition to connected state: %w", err)
-	}
-
+	// TODO: Uncomment this and do the transition.
+	/*
+		// === Step 5: Transition to connected state ===
+		if err := session.Transition(SessionStateConnected); err != nil {
+			return fmt.Errorf("failed to transition to connected state: %w", err)
+		}
+	*/
 	logger.Info("Inbound session finalized and secured")
 
 	return nil

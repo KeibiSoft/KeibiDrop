@@ -4,7 +4,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -113,16 +112,9 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	}
 
 	peerReg := &PeerRegistration{}
-	res := []byte{}
-	_, err = io.ReadFull(resp.Body, res)
-	if err != nil {
-		logger.Error("Failed to get response", "error", err)
-		return err
-	}
 
-	err = json.Unmarshal(res, peerReg)
-	if err != nil {
-		logger.Error("Failed to unmarshal the response", "error", err)
+	if err := json.NewDecoder(resp.Body).Decode(peerReg); err != nil {
+		logger.Error("Failed to decode JSON", "error", err)
 		return err
 	}
 

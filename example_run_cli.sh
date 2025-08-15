@@ -1,0 +1,1 @@
+KEIBIDROP_RELAY="http://0.0.0.0:54321" INBOUND_PORT=26001 OUTBOUND_PORT=26002 go run cmd/cli/keibidrop-cli.go

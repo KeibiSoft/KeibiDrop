@@ -40,6 +40,7 @@ type Session struct {
 	PeerPort int
 
 	DefaultOutboundPort int
+	DefaultInboundPort  int
 
 	GRPCListener net.Listener
 	GRPCClient   bindings.KeibiServiceClient
@@ -56,7 +57,7 @@ type Session struct {
 	logger log15.Logger
 }
 
-func InitSession(logger log15.Logger, defaultOutboundPort int) (*Session, error) {
+func InitSession(logger log15.Logger, defaultOutboundPort int, defaultInboundPort int) (*Session, error) {
 	logger = logger.New("service", "session")
 	kemDecapsulate, kemEncapsulate, err := kbc.GenerateMLKEMKeypair()
 	if err != nil {
@@ -89,6 +90,7 @@ func InitSession(logger log15.Logger, defaultOutboundPort int) (*Session, error)
 		OwnFingerprint:      ownFingerprint,
 		State:               SessionInit,
 		DefaultOutboundPort: defaultOutboundPort,
+		DefaultInboundPort:  defaultInboundPort,
 	}, nil
 }
 
