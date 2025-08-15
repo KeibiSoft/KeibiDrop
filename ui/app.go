@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"strconv"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
@@ -21,16 +22,43 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+const KEIBIDROP_RELAY_ENV = "KEIBIDROP_RELAY"
+const INBOUND_PORT_ENV = "INBOUND_PORT"
+const OUTBOUND_PORT_ENV = "OUTBOUND_PORT"
+
 func Launch(logger log15.Logger) {
-	relay := getenv("KEIBIDROP_RELAY", "https://keibidroprelay.keibisoft.com")
+	relay := getenv(KEIBIDROP_RELAY_ENV, "https://keibidroprelay.keibisoft.com")
 	relayURL, err := url.Parse(relay)
 	if err != nil {
-		log.Fatalf("Invalid KEIBIDROP_RELAY: %v", err)
+		logger.Error("Failed to parse relay endpoint", "error", err)
+		os.Exit(1)
 	}
 
-	kd, err := common.NewKeibiDrop(logger, relayURL, config.InboundPort)
+	inboundStr := os.Getenv(INBOUND_PORT_ENV)
+	outboundStr := os.Getenv(OUTBOUND_PORT_ENV)
+	inbound := config.InboundPort
+	if inboundStr != "" {
+		inPort, err := strconv.Atoi(inboundStr)
+		if err != nil {
+			logger.Error("Invalid inbound port", "provided", inboundStr)
+			os.Exit(1)
+		}
+		inbound = inPort
+	}
+	outbound := config.OutboundPort
+	if outboundStr != "" {
+		outPort, err := strconv.Atoi(outboundStr)
+		if err != nil {
+			logger.Error("Invalid outbound port", "provided", outboundStr)
+			os.Exit(1)
+		}
+		outbound = outPort
+	}
+
+	kd, err := common.NewKeibiDrop(logger, relayURL, inbound, outbound)
 	if err != nil {
-		log.Fatalf("Failed to start keibidrop: %v", err)
+		logger.Error("Failed to create new Keibi Drop client", "error", err)
+		os.Exit(1)
 	}
 
 	a := app.New()
@@ -39,14 +67,14 @@ func Launch(logger log15.Logger) {
 	logoFile, err := os.Open("assets/logo.png")
 	if err != nil {
 		log.Printf("failed to open logo file: %v", err)
-		return
+		os.Exit(2)
 	}
 	defer func() { _ = logoFile.Close() }()
 
 	img, err := png.Decode(logoFile)
 	if err != nil {
 		log.Printf("failed to decode logo image: %v", err)
-		return
+		os.Exit(2)
 	}
 
 	logo := canvas.NewImageFromImage(img)
@@ -67,9 +95,9 @@ func Launch(logger log15.Logger) {
 	startBtn := widget.NewButton("Start Session (Alice)", func() {
 		err := kd.CreateRoom()
 		if err != nil {
-			log.Println("Failed to create room:", err)
+			logger.Error("Failed to create room", "error", err)
 		} else {
-			log.Println("Room created successfully.")
+			logger.Info("Room created successfully")
 		}
 	})
 
@@ -80,9 +108,9 @@ func Launch(logger log15.Logger) {
 		confirm := widget.NewButton("Join", func() {
 			err := kd.JoinRoom(input.Text)
 			if err != nil {
-				log.Println("Failed to join room:", err)
+				logger.Error("Failed to join room", "error", err)
 			} else {
-				log.Println("Joined room successfully.")
+				logger.Info("Joined room successfully")
 			}
 		})
 

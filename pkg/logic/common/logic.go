@@ -142,14 +142,14 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 
 	// This is the "Bob" flow
 
-	sec := 0
+	elapsed := 0
 	for {
-		if sec >= Timeout {
+		if elapsed >= Timeout {
 			logger.Error("Timeout reached", "error", ErrTimeoutReached)
 			return ErrTimeoutReached
 		}
 		if kd.session.ExpectedPeerFingerprint == "" {
-			sec++
+			elapsed++
 			time.Sleep(time.Second)
 			continue
 		}
@@ -247,12 +247,10 @@ func (kd *KeibiDrop) connectGRPCClient() error {
 }
 
 func (kd *KeibiDrop) startGRPCServer() error {
-	listener := kd.session.GRPCListener
-	if listener == nil {
-		return fmt.Errorf("GRPCListener not initialized in session")
-	}
+	kd.session.GRPCListener = kd.session.Session.Inbound
 
 	grpcServer := grpc.NewServer()
+
 	bindings.RegisterKeibiServiceServer(grpcServer, &service.KeibidropServiceImpl{
 		Session: kd.session,
 		Logger:  kd.logger.New("component", "keibidrop-server"),
@@ -260,7 +258,8 @@ func (kd *KeibiDrop) startGRPCServer() error {
 
 	go func() {
 		kd.logger.Info("Starting gRPC server...")
-		if err := grpcServer.Serve(listener); err != nil {
+
+		if err := grpcServer.Serve(kd.session.GRPCListener); err != nil {
 			kd.logger.Error("gRPC server exited with error", "err", err)
 		}
 	}()

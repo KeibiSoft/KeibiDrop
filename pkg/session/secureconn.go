@@ -82,6 +82,7 @@ type SecureConn struct {
 	w    *SecureWriter
 
 	readBuf *bytes.Buffer
+	done    bool
 }
 
 func NewSecureConn(conn net.Conn, kek []byte) *SecureConn {
@@ -106,6 +107,7 @@ func (s *SecureConn) WriteMessage(msg []byte) error {
 
 // Close closes the underlying connection.
 func (s *SecureConn) Close() error {
+	s.done = true
 	return s.conn.Close()
 }
 
@@ -156,4 +158,15 @@ func (s *SecureConn) SetReadDeadline(t time.Time) error {
 
 func (s *SecureConn) SetWriteDeadline(t time.Time) error {
 	return s.conn.SetWriteDeadline(t)
+}
+
+func (s *SecureConn) Accept() (net.Conn, error) {
+	if s.done {
+		return nil, io.EOF
+	}
+	return s.conn, nil
+}
+
+func (l *SecureConn) Addr() net.Addr {
+	return l.conn.LocalAddr()
 }
