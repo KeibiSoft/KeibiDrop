@@ -34,12 +34,19 @@ We used **GPT-4o (in Monday mode)** for dopamine kicks, memes, and to generate s
 We gained the knowledge in this space without relying on ~AI~ sycophancy.
 
 The first version has some red flags:
-1. There is no session key renegotiation (meaning: send too many files, and encryption becomes usless)
+1. There is no session key renegotiation (meaning: send too many files, and the encryption becomes usless)
 2. There is no file transfer resume on lost connection.
+3. I did not make use of any TPM or such sorts, which means that the private keys and session keys linger in the memory of the machine.
 
 Thus treat it as a functional demo. We plan to maintain it and improve it as resources permit.
 
 > Re-reading all this word soup in the README, makes me think about writing novels inside a code project, where the foot notes live inside the git commit message, the comments provide the narrators voice, and the code the action flow.
+
+### Important
+
+Anonymity breeds unaccountability, thus it is easy to do bad things and hurt people, only use this tool with recipients you know, as otherwise any files that you transfer might harm you and those around you.
+
+The idea of this tool is to allow you to be anonymous to third parties. In theory there is no need for the relay server for the key-exchange and establishing the session, but I did not implement it "that way" in order to reduce the payload shared out-of-bound, and because I am curious how many people are using the service through the relay. I might add it in the future if there is interest.
 
 ---
 
@@ -47,8 +54,8 @@ Thus treat it as a functional demo. We plan to maintain it and improve it as res
 
 This project was loosely inspired by:
 
-- [croc](https://github.com/schollz/croc) – for its clean approach to secure, peer-to-peer transfers
-- [rclone](https://rclone.org/) – for the general concept of mapping cloud storage to local workflows
+- [croc](https://github.com/schollz/croc) - for its clean approach to secure, peer-to-peer transfers
+- [rclone](https://rclone.org/) - for the general concept of mapping cloud storage to local workflows
 
 I haven’t used these tools directly, but I liked the ideas they explored and wanted to build something in that direction, using my own design and implementation.
 
@@ -58,19 +65,22 @@ I haven’t used these tools directly, but I liked the ideas they explored and w
 
 - Post-quantum hybrid key exchange using ML-KEM-1024 and X25519
 - ChaCha20-Poly1305 symmetric encryption
-- Encrypted streaming with chunked transfer
 - Deterministic fingerprint verification
 - No persistent metadata or tracking
 - Designed for use over untrusted relays
+- Mountable filesystem with data transfer on access
 
 ---
 
 ## ⚠️ Requirements
 
+- **All platforms**: [go 1.24](tip.golang.org/doc/go1.24)
+- **All platforms**: Requires `cgo` (due to `cgofuse` from WinFsp)
+
 - **macOS**: [macFUSE](https://macfuse.github.io/)
 - **Windows**: [WinFsp](https://winfsp.dev/)
 - **Linux**: fuse3 (usually preinstalled)
-- **All platforms**: Requires `cgo` (due to `cgofuse` from WinFsp)
+
 
 ---
 
