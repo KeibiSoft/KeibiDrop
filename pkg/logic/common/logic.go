@@ -258,7 +258,6 @@ func (kd *KeibiDrop) startGRPCServer() error {
 
 	go func() {
 		kd.logger.Info("Starting gRPC server...")
-
 		if err := grpcServer.Serve(kd.session.GRPCListener); err != nil {
 			kd.logger.Error("gRPC server exited with error", "err", err)
 		}

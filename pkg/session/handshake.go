@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
+	"github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
@@ -69,6 +70,48 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	session.PeerPubKeys = peerKeys
 	session.PeerPort = msg.OutboundPort
 
+	seed1tr, ok := msg.EncSeeds["x25519"]
+	if !ok {
+		logger.Warn("Missing x25519 seed")
+		return fmt.Errorf("Invalid payload")
+	}
+	seed2Str, ok := msg.EncSeeds["mlkem"]
+	if !ok {
+		logger.Warn("Missing mlkem seed")
+		return fmt.Errorf("Invalid payload")
+	}
+
+	seed1Bytes, err := decodeBase64(seed1tr)
+	if err != nil {
+		logger.Error("Failed to base64 decode seed1", "error", err)
+		return err
+	}
+	seed2Bytes, err := decodeBase64(seed2Str)
+	if err != nil {
+		logger.Error("Faield to base64 decode seed2", "error", err)
+		return err
+	}
+
+	seed1, err := crypto.X25519Decapsulate(seed1Bytes, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
+	if err != nil {
+		logger.Error("Failed to decapsulate x2551 seed1", "error", err)
+		return err
+	}
+
+	seed2, err := session.OwnKeys.MlKemPrivate.Decapsulate(seed2Bytes)
+	if err != nil {
+		logger.Error("Failed to decapsulate mlkem seed2", "error", err)
+		return err
+	}
+
+	inboundKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
+	if err != nil {
+		logger.Error("Failed to derive inbound key", "error", err)
+		return err
+	}
+
+	session.SEKInbound = inboundKey
+
 	// Wait for user to confirm out-of-band fingerprint
 	logger.Info("Peer fingerprint verified, awaiting user confirmation", "peer-port", session.PeerPort)
 
@@ -80,6 +123,14 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 			return err
 		}
 	*/
+
+	// Upgrade to SecureConn
+	secure := NewSecureConn(conn, session.SEKInbound)
+	if session.Session == nil {
+		session.Session = &SessionSockets{}
+	}
+	session.Session.Inbound = secure
+
 	return nil
 }
 
