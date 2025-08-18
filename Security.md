@@ -169,6 +169,7 @@ While that is sufficient for most practical sessions, key rotation is strongly a
 * 🔑 Implement periodic session rekeying for long-lived connections
 * 📈 Track and enforce AEAD usage limits (e.g., max packets or bytes per key)
 * 🔐 Support stream resumption via authenticated key+offset resync
+* 🔄 Change the IPv6 address on session end or re-keying.
 
 ---
 
