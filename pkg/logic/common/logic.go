@@ -3,8 +3,10 @@ package common
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -12,7 +14,6 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -117,17 +118,28 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
-	err = kd.startGRPCServer()
-	if err != nil {
-		logger.Error("Failed to start gRPC server", "error", err)
-		return err
-	}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err = kd.startGRPCServer()
+		if err != nil {
+			logger.Error("Failed to start gRPC server", "error", err)
+		}
+	}()
 
 	err = kd.connectGRPCClient()
 	if err != nil {
 		logger.Error("Failed to start gRPC client", "error", err)
 		return err
 	}
+
+	time.Sleep(time.Second)
+	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})
+	if err != nil {
+		logger.Error("DEBUG", "error", err)
+	}
+	wg.Wait()
 
 	logger.Info("Success")
 	return nil
@@ -180,17 +192,28 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 		return err
 	}
 
-	err = kd.startGRPCServer()
-	if err != nil {
-		logger.Error("Failed to start gRPC server", "error", err)
-		return err
-	}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err = kd.startGRPCServer()
+		if err != nil {
+			logger.Error("Failed to start gRPC server", "error", err)
+		}
+	}()
 
 	err = kd.connectGRPCClient()
 	if err != nil {
 		logger.Error("Failed to start gRPC client", "error", err)
 		return err
 	}
+
+	time.Sleep(time.Second)
+	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})
+	if err != nil {
+		logger.Error("DEBUG", "error", err)
+	}
+	wg.Wait()
 
 	logger.Info("Success", "fingerprint", fp)
 	return nil
@@ -225,7 +248,7 @@ func (kd *KeibiDrop) connectGRPCClient() error {
 	}
 
 	// Create the gRPC client connection
-	conn, err := grpc.NewClient(
+	conn, err := grpc.Dial(
 		"keibipipe", // fake target name, not used by your dialer
 		grpc.WithContextDialer(dialer),
 		grpc.WithTransportCredentials(insecure.NewCredentials()), // you're doing your own encryption
@@ -234,12 +257,14 @@ func (kd *KeibiDrop) connectGRPCClient() error {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
 	}
 
-	// Wait until connection is ready
-	for conn.GetState() != connectivity.Ready {
-		if !conn.WaitForStateChange(context.Background(), conn.GetState()) {
-			return fmt.Errorf("gRPC never reached READY state")
+	/*
+		// Wait until connection is ready
+		for conn.GetState() != connectivity.Ready {
+			if !conn.WaitForStateChange(context.Background(), conn.GetState()) {
+				return fmt.Errorf("gRPC never reached READY state")
+			}
 		}
-	}
+	*/
 
 	// Store the typed client
 	kd.session.GRPCClient = bindings.NewKeibiServiceClient(conn)
@@ -251,17 +276,65 @@ func (kd *KeibiDrop) startGRPCServer() error {
 
 	grpcServer := grpc.NewServer()
 
+	ln := NewSingleConnListener(kd.session.Session.Inbound)
+
 	bindings.RegisterKeibiServiceServer(grpcServer, &service.KeibidropServiceImpl{
 		Session: kd.session,
 		Logger:  kd.logger.New("component", "keibidrop-server"),
 	})
 
-	go func() {
-		kd.logger.Info("Starting gRPC server...")
-		if err := grpcServer.Serve(kd.session.GRPCListener); err != nil {
-			kd.logger.Error("gRPC server exited with error", "err", err)
-		}
-	}()
+	kd.logger.Info("Starting gRPC server...")
+	if err := grpcServer.Serve(ln); err != nil {
+		kd.logger.Error("gRPC server exited with error", "err", err)
+	}
 
 	return nil
+}
+
+type singleConnListener struct {
+	conn   net.Conn
+	done   chan struct{}
+	inUse  bool
+	closed chan struct{}
+}
+
+func NewSingleConnListener(conn net.Conn) net.Listener {
+	return &singleConnListener{
+		conn:   conn,
+		done:   make(chan struct{}),
+		closed: make(chan struct{}),
+		inUse:  false,
+	}
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	select {
+	case <-l.done:
+		return nil, io.EOF
+	default:
+		if l.inUse {
+			<-l.closed
+			return nil, nil
+		}
+		l.inUse = true
+		conn := l.conn
+		l.conn = nil
+		return conn, nil
+	}
+}
+
+func (l *singleConnListener) Close() error {
+	if l.conn != nil {
+		close(l.closed)
+		close(l.done)
+		return l.conn.Close()
+	}
+	return nil
+}
+
+func (l *singleConnListener) Addr() net.Addr {
+	if l.conn != nil {
+		return l.conn.LocalAddr()
+	}
+	return &net.TCPAddr{IP: net.IPv6loopback, Port: 0}
 }

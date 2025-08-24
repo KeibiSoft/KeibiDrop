@@ -46,7 +46,7 @@ Thus treat it as a functional demo. We plan to maintain it and improve it as res
 
 Anonymity breeds unaccountability, thus it is easy to do bad things and hurt people, only use this tool with recipients you know, as otherwise any files that you transfer might harm you and those around you.
 
-The idea of this tool is to allow you to be anonymous to third parties. In theory there is no need for the relay server for the key-exchange and establishing the session, but I did not implement it "that way" in order to reduce the payload shared out-of-bound, and because I am curious how many people are using the service through the relay. I might add it in the future if there is interest.
+The idea of this tool is to allow you to be anonymous to third parties. In theory there is no need for the relay server for the key-exchange and establishing the session, but I did not implement it "that way" in order to reduce the payload shared out-of-band, and because I am curious how many people are using the service through the relay. I might add it in the future if there is interest.
 
 ---
 

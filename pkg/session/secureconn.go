@@ -83,6 +83,7 @@ type SecureConn struct {
 
 	readBuf *bytes.Buffer
 	done    bool
+	closed  chan struct{}
 }
 
 func NewSecureConn(conn net.Conn, kek []byte) *SecureConn {
@@ -91,6 +92,7 @@ func NewSecureConn(conn net.Conn, kek []byte) *SecureConn {
 		r:       NewSecureReader(conn, kek),
 		w:       NewSecureWriter(conn, kek),
 		readBuf: bytes.NewBuffer(nil),
+		closed:  make(chan struct{}),
 	}
 }
 
@@ -107,8 +109,12 @@ func (s *SecureConn) WriteMessage(msg []byte) error {
 
 // Close closes the underlying connection.
 func (s *SecureConn) Close() error {
-	s.done = true
-	return s.conn.Close()
+	if s.conn != nil {
+		s.done = true
+		close(s.closed)
+		return s.conn.Close()
+	}
+	return nil
 }
 
 // RemoteAddr returns the remote network address.

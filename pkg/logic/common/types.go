@@ -43,7 +43,7 @@ func NewKeibiDrop(logger log15.Logger, relayURL *url.URL, inboundPort int, defau
 		return nil, err
 	}
 
-	ipv6, err := GetGlobalIPv6()
+	ipv6, err := GetLocalIPv6()
 	if err != nil {
 		logger.Error("Failed to get local IPv6", "error", err)
 		return nil, err

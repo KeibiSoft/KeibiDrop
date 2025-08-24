@@ -14,9 +14,15 @@ service KeibiService {
   rpc Close (CloseRequest) returns (CloseResponse);
 
   rpc Notify (NotifyRequest) returns (NotifyResponse);
+
+  rpc Debug (DebugRequest) returns (DebugResponse);
 }
 
 // ========== MESSAGE DEFINITIONS ==========
+
+message DebugRequest{}
+
+message DebugResponse{}
 
 message OpenRequest {
   string path = 1;

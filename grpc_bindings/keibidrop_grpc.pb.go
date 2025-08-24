@@ -25,6 +25,7 @@ const (
 	KeibiService_Fsync_FullMethodName  = "/keibidrop.KeibiService/Fsync"
 	KeibiService_Close_FullMethodName  = "/keibidrop.KeibiService/Close"
 	KeibiService_Notify_FullMethodName = "/keibidrop.KeibiService/Notify"
+	KeibiService_Debug_FullMethodName  = "/keibidrop.KeibiService/Debug"
 )
 
 // KeibiServiceClient is the client API for KeibiService service.
@@ -37,6 +38,7 @@ type KeibiServiceClient interface {
 	Fsync(ctx context.Context, in *FsyncRequest, opts ...grpc.CallOption) (*FsyncResponse, error)
 	Close(ctx context.Context, in *CloseRequest, opts ...grpc.CallOption) (*CloseResponse, error)
 	Notify(ctx context.Context, in *NotifyRequest, opts ...grpc.CallOption) (*NotifyResponse, error)
+	Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error)
 }
 
 type keibiServiceClient struct {
@@ -107,6 +109,16 @@ func (c *keibiServiceClient) Notify(ctx context.Context, in *NotifyRequest, opts
 	return out, nil
 }
 
+func (c *keibiServiceClient) Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DebugResponse)
+	err := c.cc.Invoke(ctx, KeibiService_Debug_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // KeibiServiceServer is the server API for KeibiService service.
 // All implementations must embed UnimplementedKeibiServiceServer
 // for forward compatibility.
@@ -117,6 +129,7 @@ type KeibiServiceServer interface {
 	Fsync(context.Context, *FsyncRequest) (*FsyncResponse, error)
 	Close(context.Context, *CloseRequest) (*CloseResponse, error)
 	Notify(context.Context, *NotifyRequest) (*NotifyResponse, error)
+	Debug(context.Context, *DebugRequest) (*DebugResponse, error)
 	mustEmbedUnimplementedKeibiServiceServer()
 }
 
@@ -144,6 +157,9 @@ func (UnimplementedKeibiServiceServer) Close(context.Context, *CloseRequest) (*C
 }
 func (UnimplementedKeibiServiceServer) Notify(context.Context, *NotifyRequest) (*NotifyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Notify not implemented")
+}
+func (UnimplementedKeibiServiceServer) Debug(context.Context, *DebugRequest) (*DebugResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Debug not implemented")
 }
 func (UnimplementedKeibiServiceServer) mustEmbedUnimplementedKeibiServiceServer() {}
 func (UnimplementedKeibiServiceServer) testEmbeddedByValue()                      {}
@@ -274,6 +290,24 @@ func _KeibiService_Notify_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeibiService_Debug_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DebugRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeibiServiceServer).Debug(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeibiService_Debug_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeibiServiceServer).Debug(ctx, req.(*DebugRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // KeibiService_ServiceDesc is the grpc.ServiceDesc for KeibiService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -304,6 +338,10 @@ var KeibiService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Notify",
 			Handler:    _KeibiService_Notify_Handler,
+		},
+		{
+			MethodName: "Debug",
+			Handler:    _KeibiService_Debug_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -10,6 +10,28 @@ import (
 	"net/url"
 )
 
+func GetLocalIPv6() (string, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+
+	for _, iface := range ifaces {
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err != nil {
+				continue
+			}
+			if ip.To16() != nil && ip.To4() == nil {
+				// allow loopback + ULA + link-local
+				return ip.String(), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no IPv6 address found")
+}
+
 func GetGlobalIPv6() (string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
