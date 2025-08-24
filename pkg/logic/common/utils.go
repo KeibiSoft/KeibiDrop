@@ -182,5 +182,7 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 
 func isValidIPv6(ipStr string) bool {
 	ip := net.ParseIP(ipStr)
+	// TODO: Comment
+	return ip != nil && ip.To4() == nil
 	return ip != nil && ip.To4() == nil && !ip.IsLoopback() && !ip.IsPrivate()
 }
