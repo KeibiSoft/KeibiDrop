@@ -24,6 +24,9 @@ var (
 	ErrNotFound                      = errors.New("not found")
 	ErrInvalidResponse               = errors.New("invalid response")
 	ErrInvalidIP                     = errors.New("invalid IP")
+	ErrSessionNotEstablished         = errors.New("session not established")
+	ErrFilesystemAlreadyMounted      = errors.New("filesystem already mounted")
+	ErrNilFilesystem                 = errors.New("filesystem not mounted")
 )
 
 func RegisterErrorMapper(statusCode int, err error) error {
