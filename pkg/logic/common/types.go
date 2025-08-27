@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/inconshreveable/log15"
 )
@@ -23,6 +24,9 @@ type KeibiDrop struct {
 	LocalIPv6IP string
 	inboundPort int
 	listener    net.Listener
+
+	// Filesystem.
+	FS *filesystem.FS
 }
 
 // Factory-style constructor

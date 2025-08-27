@@ -6,6 +6,7 @@ import (
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
+	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/inconshreveable/log15"
 )
 
@@ -55,6 +56,8 @@ type Session struct {
 	Deadline time.Time
 
 	logger log15.Logger
+
+	FS *filesystem.FS
 }
 
 func InitSession(logger log15.Logger, defaultOutboundPort int, defaultInboundPort int) (*Session, error) {

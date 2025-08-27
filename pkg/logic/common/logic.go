@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"google.golang.org/grpc"
@@ -219,13 +221,42 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 	return nil
 }
 
-func (kd *KeibiDrop) MountFilesystem() error {
-	kd.logger.Info("Mounting virtual filesystem")
+// This is blocking.
+func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond bool) error {
+	logger := kd.logger.New("method", "mount-filesystem")
+	logger.Info("Mounting virtual filesystem", "virtual-folder", toMount, "passhtrough-folder", toSave, "isSecond", isSecond)
+	if kd.session == nil {
+		logger.Warn("Session not established", "error", ErrSessionNotEstablished)
+		return ErrSessionNotEstablished
+	}
+
+	if kd.FS != nil {
+		logger.Warn("Filesystem already mounted", "error", ErrFilesystemAlreadyMounted)
+		return ErrFilesystemAlreadyMounted
+	}
+
+	fs := filesystem.NewFS(logger)
+
+	kd.session.FS = fs
+
+	fs.Mount(filepath.Clean(toMount), isSecond, filepath.Clean(toSave))
+
 	return nil
 }
 
 func (kd *KeibiDrop) UnmountFilesystem() error {
-	kd.logger.Info("Unmounting virtual filesystem")
+	logger := kd.logger.New("method", "unmonut-filesystem")
+	logger.Info("Unmounting virtual filesystem")
+	if kd.FS == nil {
+		logger.Warn("Nil filesystem", "error", ErrNilFilesystem)
+		return ErrNilFilesystem
+	}
+	kd.FS.Unmount()
+	kd.FS = nil
+	if kd.session != nil {
+		kd.session.FS = nil
+	}
+	logger.Info("Success")
 	return nil
 }
 
