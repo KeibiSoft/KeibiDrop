@@ -217,7 +217,6 @@ func (x *OpenRequest) GetTruncate() bool {
 type OpenResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Handle        uint64                 `protobuf:"varint,1,opt,name=handle,proto3" json:"handle,omitempty"`
-	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"` // empty if success, because Go error culture
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -259,18 +258,13 @@ func (x *OpenResponse) GetHandle() uint64 {
 	return 0
 }
 
-func (x *OpenResponse) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
 type WriteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Handle        uint64                 `protobuf:"varint,1,opt,name=handle,proto3" json:"handle,omitempty"`
-	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"`
-	Offset        uint64                 `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Data          []byte                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	Offset        uint64                 `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	Size          uint64                 `protobuf:"varint,5,opt,name=size,proto3" json:"size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -312,6 +306,13 @@ func (x *WriteRequest) GetHandle() uint64 {
 	return 0
 }
 
+func (x *WriteRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
 func (x *WriteRequest) GetData() []byte {
 	if x != nil {
 		return x.Data
@@ -326,10 +327,16 @@ func (x *WriteRequest) GetOffset() uint64 {
 	return 0
 }
 
+func (x *WriteRequest) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
 type WriteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	BytesWritten  uint32                 `protobuf:"varint,1,opt,name=bytes_written,json=bytesWritten,proto3" json:"bytes_written,omitempty"`
-	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -371,18 +378,12 @@ func (x *WriteResponse) GetBytesWritten() uint32 {
 	return 0
 }
 
-func (x *WriteResponse) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
 type ReadRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Handle        uint64                 `protobuf:"varint,1,opt,name=handle,proto3" json:"handle,omitempty"`
-	Offset        uint64                 `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
-	Size          uint32                 `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Offset        uint64                 `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Size          uint32                 `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -424,6 +425,13 @@ func (x *ReadRequest) GetHandle() uint64 {
 	return 0
 }
 
+func (x *ReadRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
 func (x *ReadRequest) GetOffset() uint64 {
 	if x != nil {
 		return x.Offset
@@ -441,7 +449,6 @@ func (x *ReadRequest) GetSize() uint32 {
 type ReadResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
-	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -483,16 +490,10 @@ func (x *ReadResponse) GetData() []byte {
 	return nil
 }
 
-func (x *ReadResponse) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
 type FsyncRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Handle        uint64                 `protobuf:"varint,1,opt,name=handle,proto3" json:"handle,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -534,9 +535,15 @@ func (x *FsyncRequest) GetHandle() uint64 {
 	return 0
 }
 
+func (x *FsyncRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
 type FsyncResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Error         string                 `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -571,16 +578,10 @@ func (*FsyncResponse) Descriptor() ([]byte, []int) {
 	return file_keibidrop_proto_rawDescGZIP(), []int{9}
 }
 
-func (x *FsyncResponse) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
 type CloseRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Handle        uint64                 `protobuf:"varint,1,opt,name=handle,proto3" json:"handle,omitempty"`
+	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -622,9 +623,15 @@ func (x *CloseRequest) GetHandle() uint64 {
 	return 0
 }
 
+func (x *CloseRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
 type CloseResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Error         string                 `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -659,17 +666,12 @@ func (*CloseResponse) Descriptor() ([]byte, []int) {
 	return file_keibidrop_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *CloseResponse) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
 type NotifyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          NotifyType             `protobuf:"varint,1,opt,name=type,proto3,enum=keibidrop.NotifyType" json:"type,omitempty"`
 	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Attr          *Attr                  `protobuf:"bytes,4,opt,name=attr,proto3" json:"attr,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -718,6 +720,20 @@ func (x *NotifyRequest) GetPath() string {
 	return ""
 }
 
+func (x *NotifyRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *NotifyRequest) GetAttr() *Attr {
+	if x != nil {
+		return x.Attr
+	}
+	return nil
+}
+
 type NotifyResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
@@ -762,6 +778,114 @@ func (x *NotifyResponse) GetStatus() string {
 	return ""
 }
 
+type Attr struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Dev              uint64                 `protobuf:"varint,1,opt,name=dev,proto3" json:"dev,omitempty"`
+	Ino              uint64                 `protobuf:"varint,2,opt,name=ino,proto3" json:"ino,omitempty"`
+	Mode             uint32                 `protobuf:"varint,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	Size             int64                  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
+	AccessTime       uint64                 `protobuf:"varint,5,opt,name=accessTime,proto3" json:"accessTime,omitempty"`
+	ModificationTime uint64                 `protobuf:"varint,6,opt,name=modificationTime,proto3" json:"modificationTime,omitempty"`
+	ChangeTime       uint64                 `protobuf:"varint,7,opt,name=changeTime,proto3" json:"changeTime,omitempty"`
+	BirthTime        uint64                 `protobuf:"varint,8,opt,name=birthTime,proto3" json:"birthTime,omitempty"`
+	Flags            uint32                 `protobuf:"varint,9,opt,name=flags,proto3" json:"flags,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *Attr) Reset() {
+	*x = Attr{}
+	mi := &file_keibidrop_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Attr) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Attr) ProtoMessage() {}
+
+func (x *Attr) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Attr.ProtoReflect.Descriptor instead.
+func (*Attr) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *Attr) GetDev() uint64 {
+	if x != nil {
+		return x.Dev
+	}
+	return 0
+}
+
+func (x *Attr) GetIno() uint64 {
+	if x != nil {
+		return x.Ino
+	}
+	return 0
+}
+
+func (x *Attr) GetMode() uint32 {
+	if x != nil {
+		return x.Mode
+	}
+	return 0
+}
+
+func (x *Attr) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *Attr) GetAccessTime() uint64 {
+	if x != nil {
+		return x.AccessTime
+	}
+	return 0
+}
+
+func (x *Attr) GetModificationTime() uint64 {
+	if x != nil {
+		return x.ModificationTime
+	}
+	return 0
+}
+
+func (x *Attr) GetChangeTime() uint64 {
+	if x != nil {
+		return x.ChangeTime
+	}
+	return 0
+}
+
+func (x *Attr) GetBirthTime() uint64 {
+	if x != nil {
+		return x.BirthTime
+	}
+	return 0
+}
+
+func (x *Attr) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
 var File_keibidrop_proto protoreflect.FileDescriptor
 
 const file_keibidrop_proto_rawDesc = "" +
@@ -772,37 +896,53 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\vOpenRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
 	"\x06create\x18\x02 \x01(\bR\x06create\x12\x1a\n" +
-	"\btruncate\x18\x03 \x01(\bR\btruncate\"<\n" +
+	"\btruncate\x18\x03 \x01(\bR\btruncate\"&\n" +
 	"\fOpenResponse\x12\x16\n" +
-	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"R\n" +
+	"\x06handle\x18\x01 \x01(\x04R\x06handle\"z\n" +
 	"\fWriteRequest\x12\x16\n" +
 	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x12\n" +
-	"\x04data\x18\x02 \x01(\fR\x04data\x12\x16\n" +
-	"\x06offset\x18\x03 \x01(\x04R\x06offset\"J\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\x12\x16\n" +
+	"\x06offset\x18\x04 \x01(\x04R\x06offset\x12\x12\n" +
+	"\x04size\x18\x05 \x01(\x04R\x04size\"4\n" +
 	"\rWriteResponse\x12#\n" +
-	"\rbytes_written\x18\x01 \x01(\rR\fbytesWritten\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"Q\n" +
+	"\rbytes_written\x18\x01 \x01(\rR\fbytesWritten\"e\n" +
 	"\vReadRequest\x12\x16\n" +
-	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x16\n" +
-	"\x06offset\x18\x02 \x01(\x04R\x06offset\x12\x12\n" +
-	"\x04size\x18\x03 \x01(\rR\x04size\"8\n" +
+	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x16\n" +
+	"\x06offset\x18\x03 \x01(\x04R\x06offset\x12\x12\n" +
+	"\x04size\x18\x04 \x01(\rR\x04size\"\"\n" +
 	"\fReadResponse\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"&\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\":\n" +
 	"\fFsyncRequest\x12\x16\n" +
-	"\x06handle\x18\x01 \x01(\x04R\x06handle\"%\n" +
-	"\rFsyncResponse\x12\x14\n" +
-	"\x05error\x18\x01 \x01(\tR\x05error\"&\n" +
+	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\"\x0f\n" +
+	"\rFsyncResponse\":\n" +
 	"\fCloseRequest\x12\x16\n" +
-	"\x06handle\x18\x01 \x01(\x04R\x06handle\"%\n" +
-	"\rCloseResponse\x12\x14\n" +
-	"\x05error\x18\x01 \x01(\tR\x05error\"N\n" +
+	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\"\x0f\n" +
+	"\rCloseResponse\"\x87\x01\n" +
 	"\rNotifyRequest\x12)\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x15.keibidrop.NotifyTypeR\x04type\x12\x12\n" +
-	"\x04path\x18\x02 \x01(\tR\x04path\"(\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12#\n" +
+	"\x04attr\x18\x04 \x01(\v2\x0f.keibidrop.AttrR\x04attr\"(\n" +
 	"\x0eNotifyResponse\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\tR\x06status*r\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\"\xf2\x01\n" +
+	"\x04Attr\x12\x10\n" +
+	"\x03dev\x18\x01 \x01(\x04R\x03dev\x12\x10\n" +
+	"\x03ino\x18\x02 \x01(\x04R\x03ino\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\rR\x04mode\x12\x12\n" +
+	"\x04size\x18\x04 \x01(\x03R\x04size\x12\x1e\n" +
+	"\n" +
+	"accessTime\x18\x05 \x01(\x04R\n" +
+	"accessTime\x12*\n" +
+	"\x10modificationTime\x18\x06 \x01(\x04R\x10modificationTime\x12\x1e\n" +
+	"\n" +
+	"changeTime\x18\a \x01(\x04R\n" +
+	"changeTime\x12\x1c\n" +
+	"\tbirthTime\x18\b \x01(\x04R\tbirthTime\x12\x14\n" +
+	"\x05flags\x18\t \x01(\rR\x05flags*r\n" +
 	"\n" +
 	"NotifyType\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
@@ -812,11 +952,11 @@ const file_keibidrop_proto_rawDesc = "" +
 	"REMOVE_DIR\x10\x03\x12\x0f\n" +
 	"\vREMOVE_FILE\x10\x04\x12\f\n" +
 	"\bEDIT_DIR\x10\x05\x12\r\n" +
-	"\tEDIT_FILE\x10\x062\xaf\x03\n" +
+	"\tEDIT_FILE\x10\x062\xb5\x03\n" +
 	"\fKeibiService\x127\n" +
-	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12:\n" +
-	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse\x127\n" +
-	"\x04Read\x12\x16.keibidrop.ReadRequest\x1a\x17.keibidrop.ReadResponse\x12:\n" +
+	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12<\n" +
+	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse(\x01\x12;\n" +
+	"\x04Read\x12\x16.keibidrop.ReadRequest\x1a\x17.keibidrop.ReadResponse(\x010\x01\x12:\n" +
 	"\x05Fsync\x12\x17.keibidrop.FsyncRequest\x1a\x18.keibidrop.FsyncResponse\x12:\n" +
 	"\x05Close\x12\x17.keibidrop.CloseRequest\x1a\x18.keibidrop.CloseResponse\x12=\n" +
 	"\x06Notify\x12\x18.keibidrop.NotifyRequest\x1a\x19.keibidrop.NotifyResponse\x12:\n" +
@@ -835,7 +975,7 @@ func file_keibidrop_proto_rawDescGZIP() []byte {
 }
 
 var file_keibidrop_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_keibidrop_proto_goTypes = []any{
 	(NotifyType)(0),        // 0: keibidrop.NotifyType
 	(*DebugRequest)(nil),   // 1: keibidrop.DebugRequest
@@ -852,28 +992,30 @@ var file_keibidrop_proto_goTypes = []any{
 	(*CloseResponse)(nil),  // 12: keibidrop.CloseResponse
 	(*NotifyRequest)(nil),  // 13: keibidrop.NotifyRequest
 	(*NotifyResponse)(nil), // 14: keibidrop.NotifyResponse
+	(*Attr)(nil),           // 15: keibidrop.Attr
 }
 var file_keibidrop_proto_depIdxs = []int32{
 	0,  // 0: keibidrop.NotifyRequest.type:type_name -> keibidrop.NotifyType
-	3,  // 1: keibidrop.KeibiService.Open:input_type -> keibidrop.OpenRequest
-	5,  // 2: keibidrop.KeibiService.Write:input_type -> keibidrop.WriteRequest
-	7,  // 3: keibidrop.KeibiService.Read:input_type -> keibidrop.ReadRequest
-	9,  // 4: keibidrop.KeibiService.Fsync:input_type -> keibidrop.FsyncRequest
-	11, // 5: keibidrop.KeibiService.Close:input_type -> keibidrop.CloseRequest
-	13, // 6: keibidrop.KeibiService.Notify:input_type -> keibidrop.NotifyRequest
-	1,  // 7: keibidrop.KeibiService.Debug:input_type -> keibidrop.DebugRequest
-	4,  // 8: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
-	6,  // 9: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
-	8,  // 10: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
-	10, // 11: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
-	12, // 12: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
-	14, // 13: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
-	2,  // 14: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
-	8,  // [8:15] is the sub-list for method output_type
-	1,  // [1:8] is the sub-list for method input_type
-	1,  // [1:1] is the sub-list for extension type_name
-	1,  // [1:1] is the sub-list for extension extendee
-	0,  // [0:1] is the sub-list for field type_name
+	15, // 1: keibidrop.NotifyRequest.attr:type_name -> keibidrop.Attr
+	3,  // 2: keibidrop.KeibiService.Open:input_type -> keibidrop.OpenRequest
+	5,  // 3: keibidrop.KeibiService.Write:input_type -> keibidrop.WriteRequest
+	7,  // 4: keibidrop.KeibiService.Read:input_type -> keibidrop.ReadRequest
+	9,  // 5: keibidrop.KeibiService.Fsync:input_type -> keibidrop.FsyncRequest
+	11, // 6: keibidrop.KeibiService.Close:input_type -> keibidrop.CloseRequest
+	13, // 7: keibidrop.KeibiService.Notify:input_type -> keibidrop.NotifyRequest
+	1,  // 8: keibidrop.KeibiService.Debug:input_type -> keibidrop.DebugRequest
+	4,  // 9: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
+	6,  // 10: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
+	8,  // 11: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
+	10, // 12: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
+	12, // 13: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
+	14, // 14: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
+	2,  // 15: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
+	9,  // [9:16] is the sub-list for method output_type
+	2,  // [2:9] is the sub-list for method input_type
+	2,  // [2:2] is the sub-list for extension type_name
+	2,  // [2:2] is the sub-list for extension extendee
+	0,  // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_keibidrop_proto_init() }
@@ -887,7 +1029,7 @@ func file_keibidrop_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_keibidrop_proto_rawDesc), len(file_keibidrop_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

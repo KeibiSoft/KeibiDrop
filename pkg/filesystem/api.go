@@ -18,6 +18,7 @@ type FS struct {
 
 	// Host.
 	host *winfuse.FileSystemHost
+	Root *Dir
 }
 
 func NewFS(logger log15.Logger) *FS {
@@ -65,6 +66,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 	}
 
 	root.Root = root
+	fs.Root = root
 
 	host := winfuse.NewFileSystemHost(root)
 
@@ -80,5 +82,10 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 }
 
 func (fs *FS) Unmount() {
+	if fs.host == nil {
+		return
+	}
+
 	fs.host.Unmount()
+	fs.Root = nil
 }

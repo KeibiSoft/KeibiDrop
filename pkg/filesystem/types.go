@@ -80,6 +80,7 @@ type File struct {
 
 	PeerLastEdit   uint64 `json:"peerLastEdit"`
 	IsLocalPresent bool   `json:"isLocalPresent"`
+	NotLocalSynced bool
 
 	openFileCounter OpenFileCounter
 

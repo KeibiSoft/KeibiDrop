@@ -6,6 +6,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/inconshreveable/log15"
 	"github.com/pkg/xattr"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
@@ -540,4 +541,54 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) int {
 	}
 
 	return 0
+}
+
+// Non-FUSE helper methods, used for keeping track of sync.
+
+// Notes: I am confident that it is not a good idea to use syscall errors for GRPC called methods.
+
+func (d *Dir) AddRemoteFile(logger log15.Logger, path string, name string, stat *winfuse.Stat_t) error {
+	d.afm.RLock()
+	_, ok := d.AllFileMap[path]
+	d.afm.RUnlock()
+	if ok {
+		logger.Error("Failed to create file, it already exists", "error", syscall.EEXIST)
+		return syscall.EEXIST
+	}
+
+	f := &File{
+		logger:          d.logger,
+		openFileCounter: OpenFileCounter{},
+		stat:            stat,
+		RelativePath:    path,
+		IsLocalPresent:  false,
+		Name:            name,
+		NotLocalSynced:  true,
+	}
+
+	d.afm.Lock()
+	d.AllFileMap[path] = f
+	d.afm.Unlock()
+
+	return nil
+}
+
+func (d *Dir) EditRemoteFile(logger log15.Logger, path string, name string, stat *winfuse.Stat_t) error {
+	d.afm.RLock()
+	f, ok := d.AllFileMap[path]
+	d.afm.RUnlock()
+	if !ok {
+		logger.Error("Failed to edit file, it doesn't exists", "error", syscall.EEXIST)
+		return syscall.EEXIST
+	}
+
+	if stat.Mtim.Time().Before(f.stat.Mtim.Time()) {
+		logger.Error("Remote has older modifications than us, edit rejected", "error", syscall.ECANCELED)
+		return syscall.ECANCELED
+	}
+
+	f.stat = stat
+	f.NotLocalSynced = true
+
+	return nil
 }
