@@ -8,8 +8,8 @@ option go_package = "github.com/KeibiSoft/KeibiDrop/grpc_bindings;keibidrop";
 
 service KeibiService {
   rpc Open (OpenRequest) returns (OpenResponse);
-  rpc Write (WriteRequest) returns (WriteResponse);
-  rpc Read (ReadRequest) returns (ReadResponse);
+  rpc Write (stream WriteRequest) returns (WriteResponse);
+  rpc Read (stream ReadRequest) returns (stream ReadResponse);
   rpc Fsync (FsyncRequest) returns (FsyncResponse);
   rpc Close (CloseRequest) returns (CloseResponse);
 
@@ -32,52 +32,52 @@ message OpenRequest {
 
 message OpenResponse {
   uint64 handle = 1;
-  string error = 2; // empty if success, because Go error culture
 }
 
 message WriteRequest {
   uint64 handle = 1;
-  bytes data = 2;
-  uint64 offset = 3;
+  string path = 2;
+  bytes data = 3;
+  uint64 offset = 4;
+  uint64 size = 5;
 }
 
 message WriteResponse {
   uint32 bytes_written = 1;
-  string error = 2;
 }
 
 message ReadRequest {
   uint64 handle = 1;
-  uint64 offset = 2;
-  uint32 size = 3;
+  string path = 2;
+  uint64 offset = 3;
+  uint32 size = 4;
 }
 
 message ReadResponse {
   bytes data = 1;
-  string error = 2;
 }
 
 message FsyncRequest {
   uint64 handle = 1;
+  string path = 2;
 }
 
-message FsyncResponse {
-  string error = 1;
-}
+message FsyncResponse {}
 
 message CloseRequest {
   uint64 handle = 1;
+  string path = 2;
 }
 
-message CloseResponse {
-  string error = 1;
-}
+message CloseResponse {}
 
 // ========== NOTIFY STRUCTURES ==========
 
 message NotifyRequest {
   NotifyType type = 1;
   string path = 2;
+  string name = 3;
+  Attr attr = 4;
 }
 
 message NotifyResponse {
@@ -93,3 +93,16 @@ enum NotifyType {
   EDIT_DIR = 5;
   EDIT_FILE = 6;
 }
+
+message Attr {
+  uint64 dev = 1;
+  uint64 ino = 2;
+  uint32 mode = 3;
+  int64 size = 4;
+  uint64 accessTime = 5;
+  uint64 modificationTime = 6;
+  uint64 changeTime = 7;
+  uint64 birthTime = 8;
+  uint32 flags = 9;
+}
+

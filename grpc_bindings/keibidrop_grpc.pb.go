@@ -33,8 +33,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type KeibiServiceClient interface {
 	Open(ctx context.Context, in *OpenRequest, opts ...grpc.CallOption) (*OpenResponse, error)
-	Write(ctx context.Context, in *WriteRequest, opts ...grpc.CallOption) (*WriteResponse, error)
-	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (*ReadResponse, error)
+	Write(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WriteRequest, WriteResponse], error)
+	Read(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ReadRequest, ReadResponse], error)
 	Fsync(ctx context.Context, in *FsyncRequest, opts ...grpc.CallOption) (*FsyncResponse, error)
 	Close(ctx context.Context, in *CloseRequest, opts ...grpc.CallOption) (*CloseResponse, error)
 	Notify(ctx context.Context, in *NotifyRequest, opts ...grpc.CallOption) (*NotifyResponse, error)
@@ -59,25 +59,31 @@ func (c *keibiServiceClient) Open(ctx context.Context, in *OpenRequest, opts ...
 	return out, nil
 }
 
-func (c *keibiServiceClient) Write(ctx context.Context, in *WriteRequest, opts ...grpc.CallOption) (*WriteResponse, error) {
+func (c *keibiServiceClient) Write(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WriteRequest, WriteResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(WriteResponse)
-	err := c.cc.Invoke(ctx, KeibiService_Write_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &KeibiService_ServiceDesc.Streams[0], KeibiService_Write_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[WriteRequest, WriteResponse]{ClientStream: stream}
+	return x, nil
 }
 
-func (c *keibiServiceClient) Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (*ReadResponse, error) {
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeibiService_WriteClient = grpc.ClientStreamingClient[WriteRequest, WriteResponse]
+
+func (c *keibiServiceClient) Read(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ReadRequest, ReadResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReadResponse)
-	err := c.cc.Invoke(ctx, KeibiService_Read_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &KeibiService_ServiceDesc.Streams[1], KeibiService_Read_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[ReadRequest, ReadResponse]{ClientStream: stream}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeibiService_ReadClient = grpc.BidiStreamingClient[ReadRequest, ReadResponse]
 
 func (c *keibiServiceClient) Fsync(ctx context.Context, in *FsyncRequest, opts ...grpc.CallOption) (*FsyncResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -124,8 +130,8 @@ func (c *keibiServiceClient) Debug(ctx context.Context, in *DebugRequest, opts .
 // for forward compatibility.
 type KeibiServiceServer interface {
 	Open(context.Context, *OpenRequest) (*OpenResponse, error)
-	Write(context.Context, *WriteRequest) (*WriteResponse, error)
-	Read(context.Context, *ReadRequest) (*ReadResponse, error)
+	Write(grpc.ClientStreamingServer[WriteRequest, WriteResponse]) error
+	Read(grpc.BidiStreamingServer[ReadRequest, ReadResponse]) error
 	Fsync(context.Context, *FsyncRequest) (*FsyncResponse, error)
 	Close(context.Context, *CloseRequest) (*CloseResponse, error)
 	Notify(context.Context, *NotifyRequest) (*NotifyResponse, error)
@@ -143,11 +149,11 @@ type UnimplementedKeibiServiceServer struct{}
 func (UnimplementedKeibiServiceServer) Open(context.Context, *OpenRequest) (*OpenResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Open not implemented")
 }
-func (UnimplementedKeibiServiceServer) Write(context.Context, *WriteRequest) (*WriteResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Write not implemented")
+func (UnimplementedKeibiServiceServer) Write(grpc.ClientStreamingServer[WriteRequest, WriteResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method Write not implemented")
 }
-func (UnimplementedKeibiServiceServer) Read(context.Context, *ReadRequest) (*ReadResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Read not implemented")
+func (UnimplementedKeibiServiceServer) Read(grpc.BidiStreamingServer[ReadRequest, ReadResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method Read not implemented")
 }
 func (UnimplementedKeibiServiceServer) Fsync(context.Context, *FsyncRequest) (*FsyncResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Fsync not implemented")
@@ -200,41 +206,19 @@ func _KeibiService_Open_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
-func _KeibiService_Write_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(WriteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeibiServiceServer).Write(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeibiService_Write_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeibiServiceServer).Write(ctx, req.(*WriteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+func _KeibiService_Write_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(KeibiServiceServer).Write(&grpc.GenericServerStream[WriteRequest, WriteResponse]{ServerStream: stream})
 }
 
-func _KeibiService_Read_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReadRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(KeibiServiceServer).Read(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: KeibiService_Read_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(KeibiServiceServer).Read(ctx, req.(*ReadRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeibiService_WriteServer = grpc.ClientStreamingServer[WriteRequest, WriteResponse]
+
+func _KeibiService_Read_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(KeibiServiceServer).Read(&grpc.GenericServerStream[ReadRequest, ReadResponse]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeibiService_ReadServer = grpc.BidiStreamingServer[ReadRequest, ReadResponse]
 
 func _KeibiService_Fsync_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FsyncRequest)
@@ -320,14 +304,6 @@ var KeibiService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _KeibiService_Open_Handler,
 		},
 		{
-			MethodName: "Write",
-			Handler:    _KeibiService_Write_Handler,
-		},
-		{
-			MethodName: "Read",
-			Handler:    _KeibiService_Read_Handler,
-		},
-		{
 			MethodName: "Fsync",
 			Handler:    _KeibiService_Fsync_Handler,
 		},
@@ -344,6 +320,18 @@ var KeibiService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _KeibiService_Debug_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Write",
+			Handler:       _KeibiService_Write_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Read",
+			Handler:       _KeibiService_Read_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
 	Metadata: "keibidrop.proto",
 }

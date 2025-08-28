@@ -8,8 +8,11 @@ import (
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
+	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/inconshreveable/log15"
+
+	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 )
 
 type KeibiDrop struct {
@@ -26,7 +29,9 @@ type KeibiDrop struct {
 	listener    net.Listener
 
 	// Filesystem.
-	FS *filesystem.FS
+	FS       *filesystem.FS
+	KDSvc    *service.KeibidropServiceImpl
+	KDClient bindings.KeibiServiceClient
 }
 
 // Factory-style constructor
