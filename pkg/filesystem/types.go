@@ -3,6 +3,7 @@ package filesystem
 import (
 	"sync"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/inconshreveable/log15"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
@@ -83,6 +84,8 @@ type File struct {
 	NotLocalSynced bool
 
 	openFileCounter OpenFileCounter
+
+	StreamProvider types.FileStreamProvider
 
 	stat *winfuse.Stat_t
 }

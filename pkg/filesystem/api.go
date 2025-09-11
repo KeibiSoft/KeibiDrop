@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/inconshreveable/log15"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
@@ -12,9 +13,7 @@ import (
 type FS struct {
 	logger log15.Logger
 
-	// Add duplex conn.
-
-	// Keep state.
+	OnLocalChange func(event types.FileEvent)
 
 	// Host.
 	host *winfuse.FileSystemHost
