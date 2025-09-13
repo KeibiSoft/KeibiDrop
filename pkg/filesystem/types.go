@@ -53,10 +53,13 @@ type Dir struct {
 	adm       sync.RWMutex
 	AllDirMap map[string]*Dir
 
-	afm        sync.RWMutex
+	AfmLock    sync.RWMutex
 	AllFileMap map[string]*File
 
 	stat *winfuse.Stat_t
+
+	OnLocalChange      func(event types.FileEvent)
+	OpenStreamProvider func() types.FileStreamProvider
 }
 
 func (d *Dir) NotifyPeer() {
@@ -85,7 +88,10 @@ type File struct {
 
 	openFileCounter OpenFileCounter
 
-	StreamProvider types.FileStreamProvider
+	StreamProvider   types.FileStreamProvider
+	RemoteFileStream types.RemoteFileStream
+
+	OnLocalChange func(event types.FileEvent)
 
 	stat *winfuse.Stat_t
 }
