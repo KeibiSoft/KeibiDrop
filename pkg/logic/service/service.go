@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"io"
+	"os"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -117,6 +120,56 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 }
 
 func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
+	logger := kd.Logger.New("method", "read")
+	isOpen := false
 
-	return nil
+	var fh *os.File
+	size := 0
+	offset := 0
+	// hardcode buffer to 1^19 (16 MiB)
+	buf := make([]byte, 1<<19)
+	for {
+		rec, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				logger.Info("Success")
+				return nil
+			}
+			logger.Error("Failed to recv from stream", "error", err)
+			return status.Error(codes.Internal, "failed to stream recv")
+		}
+		if !isOpen {
+			isOpen = true
+			kd.FS.Root.AfmLock.RLock()
+			f, ok := kd.FS.Root.AllFileMap[rec.Path]
+			kd.FS.Root.AfmLock.RUnlock()
+			if !ok {
+				logger.Warn("Not found", "rec", rec)
+				return status.Error(codes.NotFound, "file not found")
+			}
+			fh, err = os.Open(f.RealPathOfFile)
+			if err != nil {
+				logger.Error("Failed to open real file", "error", err)
+				return status.Error(codes.Internal, "error accesing file")
+			}
+		}
+
+		n, err := fh.ReadAt(buf[:size], int64(offset))
+		if err != nil {
+			logger.Error("Failed to read file", "error", err)
+			return status.Error(codes.Internal, "error reading file")
+		}
+
+		err = stream.Send(&bindings.ReadResponse{
+			Data: buf[:n],
+		})
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				logger.Info("Success")
+				return nil
+			}
+			logger.Error("Failed to send read file", "error", err)
+			return status.Error(codes.Internal, "failed to send data")
+		}
+	}
 }

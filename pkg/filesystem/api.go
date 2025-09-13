@@ -61,8 +61,11 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 		adm:       sync.RWMutex{},
 		AllDirMap: make(map[string]*Dir),
 
-		afm:        sync.RWMutex{},
+		AfmLock:    sync.RWMutex{},
 		AllFileMap: make(map[string]*File),
+
+		OnLocalChange:      fs.OnLocalChange,
+		OpenStreamProvider: fs.OpenStreamProvider,
 	}
 
 	root.Root = root
