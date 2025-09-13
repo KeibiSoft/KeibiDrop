@@ -33,6 +33,7 @@ func StatToAttr(stat *fuse.Stat_t) *keibidrop.Attr {
 	if stat == nil {
 		return nil
 	}
+
 	return &keibidrop.Attr{
 		Dev:              stat.Dev,
 		Ino:              stat.Ino,
@@ -51,6 +52,7 @@ func AttrToStat(attr *keibidrop.Attr) *fuse.Stat_t {
 	if attr == nil {
 		return nil
 	}
+
 	return &fuse.Stat_t{
 		Dev:      attr.Dev,
 		Ino:      attr.Ino,
@@ -71,7 +73,7 @@ func NanoToTimespec(ns uint64) fuse.Timespec {
 
 // FileStreamProvider is a factory for RemoteFileStream
 type FileStreamProvider interface {
-	OpenRemoteFile(ctx context.Context, path string) (RemoteFileStream, error)
+	OpenRemoteFile(ctx context.Context, inode uint64, path string) (RemoteFileStream, error)
 }
 
 type RemoteFileStream interface {
