@@ -13,7 +13,8 @@ import (
 type FS struct {
 	logger log15.Logger
 
-	OnLocalChange func(event types.FileEvent)
+	OnLocalChange      func(event types.FileEvent)
+	OpenStreamProvider func() types.FileStreamProvider
 
 	// Host.
 	host *winfuse.FileSystemHost

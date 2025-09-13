@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -136,6 +138,46 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
+	fs := filesystem.NewFS(logger)
+
+	fs.OnLocalChange = func(event types.FileEvent) {
+		if kd.session == nil || kd.session.GRPCClient == nil {
+			return
+		}
+
+		res, err := kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+			Type: bindings.NotifyType(event.Action),
+			Path: event.Path,
+			Attr: &bindings.Attr{
+				Dev:              event.Attr.Dev,
+				Ino:              event.Attr.Ino,
+				Mode:             event.Attr.Mode,
+				Size:             event.Attr.Size,
+				AccessTime:       event.Attr.AccessTime,
+				ModificationTime: event.Attr.ModificationTime,
+				ChangeTime:       event.Attr.ChangeTime,
+				BirthTime:        event.Attr.BirthTime,
+				Flags:            event.Attr.Flags,
+			},
+		})
+		if err != nil {
+			// TODO: Handle errors in caller, and pass logger from call chain
+			logger.Error("Failed to notify peer", "error", err)
+		}
+		_ = res
+	}
+
+	fs.OpenStreamProvider = func() types.FileStreamProvider {
+		return NewImplStreamProvider(kd.session.GRPCClient)
+	}
+
+	kd.FS = fs
+
+	toMount := os.Getenv("TO_MOUNT_PATH")
+	toSave := os.Getenv("TO_SAVE_PATH")
+
+	fs.Mount(filepath.Clean(toMount), true, filepath.Clean(toSave))
+
 	time.Sleep(time.Second)
 	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})
 	if err != nil {
@@ -210,16 +252,112 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 		return err
 	}
 
+	fs := filesystem.NewFS(logger)
+
+	fs.OnLocalChange = func(event types.FileEvent) {
+		if kd.session == nil || kd.session.GRPCClient == nil {
+			return
+		}
+
+		res, err := kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+			Type: bindings.NotifyType(event.Action),
+			Path: event.Path,
+			Attr: &bindings.Attr{
+				Dev:              event.Attr.Dev,
+				Ino:              event.Attr.Ino,
+				Mode:             event.Attr.Mode,
+				Size:             event.Attr.Size,
+				AccessTime:       event.Attr.AccessTime,
+				ModificationTime: event.Attr.ModificationTime,
+				ChangeTime:       event.Attr.ChangeTime,
+				BirthTime:        event.Attr.BirthTime,
+				Flags:            event.Attr.Flags,
+			},
+		})
+		if err != nil {
+			// TODO: Handle errors in caller, and pass logger from call chain
+			logger.Error("Failed to notify peer", "error", err)
+		}
+		_ = res
+	}
+
+	fs.OpenStreamProvider = func() types.FileStreamProvider {
+		return NewImplStreamProvider(kd.session.GRPCClient)
+	}
+
+	kd.FS = fs
+
+	toMount := os.Getenv("TO_MOUNT_PATH")
+	toSave := os.Getenv("TO_SAVE_PATH")
+
+	fs.Mount(filepath.Clean(toMount), false, filepath.Clean(toSave))
+
 	time.Sleep(time.Second)
 	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})
 	if err != nil {
 		logger.Error("DEBUG", "error", err)
 	}
+
 	wg.Wait()
 
 	logger.Info("Success", "fingerprint", fp)
 	return nil
 }
+
+// TODO;: Move in separate file;
+// TODO: From Here
+type ImplFileStreamProvider struct {
+	cli bindings.KeibiServiceClient
+}
+
+func NewImplStreamProvider(cli bindings.KeibiServiceClient) *ImplFileStreamProvider {
+	return &ImplFileStreamProvider{cli: cli}
+}
+
+type ImplRemoteFileStream struct {
+	stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse]
+	handle uint64
+	path   string
+}
+
+func NewImplRemoteFileStream(stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse], inode uint64, path string) *ImplRemoteFileStream {
+	return &ImplRemoteFileStream{
+		stream: stream,
+		handle: inode,
+		path:   path,
+	}
+}
+func (rfs *ImplRemoteFileStream) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
+	err := rfs.stream.Send(&bindings.ReadRequest{Handle: rfs.handle, Path: rfs.path, Offset: uint64(offset), Size: uint32(size)})
+	if err != nil {
+		// TODO: Log err.
+		return nil, err
+	}
+
+	resp, err := rfs.stream.Recv()
+	if err != nil {
+		// TODO: Log err.
+		return nil, err
+	}
+
+	return resp.Data, nil
+}
+
+func (rfs *ImplRemoteFileStream) Close() error {
+	return rfs.stream.CloseSend()
+}
+
+func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint64, path string) (types.RemoteFileStream, error) {
+	stream, err := sp.cli.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewImplRemoteFileStream(stream, inode, path), nil
+}
+
+// TODO;: Move in separate file;
+// TODO: To Here
 
 // This is blocking.
 func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond bool) error {
