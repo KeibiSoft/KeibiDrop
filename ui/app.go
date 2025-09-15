@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	"log"
 	"net/url"
 	"os"
 	"strconv"
@@ -19,6 +18,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -62,71 +62,111 @@ func Launch(logger log15.Logger) {
 	}
 
 	a := app.New()
+
+	a.Settings().SetTheme(theme.DarkTheme())
+
 	w := a.NewWindow("KeibiDrop")
 
-	logoFile, err := os.Open("assets/logo.png")
-	if err != nil {
-		log.Printf("failed to open logo file: %v", err)
-		os.Exit(2)
-	}
-	defer func() { _ = logoFile.Close() }()
-
-	img, err := png.Decode(logoFile)
-	if err != nil {
-		log.Printf("failed to decode logo image: %v", err)
-		os.Exit(2)
-	}
-
+	// Logo
+	logoFile, _ := os.Open("assets/logo.png")
+	img, _ := png.Decode(logoFile)
 	logo := canvas.NewImageFromImage(img)
-	logo.SetMinSize(fyne.NewSize(64, 64))
-	topBar := container.NewHBox(logo, layout.NewSpacer())
-	title := widget.NewLabelWithStyle("KeibiDrop", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
-	title.TextStyle.Monospace = true
+	logo.FillMode = canvas.ImageFillContain // preserve aspect ratio
+	logo.SetMinSize(fyne.NewSize(130, 125)) // ~ your logo size
+	// logo.SetMaxSize(fyne.NewSize(130, 125))
 
+	title := widget.NewLabelWithStyle("KeibiDrop",
+		fyne.TextAlignLeading,
+		fyne.TextStyle{Bold: true})
+
+	// place logo + title in the top bar
+	topBar := container.NewHBox(logo, layout.NewSpacer(), title)
+
+	// --- Local info ---
 	fp, err := kd.ExportFingerprint()
 	if err != nil {
 		fp = "(error generating fingerprint)"
 	}
 
-	info := widget.NewLabel(fmt.Sprintf("IPv6: %s\nRelay: %s\nFingerprint: %s", kd.LocalIPv6IP, relayURL.String(), fp))
-	info.Wrapping = fyne.TextWrapWord
-	info.Alignment = fyne.TextAlignCenter
+	localFingerprintLabel := widget.NewLabel(fp)
+	localFingerprintLabel.Wrapping = fyne.TextWrapWord
 
-	startBtn := widget.NewButton("Start Session (Alice)", func() {
+	copyBtn := widget.NewButton("Copy", func() {
+		w.Clipboard().SetContent(fp)
+	})
+
+	// show IPv6 + relay normally
+	localInfo := widget.NewLabel(fmt.Sprintf("Local IPv6: %s\nRelay: %s",
+		kd.LocalIPv6IP, relayURL.String()))
+
+	localBox := container.NewVBox(
+		widget.NewLabelWithStyle("Your Fingerprint:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewBorder(nil, nil, nil, copyBtn, localFingerprintLabel),
+		localInfo,
+	)
+
+	// --- Peer input & info ---
+	peerInput := widget.NewEntry()
+	peerInput.SetPlaceHolder("Enter peer fingerprint")
+
+	peerInfo := widget.NewLabel("Peer Fingerprint: (not set)")
+	peerInfo.Wrapping = fyne.TextWrapWord
+
+	peerInput.OnChanged = func(text string) {
+		if text != "" {
+			peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s", text))
+		} else {
+			peerInfo.SetText("Peer Fingerprint: (not set)")
+		}
+	}
+
+	joinBtn := widget.NewButton("Join Room", func() {
+		if peerInput.Text == "" {
+			return
+		}
+		err := kd.JoinRoom(peerInput.Text)
+		if err != nil {
+			logger.Error("Failed to join room", "error", err)
+		} else {
+			logger.Info("Joined room successfully")
+			peerFingerprint, _ := kd.GetPeerFingerprint()
+			peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s\nPeer IPv6: %s",
+				peerFingerprint, kd.PeerIPv6IP))
+			peerInfo.Show()
+		}
+	})
+
+	peerBox := container.NewVBox(
+		widget.NewLabelWithStyle("Peer", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		peerInput,
+		peerInfo,
+	)
+
+	// --- Start room (Alice) ---
+	startBtn := widget.NewButton("Create Room", func() {
 		err := kd.CreateRoom()
 		if err != nil {
 			logger.Error("Failed to create room", "error", err)
 		} else {
 			logger.Info("Room created successfully")
+			peerFingerprint, _ := kd.GetPeerFingerprint()
+			peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s\nPeer IPv6: %s",
+				peerFingerprint, kd.PeerIPv6IP))
+			peerInfo.Show()
 		}
-	})
-
-	joinBtn := widget.NewButton("Join Session (Bob)", func() {
-		input := widget.NewEntry()
-		input.SetPlaceHolder("Paste peer fingerprint")
-
-		confirm := widget.NewButton("Join", func() {
-			err := kd.JoinRoom(input.Text)
-			if err != nil {
-				logger.Error("Failed to join room", "error", err)
-			} else {
-				logger.Info("Joined room successfully")
-			}
-		})
-
-		joinDialog := container.NewVBox(input, confirm)
-		w.SetContent(container.NewVBox(topBar, joinDialog))
 	})
 
 	exitBtn := widget.NewButton("Exit", func() {
 		a.Quit()
 	})
 
+	// --- Layout ---
 	content := container.NewVBox(
 		topBar,
 		layout.NewSpacer(),
-		title,
-		info,
+		localBox,
+		layout.NewSpacer(),
+		peerBox,
 		layout.NewSpacer(),
 		startBtn,
 		joinBtn,
@@ -134,8 +174,8 @@ func Launch(logger log15.Logger) {
 		layout.NewSpacer(),
 	)
 
-	w.SetContent(container.NewCenter(content))
-	w.Resize(fyne.NewSize(480, 320))
+	w.SetContent(container.NewPadded(content))
+	w.Resize(fyne.NewSize(800, 500))
 	w.ShowAndRun()
 }
 
