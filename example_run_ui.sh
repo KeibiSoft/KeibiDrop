@@ -1,0 +1,1 @@
+TO_SAVE_PATH="/Users/marius/work/code/KeibiDrop/SaveAlice" TO_MOUNT_PATH="/Users/marius/work/code/KeibiDrop/MountAlice" KEIBIDROP_RELAY="http://0.0.0.0:54321" INBOUND_PORT=26001 OUTBOUND_PORT=26002 go run cmd/keibidrop.go
