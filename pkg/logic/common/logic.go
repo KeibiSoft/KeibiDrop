@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -71,6 +70,11 @@ func (kd *KeibiDrop) CreateRoom() error {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
 	}
+
+	if kd.running {
+		logger.Warn("Already running, aborting...")
+		return ErrAlreadyRunning
+	}
 	// This is the "Alice" flow
 
 	err := kd.registerRoomToRelay()
@@ -122,15 +126,9 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err = kd.startGRPCServer()
-		if err != nil {
-			logger.Error("Failed to start gRPC server", "error", err)
-		}
-	}()
+	logger.Debug("Before start")
+	kd.Start()
+	logger.Debug("After start")
 
 	err = kd.connectGRPCClient()
 	if err != nil {
@@ -183,7 +181,6 @@ func (kd *KeibiDrop) CreateRoom() error {
 	if err != nil {
 		logger.Error("DEBUG", "error", err)
 	}
-	wg.Wait()
 
 	logger.Info("Success")
 	return nil
@@ -194,6 +191,11 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
+	}
+
+	if kd.running {
+		logger.Warn("Already running, aborting...")
+		return ErrAlreadyRunning
 	}
 
 	// This is the "Bob" flow
@@ -236,15 +238,9 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 		return err
 	}
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err = kd.startGRPCServer()
-		if err != nil {
-			logger.Error("Failed to start gRPC server", "error", err)
-		}
-	}()
+	logger.Debug("Before start")
+	kd.Start()
+	logger.Debug("After start")
 
 	err = kd.connectGRPCClient()
 	if err != nil {
@@ -298,66 +294,9 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 		logger.Error("DEBUG", "error", err)
 	}
 
-	wg.Wait()
-
 	logger.Info("Success", "fingerprint", fp)
 	return nil
 }
-
-// TODO;: Move in separate file;
-// TODO: From Here
-type ImplFileStreamProvider struct {
-	cli bindings.KeibiServiceClient
-}
-
-func NewImplStreamProvider(cli bindings.KeibiServiceClient) *ImplFileStreamProvider {
-	return &ImplFileStreamProvider{cli: cli}
-}
-
-type ImplRemoteFileStream struct {
-	stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse]
-	handle uint64
-	path   string
-}
-
-func NewImplRemoteFileStream(stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse], inode uint64, path string) *ImplRemoteFileStream {
-	return &ImplRemoteFileStream{
-		stream: stream,
-		handle: inode,
-		path:   path,
-	}
-}
-func (rfs *ImplRemoteFileStream) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
-	err := rfs.stream.Send(&bindings.ReadRequest{Handle: rfs.handle, Path: rfs.path, Offset: uint64(offset), Size: uint32(size)})
-	if err != nil {
-		// TODO: Log err.
-		return nil, err
-	}
-
-	resp, err := rfs.stream.Recv()
-	if err != nil {
-		// TODO: Log err.
-		return nil, err
-	}
-
-	return resp.Data, nil
-}
-
-func (rfs *ImplRemoteFileStream) Close() error {
-	return rfs.stream.CloseSend()
-}
-
-func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint64, path string) (types.RemoteFileStream, error) {
-	stream, err := sp.cli.Read(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return NewImplRemoteFileStream(stream, inode, path), nil
-}
-
-// TODO;: Move in separate file;
-// TODO: To Here
 
 // This is blocking.
 func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond bool) error {
@@ -400,18 +339,19 @@ func (kd *KeibiDrop) UnmountFilesystem() error {
 	return nil
 }
 
-func (kd *KeibiDrop) ResetSession() {
-	kd.logger.Info("Resetting session state")
+/*
+	func (kd *KeibiDrop) ResetSession() {
+		kd.logger.Info("Resetting session state")
 
-	// You probably want to close any existing net.Conn, etc.
-}
+		// You probably want to close any existing net.Conn, etc.
+	}
 
-func (kd *KeibiDrop) RegenerateKeys() error {
-	kd.logger.Info("Regenerating ephemeral keys")
+	func (kd *KeibiDrop) RegenerateKeys() error {
+		kd.logger.Info("Regenerating ephemeral keys")
 
-	return nil
-}
-
+		return nil
+	}
+*/
 func (kd *KeibiDrop) connectGRPCClient() error {
 	// Your custom dialer using pre-established SecureConn
 	dialer := func(ctx context.Context, _ string) (net.Conn, error) {
@@ -448,6 +388,7 @@ func (kd *KeibiDrop) startGRPCServer() error {
 	kd.session.GRPCListener = kd.session.Session.Inbound
 
 	grpcServer := grpc.NewServer()
+	kd.grpcServer = grpcServer
 
 	ln := NewSingleConnListener(kd.session.Session.Inbound)
 

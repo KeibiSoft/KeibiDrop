@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/png"
@@ -55,11 +56,15 @@ func Launch(logger log15.Logger) {
 		outbound = outPort
 	}
 
-	kd, err := common.NewKeibiDrop(logger, relayURL, inbound, outbound)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	kd, err := common.NewKeibiDrop(ctx, logger, relayURL, inbound, outbound)
 	if err != nil {
 		logger.Error("Failed to create new Keibi Drop client", "error", err)
 		os.Exit(1)
 	}
+	go kd.Run()
 
 	a := app.New()
 
