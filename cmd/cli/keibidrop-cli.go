@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/url"
@@ -214,7 +215,7 @@ func joinRoom(kd *common.KeibiDrop, fp string) {
 }
 
 func resetSession(kd *common.KeibiDrop) {
-	kd.ResetSession()
+	// kd.ResetSession()
 	fmt.Println("Session reset")
 }
 
@@ -259,11 +260,17 @@ func main() {
 		}
 		outbound = outPort
 	}
-	kd, err := common.NewKeibiDrop(logger, relayURL, inbound, outbound)
+
+	kdctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	kd, err := common.NewKeibiDrop(kdctx, logger, relayURL, inbound, outbound)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		os.Exit(1)
 	}
+
+	go kd.Run()
+
 	ctx := &cliContext{kd: kd}
 
 	common.PrintBanner()

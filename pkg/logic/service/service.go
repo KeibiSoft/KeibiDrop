@@ -48,6 +48,17 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		return nil, ErrGRPCInvalidArgument
 	case bindings.NotifyType_ADD_DIR:
 		logger.Info("Mkdir called")
+
+		if kd.FS == nil {
+			logger.Warn("Nil FS")
+			return nil, ErrGRPCFailedPrecondition
+		}
+
+		if kd.FS.Root == nil {
+			logger.Warn("Nil Root FS")
+			return nil, ErrGRPCFailedPrecondition
+		}
+
 		err := kd.FS.Root.Mkdir(req.Path, 0777) // Read/Write/Execute for current user.
 		if err != 0 {
 			return nil, ErrGRPCFailedPrecondition
@@ -67,6 +78,16 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
 		ctim := time.Unix(0, int64(req.Attr.ChangeTime))
 		btim := time.Unix(0, int64(req.Attr.BirthTime))
+
+		if kd.FS == nil {
+			logger.Warn("Nil FS")
+			return nil, ErrGRPCFailedPrecondition
+		}
+
+		if kd.FS.Root == nil {
+			logger.Warn("Nil Root FS")
+			return nil, ErrGRPCFailedPrecondition
+		}
 
 		err := kd.FS.Root.AddRemoteFile(logger, req.Path, req.Name, &fuse.Stat_t{
 			Dev:      req.Attr.Dev,
@@ -92,6 +113,16 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
 		ctim := time.Unix(0, int64(req.Attr.ChangeTime))
 		btim := time.Unix(0, int64(req.Attr.BirthTime))
+
+		if kd.FS == nil {
+			logger.Warn("Nil FS")
+			return nil, ErrGRPCFailedPrecondition
+		}
+
+		if kd.FS.Root == nil {
+			logger.Warn("Nil Root FS")
+			return nil, ErrGRPCFailedPrecondition
+		}
 
 		err := kd.FS.Root.EditRemoteFile(logger, req.Path, req.Name, &fuse.Stat_t{
 			Dev:      req.Attr.Dev,

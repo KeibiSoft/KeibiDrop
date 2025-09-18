@@ -1,16 +1,19 @@
 package common
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/inconshreveable/log15"
+	"google.golang.org/grpc"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 )
@@ -32,12 +35,41 @@ type KeibiDrop struct {
 	FS       *filesystem.FS
 	KDSvc    *service.KeibidropServiceImpl
 	KDClient bindings.KeibiServiceClient
+
+	// Signals for loop management.
+	signals chan TaskSignal
+	running bool
+	ctx     context.Context
+	mu      sync.Mutex
+
+	// For session refresh.
+	refreshSession func() *session.Session
+
+	// For stopping the grpc server.
+	grpcServer *grpc.Server
 }
 
+type TaskSignal int
+
+const (
+	Start TaskSignal = iota
+	Stop
+)
+
 // Factory-style constructor
-func NewKeibiDrop(logger log15.Logger, relayURL *url.URL, inboundPort int, defaultOutboundPort int) (*KeibiDrop, error) {
+func NewKeibiDrop(ctx context.Context, logger log15.Logger, relayURL *url.URL, inboundPort int, defaultOutboundPort int) (*KeibiDrop, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
+	}
+
+	refreshSession := func() *session.Session {
+		session, err := session.InitSession(logger, defaultOutboundPort, inboundPort)
+		if err != nil {
+			logger.Error("Failed to init session", "error", err)
+			return nil
+		}
+
+		return session
 	}
 
 	session, err := session.InitSession(logger, defaultOutboundPort, inboundPort)
@@ -59,13 +91,18 @@ func NewKeibiDrop(logger log15.Logger, relayURL *url.URL, inboundPort int, defau
 	}
 
 	kd := &KeibiDrop{
-		logger:       logger,
-		relayClient:  client,
-		RelayEndoint: relayURL,
-		session:      session,
-		LocalIPv6IP:  ipv6,
-		inboundPort:  inboundPort,
-		listener:     listener,
+		logger:         logger,
+		relayClient:    client,
+		RelayEndoint:   relayURL,
+		session:        session,
+		LocalIPv6IP:    ipv6,
+		inboundPort:    inboundPort,
+		listener:       listener,
+		signals:        make(chan TaskSignal),
+		running:        false,
+		ctx:            ctx,
+		mu:             sync.Mutex{},
+		refreshSession: refreshSession,
 	}
 
 	return kd, nil
@@ -89,3 +126,77 @@ type ConnectionHint struct {
 
 // Map server status errors to semantic errors.
 type ErrorMapperFunc func(statusCode int, err error) error
+
+// Running process for KeibiDrop.
+func (kd *KeibiDrop) Start() {
+	kd.signals <- Start
+}
+
+func (kd *KeibiDrop) Stop() {
+	kd.signals <- Stop
+}
+
+func (kd *KeibiDrop) Run() {
+	logger := kd.logger.New("method", "run-state")
+	for {
+		select {
+		case <-kd.ctx.Done():
+			logger.Info("Stopping KeibiDrop run instance")
+			if kd.FS != nil {
+				kd.FS.Unmount()
+				kd.FS = nil
+			}
+			if kd.grpcServer != nil {
+				kd.grpcServer.GracefulStop()
+				kd.grpcServer = nil
+			}
+			return
+		case s := <-kd.signals:
+			switch s {
+			case Start:
+				if kd.session == nil || kd.session.Session == nil || kd.session.Session.Inbound == nil {
+					logger.Warn("Nil session")
+					continue
+				}
+
+				go func() {
+					err := kd.startGRPCServer()
+					if err != nil {
+						logger.Error("Failed to start gRPC server", "error", err)
+					}
+				}()
+
+				kd.running = true
+
+			case Stop:
+				logger.Info("Stop signal")
+				if kd.FS != nil {
+					kd.FS.Unmount()
+					kd.FS = nil
+				}
+				if kd.grpcServer != nil {
+					kd.grpcServer.GracefulStop()
+					kd.grpcServer = nil
+				}
+
+				// Close and nil gRPC client
+				if kd.KDClient != nil {
+					kd.KDClient = nil
+				}
+
+				if kd.KDSvc != nil {
+					kd.KDSvc = nil
+				}
+
+				if kd.session != nil {
+					kd.session = nil
+				}
+
+				kd.PeerIPv6IP = ""
+				kd.session = kd.refreshSession()
+
+				kd.running = false
+			}
+		}
+	}
+}
