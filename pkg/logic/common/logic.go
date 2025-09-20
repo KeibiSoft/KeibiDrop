@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -171,10 +170,9 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 	kd.FS = fs
 
-	toMount := os.Getenv("TO_MOUNT_PATH")
-	toSave := os.Getenv("TO_SAVE_PATH")
-
-	fs.Mount(filepath.Clean(toMount), true, filepath.Clean(toSave))
+	logger.Debug("Before mount")
+	fs.Mount(filepath.Clean(kd.ToMount), true, filepath.Clean(kd.ToSave))
+	logger.Debug("After mount")
 
 	time.Sleep(time.Second)
 	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})
@@ -283,10 +281,9 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 
 	kd.FS = fs
 
-	toMount := os.Getenv("TO_MOUNT_PATH")
-	toSave := os.Getenv("TO_SAVE_PATH")
-
-	fs.Mount(filepath.Clean(toMount), false, filepath.Clean(toSave))
+	logger.Debug("Before mount")
+	fs.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))
+	logger.Debug("After mount")
 
 	time.Sleep(time.Second)
 	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})

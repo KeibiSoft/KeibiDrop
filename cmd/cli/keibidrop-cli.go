@@ -19,6 +19,8 @@ import (
 const KEIBIDROP_RELAY_ENV = "KEIBIDROP_RELAY"
 const INBOUND_PORT_ENV = "INBOUND_PORT"
 const OUTBOUND_PORT_ENV = "OUTBOUND_PORT"
+const TO_MOUNT_PATH_ENV = "TO_MOUNT_PATH"
+const TO_SAVE_PATH_ENV = "TO_SAVE_PATH"
 
 type cliContext struct {
 	kd *common.KeibiDrop
@@ -261,9 +263,12 @@ func main() {
 		outbound = outPort
 	}
 
+	toMount := os.Getenv(TO_MOUNT_PATH_ENV)
+	toSave := os.Getenv(TO_SAVE_PATH_ENV)
+
 	kdctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	kd, err := common.NewKeibiDrop(kdctx, logger, relayURL, inbound, outbound)
+	kd, err := common.NewKeibiDrop(kdctx, logger, relayURL, inbound, outbound, toMount, toSave)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		os.Exit(1)
