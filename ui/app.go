@@ -26,6 +26,8 @@ import (
 const KEIBIDROP_RELAY_ENV = "KEIBIDROP_RELAY"
 const INBOUND_PORT_ENV = "INBOUND_PORT"
 const OUTBOUND_PORT_ENV = "OUTBOUND_PORT"
+const TO_MOUNT_PATH_ENV = "TO_MOUNT_PATH"
+const TO_SAVE_PATH_ENV = "TO_SAVE_PATH"
 
 func Launch(logger log15.Logger) {
 	relay := getenv(KEIBIDROP_RELAY_ENV, "https://keibidroprelay.keibisoft.com")
@@ -56,10 +58,13 @@ func Launch(logger log15.Logger) {
 		outbound = outPort
 	}
 
+	toMount := os.Getenv(TO_MOUNT_PATH_ENV)
+	toSave := os.Getenv(TO_SAVE_PATH_ENV)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	kd, err := common.NewKeibiDrop(ctx, logger, relayURL, inbound, outbound)
+	kd, err := common.NewKeibiDrop(ctx, logger, relayURL, inbound, outbound, toMount, toSave)
 	if err != nil {
 		logger.Error("Failed to create new Keibi Drop client", "error", err)
 		os.Exit(1)

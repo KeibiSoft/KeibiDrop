@@ -36,6 +36,10 @@ type KeibiDrop struct {
 	KDSvc    *service.KeibidropServiceImpl
 	KDClient bindings.KeibiServiceClient
 
+	// Paths for virtual mount point and for save folder.
+	ToMount string
+	ToSave  string
+
 	// Signals for loop management.
 	signals chan TaskSignal
 	running bool
@@ -57,7 +61,7 @@ const (
 )
 
 // Factory-style constructor
-func NewKeibiDrop(ctx context.Context, logger log15.Logger, relayURL *url.URL, inboundPort int, defaultOutboundPort int) (*KeibiDrop, error) {
+func NewKeibiDrop(ctx context.Context, logger log15.Logger, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string) (*KeibiDrop, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -103,6 +107,8 @@ func NewKeibiDrop(ctx context.Context, logger log15.Logger, relayURL *url.URL, i
 		ctx:            ctx,
 		mu:             sync.Mutex{},
 		refreshSession: refreshSession,
+		ToMount:        toMount,
+		ToSave:         toSave,
 	}
 
 	return kd, nil
