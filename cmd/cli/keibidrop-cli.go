@@ -208,7 +208,7 @@ func createRoom(kd *common.KeibiDrop) {
 }
 
 func joinRoom(kd *common.KeibiDrop, fp string) {
-	err := kd.JoinRoom(fp)
+	err := kd.JoinRoom()
 	if err != nil {
 		fmt.Println("Error: ", err)
 	} else {

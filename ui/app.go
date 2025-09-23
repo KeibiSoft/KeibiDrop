@@ -125,6 +125,10 @@ func Launch(logger log15.Logger) {
 	peerInput.OnChanged = func(text string) {
 		if text != "" {
 			peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s", text))
+			err = kd.AddPeerFingerprint(peerInput.Text)
+			if err != nil {
+				logger.Error("Failed to add fingerprint", "error", err)
+			}
 		} else {
 			peerInfo.SetText("Peer Fingerprint: (not set)")
 		}
@@ -134,7 +138,7 @@ func Launch(logger log15.Logger) {
 		if peerInput.Text == "" {
 			return
 		}
-		err := kd.JoinRoom(peerInput.Text)
+		err := kd.JoinRoom()
 		if err != nil {
 			logger.Error("Failed to join room", "error", err)
 		} else {

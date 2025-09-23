@@ -13,6 +13,7 @@ import (
 )
 
 func TestKeibiDropFlow(t *testing.T) {
+	require := require.New(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -30,7 +31,7 @@ func TestKeibiDropFlow(t *testing.T) {
 
 	relayURL := "http://0.0.0.0:54321"
 	parsedURL, err := url.Parse(relayURL)
-	require.NoError(t, err, "parse url")
+	require.NoError(err, "parse url")
 
 	aliceInPort := 26001
 	aliceOutPort := 26002
@@ -39,10 +40,10 @@ func TestKeibiDropFlow(t *testing.T) {
 	bobOutPort := 26004
 
 	err = os.Mkdir(absAliceSave, 0777)
-	require.NoError(t, err, "create save dir Alice")
+	require.NoError(err, "create save dir Alice")
 
 	err = os.Mkdir(absBobSave, 0777)
-	require.NoError(t, err, "create save dir Bob")
+	require.NoError(err, "create save dir Bob")
 
 	logger := log15.New("method", "test")
 
@@ -62,4 +63,38 @@ func TestKeibiDropFlow(t *testing.T) {
 
 	go kdBob.Run()
 
+	aliceFp, err := kdAlice.ExportFingerprint()
+	require.NoError(err)
+
+	bobFp, err := kdBob.ExportFingerprint()
+	require.NoError(err)
+
+	err = kdAlice.AddPeerFingerprint(bobFp)
+	require.NoError(err)
+
+	kdBob.AddPeerFingerprint(aliceFp)
+	require.NoError(err)
+
+	ch := make(chan bool)
+	go func() {
+		ch <- true
+		err = kdAlice.CreateRoom()
+		require.NoError(err)
+	}()
+
+	logger.Info("Sleep a bit for Alice to create room")
+	<-ch
+	time.Sleep(5 * time.Second)
+	logger.Info("Looks ok")
+
+	go func() {
+		ch <- true
+		err = kdBob.JoinRoom()
+		require.NoError(err)
+	}()
+	logger.Info("Wait a bit for Bob to join")
+	<-ch
+	logger.Info("sleep 10 sec")
+	time.Sleep(10 * time.Second)
+	logger.Info("Done")
 }
