@@ -102,7 +102,7 @@ func NewKeibiDrop(ctx context.Context, logger log15.Logger, relayURL *url.URL, i
 		LocalIPv6IP:    ipv6,
 		inboundPort:    inboundPort,
 		listener:       listener,
-		signals:        make(chan TaskSignal),
+		signals:        make(chan TaskSignal, 2),
 		running:        false,
 		ctx:            ctx,
 		mu:             sync.Mutex{},
@@ -160,10 +160,13 @@ func (kd *KeibiDrop) Run() {
 		case s := <-kd.signals:
 			switch s {
 			case Start:
+				logger.Info("Signal start")
 				if kd.session == nil || kd.session.Session == nil || kd.session.Session.Inbound == nil {
 					logger.Warn("Nil session")
 					continue
 				}
+
+				logger.Info("Signal start success")
 
 				go func() {
 					err := kd.startGRPCServer()
