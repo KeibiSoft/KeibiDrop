@@ -184,7 +184,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 	return nil
 }
 
-func (kd *KeibiDrop) JoinRoom(fp string) error {
+func (kd *KeibiDrop) JoinRoom() error {
 	logger := kd.logger.New("method", "join-room")
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
@@ -291,7 +291,7 @@ func (kd *KeibiDrop) JoinRoom(fp string) error {
 		logger.Error("DEBUG", "error", err)
 	}
 
-	logger.Info("Success", "fingerprint", fp)
+	logger.Info("Success")
 	return nil
 }
 
