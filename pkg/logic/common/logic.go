@@ -125,9 +125,9 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
-	logger.Debug("Before start")
+	logger.Info("Before start")
 	kd.Start()
-	logger.Debug("After start")
+	logger.Info("After start")
 
 	err = kd.connectGRPCClient()
 	if err != nil {
@@ -170,9 +170,9 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 	kd.FS = fs
 
-	logger.Debug("Before mount")
+	logger.Info("Before mount")
 	fs.Mount(filepath.Clean(kd.ToMount), true, filepath.Clean(kd.ToSave))
-	logger.Debug("After mount")
+	logger.Info("After mount")
 
 	time.Sleep(time.Second)
 	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})
@@ -236,9 +236,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 		return err
 	}
 
-	logger.Debug("Before start")
+	logger.Info("Before start")
 	kd.Start()
-	logger.Debug("After start")
+	logger.Info("After start")
 
 	err = kd.connectGRPCClient()
 	if err != nil {
@@ -281,9 +281,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 	kd.FS = fs
 
-	logger.Debug("Before mount")
+	logger.Info("Before mount")
 	fs.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))
-	logger.Debug("After mount")
+	logger.Info("After mount")
 
 	time.Sleep(time.Second)
 	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})
