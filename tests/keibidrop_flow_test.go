@@ -95,6 +95,6 @@ func TestKeibiDropFlow(t *testing.T) {
 	logger.Info("Wait a bit for Bob to join")
 	<-ch
 	logger.Info("sleep 10 sec")
-	time.Sleep(10 * time.Second)
+	time.Sleep(60 * time.Second)
 	logger.Info("Done")
 }

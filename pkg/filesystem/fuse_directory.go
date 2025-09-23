@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -41,6 +42,7 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) int {
 
 func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 	d.logger.Info("Create", "path", path)
+	relativePath := path
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "open", "path", path, "flags", flags)
 	fd, err := syscall.Open(path, flags, mode)
@@ -48,6 +50,27 @@ func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 		logger.Error("Failed to open path", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
 	}
+
+	name := strings.Split(path, "/")
+
+	f := &File{
+		logger:          logger,
+		openFileCounter: OpenFileCounter{mu: &sync.Mutex{}, counter: 1},
+		Inode:           uint64(fd),
+		Name:            name[len(name)-1],
+		RelativePath:    relativePath,
+		RealPathOfFile:  path,
+		OnLocalChange:   d.OnLocalChange,
+		StreamProvider:  d.OpenStreamProvider(),
+	}
+
+	d.AfmLock.Lock()
+	d.AllFileMap[path] = f
+	d.AfmLock.Unlock()
+
+	d.OpenMapLock.Lock()
+	d.OpenFileHandlers[uint64(fd)] = f
+	d.OpenMapLock.Unlock()
 
 	return 0, uint64(fd)
 }
@@ -223,19 +246,19 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 }
 
 func (d *Dir) Init() {
-	d.logger.Debug("Init", "inode", d.Inode)
+	d.logger.Info("Init", "inode", d.Inode)
 	// syscall.Chdir(d.LocalDownloadFolder)
 
 }
 
 func (d *Dir) Link(oldpath string, newpath string) int {
-	d.logger.Debug("Link", "oldPath", oldpath, "newPath", newpath, "inode", d.Inode)
+	d.logger.Info("Link", "oldPath", oldpath, "newPath", newpath, "inode", d.Inode)
 
 	return -winfuse.ENOSYS
 }
 
 func (d *Dir) Mkdir(path string, mode uint32) int {
-	d.logger.Debug("Mkdir", "path", path, "inode", d.Inode)
+	d.logger.Info("Mkdir", "path", path, "inode", d.Inode)
 	logger := d.logger.New("method", "mkdir", "path", path, "mode", mode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := syscall.Mkdir(path, mode)
@@ -247,7 +270,7 @@ func (d *Dir) Mkdir(path string, mode uint32) int {
 }
 
 func (d *Dir) Mknod(path string, mode uint32, dev uint64) int {
-	d.logger.Debug("Mknod", "path", path, "inode", d.Inode)
+	d.logger.Info("Mknod", "path", path, "inode", d.Inode)
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "mknod", "path", path, "mode", mode, "dev", dev)
@@ -260,7 +283,7 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) int {
 }
 
 func (d *Dir) Open(path string, flags int) (int, uint64) {
-	d.logger.Debug("Open", "path", path, "inode", d.Inode)
+	d.logger.Info("Open", "path", path, "inode", d.Inode)
 	d.AfmLock.RLock()
 	fh, ok := d.AllFileMap[path]
 	d.AfmLock.RUnlock()
@@ -293,7 +316,7 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 }
 
 func (d *Dir) Opendir(path string) (int, uint64) {
-	d.logger.Debug("Opendir", "path", path, "inode", d.Inode)
+	d.logger.Info("Opendir", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "opendir", "path", path)
 	f, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
@@ -306,7 +329,7 @@ func (d *Dir) Opendir(path string) (int, uint64) {
 }
 
 func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) int {
-	d.logger.Debug("Readdir", "path", path, "inode", d.Inode)
+	d.logger.Info("Readdir", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "readdir", "path", path, "fh", fh)
 
@@ -328,13 +351,13 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 }
 
 func (d *Dir) Readlink(path string) (int, string) {
-	d.logger.Debug("Readlink", "path", path, "inode", d.Inode)
+	d.logger.Info("Readlink", "path", path, "inode", d.Inode)
 
 	return -winfuse.ENOSYS, ""
 }
 
 func (d *Dir) Release(path string, fh uint64) int {
-	d.logger.Debug("Release", "path", path, "inode", d.Inode, "fh", fh)
+	d.logger.Info("Release", "path", path, "inode", d.Inode, "fh", fh)
 
 	logger := d.logger.New("method", "release", "path", path, "fh", fh)
 	err := syscall.Close(int(fh))
@@ -343,11 +366,23 @@ func (d *Dir) Release(path string, fh uint64) int {
 		return int(convertOsErrToSyscallErrno("release", err))
 	}
 
+	d.OpenMapLock.RLock()
+	f, ok := d.OpenFileHandlers[fh]
+	d.OpenMapLock.RUnlock()
+	if ok {
+		v := f.openFileCounter.Release()
+		if v == 0 {
+			d.OpenMapLock.Lock()
+			delete(d.OpenFileHandlers, fh)
+			d.OpenMapLock.Unlock()
+		}
+	}
+
 	return 0
 }
 
 func (d *Dir) Releasedir(path string, fh uint64) int {
-	d.logger.Debug("Releasedir", "path", path, "inode", d.Inode, "fh", fh)
+	d.logger.Info("Releasedir", "path", path, "inode", d.Inode, "fh", fh)
 	logger := d.logger.New("method", "release-dir", "path", path, "fh", fh)
 	err := syscall.Close(int(fh))
 	if err != nil {
@@ -360,7 +395,7 @@ func (d *Dir) Releasedir(path string, fh uint64) int {
 
 // Mac OS High Level apps use Rename SWAP, which is really fun from my experience.
 func (d *Dir) Rename(oldpath string, newpath string) int {
-	d.logger.Debug("Rename", "oldpath", oldpath, "newpath", newpath, "inode", d.Inode)
+	d.logger.Info("Rename", "oldpath", oldpath, "newpath", newpath, "inode", d.Inode)
 	oldpath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, oldpath))
 	newpath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
 	logger := d.logger.New("method", "rename", "old-path", oldpath, "new-path", newpath)
@@ -374,7 +409,7 @@ func (d *Dir) Rename(oldpath string, newpath string) int {
 }
 
 func (d *Dir) Rmdir(path string) int {
-	d.logger.Debug("Rmdir", "path", path, "inode", d.Inode)
+	d.logger.Info("Rmdir", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "rmdir", "path", path)
 	err := syscall.Rmdir(path)
@@ -415,7 +450,7 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) int {
 }
 
 func (d *Dir) Symlink(target string, newpath string) int {
-	d.logger.Debug("Symlink", "target", target, "newpath", newpath, "inode", d.Inode)
+	d.logger.Info("Symlink", "target", target, "newpath", newpath, "inode", d.Inode)
 
 	return -winfuse.ENOSYS
 }
@@ -423,7 +458,7 @@ func (d *Dir) Symlink(target string, newpath string) int {
 // Note: On windows open does not have a truncate flag,
 // thus Open is immediately followed by Truncate.
 func (d *Dir) Truncate(path string, size int64, fh uint64) int {
-	d.logger.Debug("Truncate", "path", path, "size", size, "inode", d.Inode, "fh", fh)
+	d.logger.Info("Truncate", "path", path, "size", size, "inode", d.Inode, "fh", fh)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "truncate", "path", path, "size", size, "fh", fh)
 	err := syscall.Truncate(path, size)
@@ -437,7 +472,7 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) int {
 
 // Unlink removes a file.
 func (d *Dir) Unlink(path string) int {
-	d.logger.Debug("Unlink", "path", path, "inode", d.Inode)
+	d.logger.Info("Unlink", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "unlink", "path", path)
 	err := syscall.Unlink(path)
@@ -452,14 +487,14 @@ func (d *Dir) Unlink(path string) int {
 // Utimens changes the access and modification times of a file.
 // Note: I do not care about it :^D for this version.
 func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) int {
-	d.logger.Debug("Utimens", "path", path, "inode", d.Inode)
+	d.logger.Info("Utimens", "path", path, "inode", d.Inode)
 
 	return -winfuse.ENOSYS
 }
 
 // The method returns the number of bytes written.
 func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
-	d.logger.Debug("Write", "path", path, "inode", d.Inode, "fh", fh)
+	d.logger.Info("Write", "path", path, "inode", d.Inode, "fh", fh)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "write", "path", path, "fh", fh, "offset", offset)
 
@@ -474,7 +509,7 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
 
 // The method returns the number of bytes read.
 func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
-	d.logger.Debug("Read", "path", path, "inode", d.Inode, "fh", fh)
+	d.logger.Info("Read", "path", path, "inode", d.Inode, "fh", fh)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "read", "path", path, "fh", fh, "offset", offset)
 
@@ -600,7 +635,7 @@ func (d *Dir) AddRemoteFile(logger log15.Logger, path string, name string, stat 
 
 	f := &File{
 		logger:          d.logger,
-		openFileCounter: OpenFileCounter{},
+		openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
 		stat:            stat,
 		RelativePath:    path,
 		IsLocalPresent:  false,
