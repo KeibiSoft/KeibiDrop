@@ -281,6 +281,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 	kd.FS = fs
 
+	// TODO: This is for tests to debug.
+	time.Sleep(2 * time.Second)
+
 	logger.Info("Before mount")
 	fs.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))
 	logger.Info("After mount")
