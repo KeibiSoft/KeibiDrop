@@ -109,12 +109,17 @@ func (s *SecureConn) WriteMessage(msg []byte) error {
 
 // Close closes the underlying connection.
 func (s *SecureConn) Close() error {
+	if s.done {
+		return net.ErrClosed
+	}
 	if s.conn != nil {
 		s.done = true
 		close(s.closed)
 		return s.conn.Close()
 	}
-	return nil
+
+	s.done = true
+	return net.ErrClosed
 }
 
 // RemoteAddr returns the remote network address.

@@ -20,3 +20,5 @@ install-proto:
 protoc:
 	protoc --go_opt=module=github.com/KeibiSoft/KeibiDrop --go-grpc_opt=module=github.com/KeibiSoft/KeibiDrop --go_out=. --go-grpc_out=. keibidrop.proto
 
+test:
+	go test -timeout 30s -v ./...

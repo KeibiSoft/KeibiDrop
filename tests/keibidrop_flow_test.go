@@ -95,6 +95,31 @@ func TestKeibiDropFlow(t *testing.T) {
 	logger.Info("Wait a bit for Bob to join")
 	<-ch
 	logger.Info("sleep 10 sec")
-	time.Sleep(60 * time.Second)
+	time.Sleep(10 * time.Second)
 	logger.Info("Done")
+
+	file, err := os.Create(absAliceMount + "/ok.txt")
+	require.NoError(err)
+	require.NotNil(file)
+
+	testString := "Hello secret file sent from Alice"
+
+	_, err = file.Write([]byte(testString))
+	require.NoError(err)
+
+	err = file.Close()
+	require.NoError(err)
+
+	bobEntr, err := os.ReadDir(absBobMount)
+	require.NoError(err)
+
+	require.NotNil(bobEntr)
+
+	require.Equal(len(bobEntr), 1)
+	require.Equal("ok.txt", bobEntr[0].Name())
+
+	data, err := os.ReadFile(absBobMount + "/ok.txt")
+	require.NoError(err)
+
+	require.Equal(testString, string(data))
 }
