@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -27,6 +28,10 @@ func TestKeibiDropFlow(t *testing.T) {
 	defer func() {
 		os.Remove(absAliceSave)
 		os.Remove(absBobSave)
+		exec.Command("umount", "-f", absAliceMount).Run()
+		exec.Command("umount", "-f", absBobMount).Run()
+		os.Remove(absAliceMount)
+		os.Remove(absBobMount)
 	}()
 
 	relayURL := "http://0.0.0.0:54321"
@@ -84,7 +89,7 @@ func TestKeibiDropFlow(t *testing.T) {
 
 	logger.Info("Sleep a bit for Alice to create room")
 	<-ch
-	time.Sleep(5 * time.Second)
+	time.Sleep(3 * time.Second)
 	logger.Info("Looks ok")
 
 	go func() {

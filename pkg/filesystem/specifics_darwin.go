@@ -34,7 +34,7 @@ func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNum
 
 func setuidgid() func() {
 	euid := syscall.Geteuid()
-	if 0 == euid {
+	if euid == 0 {
 		uid, gid, _ := fuse.Getcontext()
 		egid := syscall.Getegid()
 		syscall.Setegid(int(gid))

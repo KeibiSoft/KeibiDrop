@@ -150,43 +150,118 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	return &bindings.NotifyResponse{}, nil
 }
 
+/*
+	func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
+		logger := kd.Logger.New("method", "read")
+		isOpen := false
+
+		var fh *os.File
+		size := 0
+		offset := 0
+		// hardcode buffer to 1^19 (16 MiB)
+		buf := make([]byte, 1<<19)
+		for {
+			rec, err := stream.Recv()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					logger.Info("Success")
+					return nil
+				}
+				logger.Error("Failed to recv from stream", "error", err)
+				return status.Error(codes.Internal, "failed to stream recv")
+			}
+			if !isOpen {
+				isOpen = true
+				kd.FS.Root.AfmLock.RLock()
+				f, ok := kd.FS.Root.AllFileMap[rec.Path]
+				kd.FS.Root.AfmLock.RUnlock()
+				if !ok {
+					logger.Warn("Not found", "rec", rec)
+					return status.Error(codes.NotFound, "file not found")
+				}
+				fh, err = os.Open(f.RealPathOfFile)
+				if err != nil {
+					logger.Error("Failed to open real file", "error", err)
+					return status.Error(codes.Internal, "error accesing file")
+				}
+			}
+
+			n, err := fh.ReadAt(buf[:size], int64(offset))
+			if err != nil {
+				logger.Error("Failed to read file", "error", err)
+				return status.Error(codes.Internal, "error reading file")
+			}
+
+			err = stream.Send(&bindings.ReadResponse{
+				Data: buf[:n],
+			})
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					logger.Info("Success")
+					return nil
+				}
+				logger.Error("Failed to send read file", "error", err)
+				return status.Error(codes.Internal, "failed to send data")
+			}
+		}
+	}
+*/
+
 func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
 	logger := kd.Logger.New("method", "read")
 	isOpen := false
 
 	var fh *os.File
-	size := 0
-	offset := 0
-	// hardcode buffer to 1^19 (16 MiB)
-	buf := make([]byte, 1<<19)
+	var openedPath string
+	// hardcode buffer to 16 MiB (1<<24 is 16 MB; adjust if needed)
+	buf := make([]byte, 1<<24)
+
 	for {
 		rec, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				logger.Info("Success")
+				if fh != nil {
+					fh.Close()
+				}
+				logger.Info("Read stream finished")
 				return nil
 			}
-			logger.Error("Failed to recv from stream", "error", err)
-			return status.Error(codes.Internal, "failed to stream recv")
+			if fh != nil {
+				fh.Close()
+			}
+			logger.Error("Failed to receive from stream", "error", err)
+			return status.Error(codes.Internal, "failed to receive read request")
 		}
+
 		if !isOpen {
 			isOpen = true
 			kd.FS.Root.AfmLock.RLock()
 			f, ok := kd.FS.Root.AllFileMap[rec.Path]
 			kd.FS.Root.AfmLock.RUnlock()
 			if !ok {
-				logger.Warn("Not found", "rec", rec)
+				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")
 			}
 			fh, err = os.Open(f.RealPathOfFile)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
-				return status.Error(codes.Internal, "error accesing file")
+				return status.Error(codes.Internal, "error accessing file")
 			}
+			openedPath = rec.Path
+		} else if openedPath != rec.Path {
+			logger.Error("Multiple paths in same stream not supported", "requested", rec.Path)
+			return status.Error(codes.InvalidArgument, "stream can only read a single file")
 		}
 
-		n, err := fh.ReadAt(buf[:size], int64(offset))
-		if err != nil {
+		size := int(rec.Size)
+		offset := int64(rec.Offset)
+		if size > len(buf) {
+			logger.Warn("Requested size too large, truncating to buffer size", "requested", size, "buffer", len(buf))
+			size = len(buf)
+		}
+
+		n, err := fh.ReadAt(buf[:size], offset)
+		if err != nil && !errors.Is(err, io.EOF) {
 			logger.Error("Failed to read file", "error", err)
 			return status.Error(codes.Internal, "error reading file")
 		}
@@ -196,10 +271,16 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 		})
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				logger.Info("Success")
+				if fh != nil {
+					fh.Close()
+				}
+				logger.Info("Read stream finished")
 				return nil
 			}
-			logger.Error("Failed to send read file", "error", err)
+			if fh != nil {
+				fh.Close()
+			}
+			logger.Error("Failed to send read data", "error", err)
 			return status.Error(codes.Internal, "failed to send data")
 		}
 	}
