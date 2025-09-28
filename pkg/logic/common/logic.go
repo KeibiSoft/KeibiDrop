@@ -152,6 +152,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 	}
 
 	logger.Info("Before mount")
+	kd.KDSvc.FS = kd.FS
 	fs.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))
 	logger.Info("After mount")
 
@@ -256,6 +257,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 	}
 
 	logger.Info("Before mount")
+	kd.KDSvc.FS = kd.FS
 	fs.Mount(filepath.Clean(kd.ToMount), true, filepath.Clean(kd.ToSave))
 	logger.Info("After mount")
 
