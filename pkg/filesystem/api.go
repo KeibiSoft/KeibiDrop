@@ -89,6 +89,8 @@ func (fs *FS) Unmount() {
 		return
 	}
 
+	// TODO: Also call umount on the MountPath in case its stuck or something.
+
 	fs.host.Unmount()
 	fs.Root = nil
 }

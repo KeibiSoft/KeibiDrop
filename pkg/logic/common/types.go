@@ -50,7 +50,9 @@ type KeibiDrop struct {
 	refreshSession func() *session.Session
 
 	// For stopping the grpc server.
-	grpcServer *grpc.Server
+	grpcServer    *grpc.Server
+	serverReady   chan struct{}
+	serverReadyMu sync.Mutex
 }
 
 type TaskSignal int
@@ -109,6 +111,8 @@ func NewKeibiDrop(ctx context.Context, logger log15.Logger, relayURL *url.URL, i
 		refreshSession: refreshSession,
 		ToMount:        toMount,
 		ToSave:         toSave,
+		serverReady:    make(chan struct{}),
+		serverReadyMu:  sync.Mutex{},
 	}
 
 	return kd, nil
@@ -168,8 +172,10 @@ func (kd *KeibiDrop) Run() {
 
 				logger.Info("Signal start success")
 
+				// prepare serverReady channel
+				kd.serverReady = make(chan struct{})
 				go func() {
-					err := kd.startGRPCServer()
+					err := kd.startGRPCServer(kd.serverReady)
 					if err != nil {
 						logger.Error("Failed to start gRPC server", "error", err)
 					}

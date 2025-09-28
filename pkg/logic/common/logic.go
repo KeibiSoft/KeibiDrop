@@ -63,6 +63,249 @@ func (kd *KeibiDrop) GetPeerFingerprint() (string, error) {
 	return kd.session.ExpectedPeerFingerprint, nil
 }
 
+func (kd *KeibiDrop) JoinRoom() error {
+	logger := kd.logger.New("method", "join-room")
+	if kd.session == nil {
+		logger.Warn("Nil pointer deference")
+		return ErrNilPointer
+	}
+	if kd.running {
+		logger.Warn("Already running, aborting...")
+		return ErrAlreadyRunning
+	}
+
+	// Wait for expected peer fingerprint
+	elapsed := 0
+	for {
+		if elapsed >= Timeout {
+			logger.Error("Timeout reached", "error", ErrTimeoutReached)
+			return ErrTimeoutReached
+		}
+		if kd.session.ExpectedPeerFingerprint == "" {
+			elapsed++
+			time.Sleep(time.Second)
+			continue
+		}
+		break
+	}
+
+	if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
+		return err
+	}
+
+	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))); err != nil {
+		logger.Error("Failed outbound handshake", "error", err)
+		return err
+	}
+
+	conn, err := kd.listener.Accept()
+	if err != nil {
+		logger.Error("Failed to accept", "error", err)
+		return err
+	}
+
+	if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
+		logger.Error("Failed inbound handshake", "error", err)
+		return err
+	}
+
+	logger.Info("Before start")
+	kd.Start()
+	logger.Info("After start")
+
+	// retry dialing until gRPC server is ready
+	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {
+		logger.Error("Failed to connect to grpc server after retries", "error", err)
+		return err
+	}
+
+	fs := filesystem.NewFS(logger)
+	kd.FS = fs
+
+	fs.OnLocalChange = func(event types.FileEvent) {
+		if kd.session == nil || kd.session.GRPCClient == nil {
+			return
+		}
+		res, err := kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+			Type: bindings.NotifyType(event.Action),
+			Path: event.Path,
+			Attr: &bindings.Attr{
+				Dev:              event.Attr.Dev,
+				Ino:              event.Attr.Ino,
+				Mode:             event.Attr.Mode,
+				Size:             event.Attr.Size,
+				AccessTime:       event.Attr.AccessTime,
+				ModificationTime: event.Attr.ModificationTime,
+				ChangeTime:       event.Attr.ChangeTime,
+				BirthTime:        event.Attr.BirthTime,
+				Flags:            event.Attr.Flags,
+			},
+		})
+		if err != nil {
+			logger.Error("Failed to notify peer", "error", err)
+		}
+		_ = res
+	}
+
+	fs.OpenStreamProvider = func() types.FileStreamProvider {
+		return NewImplStreamProvider(kd.session.GRPCClient)
+	}
+
+	logger.Info("Before mount")
+	fs.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))
+	logger.Info("After mount")
+
+	if _, err := kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{}); err != nil {
+		logger.Error("DEBUG failed", "error", err)
+		return err
+	}
+
+	logger.Info("Success")
+	return nil
+}
+
+func (kd *KeibiDrop) CreateRoom() error {
+	logger := kd.logger.New("method", "create-room")
+	if kd.session == nil {
+		logger.Warn("Nil pointer deference")
+		return ErrNilPointer
+	}
+	if kd.running {
+		logger.Warn("Already running, aborting...")
+		return ErrAlreadyRunning
+	}
+
+	if err := kd.registerRoomToRelay(); err != nil {
+		return err
+	}
+
+	// Wait for expected peer fingerprint
+	elapsed := 0
+	for {
+		if elapsed >= Timeout {
+			logger.Error("Timeout reached", "error", ErrTimeoutReached)
+			return ErrTimeoutReached
+		}
+		if kd.session.ExpectedPeerFingerprint == "" {
+			time.Sleep(time.Second)
+			elapsed++
+			continue
+		}
+		break
+	}
+
+	conn, err := kd.listener.Accept()
+	if err != nil {
+		logger.Error("Failed to accept", "error", err)
+		return err
+	}
+
+	if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
+		return err
+	}
+
+	addr, ok := conn.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		logger.Error("Failed to cast TCP address", "error", err)
+		return err
+	}
+
+	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(addr.IP.String(), strconv.Itoa(kd.session.PeerPort))); err != nil {
+		return err
+	}
+
+	logger.Info("Before start")
+	kd.Start()
+	logger.Info("After start")
+
+	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {
+		logger.Error("Failed to connect to grpc server after retries", "error", err)
+		return err
+	}
+
+	fs := filesystem.NewFS(logger)
+	kd.FS = fs
+
+	fs.OnLocalChange = func(event types.FileEvent) {
+		if kd.session == nil || kd.session.GRPCClient == nil {
+			return
+		}
+		res, err := kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+			Type: bindings.NotifyType(event.Action),
+			Path: event.Path,
+			Attr: &bindings.Attr{
+				Dev:              event.Attr.Dev,
+				Ino:              event.Attr.Ino,
+				Mode:             event.Attr.Mode,
+				Size:             event.Attr.Size,
+				AccessTime:       event.Attr.AccessTime,
+				ModificationTime: event.Attr.ModificationTime,
+				ChangeTime:       event.Attr.ChangeTime,
+				BirthTime:        event.Attr.BirthTime,
+				Flags:            event.Attr.Flags,
+			},
+		})
+		if err != nil {
+			logger.Error("Failed to notify peer", "error", err)
+		}
+		_ = res
+	}
+
+	fs.OpenStreamProvider = func() types.FileStreamProvider {
+		return NewImplStreamProvider(kd.session.GRPCClient)
+	}
+
+	logger.Info("Before mount")
+	fs.Mount(filepath.Clean(kd.ToMount), true, filepath.Clean(kd.ToSave))
+	logger.Info("After mount")
+
+	if _, err := kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{}); err != nil {
+		logger.Error("DEBUG failed", "error", err)
+		return err
+	}
+
+	logger.Info("Success")
+	return nil
+}
+
+// connectGRPCClientWithRetry waits until the gRPC server is ready and then creates the client.
+// timeout is the maximum total wait duration.
+func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
+	logger := kd.logger.New("method", "connect-grpc-retry")
+	deadline := time.Now().Add(timeout)
+
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout connecting to grpc server")
+		}
+
+		// only try if the inbound connection (single-conn listener) is non-nil
+		if kd.session != nil && kd.session.Session != nil && kd.session.Session.Inbound != nil {
+			// create gRPC client using the hijacked outbound conn
+			dialer := func(ctx context.Context, _ string) (net.Conn, error) {
+				return kd.session.Session.Outbound, nil
+			}
+
+			conn, err := grpc.Dial(
+				"keibipipe", // fake target name
+				grpc.WithContextDialer(dialer),
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+			)
+			if err != nil {
+				logger.Debug("grpc dial attempt failed, retrying", "err", err)
+			} else {
+				kd.session.GRPCClient = bindings.NewKeibiServiceClient(conn)
+				kd.KDClient = kd.session.GRPCClient
+				logger.Info("connected to grpc server")
+				return nil
+			}
+		}
+
+		time.Sleep(100 * time.Millisecond) // short retry delay
+	}
+}
+
+/*
 func (kd *KeibiDrop) CreateRoom() error {
 	logger := kd.logger.New("method", "create-room")
 	if kd.session == nil {
@@ -129,6 +372,15 @@ func (kd *KeibiDrop) CreateRoom() error {
 	kd.Start()
 	logger.Info("After start")
 
+	// wait for server ready (avoid indefinite sleep)
+	select {
+	case <-kd.serverReady:
+		// server reported ready; proceed
+	case <-time.After(15 * time.Second):
+		logger.Error("timeout waiting for grpc server to become ready")
+		return fmt.Errorf("grpc server not ready")
+	}
+
 	err = kd.connectGRPCClient()
 	if err != nil {
 		logger.Error("Failed to start gRPC client", "error", err)
@@ -178,12 +430,16 @@ func (kd *KeibiDrop) CreateRoom() error {
 	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})
 	if err != nil {
 		logger.Error("DEBUG", "error", err)
+		return err
 	}
 
 	logger.Info("Success")
 	return nil
 }
 
+*/
+
+/*
 func (kd *KeibiDrop) JoinRoom() error {
 	logger := kd.logger.New("method", "join-room")
 	if kd.session == nil {
@@ -240,6 +496,15 @@ func (kd *KeibiDrop) JoinRoom() error {
 	kd.Start()
 	logger.Info("After start")
 
+	// wait for server ready (avoid indefinite sleep)
+	select {
+	case <-kd.serverReady:
+		// server reported ready; proceed
+	case <-time.After(15 * time.Second):
+		logger.Error("timeout waiting for grpc server to become ready")
+		return fmt.Errorf("grpc server not ready")
+	}
+
 	err = kd.connectGRPCClient()
 	if err != nil {
 		logger.Error("Failed to start gRPC client", "error", err)
@@ -281,9 +546,6 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 	kd.FS = fs
 
-	// TODO: This is for tests to debug.
-	time.Sleep(2 * time.Second)
-
 	logger.Info("Before mount")
 	fs.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))
 	logger.Info("After mount")
@@ -292,11 +554,14 @@ func (kd *KeibiDrop) JoinRoom() error {
 	_, err = kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{})
 	if err != nil {
 		logger.Error("DEBUG", "error", err)
+		return err
 	}
 
 	logger.Info("Success")
 	return nil
 }
+
+*/
 
 // This is blocking.
 func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond bool) error {
@@ -360,9 +625,10 @@ func (kd *KeibiDrop) connectGRPCClient() error {
 
 	// Create the gRPC client connection
 	conn, err := grpc.Dial(
-		"keibipipe", // fake target name, not used by your dialer
+		"keibipipe", // fake target name, not used by dialer.
 		grpc.WithContextDialer(dialer),
 		grpc.WithTransportCredentials(insecure.NewCredentials()), // you're doing your own encryption
+		grpc.WithBlock(), // wait until the connection is ready
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client: %w", err)
@@ -384,7 +650,7 @@ func (kd *KeibiDrop) connectGRPCClient() error {
 	return nil
 }
 
-func (kd *KeibiDrop) startGRPCServer() error {
+func (kd *KeibiDrop) startGRPCServer(ready chan<- struct{}) error {
 	kd.session.GRPCListener = kd.session.Session.Inbound
 
 	grpcServer := grpc.NewServer()
@@ -399,6 +665,12 @@ func (kd *KeibiDrop) startGRPCServer() error {
 
 	kd.KDSvc = svc
 	bindings.RegisterKeibiServiceServer(grpcServer, svc)
+
+	// Signal that we've finished setup and are about to Serve.
+	if ready != nil {
+		// non-blocking close/send: send then close channel
+		close(ready)
+	}
 
 	kd.logger.Info("Starting gRPC server...")
 	if err := grpcServer.Serve(ln); err != nil {
