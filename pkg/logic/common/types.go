@@ -90,7 +90,7 @@ func NewKeibiDrop(ctx context.Context, logger log15.Logger, relayURL *url.URL, i
 		return nil, err
 	}
 
-	ipv6, err := GetLocalIPv6()
+	ipv6, err := GetGlobalIPv6() //GetLocalIPv6()
 	if err != nil {
 		logger.Error("Failed to get local IPv6", "error", err)
 		return nil, err
