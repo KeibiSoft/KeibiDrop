@@ -5,6 +5,7 @@ import (
 	"syscall"
 
 	"github.com/winfsp/cgofuse/fuse"
+	winfuse "github.com/winfsp/cgofuse/fuse"
 	"golang.org/x/sys/unix"
 )
 
@@ -64,11 +65,29 @@ func copyFusestatFromGostat(dst *fuse.Stat_t, src *syscall.Stat_t) {
 	dst.Gid = uint32(src.Gid)
 	dst.Rdev = uint64(src.Rdev)
 	dst.Size = int64(src.Size)
+	dst.Atim.Sec, dst.Atim.Nsec = int64(src.Atim.Sec), int64(src.Atim.Nsec)
+	dst.Mtim.Sec, dst.Mtim.Nsec = int64(src.Mtim.Sec), int64(src.Mtim.Nsec)
+	dst.Ctim.Sec, dst.Ctim.Nsec = int64(src.Ctim.Sec), int64(src.Ctim.Nsec)
+	dst.Blksize = int64(src.Blksize)
+	dst.Blocks = int64(src.Blocks)
+}
+
+func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
+	*dst = winfuse.Stat_t{}
+	dst.Dev = src.Dev
+	dst.Ino = src.Ino
+	dst.Mode = src.Mode
+	dst.Nlink = src.Nlink
+	dst.Uid = src.Uid
+	dst.Gid = src.Gid
+	dst.Rdev = src.Rdev
+	dst.Size = src.Size
 	dst.Atim.Sec, dst.Atim.Nsec = src.Atim.Sec, src.Atim.Nsec
 	dst.Mtim.Sec, dst.Mtim.Nsec = src.Mtim.Sec, src.Mtim.Nsec
 	dst.Ctim.Sec, dst.Ctim.Nsec = src.Ctim.Sec, src.Ctim.Nsec
-	dst.Blksize = int64(src.Blksize)
-	dst.Blocks = int64(src.Blocks)
+	dst.Blksize = src.Blksize
+	dst.Blocks = src.Blocks
+	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtim.Sec, src.Birthtim.Nsec
 }
 
 func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
