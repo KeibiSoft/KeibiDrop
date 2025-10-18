@@ -146,7 +146,7 @@ See [`Security.md`](./Security.md) for a complete protocol overview.
 
 ## Contributing & Legal
 
-Want to contribute? Great, but please read the [CONTRIBUTING.md](./CONTRIBUTING.md) first. All commits must be signed (`git commit -S`) and by doing so, you agree to the terms outlined in our [Developer Certificate of Origin](./DCO.txt).
+Want to contribute? Great, but please read the [CONTRIBUTING.md](./CONTRIBUTING.md) first. All commits must be signed (`git commit -S`); you also need to `git commit --sign-off` in order to agree to the terms outlined in our [Developer Certificate of Origin](./DCO.txt).
 
 For information about how we (don’t) use your data, see the [Privacy Policy](./privacy.md).
 
