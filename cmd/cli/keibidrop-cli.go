@@ -115,6 +115,7 @@ func (c *cliContext) executor(in string) {
 		deleteFile(c.kd, args[1])
 
 	case "exit", "quit":
+		c.kd.UnmountFilesystem()
 		fmt.Println("Goodbye.")
 		os.Exit(0)
 

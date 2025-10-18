@@ -44,13 +44,7 @@ type Dir struct {
 	OpenFileHandlers map[uint64]*File
 	OpenMapLock      sync.RWMutex
 
-	FileChildren map[uint64]*File // {Inode: *File}
-	fcl          sync.RWMutex
-
-	DirChildren map[uint64]*Dir // {Inode: *Dir}
-	dcl         sync.RWMutex
-
-	adm       sync.RWMutex
+	Adm       sync.RWMutex
 	AllDirMap map[string]*Dir
 
 	AfmLock    sync.RWMutex
@@ -60,10 +54,6 @@ type Dir struct {
 
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
-}
-
-func (d *Dir) NotifyPeer() {
-	d.logger.Warn("TODO")
 }
 
 type File struct {

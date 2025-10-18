@@ -37,6 +37,8 @@ func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (
 
 func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRequest) (*bindings.NotifyResponse, error) {
 	logger := kd.Logger.New("method", "notify", "req-type", req.Type)
+	logger.Warn("DEBUG NOTIFY CALLED")
+
 	if kd.FS == nil {
 		logger.Warn("Filesystem not mounted")
 		return nil, ErrGRPCNotMounted
@@ -74,6 +76,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			logger.Error("Failed to add file, invalid attr", "error", ErrGRPCInvalidArgument)
 			return nil, ErrGRPCInvalidArgument
 		}
+
+		logger.Debug("NOTIFY ADD FILE")
 		atim := time.Unix(0, int64(req.Attr.AccessTime))
 		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
 		ctim := time.Unix(0, int64(req.Attr.ChangeTime))
@@ -89,6 +93,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 
+		logger.Warn("DEBUG ROOT ADD REMOTE FILE")
 		err := kd.FS.Root.AddRemoteFile(logger, req.Path, req.Name, &fuse.Stat_t{
 			Dev:      req.Attr.Dev,
 			Ino:      req.Attr.Ino,
@@ -209,7 +214,14 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
 	logger := kd.Logger.New("method", "read")
+	if kd.FS == nil || kd.FS.Root == nil {
+		logger.Error("FS or Root is nil")
+		return ErrGRPCFailedPrecondition
+	}
+
 	isOpen := false
+	kd.FS.Root.AfmLock.RLock()
+	defer kd.FS.Root.AfmLock.RUnlock()
 
 	var fh *os.File
 	var openedPath string
@@ -235,9 +247,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 		if !isOpen {
 			isOpen = true
-			kd.FS.Root.AfmLock.RLock()
 			f, ok := kd.FS.Root.AllFileMap[rec.Path]
-			kd.FS.Root.AfmLock.RUnlock()
 			if !ok {
 				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -50,9 +51,9 @@ type KeibiDrop struct {
 	refreshSession func() *session.Session
 
 	// For stopping the grpc server.
-	grpcServer    *grpc.Server
-	serverReady   chan struct{}
-	serverReadyMu sync.Mutex
+	grpcServer      *grpc.Server
+	filesystemReady chan struct{}
+	serverReadyMu   sync.Mutex
 }
 
 type TaskSignal int
@@ -97,22 +98,22 @@ func NewKeibiDrop(ctx context.Context, logger log15.Logger, relayURL *url.URL, i
 	}
 
 	kd := &KeibiDrop{
-		logger:         logger,
-		relayClient:    client,
-		RelayEndoint:   relayURL,
-		session:        session,
-		LocalIPv6IP:    ipv6,
-		inboundPort:    inboundPort,
-		listener:       listener,
-		signals:        make(chan TaskSignal, 2),
-		running:        false,
-		ctx:            ctx,
-		mu:             sync.Mutex{},
-		refreshSession: refreshSession,
-		ToMount:        toMount,
-		ToSave:         toSave,
-		serverReady:    make(chan struct{}),
-		serverReadyMu:  sync.Mutex{},
+		logger:          logger,
+		relayClient:     client,
+		RelayEndoint:    relayURL,
+		session:         session,
+		LocalIPv6IP:     ipv6,
+		inboundPort:     inboundPort,
+		listener:        listener,
+		signals:         make(chan TaskSignal, 2),
+		running:         false,
+		ctx:             ctx,
+		mu:              sync.Mutex{},
+		refreshSession:  refreshSession,
+		ToMount:         toMount,
+		ToSave:          toSave,
+		filesystemReady: make(chan struct{}),
+		serverReadyMu:   sync.Mutex{},
 	}
 
 	return kd, nil
@@ -146,6 +147,7 @@ func (kd *KeibiDrop) Stop() {
 	kd.signals <- Stop
 }
 
+// Run as a go-routine.
 func (kd *KeibiDrop) Run() {
 	logger := kd.logger.New("method", "run-state")
 	for {
@@ -172,14 +174,26 @@ func (kd *KeibiDrop) Run() {
 
 				logger.Info("Signal start success")
 
+				kd.filesystemReady = make(chan struct{})
 				// prepare serverReady channel
-				kd.serverReady = make(chan struct{})
 				go func() {
-					err := kd.startGRPCServer(kd.serverReady)
+					err := kd.startGRPCServer()
 					if err != nil {
 						logger.Error("Failed to start gRPC server", "error", err)
 					}
 				}()
+
+				// mount filesystem here
+				<-kd.filesystemReady
+
+				if kd.FS != nil {
+					logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
+					kd.KDSvc.FS = kd.FS
+					kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))
+					logger.Info("Filesystem mounted successfully")
+				} else {
+					logger.Warn("No FS to mount")
+				}
 
 				kd.running = true
 
