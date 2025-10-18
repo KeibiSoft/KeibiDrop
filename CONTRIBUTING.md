@@ -74,9 +74,10 @@ By contributing, you confirm that:
 1. Fork the repository  
 2. Create a feature branch: `git checkout -b feature/my-module`  
 3. Make your changes (modular is better!)  
-4. Sign your commits using `git commit -S -m "your message here"`  
-5. Push your changes: `git push origin feature/my-module`  
-6. Open a pull request with a clear, descriptive message
+4. Sign your commits using `git commit -S -m "your message here"`
+5. The first time, you are required to sign-off that you read the DCO.txt (`git commit --sign-off`)
+6. Push your changes: `git push origin feature/my-module`  
+7. Open a pull request with a clear, descriptive message
 
 ---
 
@@ -86,4 +87,4 @@ Open an issue or start a discussion thread. We try to respond in a human timefra
 
 Thanks again for contributing. The community and caffeine both appreciate you.
 
-– KeibiSoft SRL
+- KeibiSoft SRL

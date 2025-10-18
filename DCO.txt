@@ -20,6 +20,6 @@ By submitting a signed commit to this project, I certify that:
 
 ---
 
-By submitting a commit signed with `git commit -S`, you agree to the terms above.
+By submitting a commit signed-off with `git commit --sign-off`, you agree to the terms above.
 
 No manual `Signed-off-by:` line is required.
