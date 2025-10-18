@@ -45,6 +45,12 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) int {
 
 func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 	d.logger.Info("Create", "path", path)
+	d.AfmLock.Lock()
+	defer d.AfmLock.Unlock()
+
+	d.OpenMapLock.Lock()
+	defer d.OpenMapLock.Unlock()
+
 	relativePath := path
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "open", "path", path, "flags", flags)
@@ -54,11 +60,19 @@ func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 		return int(convertOsErrToSyscallErrno("open", err)), 0
 	}
 
-	d.OnLocalChange(types.FileEvent{
-		Path:   path,
-		Action: types.AddFile,
-		Attr:   &keibidrop.Attr{},
-	})
+	logger.Warn("DEBUG Before local change")
+
+	if d.OnLocalChange == nil {
+		logger.Warn("DEBUG LOCAL CHANGE WAS NIL")
+	}
+
+	if d.OnLocalChange != nil {
+		d.OnLocalChange(types.FileEvent{
+			Path:   path,
+			Action: types.AddFile,
+			Attr:   &keibidrop.Attr{},
+		})
+	}
 
 	name := strings.Split(path, "/")
 
@@ -73,13 +87,15 @@ func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 		StreamProvider:  d.OpenStreamProvider(),
 	}
 
-	d.AfmLock.Lock()
-	d.AllFileMap[path] = f
-	d.AfmLock.Unlock()
+	logger.Warn("DEBUG After local change and before AFM LOCK")
 
-	d.OpenMapLock.Lock()
+	d.AllFileMap[path] = f
+
+	logger.Warn("DEBUG AFTER AFM LOCK BUT BEFORE Open map lock")
+
 	d.OpenFileHandlers[uint64(fd)] = f
-	d.OpenMapLock.Unlock()
+
+	logger.Warn("DEBUG AFTER OPEN MAP LOCK")
 
 	return 0, uint64(fd)
 }
@@ -91,7 +107,7 @@ func (d *Dir) Destroy() {
 
 func (d *Dir) Flush(path string, fh uint64) int {
 	d.logger.Info("Flush", "path", path)
-	return winfuse.ENOSYS
+	return -winfuse.ENOSYS
 }
 
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) int {
@@ -115,6 +131,10 @@ func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) int {
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 	logger := d.logger.New("method", "get-attr", "path", path, "fh", fh)
 	logger.Info("Getattr")
+	d.Adm.Lock()
+	defer d.Adm.Unlock()
+	d.AfmLock.Lock()
+	defer d.AfmLock.Unlock()
 
 	stgo := syscall.Stat_t{}
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -124,19 +144,13 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 		cerr := convertOsErrToSyscallErrno("lstat", err)
 		// Path not locally present, thus it is present on remote.
 		if errors.Is(-cerr, syscall.ENOENT) {
-			d.adm.RLock()
 			dir, ok := d.AllDirMap[path]
-			d.adm.RUnlock()
-
 			if ok && dir.stat != nil {
 				copyFusestatFromFusestat(stat, dir.stat)
 				return 0
 			}
 
-			d.AfmLock.RLock()
 			f, ok := d.AllFileMap[path]
-			d.AfmLock.RLock()
-
 			if ok && f.stat != nil {
 				copyFusestatFromFusestat(stat, f.stat)
 				return 0
@@ -154,31 +168,25 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 
 	found := false
 
-	d.adm.RLock()
 	dir, ok := d.AllDirMap[path]
-	d.adm.RUnlock()
 
 	if ok && dir.stat != nil && gtAtim(dir.stat.Mtim, stat.Mtim) {
 		copyFusestatFromFusestat(stat, dir.stat)
 	}
 	if ok && dir.stat != nil && !gtAtim(dir.stat.Mtim, stat.Mtim) {
 		copyFusestatFromFusestat(stat, dir.stat)
-		dir.NotifyPeer()
 	}
 	if ok {
 		found = ok
 	}
 
-	d.AfmLock.RLock()
 	f, ok := d.AllFileMap[path]
-	d.AfmLock.RUnlock()
 
 	if ok && f.stat != nil && gtAtim(f.stat.Mtim, stat.Mtim) {
 		copyFusestatFromFusestat(stat, f.stat)
 	}
 	if ok && f.stat != nil && !gtAtim(f.stat.Mtim, stat.Mtim) {
 		copyFusestatFromFusestat(f.stat, stat)
-		f.NotifyPeer()
 	}
 	if ok {
 		found = ok
@@ -199,9 +207,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 		if finfo.IsDir() {
 			dir := &Dir{
 				logger:              logger,
-				fcl:                 sync.RWMutex{},
-				dcl:                 sync.RWMutex{},
-				adm:                 sync.RWMutex{},
+				Adm:                 sync.RWMutex{},
 				AfmLock:             sync.RWMutex{},
 				Inode:               stat.Ino,
 				RelativePath:        path,
@@ -211,8 +217,6 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 				OpenFileHandlers:    make(map[uint64]*File),
 				OpenMapLock:         sync.RWMutex{},
 				PeerLastEdit:        0,
-				FileChildren:        make(map[uint64]*File),
-				DirChildren:         make(map[uint64]*Dir),
 				AllDirMap:           make(map[string]*Dir),
 				AllFileMap:          make(map[string]*File),
 				stat:                &winfuse.Stat_t{},
@@ -220,17 +224,13 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 				OpenStreamProvider:  d.OpenStreamProvider,
 			}
 			copyFusestatFromFusestat(dir.stat, stat)
-			d.adm.Lock()
 			d.AllDirMap[path] = dir
-			d.adm.Unlock()
 
 			d.OnLocalChange(types.FileEvent{
 				Action: types.AddDir,
 				Path:   path,
 				Attr:   types.StatToAttr(dir.stat),
 			})
-
-			dir.NotifyPeer()
 		} else {
 			f := &File{
 				logger:          logger,
@@ -248,17 +248,12 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 			}
 			copyFusestatFromFusestat(f.stat, stat)
 
-			d.AfmLock.Lock()
 			d.AllFileMap[path] = f
-			d.AfmLock.Unlock()
-
 			d.OnLocalChange(types.FileEvent{
 				Action: types.AddFile,
 				Path:   path,
 				Attr:   types.StatToAttr(f.stat),
 			})
-
-			f.NotifyPeer()
 		}
 
 	}
@@ -305,9 +300,12 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) int {
 
 func (d *Dir) Open(path string, flags int) (int, uint64) {
 	d.logger.Info("Open", "path", path, "inode", d.Inode)
-	d.AfmLock.RLock()
+	d.AfmLock.Lock()
+	defer d.AfmLock.Unlock()
+	d.OpenMapLock.Lock()
+	defer d.OpenMapLock.Unlock()
+
 	fh, ok := d.AllFileMap[path]
-	d.AfmLock.RUnlock()
 	if ok {
 		d.logger.Info("Open remote file")
 		fsp := d.OpenStreamProvider()
@@ -319,9 +317,7 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 			return -winfuse.EACCES, 0
 		}
 		fh.RemoteFileStream = stream
-		d.OpenMapLock.Lock()
 		d.OpenFileHandlers[fh.Inode] = fh
-		d.OpenMapLock.Unlock()
 		return 0, fh.Inode
 	}
 
@@ -390,7 +386,6 @@ func (d *Dir) Release(path string, fh uint64) int {
 	d.OpenMapLock.Lock()
 	defer d.OpenMapLock.Unlock()
 	f, ok := d.OpenFileHandlers[fh]
-	d.OpenMapLock.RUnlock()
 	if ok {
 		v := f.openFileCounter.Release()
 		if v == 0 {
@@ -462,7 +457,7 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) int {
 	stgo := syscall.Statfs_t{}
 	err := syscall_Statfs(path, &stgo)
 	if err != nil {
-		logger.Error("Faield to stat underlying folder", "error", err)
+		logger.Error("Failed to stat underlying folder", "error", err)
 		return int(convertOsErrToSyscallErrno("statfs", err))
 	}
 	copyFusestatfsFromGostatfs(stat, &stgo)
@@ -535,9 +530,10 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 	logger := d.logger.New("method", "read", "path", path, "fh", fh, "offset", offset)
 
 	// Check if this file has a remote stream
-	d.OpenMapLock.RLock()
+	d.OpenMapLock.Lock()
+	defer d.OpenMapLock.Unlock()
+
 	f, ok := d.OpenFileHandlers[fh]
-	d.OpenMapLock.RUnlock()
 
 	if ok && f.NotLocalSynced && f.RemoteFileStream != nil {
 		// Read from remote stream
@@ -577,43 +573,6 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 
 	return n
 }
-
-/*
-// The method returns the number of bytes read.
-func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
-	d.logger.Info("Read", "path", path, "inode", d.Inode, "fh", fh)
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "read", "path", path, "fh", fh, "offset", offset)
-
-	d.OpenMapLock.RLock()
-	f, ok := d.OpenFileHandlers[fh]
-	d.OpenMapLock.RUnlock()
-	if ok {
-		// TODO: Check stream not nil.
-		if f.NotLocalSynced {
-			data, err := f.RemoteFileStream.ReadAt(context.Background(), offset, int64(len(buff)))
-			if err != nil {
-				logger.Error("Failed to read data", "error", err)
-				return -winfuse.EBADF
-			}
-
-			// TODO: Also write it in my local save file.
-
-			n := copy(buff, data)
-			return n
-		}
-	}
-
-	n, err := syscall.Pread(int(fh), buff, offset)
-	if err != nil {
-		logger.Error("Failed to read", "error", err)
-		return int(convertOsErrToSyscallErrno("pread", err))
-	}
-
-	return n
-}
-
-*/
 
 // Notes about extended attributes:
 // Personally I have no care for them.
@@ -703,7 +662,9 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) int {
 // Notes: I am confident that it is not a good idea to use syscall errors for GRPC called methods.
 
 func (d *Dir) AddRemoteFile(logger log15.Logger, path string, name string, stat *winfuse.Stat_t) error {
+	logger.Warn("DEBUG ADD REMOTE FILE BEFORE LOCK")
 	d.AfmLock.Lock()
+	logger.Warn("DEBUG AFM LOCK ACQUIRED")
 	defer d.AfmLock.Unlock()
 	_, ok := d.AllFileMap[path]
 	if ok {
@@ -726,13 +687,16 @@ func (d *Dir) AddRemoteFile(logger log15.Logger, path string, name string, stat 
 
 	d.AllFileMap[path] = f
 
+	logger.Warn("DEBUG SUCCESS !")
+
 	return nil
 }
 
 func (d *Dir) EditRemoteFile(logger log15.Logger, path string, name string, stat *winfuse.Stat_t) error {
-	d.AfmLock.RLock()
+	d.AfmLock.Lock()
+	defer d.AfmLock.RUnlock()
+
 	f, ok := d.AllFileMap[path]
-	d.AfmLock.RUnlock()
 	if !ok {
 		logger.Error("Failed to edit file, it doesn't exists", "error", syscall.EEXIST)
 		return syscall.EEXIST

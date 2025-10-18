@@ -52,13 +52,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 		OpenMapLock:      sync.RWMutex{},
 		OpenFileHandlers: make(map[uint64]*File),
 
-		fcl:          sync.RWMutex{},
-		FileChildren: make(map[uint64]*File),
-
-		dcl:         sync.RWMutex{},
-		DirChildren: make(map[uint64]*Dir),
-
-		adm:       sync.RWMutex{},
+		Adm:       sync.RWMutex{},
 		AllDirMap: make(map[string]*Dir),
 
 		AfmLock:    sync.RWMutex{},

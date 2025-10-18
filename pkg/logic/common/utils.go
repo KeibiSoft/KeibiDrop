@@ -1,16 +1,26 @@
 package common
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
 
+	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/crypto"
+	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
+	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
+	"github.com/inconshreveable/log15"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func (kd *KeibiDrop) registerRoomToRelay() error {
@@ -185,4 +195,182 @@ func isValidIPv6(ipStr string) bool {
 	// TODO: Comment
 	return ip != nil && ip.To4() == nil
 	// return ip != nil && ip.To4() == nil && !ip.IsLoopback() && !ip.IsPrivate()
+}
+
+//
+
+func (kd *KeibiDrop) setupFilesystem(logger log15.Logger, ready chan struct{}) error {
+	if kd.session == nil || kd.session.GRPCClient == nil {
+		logger.Warn("Session or gRPC client not initialized")
+		return ErrNilPointer
+	}
+
+	fs := filesystem.NewFS(logger)
+	kd.FS = fs
+
+	fs.OnLocalChange = func(event types.FileEvent) {
+		if kd.session == nil || kd.session.GRPCClient == nil {
+			return
+		}
+
+		logger.Warn("DEBUG BEFORE GRPC NOTIFY", "kd sess nil", kd.session == nil)
+		logger.Warn("DEBUG CLI NIL", "cli-nil", kd.session.GRPCClient == nil)
+
+		_, err := kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+			Type: bindings.NotifyType(event.Action),
+			Path: event.Path,
+			Attr: &bindings.Attr{
+				Dev:              event.Attr.Dev,
+				Ino:              event.Attr.Ino,
+				Mode:             event.Attr.Mode,
+				Size:             event.Attr.Size,
+				AccessTime:       event.Attr.AccessTime,
+				ModificationTime: event.Attr.ModificationTime,
+				ChangeTime:       event.Attr.ChangeTime,
+				BirthTime:        event.Attr.BirthTime,
+				Flags:            event.Attr.Flags,
+			},
+		})
+		if err != nil {
+			logger.Error("Failed to notify peer", "error", err)
+		}
+
+		logger.Warn("DEBUG AFTER GRPC NOTIFY")
+	}
+
+	fs.OpenStreamProvider = func() types.FileStreamProvider {
+		return NewImplStreamProvider(kd.session.GRPCClient)
+	}
+
+	if _, err := kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{}); err != nil {
+		logger.Error("DEBUG failed", "error", err)
+		return err
+	}
+
+	if _, err := kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{}); err != nil {
+		logger.Error("DEBUG failed", "error", err)
+		return err
+	}
+
+	if _, err := kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{}); err != nil {
+		logger.Error("DEBUG failed", "error", err)
+		return err
+	}
+
+	if ready != nil {
+		close(ready)
+	}
+
+	return nil
+}
+
+// connectGRPCClientWithRetry waits until the gRPC server is ready and then creates the client.
+// timeout is the maximum total wait duration.
+func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
+	logger := kd.logger.New("method", "connect-grpc-retry")
+	deadline := time.Now().Add(timeout)
+
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout connecting to grpc server")
+		}
+
+		// only try if the inbound connection (single-conn listener) is non-nil
+		if kd.session != nil && kd.session.Session != nil && kd.session.Session.Inbound != nil {
+			// create gRPC client using the hijacked outbound conn
+			dialer := func(ctx context.Context, _ string) (net.Conn, error) {
+				return kd.session.Session.Outbound, nil
+			}
+
+			conn, err := grpc.Dial(
+				"keibipipe", // fake target name
+				grpc.WithContextDialer(dialer),
+				grpc.WithTransportCredentials(insecure.NewCredentials()),
+			)
+			if err != nil {
+				logger.Debug("grpc dial attempt failed, retrying", "err", err)
+			} else {
+				kd.session.GRPCClient = bindings.NewKeibiServiceClient(conn)
+				kd.KDClient = kd.session.GRPCClient
+				logger.Info("connected to grpc server")
+				return nil
+			}
+		}
+
+		time.Sleep(100 * time.Millisecond) // short retry delay
+	}
+}
+
+//
+
+func (kd *KeibiDrop) startGRPCServer() error {
+	kd.session.GRPCListener = kd.session.Session.Inbound
+
+	grpcServer := grpc.NewServer()
+	kd.grpcServer = grpcServer
+
+	ln := NewSingleConnListener(kd.session.Session.Inbound)
+
+	svc := &service.KeibidropServiceImpl{
+		Session: kd.session,
+		Logger:  kd.logger.New("component", "keibidrop-server"),
+	}
+
+	kd.KDSvc = svc
+	bindings.RegisterKeibiServiceServer(grpcServer, svc)
+
+	kd.logger.Info("Starting gRPC server...")
+	if err := grpcServer.Serve(ln); err != nil {
+		kd.logger.Error("gRPC server exited with error", "err", err)
+	}
+
+	return nil
+}
+
+type singleConnListener struct {
+	conn   net.Conn
+	done   chan struct{}
+	inUse  bool
+	closed chan struct{}
+}
+
+func NewSingleConnListener(conn net.Conn) net.Listener {
+	return &singleConnListener{
+		conn:   conn,
+		done:   make(chan struct{}),
+		closed: make(chan struct{}),
+		inUse:  false,
+	}
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	select {
+	case <-l.done:
+		return nil, io.EOF
+	default:
+		if l.inUse {
+			<-l.closed
+			return nil, nil
+		}
+		l.inUse = true
+		conn := l.conn
+		l.conn = nil
+		return conn, nil
+	}
+}
+
+func (l *singleConnListener) Close() error {
+	if l.conn != nil {
+		close(l.closed)
+		close(l.done)
+		return l.conn.Close()
+	}
+	return nil
+}
+
+func (l *singleConnListener) Addr() net.Addr {
+	if l.conn != nil {
+		return l.conn.LocalAddr()
+	}
+	return &net.TCPAddr{IP: net.IPv6loopback, Port: 0}
 }
