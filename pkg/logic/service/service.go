@@ -213,11 +213,13 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 */
 
 func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
-	logger := kd.Logger.New("method", "read")
+	logger := kd.Logger.New("method", "server-read")
 	if kd.FS == nil || kd.FS.Root == nil {
 		logger.Error("FS or Root is nil")
 		return ErrGRPCFailedPrecondition
 	}
+
+	logger.Debug("READ CALLED")
 
 	isOpen := false
 	kd.FS.Root.AfmLock.RLock()
@@ -247,11 +249,14 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 		if !isOpen {
 			isOpen = true
+			logger.Debug("PATH", "rec-path", rec.Path, "offset", rec.Offset, "rec-szie", rec.Size, "handle", rec.Handle)
 			f, ok := kd.FS.Root.AllFileMap[rec.Path]
 			if !ok {
 				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")
 			}
+
+			logger.Debug("REAL PATH OF FILE?", f.RealPathOfFile, "path", f.RelativePath)
 			fh, err = os.Open(f.RealPathOfFile)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)

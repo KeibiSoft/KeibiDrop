@@ -21,6 +21,7 @@ const INBOUND_PORT_ENV = "INBOUND_PORT"
 const OUTBOUND_PORT_ENV = "OUTBOUND_PORT"
 const TO_MOUNT_PATH_ENV = "TO_MOUNT_PATH"
 const TO_SAVE_PATH_ENV = "TO_SAVE_PATH"
+const LOG_FILE_ENV = "LOG_FILE"
 
 type cliContext struct {
 	kd *common.KeibiDrop
@@ -243,6 +244,18 @@ func main() {
 	relayURL := initRelay()
 	logger := log15.New("component", "cli")
 
+	/*
+		var wr io.Writer
+		logFileStr := os.Getenv(LOG_FILE_ENV)
+		f, err := os.Open(filepath.Clean(logFileStr))
+		if err != nil {
+			logger.Warn("Failed to open log file, defaulting to stderr", "path", logFileStr, "env", LOG_FILE_ENV, "error", err)
+			wr = os.Stderr
+		} else {
+			wr = f
+		}
+		logger.SetHandler(log15.StreamHandler(wr, log15.LogfmtFormat()))
+	*/
 	inboundStr := os.Getenv(INBOUND_PORT_ENV)
 	outboundStr := os.Getenv(OUTBOUND_PORT_ENV)
 	inbound := config.InboundPort
