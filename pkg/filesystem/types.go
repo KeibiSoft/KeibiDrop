@@ -54,6 +54,9 @@ type Dir struct {
 
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
+
+	RemoteFilesLock sync.RWMutex
+	RemoteFiles     map[string]*File
 }
 
 type File struct {
@@ -74,7 +77,11 @@ type File struct {
 
 	PeerLastEdit   uint64 `json:"peerLastEdit"`
 	IsLocalPresent bool   `json:"isLocalPresent"`
-	NotLocalSynced bool
+
+	NotLocalSynced  bool
+	NotRemoteSynced bool
+
+	LocalNewer bool
 
 	openFileCounter OpenFileCounter
 
