@@ -140,25 +140,34 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
 	isRemote := len(d.RemoteFiles) != 0
+	logger.Info("IS REMOTE?", "is-remote", len(d.RemoteFiles) != 0, "actual-len", len(d.RemoteFiles))
 	if isRemote {
+		logger.Debug("DEBUG IS REMOTE")
 		d.RemoteFilesLock.RLock()
 		defer d.RemoteFilesLock.RUnlock()
 	}
 
+	logger.Debug("HEY DEBYG")
+
 	// Check if the file is on remote, and add it to local tree.
 	if isRemote {
+		logger.Info("DEBUG inside isRemote")
 		remFile, okRemote := d.RemoteFiles[path]
 		if okRemote {
+			logger.Info("DEBUG we found remote file")
 			// File is on remote, let's see if it is also locally.
 			err := syscall.Lstat(cleanPath, &stgo)
 			if err != nil {
+				logger.Info("WE LSTAT CLEAN PATH", "error", err)
 				// Ok file not locally. Just add it, and download it on Open.
 				copyFusestatFromFusestat(stat, remFile.stat)
+				logger.Info("DEBUG HEY WE GOT a stat", "stat-size", stat.Size, "path", path)
 				d.AllFileMap[path] = remFile
 				// All good.
 				return 0
 			}
 
+			logger.Debug("SO IT WAS NOT ERROR")
 			// Ok, file is also locally present, but we already got the pointer to it.
 			// Let's see if the stats are ok.
 
@@ -166,6 +175,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 			copyFusestatFromGostat(auxStat, &stgo)
 
 			if isModificationTimeNewer(auxStat, remFile.stat) {
+				logger.Debug("IS MOD TIME NEWER?")
 				remFile.LocalNewer = true
 				copyFusestatFromFusestat(remFile.stat, auxStat)
 				copyFusestatFromFusestat(stat, remFile.stat)
@@ -174,6 +184,8 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 
 			copyFusestatFromFusestat(stat, remFile.stat)
 			remFile.LocalNewer = false
+
+			logger.Debug("OK SUCCESS")
 
 			return 0
 		}
@@ -349,11 +361,11 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 
 	// We do not have the file open.
 
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
 	// Check if file is locally present.
 	if fh.IsLocalPresent && fh.LocalNewer {
-		fd, err := syscall.Open(path, flags, 0)
+		fd, err := syscall.Open(localPath, flags, 0)
 		if err != nil {
 			logger.Error("Failed to open path", "error", err)
 			return int(convertOsErrToSyscallErrno("open", err)), 0
@@ -367,17 +379,17 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 		return 0, uint64(fd)
 	}
 
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	localPath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, localPath))
 
-	_, err := os.Stat(path)
+	_, err := os.Stat(localPath)
 	if err != nil {
 		// Create the directory, and file.
-		err2 := os.MkdirAll(getPathWithoutName(path), 0o755)
+		err2 := os.MkdirAll(getPathWithoutName(localPath), 0o755)
 		if err2 != nil {
 			logger.Error("Failed to create folders along the path", "error", err2)
 			return int(convertOsErrToSyscallErrno("open", err2)), 0
 		}
-		f, err2 := os.Create(path)
+		f, err2 := os.Create(localPath)
 		if err2 != nil {
 			logger.Error("Failed to create or truncate the file", "error", err2)
 			return int(convertOsErrToSyscallErrno("open", err2)), 0
@@ -385,7 +397,7 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 		_ = f.Close()
 	}
 
-	fd, err := syscall.Open(path, flags, 0)
+	fd, err := syscall.Open(localPath, flags, 0)
 	if err != nil {
 		logger.Error("Failed to open path", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
@@ -651,7 +663,6 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
 }
 
 func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.New("method", "read", "path", path, "fh", fh, "offset", offset)
 
 	// Check if this file has a remote stream
@@ -659,7 +670,6 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 	defer d.OpenMapLock.Unlock()
 
 	f, ok := d.OpenFileHandlers[fh]
-
 	if ok && f.NotLocalSynced && f.RemoteFileStream != nil {
 		// Read from remote stream
 		data, err := f.RemoteFileStream.ReadAt(context.Background(), offset, int64(len(buff)))
