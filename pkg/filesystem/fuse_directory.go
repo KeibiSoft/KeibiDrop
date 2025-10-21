@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,6 @@ import (
 	"syscall"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
-	"github.com/inconshreveable/log15"
 	"github.com/pkg/xattr"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
@@ -18,7 +18,7 @@ import (
 // https://pkg.go.dev/github.com/winfsp/cgofuse/fuse#FileSystemInterface
 
 func (d *Dir) Access(path string, _mask uint32) int {
-	logger := d.logger.New("method", "access", "path", path)
+	logger := d.logger.With("method", "access", "path", path)
 	logger.Info("Access", "path", path)
 
 	d.RemoteFilesLock.RLock()
@@ -60,7 +60,7 @@ func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 
 	relativePath := path
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "open", "path", path, "flags", flags)
+	logger := d.logger.With("method", "open", "path", path, "flags", flags)
 	fd, err := syscall.Open(path, flags, mode)
 	if err != nil {
 		logger.Error("Failed to open path", "error", err)
@@ -113,7 +113,7 @@ func (d *Dir) Flush(path string, fh uint64) int {
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) int {
 	d.logger.Info("Fsync", "path", path)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "fsync", "path", path)
+	logger := d.logger.With("method", "fsync", "path", path)
 	err := syscall.Fsync(int(fh))
 	if err != nil {
 		logger.Error("Failed to fsync", "error", err)
@@ -129,7 +129,7 @@ func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) int {
 }
 
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
-	logger := d.logger.New("method", "get-attr", "path", path, "fh", fh)
+	logger := d.logger.With("method", "get-attr", "path", path, "fh", fh)
 	logger.Info("Getattr")
 	d.Adm.Lock()
 	defer d.Adm.Unlock()
@@ -314,7 +314,7 @@ func (d *Dir) Link(oldpath string, newpath string) int {
 
 func (d *Dir) Mkdir(path string, mode uint32) int {
 	d.logger.Info("Mkdir", "path", path, "inode", d.Inode)
-	logger := d.logger.New("method", "mkdir", "path", path, "mode", mode)
+	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := syscall.Mkdir(path, mode)
 	if err != nil {
@@ -328,7 +328,7 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) int {
 	d.logger.Info("Mknod", "path", path, "inode", d.Inode)
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "mknod", "path", path, "mode", mode, "dev", dev)
+	logger := d.logger.With("method", "mknod", "path", path, "mode", mode, "dev", dev)
 	err := syscall.Mknod(path, mode, int(dev))
 	if err != nil {
 		logger.Error("Failed to mknor", "errro", err)
@@ -339,7 +339,7 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) int {
 
 func (d *Dir) Open(path string, flags int) (int, uint64) {
 	d.logger.Info("Open", "path", path, "inode", d.Inode)
-	logger := d.logger.New("method", "open", "path", path, "flags", flags)
+	logger := d.logger.With("method", "open", "path", path, "flags", flags)
 
 	// TODO: Check flags. O_RW, O_RDONLY, O_WRITE, O_TRUNCATE.
 
@@ -423,7 +423,7 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 func (d *Dir) Opendir(path string) (int, uint64) {
 	d.logger.Info("Opendir", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "opendir", "path", path)
+	logger := d.logger.With("method", "opendir", "path", path)
 	f, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
 	if err != nil {
 		logger.Error("Failed to open dir", "error", err)
@@ -436,7 +436,7 @@ func (d *Dir) Opendir(path string) (int, uint64) {
 func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) int {
 	d.logger.Info("Readdir", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "readdir", "path", path, "fh", fh)
+	logger := d.logger.With("method", "readdir", "path", path, "fh", fh)
 
 	dirEn, err := os.ReadDir(path)
 	if err != nil {
@@ -474,7 +474,7 @@ func (d *Dir) Readlink(path string) (int, string) {
 func (d *Dir) Release(path string, fh uint64) int {
 	d.logger.Info("Release", "path", path, "inode", d.Inode, "fh", fh)
 
-	logger := d.logger.New("method", "release", "path", path, "fh", fh)
+	logger := d.logger.With("method", "release", "path", path, "fh", fh)
 	err := syscall.Close(int(fh))
 	if err != nil {
 		logger.Error("Failed to release", "error", err)
@@ -538,7 +538,7 @@ func (d *Dir) Release(path string, fh uint64) int {
 
 func (d *Dir) Releasedir(path string, fh uint64) int {
 	d.logger.Info("Releasedir", "path", path, "inode", d.Inode, "fh", fh)
-	logger := d.logger.New("method", "release-dir", "path", path, "fh", fh)
+	logger := d.logger.With("method", "release-dir", "path", path, "fh", fh)
 	err := syscall.Close(int(fh))
 	if err != nil {
 		logger.Error("Failed to release", "error", err)
@@ -553,7 +553,7 @@ func (d *Dir) Rename(oldpath string, newpath string) int {
 	d.logger.Info("Rename", "oldpath", oldpath, "newpath", newpath, "inode", d.Inode)
 	oldpath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, oldpath))
 	newpath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
-	logger := d.logger.New("method", "rename", "old-path", oldpath, "new-path", newpath)
+	logger := d.logger.With("method", "rename", "old-path", oldpath, "new-path", newpath)
 	err := syscall.Rename(oldpath, newpath)
 	if err != nil {
 		logger.Error("Failed to rename", "error", err)
@@ -566,7 +566,7 @@ func (d *Dir) Rename(oldpath string, newpath string) int {
 func (d *Dir) Rmdir(path string) int {
 	d.logger.Info("Rmdir", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "rmdir", "path", path)
+	logger := d.logger.With("method", "rmdir", "path", path)
 	err := syscall.Rmdir(path)
 	if err != nil {
 		logger.Error("Failed to remove dir", "error", err)
@@ -589,7 +589,7 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) int {
 		}
 	*/
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "statfs", "path", path)
+	logger := d.logger.With("method", "statfs", "path", path)
 
 	stgo := syscall.Statfs_t{}
 	err := syscall_Statfs(path, &stgo)
@@ -615,7 +615,7 @@ func (d *Dir) Symlink(target string, newpath string) int {
 func (d *Dir) Truncate(path string, size int64, fh uint64) int {
 	d.logger.Info("Truncate", "path", path, "size", size, "inode", d.Inode, "fh", fh)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "truncate", "path", path, "size", size, "fh", fh)
+	logger := d.logger.With("method", "truncate", "path", path, "size", size, "fh", fh)
 	err := syscall.Truncate(path, size)
 	if err != nil {
 		logger.Error("Faile to truncate", "error", err)
@@ -629,7 +629,7 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) int {
 func (d *Dir) Unlink(path string) int {
 	d.logger.Info("Unlink", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "unlink", "path", path)
+	logger := d.logger.With("method", "unlink", "path", path)
 	err := syscall.Unlink(path)
 	if err != nil {
 		logger.Error("Failed to unlink", "error", err)
@@ -651,7 +651,7 @@ func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) int {
 func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
 	d.logger.Info("Write", "path", path, "inode", d.Inode, "fh", fh)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "write", "path", path, "fh", fh, "offset", offset)
+	logger := d.logger.With("method", "write", "path", path, "fh", fh, "offset", offset)
 
 	n, err := syscall.Pwrite(int(fh), buff, offset)
 	if err != nil {
@@ -663,7 +663,7 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
 }
 
 func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
-	logger := d.logger.New("method", "read", "path", path, "fh", fh, "offset", offset)
+	logger := d.logger.With("method", "read", "path", path, "fh", fh, "offset", offset)
 
 	// Check if this file has a remote stream
 	d.OpenMapLock.Lock()
@@ -727,7 +727,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 
 func (d *Dir) Removexattr(path string, name string) int {
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "remove-xattr", "path", path, "name", name)
+	logger := d.logger.With("method", "remove-xattr", "path", path, "name", name)
 
 	err := xattr.Remove(path, name)
 	if err != nil {
@@ -740,7 +740,7 @@ func (d *Dir) Removexattr(path string, name string) int {
 
 func (d *Dir) Listxattr(path string, fill func(name string) bool) int {
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "list-xattr", "path", path)
+	logger := d.logger.With("method", "list-xattr", "path", path)
 
 	res, err := xattr.List(path)
 	if err != nil {
@@ -765,7 +765,7 @@ func (d *Dir) Getxattr(path string, name string) (int, []byte) {
 	// xattr.Get(d.RealPathOfFile+"/"+ name)
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "get-xattr", "path", path, "name", name)
+	logger := d.logger.With("method", "get-xattr", "path", path, "name", name)
 
 	res, err := xattr.Get(path, name)
 	if err != nil {
@@ -781,7 +781,7 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) int {
 	_ = flags
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.New("method", "set-xattr", "path", path, "name", name, "val", string(value))
+	logger := d.logger.With("method", "set-xattr", "path", path, "name", name, "val", string(value))
 
 	err := xattr.Set(path, name, value)
 	if err != nil {
@@ -796,7 +796,7 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) int {
 
 // Notes: I am confident that it is not a good idea to use syscall errors for GRPC called methods.
 
-func (d *Dir) AddRemoteFile(logger log15.Logger, path string, name string, stat *winfuse.Stat_t) error {
+func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t) error {
 	logger.Warn("DEBUG ADD REMOTE FILE BEFORE LOCK")
 	d.RemoteFilesLock.Lock()
 	logger.Warn("DEBUG AFM LOCK ACQUIRED")
@@ -827,7 +827,7 @@ func (d *Dir) AddRemoteFile(logger log15.Logger, path string, name string, stat 
 	return nil
 }
 
-func (d *Dir) EditRemoteFile(logger log15.Logger, path string, name string, stat *winfuse.Stat_t) error {
+func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t) error {
 	d.RemoteFilesLock.RLock()
 	defer d.RemoteFilesLock.RUnlock()
 

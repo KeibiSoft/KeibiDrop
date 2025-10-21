@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
@@ -9,7 +10,6 @@ import (
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
-	"github.com/inconshreveable/log15"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,7 +50,11 @@ func TestKeibiDropFlow(t *testing.T) {
 	err = os.Mkdir(absBobSave, 0777)
 	require.NoError(err, "create save dir Bob")
 
-	logger := log15.New("method", "test")
+	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})
+
+	logger := slog.New(handler).With("component", "cli")
 
 	kdAlice, err := common.NewKeibiDrop(ctx, logger, parsedURL, aliceInPort, aliceOutPort, absAliceMount, absAliceSave)
 	if err != nil {

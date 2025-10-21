@@ -13,7 +13,7 @@ import (
 const Timeout = 10*60 - 5
 
 func (kd *KeibiDrop) ExportFingerprint() (string, error) {
-	logger := kd.logger.New("method", "export-fingerprint")
+	logger := kd.logger.With("method", "export-fingerprint")
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return "", ErrNilPointer
@@ -27,7 +27,7 @@ func (kd *KeibiDrop) ExportFingerprint() (string, error) {
 }
 
 func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
-	logger := kd.logger.New("method", "add-peer-fingerprint")
+	logger := kd.logger.With("method", "add-peer-fingerprint")
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -45,7 +45,7 @@ func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
 }
 
 func (kd *KeibiDrop) GetPeerFingerprint() (string, error) {
-	logger := kd.logger.New("method", "get-peer-fingerprint")
+	logger := kd.logger.With("method", "get-peer-fingerprint")
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return "", ErrNilPointer
@@ -55,7 +55,7 @@ func (kd *KeibiDrop) GetPeerFingerprint() (string, error) {
 }
 
 func (kd *KeibiDrop) JoinRoom() error {
-	logger := kd.logger.New("method", "join-room")
+	logger := kd.logger.With("method", "join-room")
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -120,7 +120,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 }
 
 func (kd *KeibiDrop) CreateRoom() error {
-	logger := kd.logger.New("method", "create-room")
+	logger := kd.logger.With("method", "create-room")
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -189,7 +189,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 // This is blocking.
 func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond bool) error {
-	logger := kd.logger.New("method", "mount-filesystem")
+	logger := kd.logger.With("method", "mount-filesystem")
 	logger.Info("Mounting virtual filesystem", "virtual-folder", toMount, "passhtrough-folder", toSave, "isSecond", isSecond)
 	if kd.session == nil || kd.KDSvc == nil {
 		logger.Warn("Session not established", "error", ErrSessionNotEstablished)
@@ -210,7 +210,7 @@ func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond boo
 }
 
 func (kd *KeibiDrop) UnmountFilesystem() error {
-	logger := kd.logger.New("method", "unmonut-filesystem")
+	logger := kd.logger.With("method", "unmonut-filesystem")
 	logger.Info("Unmounting virtual filesystem")
 	if kd.FS == nil {
 		logger.Warn("Nil filesystem", "error", ErrNilFilesystem)

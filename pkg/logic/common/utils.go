@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,13 +19,12 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
-	"github.com/inconshreveable/log15"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func (kd *KeibiDrop) registerRoomToRelay() error {
-	logger := kd.logger.New("method", "register-room-to-relay")
+	logger := kd.logger.With("method", "register-room-to-relay")
 	if kd.relayClient == nil || kd.session == nil || kd.session.OwnKeys == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -87,7 +87,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 }
 
 func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
-	logger := kd.logger.New("method", "get-room-from-relay")
+	logger := kd.logger.With("method", "get-room-from-relay")
 	if kd.relayClient == nil || kd.session == nil || kd.session.OwnKeys == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -199,7 +199,7 @@ func isValidIPv6(ipStr string) bool {
 
 //
 
-func (kd *KeibiDrop) setupFilesystem(logger log15.Logger, ready chan struct{}) error {
+func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) error {
 	if kd.session == nil || kd.session.GRPCClient == nil {
 		logger.Warn("Session or gRPC client not initialized")
 		return ErrNilPointer
@@ -267,7 +267,7 @@ func (kd *KeibiDrop) setupFilesystem(logger log15.Logger, ready chan struct{}) e
 // connectGRPCClientWithRetry waits until the gRPC server is ready and then creates the client.
 // timeout is the maximum total wait duration.
 func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
-	logger := kd.logger.New("method", "connect-grpc-retry")
+	logger := kd.logger.With("method", "connect-grpc-retry")
 	deadline := time.Now().Add(timeout)
 
 	for {
@@ -313,7 +313,7 @@ func (kd *KeibiDrop) startGRPCServer() error {
 
 	svc := &service.KeibidropServiceImpl{
 		Session: kd.session,
-		Logger:  kd.logger.New("component", "keibidrop-server"),
+		Logger:  kd.logger.With("component", "keibidrop-server"),
 	}
 
 	kd.KDSvc = svc

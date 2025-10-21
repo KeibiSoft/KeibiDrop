@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -13,7 +15,6 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/fatih/color"
-	"github.com/inconshreveable/log15"
 )
 
 const KEIBIDROP_RELAY_ENV = "KEIBIDROP_RELAY"
@@ -242,20 +243,29 @@ func deleteFile(kd *common.KeibiDrop, path string) {
 
 func main() {
 	relayURL := initRelay()
-	logger := log15.New("component", "cli")
+	var wr *os.File = os.Stderr
 
-	/*
-		var wr io.Writer
-		logFileStr := os.Getenv(LOG_FILE_ENV)
-		f, err := os.Open(filepath.Clean(logFileStr))
+	logFileStr := os.Getenv(LOG_FILE_ENV)
+	if logFileStr != "" {
+		f, err := os.OpenFile(filepath.Clean(logFileStr),
+			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
-			logger.Warn("Failed to open log file, defaulting to stderr", "path", logFileStr, "env", LOG_FILE_ENV, "error", err)
-			wr = os.Stderr
+			slog.Warn("Failed to open log file, defaulting to stderr",
+				"path", logFileStr,
+				"env", LOG_FILE_ENV,
+				"error", err)
 		} else {
 			wr = f
 		}
-		logger.SetHandler(log15.StreamHandler(wr, log15.LogfmtFormat()))
-	*/
+	}
+
+	// text output, level=DEBUG
+	handler := slog.NewTextHandler(wr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})
+
+	logger := slog.New(handler).With("component", "cli")
+
 	inboundStr := os.Getenv(INBOUND_PORT_ENV)
 	outboundStr := os.Getenv(OUTBOUND_PORT_ENV)
 	inbound := config.InboundPort

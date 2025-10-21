@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
-	"github.com/inconshreveable/log15"
 	"github.com/winfsp/cgofuse/fuse"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,7 +25,7 @@ var (
 type KeibidropServiceImpl struct {
 	bindings.UnimplementedKeibiServiceServer
 	Session *session.Session
-	Logger  log15.Logger
+	Logger  *slog.Logger
 	FS      *filesystem.FS
 }
 
@@ -36,7 +36,7 @@ func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (
 }
 
 func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRequest) (*bindings.NotifyResponse, error) {
-	logger := kd.Logger.New("method", "notify", "req-type", req.Type)
+	logger := kd.Logger.With("method", "notify", "req-type", req.Type)
 	logger.Warn("DEBUG NOTIFY CALLED")
 
 	if kd.FS == nil {
@@ -213,7 +213,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 */
 
 func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
-	logger := kd.Logger.New("method", "server-read")
+	logger := kd.Logger.With("method", "server-read")
 	if kd.FS == nil || kd.FS.Root == nil {
 		logger.Error("FS or Root is nil")
 		return ErrGRPCFailedPrecondition
@@ -256,7 +256,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			logger.Debug("REAL PATH OF FILE?", f.RealPathOfFile, "path", f.RelativePath)
+			logger.Debug("REAL PATH OF FILE?", "real-path", f.RealPathOfFile, "rel-path", f.RelativePath)
 			fh, err = os.Open(f.RealPathOfFile)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)

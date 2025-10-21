@@ -1,10 +1,10 @@
 package filesystem
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
-	"github.com/inconshreveable/log15"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
@@ -25,7 +25,7 @@ import (
 //    | -> Dir -> File
 
 type Dir struct {
-	logger log15.Logger
+	logger *slog.Logger
 
 	Inode uint64 `json:"inode"` // Inodes must be unique and not re-used.
 	Name  string `json:"name"`
@@ -60,7 +60,7 @@ type Dir struct {
 }
 
 type File struct {
-	logger log15.Logger
+	logger *slog.Logger
 
 	Inode uint64 `json:"inode"` // Inodes must be unique and not re-used.
 	Name  string `json:"name"`

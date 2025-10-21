@@ -6,7 +6,6 @@ require (
 	fyne.io/fyne/v2 v2.6.1
 	github.com/c-bata/go-prompt v0.2.6
 	github.com/fatih/color v1.18.0
-	github.com/inconshreveable/log15 v2.16.0+incompatible
 	github.com/pkg/xattr v0.4.12
 	github.com/stretchr/testify v1.10.0
 	github.com/winfsp/cgofuse v1.6.0
@@ -28,7 +27,6 @@ require (
 	github.com/fyne-io/oksvg v0.1.0 // indirect
 	github.com/go-gl/gl v0.0.0-20231021071112-07e5d0ea2e71 // indirect
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20240506104042-037f3cc74f2a // indirect
-	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/go-text/render v0.2.0 // indirect
 	github.com/go-text/typesetting v0.2.1 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
@@ -51,7 +49,6 @@ require (
 	github.com/yuin/goldmark v1.7.8 // indirect
 	golang.org/x/image v0.24.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
-	golang.org/x/term v0.32.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250218202821-56aae31c358a // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"log/slog"
 	"net/url"
 	"os"
 	"strconv"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
-	"github.com/inconshreveable/log15"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -29,7 +29,7 @@ const OUTBOUND_PORT_ENV = "OUTBOUND_PORT"
 const TO_MOUNT_PATH_ENV = "TO_MOUNT_PATH"
 const TO_SAVE_PATH_ENV = "TO_SAVE_PATH"
 
-func Launch(logger log15.Logger) {
+func Launch(logger *slog.Logger) {
 	relay := getenv(KEIBIDROP_RELAY_ENV, "https://keibidroprelay.keibisoft.com")
 	relayURL, err := url.Parse(relay)
 	if err != nil {

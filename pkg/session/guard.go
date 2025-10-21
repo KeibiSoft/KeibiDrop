@@ -15,7 +15,7 @@ var allowedTransitions = map[SessionState][]SessionState{
 
 // Transition safely updates the session state, if allowed.
 func (s *Session) Transition(next SessionState) error {
-	logger := s.logger.New("method", "transition")
+	logger := s.logger.With("method", "transition")
 
 	if s.State == next {
 		return nil
@@ -35,7 +35,7 @@ func (s *Session) Transition(next SessionState) error {
 
 // ValidateReady ensures session is fully ready for encryption and data transfer.
 func (s *Session) ValidateReady() error {
-	logger := s.logger.New("method", "validate-ready")
+	logger := s.logger.With("method", "validate-ready")
 
 	if s.State != SessionStateConnected {
 		err := fmt.Errorf("invalid session state: %s (expected 'connected')", s.State)
@@ -63,7 +63,7 @@ func (s *Session) ValidateReady() error {
 
 // ValidatePeer ensures peer handshake and verification are complete.
 func (s *Session) ValidatePeer() error {
-	logger := s.logger.New("method", "validate-peer")
+	logger := s.logger.With("method", "validate-peer")
 
 	if s.State != SessionStateVerified && s.State != SessionStateConnected {
 		err := fmt.Errorf("peer not verified (state: %s)", s.State)

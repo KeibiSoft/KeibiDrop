@@ -1,17 +1,17 @@
 package filesystem
 
 import (
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
-	"github.com/inconshreveable/log15"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
 type FS struct {
-	logger log15.Logger
+	logger *slog.Logger
 
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
@@ -21,7 +21,7 @@ type FS struct {
 	Root *Dir
 }
 
-func NewFS(logger log15.Logger) *FS {
+func NewFS(logger *slog.Logger) *FS {
 	return &FS{
 		logger: logger,
 	}
@@ -35,7 +35,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 	}
 
 	root := &Dir{
-		logger: fs.logger.New("mount", "root"),
+		logger: fs.logger.With("mount", "root"),
 		Inode:  0,
 		Name:   "",
 
