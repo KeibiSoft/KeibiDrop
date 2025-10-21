@@ -14,6 +14,7 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"google.golang.org/grpc"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -36,6 +37,9 @@ type KeibiDrop struct {
 	FS       *filesystem.FS
 	KDSvc    *service.KeibidropServiceImpl
 	KDClient bindings.KeibiServiceClient
+
+	// Non-FUSE fallback.
+	SyncTracker *synctracker.SyncTracker
 
 	// Paths for virtual mount point and for save folder.
 	ToMount string

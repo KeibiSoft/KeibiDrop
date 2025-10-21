@@ -225,9 +225,14 @@ func resetSession(kd *common.KeibiDrop) {
 }
 
 func addFile(kd *common.KeibiDrop, p string) {
-	_ = kd
-	fmt.Println("[TODO] Added to shared list:", p)
+	err := kd.AddFile(p)
+	if err != nil {
+		fmt.Println(fmt.Errorf("failed to add the file `%v` to the shared list: %e", p, err))
+		return
+	}
+	fmt.Printf("File `%v` added\n", p)
 }
+
 func listFiles(kd *common.KeibiDrop) {
 	_ = kd
 	fmt.Println("[TODO] Listing shared files...")
@@ -236,6 +241,7 @@ func pullFile(kd *common.KeibiDrop, remote, local string) {
 	_ = kd
 	fmt.Printf("[TODO] Pulled '%s' to '%s'\n", remote, local)
 }
+
 func deleteFile(kd *common.KeibiDrop, path string) {
 	_ = kd
 	fmt.Println("[TODO] Unshared:", path)
@@ -258,6 +264,9 @@ func main() {
 			wr = f
 		}
 	}
+
+	// TODO: remove this.
+	wr = os.Stdout
 
 	// text output, level=DEBUG
 	handler := slog.NewTextHandler(wr, &slog.HandlerOptions{

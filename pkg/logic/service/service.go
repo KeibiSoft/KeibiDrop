@@ -11,6 +11,7 @@ import (
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/winfsp/cgofuse/fuse"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,26 +21,27 @@ var (
 	ErrGRPCNotMounted         = status.Error(codes.FailedPrecondition, "filesystem not mounted")
 	ErrGRPCInvalidArgument    = status.Error(codes.InvalidArgument, "invalid argument")
 	ErrGRPCFailedPrecondition = status.Error(codes.FailedPrecondition, "failed precondition")
+	ErrGRPCAlreadyExists      = status.Error(codes.AlreadyExists, "already exists")
 )
 
 type KeibidropServiceImpl struct {
 	bindings.UnimplementedKeibiServiceServer
-	Session *session.Session
-	Logger  *slog.Logger
-	FS      *filesystem.FS
+	Session     *session.Session
+	Logger      *slog.Logger
+	FS          *filesystem.FS
+	SyncTracker *synctracker.SyncTracker
 }
 
 func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (*bindings.DebugResponse, error) {
-	kd.Logger.Info("WAWAWAWAWWEAWEAWEAWEDAEWAWEDAWE")
+	kd.Logger.Info("Debug called. Success!")
 
 	return &bindings.DebugResponse{}, nil
 }
 
 func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRequest) (*bindings.NotifyResponse, error) {
 	logger := kd.Logger.With("method", "notify", "req-type", req.Type)
-	logger.Warn("DEBUG NOTIFY CALLED")
 
-	if kd.FS == nil {
+	if kd.FS == nil && kd.SyncTracker == nil {
 		logger.Warn("Filesystem not mounted")
 		return nil, ErrGRPCNotMounted
 	}
@@ -77,11 +79,31 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCInvalidArgument
 		}
 
-		logger.Debug("NOTIFY ADD FILE")
 		atim := time.Unix(0, int64(req.Attr.AccessTime))
 		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
 		ctim := time.Unix(0, int64(req.Attr.ChangeTime))
 		btim := time.Unix(0, int64(req.Attr.BirthTime))
+
+		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+			kd.SyncTracker.RemoteFilesMu.Lock()
+			defer kd.SyncTracker.RemoteFilesMu.Unlock()
+			_, ok := kd.SyncTracker.RemoteFiles[req.Path]
+			if ok {
+				logger.Error("File already exists", "error", ErrGRPCAlreadyExists)
+				return nil, ErrGRPCAlreadyExists
+			}
+
+			kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+				Name:         req.Name,
+				RelativePath: req.Path,
+				LastEditTime: req.Attr.ModificationTime,
+				CreatedTime:  req.Attr.BirthTime,
+			}
+
+			logger.Info("Success")
+
+			return &bindings.NotifyResponse{}, nil
+		}
 
 		if kd.FS == nil {
 			logger.Warn("Nil FS")
@@ -155,44 +177,66 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	return &bindings.NotifyResponse{}, nil
 }
 
-/*
-	func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
-		logger := kd.Logger.New("method", "read")
+func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
+	logger := kd.Logger.With("method", "server-read")
+
+	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+		// f,ok:= kd.SyncTracker.LocalFiles[]
+		kd.SyncTracker.LocalFilesMu.RLock()
+		defer kd.SyncTracker.LocalFilesMu.RUnlock()
+
 		isOpen := false
 
 		var fh *os.File
-		size := 0
-		offset := 0
-		// hardcode buffer to 1^19 (16 MiB)
-		buf := make([]byte, 1<<19)
+		var openedPath string
+		// hardcode buffer to 16 MiB (1<<24 is 16 MB; adjust if needed)
+		buf := make([]byte, 1<<24)
+
 		for {
 			rec, err := stream.Recv()
 			if err != nil {
 				if errors.Is(err, io.EOF) {
-					logger.Info("Success")
+					if fh != nil {
+						fh.Close()
+					}
+					logger.Info("Read stream finished")
 					return nil
 				}
-				logger.Error("Failed to recv from stream", "error", err)
-				return status.Error(codes.Internal, "failed to stream recv")
+				if fh != nil {
+					fh.Close()
+				}
+				logger.Error("Failed to receive from stream", "error", err)
+				return status.Error(codes.Internal, "failed to receive read request")
 			}
+
 			if !isOpen {
 				isOpen = true
-				kd.FS.Root.AfmLock.RLock()
-				f, ok := kd.FS.Root.AllFileMap[rec.Path]
-				kd.FS.Root.AfmLock.RUnlock()
+				f, ok := kd.SyncTracker.LocalFiles[rec.Path]
 				if !ok {
-					logger.Warn("Not found", "rec", rec)
+					logger.Warn("File not found", "rec", rec)
 					return status.Error(codes.NotFound, "file not found")
 				}
+
 				fh, err = os.Open(f.RealPathOfFile)
 				if err != nil {
 					logger.Error("Failed to open real file", "error", err)
-					return status.Error(codes.Internal, "error accesing file")
+					return status.Error(codes.Internal, "error accessing file")
 				}
+				openedPath = rec.Path
+			} else if openedPath != rec.Path {
+				logger.Error("Multiple paths in same stream not supported", "requested", rec.Path)
+				return status.Error(codes.InvalidArgument, "stream can only read a single file")
 			}
 
-			n, err := fh.ReadAt(buf[:size], int64(offset))
-			if err != nil {
+			size := int(rec.Size)
+			offset := int64(rec.Offset)
+			if size > len(buf) {
+				logger.Warn("Requested size too large, truncating to buffer size", "requested", size, "buffer", len(buf))
+				size = len(buf)
+			}
+
+			n, err := fh.ReadAt(buf[:size], offset)
+			if err != nil && !errors.Is(err, io.EOF) {
 				logger.Error("Failed to read file", "error", err)
 				return status.Error(codes.Internal, "error reading file")
 			}
@@ -202,24 +246,25 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			})
 			if err != nil {
 				if errors.Is(err, io.EOF) {
-					logger.Info("Success")
+					if fh != nil {
+						fh.Close()
+					}
+					logger.Info("Read stream finished")
 					return nil
 				}
-				logger.Error("Failed to send read file", "error", err)
+				if fh != nil {
+					fh.Close()
+				}
+				logger.Error("Failed to send read data", "error", err)
 				return status.Error(codes.Internal, "failed to send data")
 			}
 		}
 	}
-*/
 
-func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
-	logger := kd.Logger.With("method", "server-read")
 	if kd.FS == nil || kd.FS.Root == nil {
 		logger.Error("FS or Root is nil")
 		return ErrGRPCFailedPrecondition
 	}
-
-	logger.Debug("READ CALLED")
 
 	isOpen := false
 	kd.FS.Root.AfmLock.RLock()
@@ -249,14 +294,12 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 		if !isOpen {
 			isOpen = true
-			logger.Debug("PATH", "rec-path", rec.Path, "offset", rec.Offset, "rec-szie", rec.Size, "handle", rec.Handle)
 			f, ok := kd.FS.Root.AllFileMap[rec.Path]
 			if !ok {
 				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			logger.Debug("REAL PATH OF FILE?", "real-path", f.RealPathOfFile, "rel-path", f.RelativePath)
 			fh, err = os.Open(f.RealPathOfFile)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
