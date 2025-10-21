@@ -238,8 +238,13 @@ func listFiles(kd *common.KeibiDrop) {
 	fmt.Println("[TODO] Listing shared files...")
 }
 func pullFile(kd *common.KeibiDrop, remote, local string) {
-	_ = kd
-	fmt.Printf("[TODO] Pulled '%s' to '%s'\n", remote, local)
+	err := kd.PullFile(remote, local)
+	if err != nil {
+		fmt.Printf("Failed to pull remote file: %e\n", err)
+		return
+	}
+
+	fmt.Printf("Pulled '%s' to '%s'\n", remote, local)
 }
 
 func deleteFile(kd *common.KeibiDrop, path string) {

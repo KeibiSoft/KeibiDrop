@@ -96,6 +96,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
 				Name:         req.Name,
 				RelativePath: req.Path,
+				Size:         uint64(req.Attr.Size),
 				LastEditTime: req.Attr.ModificationTime,
 				CreatedTime:  req.Attr.BirthTime,
 			}

@@ -2,13 +2,17 @@ package common
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
@@ -35,10 +39,16 @@ func (kd *KeibiDrop) AddFile(path string) error {
 
 	name := finfo.Name()
 
+	if finfo.IsDir() {
+		logger.Warn("File is a directory", "error", syscall.EISDIR)
+		return syscall.EISDIR
+	}
+
 	file := &synctracker.File{
 		Name:           name,
 		RelativePath:   "/" + name,
 		RealPathOfFile: cleanPath,
+		Size:           uint64(finfo.Size()),
 		LastEditTime:   uint64(finfo.ModTime().UnixNano()),
 		CreatedTime:    uint64(finfo.ModTime().UnixNano()),
 	}
@@ -82,11 +92,96 @@ func listFiles(kd *common.KeibiDrop) {
 	_ = kd
 	fmt.Println("[TODO] Listing shared files...")
 }
-func pullFile(kd *common.KeibiDrop, remote, local string) {
-	_ = kd
-	fmt.Printf("[TODO] Pulled '%s' to '%s'\n", remote, local)
-}
+
 */
+
+func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
+	logger := kd.logger.With("method", "pull-file")
+	if kd.session == nil || kd.session.GRPCClient == nil {
+		logger.Error("Invalid session", "error", ErrInvalidSession)
+		return ErrInvalidSession
+	}
+
+	localPath = filepath.Clean(localPath)
+
+	f, err := os.Create(localPath)
+	if err != nil {
+		logger.Error("Failed to create local file", "error", err)
+		return err
+	}
+
+	kd.SyncTracker.RemoteFilesMu.Lock()
+	remFile, ok := kd.SyncTracker.RemoteFiles[remoteName]
+	defer kd.SyncTracker.RemoteFilesMu.Unlock()
+	if !ok {
+		logger.Error("Not found", "error", syscall.ENOENT)
+		return syscall.ENOENT
+	}
+
+	stream, err := kd.session.GRPCClient.Read(kd.ctx)
+	if err != nil {
+		logger.Error("Failed to open stream", "error", err)
+		return err
+	}
+
+	blocks := remFile.Size / config.BlockSize
+	leftoverBlockSize := remFile.Size % config.BlockSize
+
+	i := 0
+	for {
+		offset := i * config.BlockSize
+		size := uint32(config.BlockSize)
+		if i >= int(blocks) {
+			if leftoverBlockSize != 0 {
+				size = uint32(leftoverBlockSize)
+			} else {
+				break
+			}
+		}
+		err := stream.Send(&bindings.ReadRequest{
+			Handle: 0,
+			Path:   remFile.RelativePath,
+			Offset: uint64(offset),
+			Size:   size,
+		})
+		if err != nil {
+			logger.Error("Failed to send stream", "error", err)
+			return err
+		}
+
+		data, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			logger.Error("Failed to receive data", "error", err)
+			return err
+		}
+
+		n, err := f.WriteAt(data.Data, int64(offset))
+		if err != nil {
+			logger.Error("Failed to write data to disk", "error", err)
+
+			return err
+		}
+
+		if n != int(size) {
+			logger.Warn("Wrote less than the requested size")
+			break
+		}
+
+		i++
+	}
+
+	remFile.RealPathOfFile = localPath
+	kd.SyncTracker.LocalFilesMu.Lock()
+	kd.SyncTracker.LocalFiles[localPath] = remFile
+	kd.SyncTracker.LocalFilesMu.Unlock()
+
+	logger.Info("Success")
+
+	return nil
+}
 
 func (kd *KeibiDrop) ExportFingerprint() (string, error) {
 	logger := kd.logger.With("method", "export-fingerprint")
