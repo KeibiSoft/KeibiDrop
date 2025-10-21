@@ -1,16 +1,92 @@
 package common
 
 import (
+	"context"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 )
 
 const Timeout = 10*60 - 5
+
+// Add a file to be tracked.
+func (kd *KeibiDrop) AddFile(path string) error {
+	logger := kd.logger.With("method", "add-file")
+	if kd.session == nil || kd.session.GRPCClient == nil {
+		logger.Error("Invalid session", "error", ErrInvalidSession)
+		return ErrInvalidSession
+	}
+
+	cleanPath := filepath.Clean(path)
+
+	finfo, err := os.Stat(cleanPath)
+	if err != nil {
+		logger.Error("Failed to add file", "error", err)
+		return err
+	}
+
+	name := finfo.Name()
+
+	file := &synctracker.File{
+		Name:           name,
+		RelativePath:   "/" + name,
+		RealPathOfFile: cleanPath,
+		LastEditTime:   uint64(finfo.ModTime().UnixNano()),
+		CreatedTime:    uint64(finfo.ModTime().UnixNano()),
+	}
+
+	kd.SyncTracker.LocalFilesMu.Lock()
+	defer kd.SyncTracker.LocalFilesMu.Unlock()
+	_, ok := kd.SyncTracker.LocalFiles[name]
+	if ok {
+		logger.Error("File already tracked", "name", name, "error", os.ErrExist)
+		return os.ErrExist
+	}
+	kd.SyncTracker.LocalFiles[name] = file
+
+	_, err = kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType(types.AddFile),
+		Path: file.RelativePath,
+		Attr: &bindings.Attr{
+			Dev:              0,
+			Ino:              0,
+			Mode:             uint32(finfo.Mode()),
+			Size:             finfo.Size(),
+			AccessTime:       file.LastEditTime,
+			ModificationTime: file.LastEditTime,
+			ChangeTime:       file.LastEditTime,
+			BirthTime:        file.LastEditTime,
+			Flags:            0o444,
+		},
+	})
+	if err != nil {
+		logger.Error("Failed to notify peer", "error", err)
+		return err
+	}
+
+	logger.Info("Success")
+
+	return nil
+}
+
+/*
+func listFiles(kd *common.KeibiDrop) {
+	_ = kd
+	fmt.Println("[TODO] Listing shared files...")
+}
+func pullFile(kd *common.KeibiDrop, remote, local string) {
+	_ = kd
+	fmt.Printf("[TODO] Pulled '%s' to '%s'\n", remote, local)
+}
+*/
 
 func (kd *KeibiDrop) ExportFingerprint() (string, error) {
 	logger := kd.logger.With("method", "export-fingerprint")

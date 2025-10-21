@@ -28,6 +28,7 @@ var (
 	ErrFilesystemAlreadyMounted      = errors.New("filesystem already mounted")
 	ErrNilFilesystem                 = errors.New("filesystem not mounted")
 	ErrAlreadyRunning                = errors.New("already running")
+	ErrInvalidSession                = errors.New("invalid sesssion")
 )
 
 func RegisterErrorMapper(statusCode int, err error) error {

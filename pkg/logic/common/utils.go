@@ -213,9 +213,6 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			return
 		}
 
-		logger.Warn("DEBUG BEFORE GRPC NOTIFY", "kd sess nil", kd.session == nil)
-		logger.Warn("DEBUG CLI NIL", "cli-nil", kd.session.GRPCClient == nil)
-
 		_, err := kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
 			Type: bindings.NotifyType(event.Action),
 			Path: event.Path,
@@ -234,8 +231,6 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		if err != nil {
 			logger.Error("Failed to notify peer", "error", err)
 		}
-
-		logger.Warn("DEBUG AFTER GRPC NOTIFY")
 	}
 
 	fs.OpenStreamProvider = func() types.FileStreamProvider {
@@ -312,8 +307,9 @@ func (kd *KeibiDrop) startGRPCServer() error {
 	ln := NewSingleConnListener(kd.session.Session.Inbound)
 
 	svc := &service.KeibidropServiceImpl{
-		Session: kd.session,
-		Logger:  kd.logger.With("component", "keibidrop-server"),
+		Session:     kd.session,
+		Logger:      kd.logger.With("component", "keibidrop-server"),
+		SyncTracker: kd.SyncTracker,
 	}
 
 	kd.KDSvc = svc
