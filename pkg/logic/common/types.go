@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,14 +14,13 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
-	"github.com/inconshreveable/log15"
 	"google.golang.org/grpc"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 )
 
 type KeibiDrop struct {
-	logger       log15.Logger
+	logger       *slog.Logger
 	relayClient  *http.Client
 	RelayEndoint *url.URL
 
@@ -64,7 +64,7 @@ const (
 )
 
 // Factory-style constructor
-func NewKeibiDrop(ctx context.Context, logger log15.Logger, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string) (*KeibiDrop, error) {
+func NewKeibiDrop(ctx context.Context, logger *slog.Logger, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string) (*KeibiDrop, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -149,7 +149,7 @@ func (kd *KeibiDrop) Stop() {
 
 // Run as a go-routine.
 func (kd *KeibiDrop) Run() {
-	logger := kd.logger.New("method", "run-state")
+	logger := kd.logger.With("method", "run-state")
 	for {
 		select {
 		case <-kd.ctx.Done():

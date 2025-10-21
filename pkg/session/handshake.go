@@ -26,7 +26,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		return fmt.Errorf("nil pointer deference")
 	}
 
-	logger := session.logger.New("phase", "inbound-handshake")
+	logger := session.logger.With("phase", "inbound-handshake")
 
 	// Read JSON
 	var msg PeerHandshakeMessage
@@ -140,7 +140,7 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 		return fmt.Errorf("nil pointer dereference")
 	}
 
-	logger := session.logger.New("phase", "outbound-handshake")
+	logger := session.logger.With("phase", "outbound-handshake")
 
 	seed1 := kbc.GenerateSeed()
 	encSeed1X25519, err := kbc.X25519Encapsulate(seed1, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
@@ -218,7 +218,7 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	if session == nil || conn == nil {
 		return fmt.Errorf("nil pointer deference")
 	}
-	logger := session.logger.New("phase", "inbound-finalize")
+	logger := session.logger.With("phase", "inbound-finalize")
 
 	// === Pre-check: make sure peer is verified ===
 	if err := session.ValidatePeer(); err != nil {

@@ -14,7 +14,7 @@ import (
 // StartListener starts a TCP listener on the given port and waits for Bob.
 // It will block until Bob connects and sends valid keys that match the expected fingerprint.
 func StartListener(session *Session, port int) error {
-	logger := session.logger.New("method", "start-listener")
+	logger := session.logger.With("method", "start-listener")
 	addr := fmt.Sprintf("0.0.0.0:%d", port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {

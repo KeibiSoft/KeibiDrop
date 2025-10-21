@@ -1,12 +1,12 @@
 package session
 
 import (
+	"log/slog"
 	"net"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
-	"github.com/inconshreveable/log15"
 )
 
 type SessionState string
@@ -54,11 +54,11 @@ type Session struct {
 	// Internal timeout deadline
 	Deadline time.Time
 
-	logger log15.Logger
+	logger *slog.Logger
 }
 
-func InitSession(logger log15.Logger, defaultOutboundPort int, defaultInboundPort int) (*Session, error) {
-	logger = logger.New("service", "session")
+func InitSession(logger *slog.Logger, defaultOutboundPort int, defaultInboundPort int) (*Session, error) {
+	logger = logger.With("service", "session")
 	kemDecapsulate, kemEncapsulate, err := kbc.GenerateMLKEMKeypair()
 	if err != nil {
 		logger.Error("Failed to generate session mlkem keys", "error", err)
@@ -112,7 +112,7 @@ func NewSessionSockets(connIn, connOut net.Conn, sekIn, sekOut []byte) *SessionS
 }
 
 // NewSession initializes a new session with a timeout deadline.
-func NewSession(logger log15.Logger, expectedFingerprint string, timeout time.Duration) *Session {
+func NewSession(logger *slog.Logger, expectedFingerprint string, timeout time.Duration) *Session {
 	return &Session{
 		ExpectedPeerFingerprint: expectedFingerprint,
 		State:                   SessionStatePending,

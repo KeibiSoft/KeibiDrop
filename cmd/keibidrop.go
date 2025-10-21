@@ -3,12 +3,12 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"net/url"
 	"os"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/ui"
-	"github.com/inconshreveable/log15"
 )
 
 func getenv(key, fallback string) string {
@@ -31,5 +31,12 @@ func main() {
 
 	common.PrintBanner()
 
-	ui.Launch(log15.New("component", "GUI"))
+	// text output, level=DEBUG
+	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})
+
+	logger := slog.New(handler).With("component", "cli")
+
+	ui.Launch(logger)
 }
