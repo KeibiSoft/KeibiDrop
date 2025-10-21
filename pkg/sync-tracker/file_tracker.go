@@ -12,6 +12,8 @@ type File struct {
 
 	LastEditTime uint64 // Use time.Now().UnixNano().
 	CreatedTime  uint64
+
+	Size uint64
 }
 
 type SyncTracker struct {
