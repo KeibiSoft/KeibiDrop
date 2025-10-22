@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
@@ -24,6 +25,8 @@ type KeibiDrop struct {
 	logger       *slog.Logger
 	relayClient  *http.Client
 	RelayEndoint *url.URL
+
+	OpInProgress atomic.Int32
 
 	session *session.Session
 
