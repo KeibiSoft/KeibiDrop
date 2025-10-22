@@ -205,33 +205,50 @@ func registerPeer(kd *common.KeibiDrop, fp string) {
 }
 
 func createRoom(kd *common.KeibiDrop) {
-	err := kd.CreateRoom()
-	if err != nil {
-		fmt.Println("Error: ", err)
+	if kd.OpInProgress.Add(1) != 1 {
+		kd.OpInProgress.Add(-1)
+		fmt.Println("Create/Join Room already in progress...")
 		return
 	}
-	fmt.Println("Room created and peer connected: ", kd.PeerIPv6IP)
+
+	go func() {
+		defer kd.OpInProgress.Add(-1)
+		err := kd.CreateRoom()
+		if err != nil {
+			fmt.Println("Error: ", err)
+			return
+		}
+		fmt.Println("Room created and peer connected: ", kd.PeerIPv6IP)
+	}()
 }
 
 func joinRoom(kd *common.KeibiDrop, fp string) {
-	err := kd.JoinRoom()
-	if err != nil {
-		if errors.Is(err, common.ErrRateLimitHit) {
-			fmt.Printf(`This is a free public relay, you can use it around 3 times per 5 minute interval: %e\n`, err)
-			return
-		}
-
-		if errors.Is(err, common.ErrServerAtCapacity) {
-			fmt.Printf(`The free public relay is at it's capacity, please retry in 5 minutes: %e\n`, err)
-			return
-		}
-
-		fmt.Println("Error: ", err)
+	if kd.OpInProgress.Add(1) != 1 {
+		kd.OpInProgress.Add(-1)
+		fmt.Println("Create/Join Room already in progress...")
 		return
 	}
 
-	fmt.Printf("Room: %v, joined successfully", kd.PeerIPv6IP)
+	go func() {
+		defer kd.OpInProgress.Add(-1)
+		err := kd.JoinRoom()
+		if err != nil {
+			if errors.Is(err, common.ErrRateLimitHit) {
+				fmt.Printf(`This is a free public relay, you can use it around 3 times per 5 minute interval: %e\n`, err)
+				return
+			}
 
+			if errors.Is(err, common.ErrServerAtCapacity) {
+				fmt.Printf(`The free public relay is at it's capacity, please retry in 5 minutes: %e\n`, err)
+				return
+			}
+
+			fmt.Println("Error: ", err)
+			return
+		}
+
+		fmt.Printf("Room: %v, joined successfully", kd.PeerIPv6IP)
+	}()
 }
 
 func resetSession(kd *common.KeibiDrop) {
