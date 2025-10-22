@@ -26,6 +26,7 @@ type KeibiDrop struct {
 	relayClient  *http.Client
 	RelayEndoint *url.URL
 
+	IsFUSE       bool
 	OpInProgress atomic.Int32
 
 	session *session.Session
@@ -71,7 +72,7 @@ const (
 )
 
 // Factory-style constructor
-func NewKeibiDrop(ctx context.Context, logger *slog.Logger, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string) (*KeibiDrop, error) {
+func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string) (*KeibiDrop, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -106,6 +107,7 @@ func NewKeibiDrop(ctx context.Context, logger *slog.Logger, relayURL *url.URL, i
 
 	kd := &KeibiDrop{
 		logger:          logger,
+		IsFUSE:          isFuse,
 		relayClient:     client,
 		RelayEndoint:    relayURL,
 		session:         session,
