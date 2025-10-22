@@ -11,7 +11,7 @@ var (
 	ErrEmptyFingerprint              = errors.New("fingerprint is empty")
 	ErrInvalidLength                 = errors.New("invalid length")
 	ErrRelayAtMaximumCapacity        = errors.New("relay at maximum capacity")
-	ErrRateLimitHit                  = errors.New("relay rate limit hit, retry in 15 minutes")
+	ErrRateLimitHit                  = errors.New("relay rate limit hit, retry in 5 minutes")
 	ErrMissingFingerprint            = errors.New("missing fingerprint header")
 	ErrInvalidPayload                = errors.New("invalid registration payload")
 	ErrMissingKeys                   = errors.New("missing public keys")
@@ -29,22 +29,25 @@ var (
 	ErrNilFilesystem                 = errors.New("filesystem not mounted")
 	ErrAlreadyRunning                = errors.New("already running")
 	ErrInvalidSession                = errors.New("invalid sesssion")
+	ErrServerAtCapacity              = errors.New("relay server at capacity, please try again in 5 minutes")
 )
 
 func RegisterErrorMapper(statusCode int, err error) error {
 	if err != nil {
-		// Networking or JSON failure
 		return fmt.Errorf("request failed: %w", err)
 	}
 
 	switch statusCode {
 	case http.StatusBadRequest:
-		// Optional: parse error body to be more specific
 		return ErrInvalidPayload
 	case http.StatusConflict:
-		return ErrTemporaryRetry // For example
+		return ErrTemporaryRetry
 	case http.StatusInternalServerError:
 		return ErrServerError
+	case http.StatusTooManyRequests:
+		return ErrRateLimitHit
+	case http.StatusServiceUnavailable:
+		return ErrServerAtCapacity
 	default:
 		return fmt.Errorf("unexpected HTTP status %d", statusCode)
 	}
