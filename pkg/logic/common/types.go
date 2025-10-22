@@ -118,6 +118,7 @@ func NewKeibiDrop(ctx context.Context, logger *slog.Logger, relayURL *url.URL, i
 		ToSave:          toSave,
 		filesystemReady: make(chan struct{}),
 		serverReadyMu:   sync.Mutex{},
+		SyncTracker:     synctracker.NewSyncTracker(),
 	}
 
 	return kd, nil

@@ -234,8 +234,18 @@ func addFile(kd *common.KeibiDrop, p string) {
 }
 
 func listFiles(kd *common.KeibiDrop) {
-	_ = kd
-	fmt.Println("[TODO] Listing shared files...")
+	fmt.Println("Listing shared files...")
+
+	remote, local := kd.ListFiles()
+	for _, s := range remote {
+		fmt.Println(s)
+	}
+	for _, s := range local {
+		fmt.Println(s)
+	}
+	if len(remote) == 0 && len(local) == 0 {
+		fmt.Println("No tracked files.")
+	}
 }
 func pullFile(kd *common.KeibiDrop, remote, local string) {
 	err := kd.PullFile(remote, local)
