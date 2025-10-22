@@ -22,6 +22,7 @@ var (
 	ErrGRPCInvalidArgument    = status.Error(codes.InvalidArgument, "invalid argument")
 	ErrGRPCFailedPrecondition = status.Error(codes.FailedPrecondition, "failed precondition")
 	ErrGRPCAlreadyExists      = status.Error(codes.AlreadyExists, "already exists")
+	ErrGRPCNotFound           = status.Error(codes.NotFound, "notFound")
 )
 
 type KeibidropServiceImpl struct {
@@ -116,7 +117,6 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		logger.Warn("DEBUG ROOT ADD REMOTE FILE")
 		err := kd.FS.Root.AddRemoteFile(logger, req.Path, req.Name, &fuse.Stat_t{
 			Dev:      req.Attr.Dev,
 			Ino:      req.Attr.Ino,
@@ -141,6 +141,26 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
 		ctim := time.Unix(0, int64(req.Attr.ChangeTime))
 		btim := time.Unix(0, int64(req.Attr.BirthTime))
+
+		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+			kd.SyncTracker.RemoteFilesMu.RLock()
+			defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+			f, ok := kd.SyncTracker.RemoteFiles[req.Path]
+			if !ok {
+				logger.Error("File does not exists", "error", ErrGRPCNotFound)
+				return nil, ErrGRPCNotFound
+			}
+
+			f.Name = req.Name
+			f.RelativePath = req.Path
+			f.Size = uint64(req.Attr.Size)
+			f.LastEditTime = req.Attr.ModificationTime
+			f.CreatedTime = req.Attr.BirthTime
+
+			logger.Info("Success")
+
+			return &bindings.NotifyResponse{}, nil
+		}
 
 		if kd.FS == nil {
 			logger.Warn("Nil FS")
