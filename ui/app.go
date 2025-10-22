@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -18,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -105,6 +107,54 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 		w.Clipboard().SetContent(fp)
 	})
 
+	// File operations
+
+	// --- File operations ---
+	addFileBtn := widget.NewButton("Add File", func() {
+		fd := dialog.NewFileOpen(
+			func(uc fyne.URIReadCloser, err error) {
+				if err != nil || uc == nil {
+					return
+				}
+				path := uc.URI().Path()
+				if err := kd.AddFile(path); err != nil {
+					dialog.ShowError(err, w)
+				} else {
+					dialog.ShowInformation("Added File", path, w)
+				}
+			}, w)
+		fd.Show()
+	})
+
+	listFilesBtn := widget.NewButton("List Files", func() {
+		remote, local := kd.ListFiles()
+		msg := "Local Files:\n"
+		for _, f := range local {
+			msg += " • " + f + "\n"
+		}
+		msg += "\nRemote Files:\n"
+		for _, f := range remote {
+			msg += " • " + f + "\n"
+		}
+		dialog.ShowInformation("Shared Files", msg, w)
+	})
+
+	pullFileEntry := widget.NewEntry()
+	pullFileEntry.SetPlaceHolder("Remote path to pull")
+
+	pullFileBtn := widget.NewButton("Pull File", func() {
+		remote := pullFileEntry.Text
+		if remote == "" {
+			return
+		}
+		local := toSave + "/" + remote
+		if err := kd.PullFile(remote, local); err != nil {
+			dialog.ShowError(err, w)
+		} else {
+			dialog.ShowInformation("Pulled File", fmt.Sprintf("%s -> %s", remote, local), w)
+		}
+	})
+
 	// show IPv6 + relay normally
 	localInfo := widget.NewLabel(fmt.Sprintf("Local IPv6: %s\nRelay: %s",
 		kd.LocalIPv6IP, relayURL.String()))
@@ -114,6 +164,12 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 		container.NewBorder(nil, nil, nil, copyBtn, localFingerprintLabel),
 		localInfo,
 	)
+
+	// Wrap in a VBox and hide initially
+	fileBox := container.NewVBox(localBox, addFileBtn, listFilesBtn,
+		pullFileEntry,
+		pullFileBtn)
+	fileBox.Hide()
 
 	// --- Peer input & info ---
 	peerInput := widget.NewEntry()
@@ -138,16 +194,40 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 		if peerInput.Text == "" {
 			return
 		}
-		err := kd.JoinRoom()
-		if err != nil {
-			logger.Error("Failed to join room", "error", err)
-		} else {
-			logger.Info("Joined room successfully")
-			peerFingerprint, _ := kd.GetPeerFingerprint()
-			peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s\nPeer IPv6: %s",
-				peerFingerprint, kd.PeerIPv6IP))
-			peerInfo.Show()
+
+		if kd.OpInProgress.Add(1) != 1 {
+			kd.OpInProgress.Add(-1)
+			dialog.ShowInformation("Busy", "Create/Join Room already in progress...", w)
+			return
 		}
+
+		go func() {
+			defer kd.OpInProgress.Add(-1)
+
+			err := kd.JoinRoom()
+			if err != nil {
+				fyne.Do(func() {
+					if errors.Is(err, common.ErrRateLimitHit) {
+						dialog.ShowInformation("Rate Limit", "Free public relay allows ~3 joins per 5 min", w)
+					} else if errors.Is(err, common.ErrServerAtCapacity) {
+						dialog.ShowInformation("Relay Full", "Free public relay at capacity. Retry in 5 minutes.", w)
+					} else {
+						dialog.ShowError(err, w)
+					}
+				})
+				return
+			}
+
+			peerFingerprint, _ := kd.GetPeerFingerprint()
+			peerIP := kd.PeerIPv6IP
+
+			fyne.Do(func() {
+				peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s\nPeer IPv6: %s", peerFingerprint, peerIP))
+				peerInfo.Show()
+				dialog.ShowInformation("Joined Room", "Successfully joined room.", w)
+				fileBox.Show()
+			})
+		}()
 	})
 
 	peerBox := container.NewVBox(
@@ -158,16 +238,34 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 
 	// --- Start room (Alice) ---
 	startBtn := widget.NewButton("Create Room", func() {
-		err := kd.CreateRoom()
-		if err != nil {
-			logger.Error("Failed to create room", "error", err)
-		} else {
-			logger.Info("Room created successfully")
-			peerFingerprint, _ := kd.GetPeerFingerprint()
-			peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s\nPeer IPv6: %s",
-				peerFingerprint, kd.PeerIPv6IP))
-			peerInfo.Show()
+		if kd.OpInProgress.Add(1) != 1 {
+			kd.OpInProgress.Add(-1)
+			dialog.ShowInformation("Busy", "Create/Join Room already in progress...", w)
+			return
 		}
+
+		go func() {
+			defer kd.OpInProgress.Add(-1)
+
+			err := kd.CreateRoom()
+			if err != nil {
+				fyne.Do(func() {
+					dialog.ShowError(err, w)
+				})
+				return
+			}
+
+			peerFingerprint, _ := kd.GetPeerFingerprint()
+			peerIP := kd.PeerIPv6IP
+
+			// Update UI safely
+			fyne.Do(func() {
+				peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s\nPeer IPv6: %s", peerFingerprint, peerIP))
+				peerInfo.Show()
+				dialog.ShowInformation("Room Created", "Room created and peer connected successfully.", w)
+				fileBox.Show()
+			})
+		}()
 	})
 
 	exitBtn := widget.NewButton("Exit", func() {
@@ -179,6 +277,7 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 		topBar,
 		layout.NewSpacer(),
 		localBox,
+		fileBox,
 		layout.NewSpacer(),
 		peerBox,
 		layout.NewSpacer(),
