@@ -23,3 +23,10 @@ type SyncTracker struct {
 	RemoteFilesMu sync.RWMutex
 	RemoteFiles   map[string]*File
 }
+
+func NewSyncTracker() *SyncTracker {
+	return &SyncTracker{
+		LocalFiles:  make(map[string]*File),
+		RemoteFiles: make(map[string]*File),
+	}
+}

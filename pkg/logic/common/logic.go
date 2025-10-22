@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -87,13 +88,26 @@ func (kd *KeibiDrop) AddFile(path string) error {
 	return nil
 }
 
-/*
-func listFiles(kd *common.KeibiDrop) {
-	_ = kd
-	fmt.Println("[TODO] Listing shared files...")
-}
+func (kd *KeibiDrop) ListFiles() (remote []string, local []string) {
+	remote = []string{}
+	local = []string{}
 
-*/
+	kd.SyncTracker.LocalFilesMu.RLock()
+	defer kd.SyncTracker.LocalFilesMu.RUnlock()
+
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+
+	for k, v := range kd.SyncTracker.LocalFiles {
+		local = append(local, fmt.Sprintf("[Local] Path: %v Size: %v RealPath: %v\n", k, v.Size, v.RealPathOfFile))
+	}
+
+	for k, v := range kd.SyncTracker.RemoteFiles {
+		local = append(remote, fmt.Sprintf("[Remote] Path: %v Size: %v RealPath: %v\n", k, v.Size, v.RealPathOfFile))
+	}
+
+	return remote, local
+}
 
 func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	logger := kd.logger.With("method", "pull-file")
