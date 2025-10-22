@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -176,9 +177,10 @@ func handleShow(kd *common.KeibiDrop, what string) {
 		fp, err := kd.ExportFingerprint()
 		if err != nil {
 			fmt.Println("Error:", err)
-		} else {
-			fmt.Println("Your fingerprint:", fp)
+			return
 		}
+		fmt.Println("Your fingerprint:", fp)
+
 	case "ip":
 		fmt.Println("Your IP:", kd.LocalIPv6IP)
 	case "peer fingerprint":
@@ -197,26 +199,39 @@ func registerPeer(kd *common.KeibiDrop, fp string) {
 	err := kd.AddPeerFingerprint(fp)
 	if err != nil {
 		fmt.Println("Error: ", err)
-	} else {
-		fmt.Println("Peer registed: ", fp)
+		return
 	}
+	fmt.Println("Peer registed: ", fp)
 }
+
 func createRoom(kd *common.KeibiDrop) {
 	err := kd.CreateRoom()
 	if err != nil {
 		fmt.Println("Error: ", err)
-	} else {
-		fmt.Println("Room created and peer connected: ", kd.PeerIPv6IP)
+		return
 	}
+	fmt.Println("Room created and peer connected: ", kd.PeerIPv6IP)
 }
 
 func joinRoom(kd *common.KeibiDrop, fp string) {
 	err := kd.JoinRoom()
 	if err != nil {
+		if errors.Is(err, common.ErrRateLimitHit) {
+			fmt.Printf(`This is a free public relay, you can use it around 3 times per 5 minute interval: %e\n`, err)
+			return
+		}
+
+		if errors.Is(err, common.ErrServerAtCapacity) {
+			fmt.Printf(`The free public relay is at it's capacity, please retry in 5 minutes: %e\n`, err)
+			return
+		}
+
 		fmt.Println("Error: ", err)
-	} else {
-		fmt.Printf("Room: %v, joined successfully", kd.PeerIPv6IP)
+		return
 	}
+
+	fmt.Printf("Room: %v, joined successfully", kd.PeerIPv6IP)
+
 }
 
 func resetSession(kd *common.KeibiDrop) {
