@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	prompt "github.com/c-bata/go-prompt"
@@ -24,6 +25,7 @@ const OUTBOUND_PORT_ENV = "OUTBOUND_PORT"
 const TO_MOUNT_PATH_ENV = "TO_MOUNT_PATH"
 const TO_SAVE_PATH_ENV = "TO_SAVE_PATH"
 const LOG_FILE_ENV = "LOG_FILE"
+const NO_FUSE_ENV = "NO_FUSE"
 
 type cliContext struct {
 	kd *common.KeibiDrop
@@ -346,9 +348,19 @@ func main() {
 	toMount := os.Getenv(TO_MOUNT_PATH_ENV)
 	toSave := os.Getenv(TO_SAVE_PATH_ENV)
 
+	// Explicitly pass NO FUSE
+	_, noFUSE := os.LookupEnv(NO_FUSE_ENV)
+
+	isFuse := checkfuse.IsFUSEPresent()
+	logger.Info("Is FUSE present", "val", isFuse)
+
+	logger.Info("Do not use FUSE", "val", noFUSE)
+
+	finalVal := isFuse && !noFUSE
+
 	kdctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	kd, err := common.NewKeibiDrop(kdctx, logger, relayURL, inbound, outbound, toMount, toSave)
+	kd, err := common.NewKeibiDrop(kdctx, logger, finalVal, relayURL, inbound, outbound, toMount, toSave)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		os.Exit(1)

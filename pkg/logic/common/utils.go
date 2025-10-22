@@ -237,21 +237,6 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		return NewImplStreamProvider(kd.session.GRPCClient)
 	}
 
-	if _, err := kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{}); err != nil {
-		logger.Error("DEBUG failed", "error", err)
-		return err
-	}
-
-	if _, err := kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{}); err != nil {
-		logger.Error("DEBUG failed", "error", err)
-		return err
-	}
-
-	if _, err := kd.session.GRPCClient.Debug(context.Background(), &bindings.DebugRequest{}); err != nil {
-		logger.Error("DEBUG failed", "error", err)
-		return err
-	}
-
 	if ready != nil {
 		close(ready)
 	}

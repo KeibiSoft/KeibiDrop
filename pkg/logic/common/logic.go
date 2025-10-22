@@ -47,7 +47,7 @@ func (kd *KeibiDrop) AddFile(path string) error {
 
 	file := &synctracker.File{
 		Name:           name,
-		RelativePath:   "/" + name,
+		RelativePath:   name,
 		RealPathOfFile: cleanPath,
 		Size:           uint64(finfo.Size()),
 		LastEditTime:   uint64(finfo.ModTime().UnixNano()),
@@ -285,14 +285,17 @@ func (kd *KeibiDrop) JoinRoom() error {
 		return err
 	}
 
-	logger.Info("Before start")
 	kd.Start()
-	logger.Info("After start")
 
 	// retry dialing until gRPC server is ready
 	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {
 		logger.Error("Failed to connect to grpc server after retries", "error", err)
 		return err
+	}
+
+	if !kd.IsFUSE {
+		logger.Info("Success, starting without FUSE")
+		return nil
 	}
 
 	err = kd.setupFilesystem(logger, kd.filesystemReady)
@@ -318,6 +321,8 @@ func (kd *KeibiDrop) CreateRoom() error {
 	if err := kd.registerRoomToRelay(); err != nil {
 		return err
 	}
+
+	logger.Info("Waiting for peer to join...")
 
 	// Wait for expected peer fingerprint
 	elapsed := 0
@@ -354,13 +359,16 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
-	logger.Info("Before start")
 	kd.Start()
-	logger.Info("After start")
 
 	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {
 		logger.Error("Failed to connect to grpc server after retries", "error", err)
 		return err
+	}
+
+	if !kd.IsFUSE {
+		logger.Info("Success, starting without FUSE")
+		return nil
 	}
 
 	err = kd.setupFilesystem(logger, kd.filesystemReady)

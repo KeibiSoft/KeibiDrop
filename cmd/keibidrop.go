@@ -7,9 +7,12 @@ import (
 	"net/url"
 	"os"
 
+	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/ui"
 )
+
+const NO_FUSE_ENV = "NO_FUSE"
 
 func getenv(key, fallback string) string {
 	if val := os.Getenv(key); val != "" {
@@ -38,5 +41,13 @@ func main() {
 
 	logger := slog.New(handler).With("component", "cli")
 
-	ui.Launch(logger)
+	// Explicitly pass NO FUSE
+	_, noFUSE := os.LookupEnv(NO_FUSE_ENV)
+	isFuse := checkfuse.IsFUSEPresent()
+	logger.Info("Is FUSE present", "val", isFuse)
+
+	logger.Info("Do not use FUSE", "val", noFUSE)
+	finalVal := isFuse && !noFUSE
+
+	ui.Launch(logger, finalVal)
 }
