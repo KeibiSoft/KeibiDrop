@@ -83,6 +83,8 @@ type File struct {
 
 	LocalNewer bool
 
+	HadEdits bool
+
 	openFileCounter OpenFileCounter
 
 	StreamProvider   types.FileStreamProvider
