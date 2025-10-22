@@ -85,7 +85,7 @@ func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 		NotRemoteSynced: true,
 	}
 
-	d.AllFileMap[path] = f
+	d.AllFileMap[relativePath] = f
 	d.OpenFileHandlers[uint64(fd)] = f
 
 	return 0, uint64(fd)
@@ -363,6 +363,7 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 	_, err := os.Stat(localPath)
 	if err != nil {
 		// Create the directory, and file.
+		logger.Debug("The path we create dir at", "path", getPathWithoutName(localPath))
 		err2 := os.MkdirAll(getPathWithoutName(localPath), 0o755)
 		if err2 != nil {
 			logger.Error("Failed to create folders along the path", "error", err2)
@@ -566,13 +567,15 @@ func (d *Dir) Rename(oldpath string, newpath string) int {
 
 func (d *Dir) Rmdir(path string) int {
 	d.logger.Info("Rmdir", "path", path, "inode", d.Inode)
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "rmdir", "path", path)
-	err := syscall.Rmdir(path)
+	err := syscall.Rmdir(cleanPath)
 	if err != nil {
 		logger.Error("Failed to remove dir", "error", err)
 		return int(convertOsErrToSyscallErrno("rmdir", err))
 	}
+
+	// TODO: Remove also sub-files and sub dirs.
 
 	return 0
 }
@@ -615,6 +618,7 @@ func (d *Dir) Symlink(target string, newpath string) int {
 // thus Open is immediately followed by Truncate.
 func (d *Dir) Truncate(path string, size int64, fh uint64) int {
 	d.logger.Info("Truncate", "path", path, "size", size, "inode", d.Inode, "fh", fh)
+
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "truncate", "path", path, "size", size, "fh", fh)
 	err := syscall.Truncate(path, size)
@@ -719,22 +723,6 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 	return n
 }
 
-// Notes about extended attributes:
-// Personally I have no care for them.
-//
-// But MacOS cares a bit too much about them (the only reason they are implemented here).
-//
-// Windows cares in the sense European Union cares about Romania:
-// Meaning that EU (Windows) behaves like the rich grandmother
-// who financially supports "that" cousin who sniffs dried wall paint (extended attributes)
-// all for the sake of "regional security" and "greater values". But we all know
-// people will just meme with ACLs and not bother with "download date" of files in the Xattr,
-// and LARP some success metric of we "inreased security to 80%" because of this is "how you measure it".
-//
-// My decision is to just support them at the mounted filesystem level.
-// If the underlying filesystem has xattrs, good for them, they wont be mapped to the mounted one,
-// nor shared between peers.
-
 func (d *Dir) Removexattr(path string, name string) int {
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "remove-xattr", "path", path, "name", name)
@@ -828,7 +816,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		NotLocalSynced:  true,
 		StreamProvider:  d.OpenStreamProvider(),
 		OnLocalChange:   d.OnLocalChange,
-		RealPathOfFile:  d.RealPathOfFile + strings.Replace("/"+path, "//", "/", 1),
+		RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
 	}
 
 	d.RemoteFiles[path] = f
