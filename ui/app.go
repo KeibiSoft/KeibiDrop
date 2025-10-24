@@ -288,7 +288,7 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 	)
 
 	w.SetContent(container.NewPadded(content))
-	w.Resize(fyne.NewSize(800, 500))
+	w.Resize(fyne.NewSize(900, 600))
 	w.ShowAndRun()
 }
 
