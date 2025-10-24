@@ -355,6 +355,8 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
+	kd.PeerIPv6IP = addr.IP.String()
+
 	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(addr.IP.String(), strconv.Itoa(kd.session.PeerPort))); err != nil {
 		return err
 	}
