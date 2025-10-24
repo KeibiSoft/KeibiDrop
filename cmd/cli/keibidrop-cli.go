@@ -86,11 +86,7 @@ func (c *cliContext) executor(in string) {
 		createRoom(c.kd)
 
 	case "join":
-		if len(args) != 2 {
-			fmt.Println("Usage: join <peer fingerprint>")
-			return
-		}
-		joinRoom(c.kd, args[1])
+		joinRoom(c.kd)
 
 	case "reset":
 		resetSession(c.kd)
@@ -224,7 +220,7 @@ func createRoom(kd *common.KeibiDrop) {
 	}()
 }
 
-func joinRoom(kd *common.KeibiDrop, fp string) {
+func joinRoom(kd *common.KeibiDrop) {
 	if kd.OpInProgress.Add(1) != 1 {
 		kd.OpInProgress.Add(-1)
 		fmt.Println("Create/Join Room already in progress...")
@@ -313,9 +309,6 @@ func main() {
 			wr = f
 		}
 	}
-
-	// TODO: remove this.
-	wr = os.Stdout
 
 	// text output, level=DEBUG
 	handler := slog.NewTextHandler(wr, &slog.HandlerOptions{

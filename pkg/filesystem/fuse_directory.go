@@ -358,8 +358,6 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 		return 0, uint64(fd)
 	}
 
-	localPath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, localPath))
-
 	_, err := os.Stat(localPath)
 	if err != nil {
 		// Create the directory, and file.
@@ -592,11 +590,11 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) int {
 			return winfuse.EIO
 		}
 	*/
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "statfs", "path", path)
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	logger := d.logger.With("method", "statfs", "path", path, "rea-path", cleanPath)
 
 	stgo := syscall.Statfs_t{}
-	err := syscall_Statfs(path, &stgo)
+	err := syscall_Statfs(cleanPath, &stgo)
 	if err != nil {
 		logger.Error("Failed to stat underlying folder", "error", err)
 		return int(convertOsErrToSyscallErrno("statfs", err))
@@ -737,10 +735,10 @@ func (d *Dir) Removexattr(path string, name string) int {
 }
 
 func (d *Dir) Listxattr(path string, fill func(name string) bool) int {
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "list-xattr", "path", path)
+	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	logger := d.logger.With("method", "list-xattr", "path", path, "real-path", realPath)
 
-	res, err := xattr.List(path)
+	res, err := xattr.List(realPath)
 	if err != nil {
 		logger.Error("Failed to list xattr", "error", err)
 		return int(convertOsErrToSyscallErrno("list-xattr", err))
@@ -762,10 +760,10 @@ func (d *Dir) Getxattr(path string, name string) (int, []byte) {
 	// is the last segment, this implies that you need to
 	// xattr.Get(d.RealPathOfFile+"/"+ name)
 
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "get-xattr", "path", path, "name", name)
+	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	logger := d.logger.With("method", "get-xattr", "path", path, "real-path", realPath, "xattr-name", name)
 
-	res, err := xattr.Get(path, name)
+	res, err := xattr.Get(realPath, name)
 	if err != nil {
 		logger.Error("Failed to get xattr", "error", err)
 		return int(convertOsErrToSyscallErrno("get-xattr", err)), nil
@@ -778,10 +776,10 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) int {
 	// I do not support flags for this version.
 	_ = flags
 
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "set-xattr", "path", path, "name", name, "val", string(value))
+	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	logger := d.logger.With("method", "set-xattr", "path", path, "real-path", realPath, "name", name, "val", string(value), "flags", flags)
 
-	err := xattr.Set(path, name, value)
+	err := xattr.Set(realPath, name, value)
 	if err != nil {
 		logger.Error("Failed to set xattr", "error", err)
 		return int(convertOsErrToSyscallErrno("set-xattr", err))
