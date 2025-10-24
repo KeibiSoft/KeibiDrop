@@ -1,3 +1,15 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+//
+// Portions of this file are derived from the cgofuse project,
+// which is licensed under the MIT License.
+// Copyright (c) 2018–2023, Bill Zissimopoulos and cgofuse contributors.
+// See https://github.com/billziss-gh/cgofuse for details.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package filesystem
 
 import (
@@ -335,6 +347,9 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 	// File already opened. It exists. All good.
 	if fh.openFileCounter.CountOpenDescriptors() != 0 {
 		fh.openFileCounter.Open()
+
+		logger.Info("We already opened it", "fh", fh.Inode)
+
 		return 0, uint64(fh.Inode)
 	}
 
@@ -354,6 +369,8 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 		fh.openFileCounter.Open()
 
 		d.OpenFileHandlers[fh.Inode] = fh
+
+		logger.Info("We just opened local", "fh", fh.Inode)
 
 		return 0, uint64(fd)
 	}
@@ -381,6 +398,8 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 		return int(convertOsErrToSyscallErrno("open", err)), 0
 	}
 
+	logger.Info("File inode before open", "inode", fh.Inode)
+
 	fh.Inode = uint64(fd)
 
 	fsp := d.OpenStreamProvider()
@@ -395,6 +414,9 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 	d.OpenFileHandlers[fh.Inode] = fh
 
 	fh.openFileCounter.Open()
+
+	logger.Info("Success with inode", "inode", fh.Inode)
+
 	return 0, fh.Inode
 }
 
@@ -676,6 +698,7 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
 
 func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 	logger := d.logger.With("method", "read", "path", path, "fh", fh, "offset", offset)
+	logger.Info("Read")
 
 	// Check if this file has a remote stream
 	d.OpenMapLock.RLock()
