@@ -1,3 +1,15 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+//
+// Portions of this file are derived from the cgofuse project,
+// which is licensed under the MIT License.
+// Copyright (c) 2018–2023, Bill Zissimopoulos and cgofuse contributors.
+// See https://github.com/billziss-gh/cgofuse for details.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package filesystem
 
 import (

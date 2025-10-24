@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package session
 
 import (
@@ -8,7 +14,7 @@ import (
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
-	"github.com/KeibiSoft/KeibiDrop/pkg/crypto"
+
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
@@ -73,12 +79,12 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	seed1tr, ok := msg.EncSeeds["x25519"]
 	if !ok {
 		logger.Warn("Missing x25519 seed")
-		return fmt.Errorf("Invalid payload")
+		return fmt.Errorf("invalid payload")
 	}
 	seed2Str, ok := msg.EncSeeds["mlkem"]
 	if !ok {
 		logger.Warn("Missing mlkem seed")
-		return fmt.Errorf("Invalid payload")
+		return fmt.Errorf("invalid payload")
 	}
 
 	seed1Bytes, err := decodeBase64(seed1tr)
@@ -92,7 +98,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		return err
 	}
 
-	seed1, err := crypto.X25519Decapsulate(seed1Bytes, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
+	seed1, err := kbc.X25519Decapsulate(seed1Bytes, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
 	if err != nil {
 		logger.Error("Failed to decapsulate x2551 seed1", "error", err)
 		return err
