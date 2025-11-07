@@ -1,0 +1,269 @@
+// ui.slint
+import { Button, VerticalBox } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    width: 1200px;
+    height: 760px;
+    background: #1f1f1f;
+
+    // Data bindings from Rust
+    in property<string> my_code: "XXXX-XXXX-XXXX-XXXX";
+    in property<string> peer_code: "";
+    in property<bool> next_enabled: true;
+
+    // Callbacks
+    callback add_peer_code(code: string);
+    callback copy_my_code(code: string);
+    callback next_pressed();
+
+    VerticalLayout {
+        spacing: 36px;
+        padding: 36px;
+
+        // Top logo
+        Text {
+            text: "KEIBIDROP";
+            color: white;
+            font-family: "Inter";
+            font-size: 26px;
+            font-weight: 700;
+        }
+
+        // Main content area
+        HorizontalLayout {
+            spacing: 36px;
+
+            // Left spacer
+            Rectangle { width: 1px; height: 1px; background: transparent; }
+
+            // Center content
+            VerticalLayout {
+                spacing: 24px;
+
+                // Title
+                VerticalLayout {
+                    spacing: 6px;
+
+                    Text {
+                        text: "Connect Securely";
+                        color: white;
+                        font-family: "Inter";
+                        font-size: 32px;
+                        font-weight: 700;
+                    }
+
+                    Text {
+                        text: "Exchange fingerprints to establish a secure connection";
+                        color: #cfcfcf;
+                        font-family: "Inter";
+                        font-size: 14px;
+                        font-weight: 400;
+                    }
+                }
+
+                Rectangle { height: 8px; background: transparent; }
+
+                // Card 1: Enter Code
+                Rectangle {
+                    width: 720px;
+                    border-width: 1px;
+                    border-color: rgba(255,255,255,0.06);
+                    border-radius: 8px;
+                    padding: 18px;
+                    background: transparent;
+
+                    HorizontalLayout {
+                        spacing: 14px;
+
+                        // Step circle
+                        Rectangle {
+                            width: 34px; height: 34px;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: rgba(255,255,255,0.06);
+                            background: transparent;
+
+                            Text {
+                                text: "1";
+                                color: #e6e6e6;
+                                font-family: "Inter";
+                                font-size: 14px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                            }
+                        }
+
+                        VerticalLayout {
+                            spacing: 10px;
+                            width: 600px;
+
+                            Text {
+                                text: "Enter Code";
+                                color: white;
+                                font-family: "Inter";
+                                font-size: 18px;
+                                font-weight: 600;
+                            }
+
+                            Text {
+                                text: "";
+                                color: #a7a7a7;
+                                font-family: "Inter";
+                                font-size: 12px;
+                                font-weight: 400;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 12px;
+
+                                TextInput {
+                                    text: peer_code;
+                                    height: 40px;
+                                    width: 520px;
+                                    color: #e8e8e8;
+                                }
+
+                                Rectangle {
+                                    width: 110px;
+                                    height: 40px;
+                                    border-radius: 8px;
+                                    background: rgba(255,255,255,0.08);
+                                    border-width: 1px;
+                                    border-color: rgba(255,255,255,0.09);
+
+                                    Button {
+                                        text: "Add";
+                                        clicked => add_peer_code(peer_code);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Card 2: Your Code
+                Rectangle {
+                    width: 720px;
+                    border-width: 1px;
+                    border-color: rgba(255,255,255,0.06);
+                    border-radius: 8px;
+                    padding: 18px;
+                    background: transparent;
+
+                    HorizontalLayout {
+                        spacing: 14px;
+
+                        Rectangle {
+                            width: 34px; height: 34px;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: rgba(255,255,255,0.06);
+                            background: transparent;
+
+                            Text {
+                                text: "2";
+                                color: #e6e6e6;
+                                font-family: "Inter";
+                                font-size: 14px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                            }
+                        }
+
+                        VerticalLayout {
+                            spacing: 10px;
+                            width: 600px;
+
+                            Text {
+                                text: "Your Code";
+                                color: white;
+                                font-family: "Inter";
+                                font-size: 18px;
+                                font-weight: 600;
+                            }
+
+                            Text {
+                                text: "Send this code to your peer via Telegram, Signal, Email or Carrier Pigeon.";
+                                color: #a7a7a7;
+                                font-family: "Inter";
+                                font-size: 12px;
+                                font-weight: 400;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 12px;
+
+                                Text {
+                                    text: my_code;
+                                    color: #e8e8e8;
+                                    font-family: "Inter";
+                                    font-size: 15px;
+                                    width: 520px;
+                                }
+
+                                Rectangle {
+                                    width: 110px;
+                                    height: 40px;
+                                    border-radius: 8px;
+                                    background: rgba(255,255,255,0.08);
+                                    border-width: 1px;
+                                    border-color: rgba(255,255,255,0.09);
+
+                                    Text {
+                                        text: "Copy";
+                                        color: white;
+                                        font-family: "Inter";
+                                        font-size: 15px;
+                                        font-weight: 700;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: center;
+                                    }
+
+                                    Button {
+                                        text: "Copy";
+                                        clicked => copy_my_code(my_code);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Right column: Next button
+            VerticalLayout {
+                spacing: 8px;
+                width: 280px;
+
+                Rectangle { height: 260px; background: transparent; }
+
+                Rectangle {
+                    width: 150px;
+                    height: 44px;
+                    border-radius: 10px;
+                    background: rgba(28,112,255,0.12);
+                    border-width: 1px;
+                    border-color: rgba(28,112,255,0.9);
+
+                    Text {
+                        text: "Next";
+                        color: white;
+                        font-family: "Inter";
+                        font-size: 16px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+
+                    Button {
+                        text: "Next";
+                        enabled: next_enabled;
+                        clicked => next_pressed();
+                    }
+                }
+            }
+        }
+    }
+}

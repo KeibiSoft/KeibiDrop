@@ -1,0 +1,17 @@
+[package]
+name = "keibidrop-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+env = "1.0.1"
+libc = "0.2"
+slint = { version = "1.14.1", features = ["backend-winit"] }
+copypasta = { version = "0.8", optional = true }
+
+[build-dependencies]
+slint-build = "1.14.1"
+bindgen = "0.69"  # generates Rust bindings from the C header
+
+[features]
+clipboard = ["copypasta"]
