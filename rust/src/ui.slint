@@ -1,9 +1,271 @@
-// ui.slint
-import { Button, VerticalBox } from "std-widgets.slint";
+import { Button, VerticalBox} from "std-widgets.slint";
+
+component CustomButton inherits Rectangle {
+    in-out property text <=> txt.text;
+    callback clicked <=> touch.clicked;
+    border-radius: root.height / 2;
+    border-width: 1px;
+    border-color: root.background.darker(25%);
+    background: touch.pressed ? #6b8282 : touch.has-hover ? #6c616c :  #456;
+    height: txt.preferred-height * 1.33;
+    min-width: txt.preferred-width + 20px;
+    txt := Text {
+        x: (parent.width - self.width)/2 + (touch.pressed ? 2px : 0);
+        y: (parent.height - self.height)/2 + (touch.pressed ? 1px : 0);
+        color: touch.pressed ? #fff : #eee;
+    }
+    touch := TouchArea { }
+}
+
+export component Recipe inherits Window {
+    VerticalLayout {
+        alignment: start;
+        Button { text: "Button"; }
+    }
+}
+
+component InputArea inherits Rectangle {
+    in property <string> inText: "xxx-xxx-xxx";
+    in property <bool> readOnly: false;
+    in property <string> buttonText: "Copy";
+    in property <int> paddingFromTop: 35;
+    width: 445px;
+    height: 34px;
+    background: #222222;
+    border-color: #FFFFFF;
+    
+    ti := TextInput {
+        x: 0px;
+        width: 303px;
+        height: 34px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-weight: 0.5;
+        text: parent.inText;
+        // vertical-alignment: center;
+        // horizontal-alignment: center;
+        // clicked => { self.focus(); }
+        read-only: parent.readOnly;
+        single-line: true;
+    }
+
+    Button{
+        x: ti.x + ti.width;
+        y: ti.y;
+        text: buttonText;
+        height: 34px;
+        width: 142px;
+    }
+
+}
+
+component DataRectangle inherits Rectangle {
+    in property <string> info: "code";
+    in property <string> inText;
+    in property <string> buttonText;
+    in property <bool> readOnly;
+
+    width: 517px;
+    height: 86px;
+
+    t:= Text {
+        x: 36px;
+        y: 0;
+        text: parent.info;
+    }
+
+    InputArea {
+        x: 36px;
+        y: t.y + 21px;
+        inText: parent.inText;
+        buttonText: parent.buttonText;
+        readOnly: parent.readOnly;
+    }
+
+
+}
+
+component NumberedToolTip inherits Rectangle {
+    in property <int> number: 1;
+    width: 34px;
+    height: 34px;
+    border-width: 1px;
+    border-color: rgba(255,255,255,0.06);
+    border-radius: 8px;
+
+    Text {
+        text: number;
+    }
+}
+
+component CodeRectangle inherits Rectangle {
+    in property <string> info: "code";
+    in property <string> inText;
+    in property <string> buttonText;
+    in property <bool> readOnly;
+
+    width: 517px;
+    height: 157px;
+    border-width: 1px;
+    border-color: rgba(255,255,255,0.06);
+    border-radius: 8px;
+    // padding: 18px;
+    background: #262626;
+
+    DataRectangle {
+        info: parent.info;
+        inText: parent.inText;
+        buttonText: parent.buttonText;
+        readOnly: parent.readOnly;
+    }
+
+}
+
+component SectionElement inherits Rectangle {
+    in property <string> info: "code";
+    in property <string> inText;
+    in property <string> buttonText;
+    in property <bool> readOnly;
+    in property <int> sectionNumber;
+
+    height: 157px;
+    width: 569px;
+
+   nt := NumberedToolTip{
+        number: parent.sectionNumber;
+        x:0;
+        y:0;
+    }
+
+    CodeRectangle{
+        x: nt.x + nt.width + 18px;
+        y: 0;
+        info: parent.info;
+        inText: parent.inText;
+        readOnly: parent.readOnly;
+        buttonText: parent.buttonText;
+    }
+
+
+}
+
+component KeibiDropLogo inherits Rectangle {
+        // spacing: 1px;
+        width: keibi.width + drop.width;
+        height: keibi.height;
+
+        keibi := Text {
+            text: "KEIBI";
+            color: white;
+            font-family: "Inter";
+            font-size: 26px;
+            font-weight: 700;
+        }
+
+        drop:= Text {
+            text: "DROP";
+            color: white;
+            font-family: "Inter";
+            font-size: 26px;
+            font-weight: 200;
+            x: keibi.x + keibi.width;
+            y: keibi.y;
+        }
+}
+
+
+// TODO: Fix the progress spinner.
+
+component ProgressSpinner {
+    // 0.0 → 1.0 progress
+    property <float> progress: 0.0;
+
+    // Input properties
+    in property <bool> isSending: true;
+    in property <string> label: "Downloading";
+
+    // Derived ring color
+    property <brush> ring_color: isSending ? #3b82f6 : #22c55e;
+
+    width: 100px;
+    height: 100px;
+
+    // Simple timer to simulate progress filling
+    Timer {
+        interval: 30ms;
+        running: true;
+        triggered => {
+            progress += 0.005;
+            if (progress > 1.0) { progress = 0.0; }
+            self.start();
+        }
+    }
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #1e293b;
+        border-radius: self.width / 2;
+
+        // Background ring
+        Rectangle {
+            width: parent.width * 0.9;
+            height: parent.height * 0.9;
+            border-width: 6px;
+            border-color: #334155;
+            background: transparent;
+            border-radius: self.width / 2;
+        }
+
+        // Progress arc
+        Path {
+            width: parent.width * 0.9;
+            height: parent.height * 0.9;
+            stroke: ring_color;
+            stroke-width: 6px;
+            stroke-line-cap: round;
+            fill: transparent;
+
+            property <float> end_angle: progress * 360.0;
+            animate end_angle { duration: 300ms; easing: ease-in-out; }
+
+            // The SVG-style arc path (in a 100×100 coordinate space)
+            // https://www.joshwcomeau.com/svg/interactive-guide-to-paths/
+            // Animations are hard.
+            // Fix this, the above blog post has nice info.
+            commands: "M 50 0 "
+                      + "A 50 50 0 "
+                      + (end_angle > 180 ? "1" : "0") + " 1 "
+                      + (50.0 + 50.0 * sin(end_angle * 1deg)) + " "
+                      + (50.0 - 50.0 * cos(end_angle * 1deg)) + "Z";
+        }
+
+        // Center numeric text
+        Text {
+            text: (progress * 100).round() + "%";
+            color: white;
+            font-size: 16px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        // Optional label below
+        Text {
+            text: label;
+            y: parent.height - 20px;
+            color: #9ca3af;
+            font-size: 12px;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+
 
 export component MainWindow inherits Window {
-    width: 1200px;
-    height: 760px;
+    default-font-family: "Inter";
+    width: 1144px;
+    height: 729px;
     background: #1f1f1f;
 
     // Data bindings from Rust
@@ -16,254 +278,75 @@ export component MainWindow inherits Window {
     callback copy_my_code(code: string);
     callback next_pressed();
 
-    VerticalLayout {
-        spacing: 36px;
-        padding: 36px;
-
-        // Top logo
-        Text {
-            text: "KEIBIDROP";
-            color: white;
-            font-family: "Inter";
-            font-size: 26px;
-            font-weight: 700;
-        }
-
-        // Main content area
-        HorizontalLayout {
-            spacing: 36px;
-
-            // Left spacer
-            Rectangle { width: 1px; height: 1px; background: transparent; }
-
-            // Center content
-            VerticalLayout {
-                spacing: 24px;
-
-                // Title
-                VerticalLayout {
-                    spacing: 6px;
-
-                    Text {
-                        text: "Connect Securely";
-                        color: white;
-                        font-family: "Inter";
-                        font-size: 32px;
-                        font-weight: 700;
-                    }
-
-                    Text {
-                        text: "Exchange fingerprints to establish a secure connection";
-                        color: #cfcfcf;
-                        font-family: "Inter";
-                        font-size: 14px;
-                        font-weight: 400;
-                    }
-                }
-
-                Rectangle { height: 8px; background: transparent; }
-
-                // Card 1: Enter Code
-                Rectangle {
-                    width: 720px;
-                    border-width: 1px;
-                    border-color: rgba(255,255,255,0.06);
-                    border-radius: 8px;
-                    padding: 18px;
-                    background: transparent;
-
-                    HorizontalLayout {
-                        spacing: 14px;
-
-                        // Step circle
-                        Rectangle {
-                            width: 34px; height: 34px;
-                            border-radius: 6px;
-                            border-width: 1px;
-                            border-color: rgba(255,255,255,0.06);
-                            background: transparent;
-
-                            Text {
-                                text: "1";
-                                color: #e6e6e6;
-                                font-family: "Inter";
-                                font-size: 14px;
-                                font-weight: 600;
-                                vertical-alignment: center;
-                                horizontal-alignment: center;
-                            }
-                        }
-
-                        VerticalLayout {
-                            spacing: 10px;
-                            width: 600px;
-
-                            Text {
-                                text: "Enter Code";
-                                color: white;
-                                font-family: "Inter";
-                                font-size: 18px;
-                                font-weight: 600;
-                            }
-
-                            Text {
-                                text: "";
-                                color: #a7a7a7;
-                                font-family: "Inter";
-                                font-size: 12px;
-                                font-weight: 400;
-                            }
-
-                            HorizontalLayout {
-                                spacing: 12px;
-
-                                TextInput {
-                                    text: peer_code;
-                                    height: 40px;
-                                    width: 520px;
-                                    color: #e8e8e8;
-                                }
-
-                                Rectangle {
-                                    width: 110px;
-                                    height: 40px;
-                                    border-radius: 8px;
-                                    background: rgba(255,255,255,0.08);
-                                    border-width: 1px;
-                                    border-color: rgba(255,255,255,0.09);
-
-                                    Button {
-                                        text: "Add";
-                                        clicked => add_peer_code(peer_code);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Card 2: Your Code
-                Rectangle {
-                    width: 720px;
-                    border-width: 1px;
-                    border-color: rgba(255,255,255,0.06);
-                    border-radius: 8px;
-                    padding: 18px;
-                    background: transparent;
-
-                    HorizontalLayout {
-                        spacing: 14px;
-
-                        Rectangle {
-                            width: 34px; height: 34px;
-                            border-radius: 6px;
-                            border-width: 1px;
-                            border-color: rgba(255,255,255,0.06);
-                            background: transparent;
-
-                            Text {
-                                text: "2";
-                                color: #e6e6e6;
-                                font-family: "Inter";
-                                font-size: 14px;
-                                font-weight: 600;
-                                vertical-alignment: center;
-                                horizontal-alignment: center;
-                            }
-                        }
-
-                        VerticalLayout {
-                            spacing: 10px;
-                            width: 600px;
-
-                            Text {
-                                text: "Your Code";
-                                color: white;
-                                font-family: "Inter";
-                                font-size: 18px;
-                                font-weight: 600;
-                            }
-
-                            Text {
-                                text: "Send this code to your peer via Telegram, Signal, Email or Carrier Pigeon.";
-                                color: #a7a7a7;
-                                font-family: "Inter";
-                                font-size: 12px;
-                                font-weight: 400;
-                            }
-
-                            HorizontalLayout {
-                                spacing: 12px;
-
-                                Text {
-                                    text: my_code;
-                                    color: #e8e8e8;
-                                    font-family: "Inter";
-                                    font-size: 15px;
-                                    width: 520px;
-                                }
-
-                                Rectangle {
-                                    width: 110px;
-                                    height: 40px;
-                                    border-radius: 8px;
-                                    background: rgba(255,255,255,0.08);
-                                    border-width: 1px;
-                                    border-color: rgba(255,255,255,0.09);
-
-                                    Text {
-                                        text: "Copy";
-                                        color: white;
-                                        font-family: "Inter";
-                                        font-size: 15px;
-                                        font-weight: 700;
-                                        vertical-alignment: center;
-                                        horizontal-alignment: center;
-                                    }
-
-                                    Button {
-                                        text: "Copy";
-                                        clicked => copy_my_code(my_code);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Right column: Next button
-            VerticalLayout {
-                spacing: 8px;
-                width: 280px;
-
-                Rectangle { height: 260px; background: transparent; }
-
-                Rectangle {
-                    width: 150px;
-                    height: 44px;
-                    border-radius: 10px;
-                    background: rgba(28,112,255,0.12);
-                    border-width: 1px;
-                    border-color: rgba(28,112,255,0.9);
-
-                    Text {
-                        text: "Next";
-                        color: white;
-                        font-family: "Inter";
-                        font-size: 16px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                        horizontal-alignment: center;
-                    }
-
-                    Button {
-                        text: "Next";
-                        enabled: next_enabled;
-                        clicked => next_pressed();
-                    }
-                }
-            }
-        }
+    KeibiDropLogo {
+        x: 115px; // distance from left edge
+        y: 70px; // distance from top edge
     }
+
+    t1:=Text {
+        y: 127px;
+        horizontal-alignment: center;
+        vertical-alignment: top;
+        text: "Connect Securely";
+        color: white;
+        font-family: "Inter";
+        font-size: 23px;
+        font-weight: 800;
+        
+    }
+
+    Text {
+        y: t1.y + t1.height + 7px;
+        horizontal-alignment: center;
+        vertical-alignment: top;
+        text: "Exchange the secret codes to establish a secure connection";
+        color: white;
+        font-family: "Inter";
+        font-size: 16px;
+        font-weight: 400;
+    }
+
+    SectionElement {
+        x: 279px;
+        y: 262px;
+        info: "Enter Code";
+        inText: "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
+        readOnly: false;
+        buttonText: "Add";
+
+        sectionNumber: 1;
+    }
+
+    snd:= SectionElement {
+        x: 279px;
+        y: 437px;
+        info: "Send this Code via signal/ telegram/ email/ carrier pidgeon";
+        inText: "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
+        readOnly: true;
+        buttonText: "Copy";
+
+        sectionNumber: 2;
+    }
+
+
+    // TODO: Need a custom button;
+    Button {
+        x: snd.x + snd.width + 38px;
+        y: snd.y + snd.height - 34px;
+        width: 161px;
+        height: 34px;
+        text: "Next";
+        // background: #1f1f1f;
+
+
+    }
+
+    // CodeRectangle {
+    //     info: "Send Code";
+    // }
+
+    // ProgressSpinner {
+    //     isSending: true;
+    // }
+
 }
