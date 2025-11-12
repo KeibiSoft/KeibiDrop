@@ -25,10 +25,13 @@ export component Recipe inherits Window {
 }
 
 component InputArea inherits Rectangle {
-    in property <string> inText: "xxx-xxx-xxx";
+    in-out property <string> inText: "xxx-xxx-xxx";
     in property <bool> readOnly: false;
     in property <string> buttonText: "Copy";
     in property <int> paddingFromTop: 35;
+
+    callback process_code;
+
     width: 445px;
     height: 34px;
     background: #222222;
@@ -41,7 +44,7 @@ component InputArea inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
         font-weight: 0.5;
-        text: parent.inText;
+        text <=> parent.inText;
         // vertical-alignment: center;
         // horizontal-alignment: center;
         // clicked => { self.focus(); }
@@ -55,15 +58,20 @@ component InputArea inherits Rectangle {
         text: buttonText;
         height: 34px;
         width: 142px;
+        clicked => {
+            parent.process_code();
+        }
     }
 
 }
 
 component DataRectangle inherits Rectangle {
     in property <string> info: "code";
-    in property <string> inText;
+    in-out property <string> inText;
     in property <string> buttonText;
     in property <bool> readOnly;
+
+    callback process_code;
 
     width: 517px;
     height: 86px;
@@ -77,12 +85,11 @@ component DataRectangle inherits Rectangle {
     InputArea {
         x: 36px;
         y: t.y + 21px;
-        inText: parent.inText;
+        inText <=> parent.inText;
         buttonText: parent.buttonText;
         readOnly: parent.readOnly;
+        process_code => {parent.process_code()}
     }
-
-
 }
 
 component NumberedToolTip inherits Rectangle {
@@ -100,9 +107,12 @@ component NumberedToolTip inherits Rectangle {
 
 component CodeRectangle inherits Rectangle {
     in property <string> info: "code";
-    in property <string> inText;
+    in-out property <string> inText;
     in property <string> buttonText;
     in property <bool> readOnly;
+    out property <string> codeData;
+
+    callback process_code;
 
     width: 517px;
     height: 157px;
@@ -114,19 +124,22 @@ component CodeRectangle inherits Rectangle {
 
     DataRectangle {
         info: parent.info;
-        inText: parent.inText;
+        inText <=> parent.inText;
         buttonText: parent.buttonText;
         readOnly: parent.readOnly;
+        process_code => {parent.process_code()}
     }
 
 }
 
 component SectionElement inherits Rectangle {
     in property <string> info: "code";
-    in property <string> inText;
+    in-out property <string> inText;
     in property <string> buttonText;
     in property <bool> readOnly;
     in property <int> sectionNumber;
+    
+    callback  process_code;
 
     height: 157px;
     width: 569px;
@@ -141,9 +154,10 @@ component SectionElement inherits Rectangle {
         x: nt.x + nt.width + 18px;
         y: 0;
         info: parent.info;
-        inText: parent.inText;
+        inText <=> parent.inText;
         readOnly: parent.readOnly;
         buttonText: parent.buttonText;
+        process_code => {parent.process_code()}
     }
 
 
@@ -270,12 +284,12 @@ export component MainWindow inherits Window {
 
     // Data bindings from Rust
     in property<string> my_code: "XXXX-XXXX-XXXX-XXXX";
-    in property<string> peer_code: "";
+    in-out property<string> peer_code: "";
     in property<bool> next_enabled: true;
 
     // Callbacks
-    callback add_peer_code(code: string);
-    callback copy_my_code(code: string);
+    callback add_peer_code();
+    callback copy_my_code();
     callback next_pressed();
 
     KeibiDropLogo {
@@ -310,10 +324,10 @@ export component MainWindow inherits Window {
         x: 279px;
         y: 262px;
         info: "Enter Code";
-        inText: "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
+        inText <=> parent.peer_code;
         readOnly: false;
         buttonText: "Add";
-
+        process_code => { parent.add_peer_code()}
         sectionNumber: 1;
     }
 
@@ -321,10 +335,10 @@ export component MainWindow inherits Window {
         x: 279px;
         y: 437px;
         info: "Send this Code via signal/ telegram/ email/ carrier pidgeon";
-        inText: "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
+        inText: parent.my_code != "" ? parent.my_code:"XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
         readOnly: true;
         buttonText: "Copy";
-
+        process_code => {parent.copy_my_code()}
         sectionNumber: 2;
     }
 
@@ -337,8 +351,7 @@ export component MainWindow inherits Window {
         height: 34px;
         text: "Next";
         // background: #1f1f1f;
-
-
+        clicked => {parent.next_pressed()}
     }
 
     // CodeRectangle {
