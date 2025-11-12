@@ -15,7 +15,10 @@ fn main() {
 
     // Use bindgen to generate bindings
     let bindings = bindgen::Builder::default()
-        .header("../libkeibidrop.h")
+        .header("../libkeibidrop.h").raw_line("#![allow(non_upper_case_globals)]")
+        .raw_line("#![allow(non_camel_case_types)]")
+        .raw_line("#![allow(non_snake_case)]")
+        .raw_line("#![allow(dead_code)]")
         .generate()
         .expect("Unable to generate bindings");
 

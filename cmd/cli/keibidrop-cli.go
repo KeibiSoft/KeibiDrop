@@ -251,7 +251,7 @@ func joinRoom(kd *common.KeibiDrop) {
 			return
 		}
 
-		fmt.Printf("Room: %v, joined successfully", kd.PeerIPv6IP)
+		fmt.Printf("Room: %v, joined successfully\n", kd.PeerIPv6IP)
 	}()
 }
 
