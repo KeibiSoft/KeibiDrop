@@ -188,88 +188,196 @@ component KeibiDropLogo inherits Rectangle {
 }
 
 
-// TODO: Fix the progress spinner.
+// Outline button (blue border, transparent bg)
+component OutlineButton inherits Rectangle {
+    in-out property <string> text: "Button";
+    in property <bool> enabled: true;
+    callback clicked;
 
-component ProgressSpinner {
-    // 0.0 → 1.0 progress
-    property <float> progress: 0.0;
+    width: 161px;
+    height: 34px;
+    background: transparent;
+    border-width: 1px;
+    border-radius: self.height / 2;
+    border-color: !enabled ? #555 : touch.pressed ? #2563eb : touch.has-hover ? #60a5fa : #3b82f6;
 
-    // Input properties
-    in property <bool> isSending: true;
-    in property <string> label: "Downloading";
-
-    // Derived ring color
-    property <brush> ring_color: isSending ? #3b82f6 : #22c55e;
-
-    width: 100px;
-    height: 100px;
-
-    // Simple timer to simulate progress filling
-    Timer {
-        interval: 30ms;
-        running: true;
-        triggered => {
-            progress += 0.005;
-            if (progress > 1.0) { progress = 0.0; }
-            self.start();
-        }
+    Text {
+        text: root.text;
+        color: !root.enabled ? #555 : touch.pressed ? #2563eb : touch.has-hover ? #60a5fa : #3b82f6;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+
+    animate border-color { duration: 150ms; }
+}
+
+// Simple rotating spinner arc
+component SpinnerArc inherits Rectangle {
+    in property <length> size: 180px;
+    in property <bool> spinning: true;
+
+    width: size;
+    height: size;
+
+    // Continuous rotation using animation-tick
+    property <float> angle: mod(animation-tick() / 8ms, 360);
+
+    // Background ring
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        border-radius: self.width / 2;
+        border-width: 6px;
+        border-color: #334155;
+        background: transparent;
+    }
+
+    // Rotating arc
+    Path {
+        x: 0;
+        y: 0;
+        width: root.size;
+        height: root.size;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: #3b82f6;
+        stroke-width: 3px;
+        stroke-line-cap: round;
+        fill: transparent;
+
+        property <float> start: spinning ? angle : 0;
+        property <float> arc-len: 90;
+        property <float> r: 47;
+        property <float> cx: 50;
+        property <float> cy: 50;
+
+        property <float> x1: cx + r * sin(start * 1deg);
+        property <float> y1: cy - r * cos(start * 1deg);
+        property <float> x2: cx + r * sin((start + arc-len) * 1deg);
+        property <float> y2: cy - r * cos((start + arc-len) * 1deg);
+
+        commands: "M " + x1 + " " + y1 + " A " + r + " " + r + " 0 0 1 " + x2 + " " + y2;
+    }
+
+    // Center "+" icon
+    Text {
+        text: "+";
+        font-size: root.size * 0.35;
+        color: #3b82f6;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// Small spinner for file cards
+component SmallSpinner inherits Rectangle {
+    in property <bool> active: true;
+
+    width: 20px;
+    height: 20px;
+
+    property <float> angle: active ? mod(animation-tick() / 6ms, 360) : 0;
 
     Rectangle {
         width: 100%;
         height: 100%;
-        background: #1e293b;
         border-radius: self.width / 2;
+        background: #1e3a5f;
+    }
 
-        // Background ring
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 20;
+        viewbox-height: 20;
+        stroke: #3b82f6;
+        stroke-width: 2px;
+        stroke-line-cap: round;
+        fill: transparent;
+
+        property <float> r: 7;
+        property <float> cx: 10;
+        property <float> cy: 10;
+        property <float> start: angle;
+        property <float> arc-len: 120;
+
+        property <float> x1: cx + r * sin(start * 1deg);
+        property <float> y1: cy - r * cos(start * 1deg);
+        property <float> x2: cx + r * sin((start + arc-len) * 1deg);
+        property <float> y2: cy - r * cos((start + arc-len) * 1deg);
+
+        commands: "M " + x1 + " " + y1 + " A " + r + " " + r + " 0 0 1 " + x2 + " " + y2;
+    }
+}
+
+// File card for non-FUSE mode
+component FileCard inherits Rectangle {
+    in property <string> filename: "Project 123";
+    in property <bool> downloading: false;
+    in property <bool> saved: false;
+
+    callback save-clicked;
+    callback open-clicked;
+
+    width: 250px;
+    height: 180px;
+    background: transparent;
+
+    // Preview area
+    Rectangle {
+        width: parent.width;
+        height: 140px;
+        background: #3a3a3a;
+        border-radius: 4px;
+
+        if downloading: SmallSpinner {
+            x: 8px;
+            y: 8px;
+            active: true;
+        }
+    }
+
+    // Bottom row
+    HorizontalLayout {
+        y: 148px;
+        height: 28px;
+        spacing: 8px;
+
+        // Checkbox placeholder
         Rectangle {
-            width: parent.width * 0.9;
-            height: parent.height * 0.9;
-            border-width: 6px;
-            border-color: #334155;
-            background: transparent;
-            border-radius: self.width / 2;
+            width: 20px;
+            height: 20px;
+            border-width: 1px;
+            border-color: #666;
+            border-radius: 4px;
         }
 
-        // Progress arc
-        Path {
-            width: parent.width * 0.9;
-            height: parent.height * 0.9;
-            stroke: ring_color;
-            stroke-width: 6px;
-            stroke-line-cap: round;
-            fill: transparent;
-
-            property <float> end_angle: progress * 360.0;
-            animate end_angle { duration: 300ms; easing: ease-in-out; }
-
-            // The SVG-style arc path (in a 100×100 coordinate space)
-            // https://www.joshwcomeau.com/svg/interactive-guide-to-paths/
-            // Animations are hard.
-            // Fix this, the above blog post has nice info.
-            commands: "M 50 0 "
-                      + "A 50 50 0 "
-                      + (end_angle > 180 ? "1" : "0") + " 1 "
-                      + (50.0 + 50.0 * sin(end_angle * 1deg)) + " "
-                      + (50.0 - 50.0 * cos(end_angle * 1deg)) + "Z";
-        }
-
-        // Center numeric text
         Text {
-            text: (progress * 100).round() + "%";
+            text: filename;
             color: white;
-            font-size: 16px;
-            horizontal-alignment: center;
+            font-size: 13px;
             vertical-alignment: center;
+            horizontal-stretch: 1;
         }
 
-        // Optional label below
-        Text {
-            text: label;
-            y: parent.height - 20px;
-            color: #9ca3af;
-            font-size: 12px;
-            horizontal-alignment: center;
+        OutlineButton {
+            width: 80px;
+            height: 28px;
+            text: saved ? "Open" : "Save";
+            clicked => {
+                if (saved) { root.open-clicked(); }
+                else { root.save-clicked(); }
+            }
         }
     }
 }
@@ -287,79 +395,124 @@ export component MainWindow inherits Window {
     in-out property<string> peer_code: "";
     in property<bool> next_enabled: true;
 
+    // Screen state: 0 = connect, 1 = connected (no-fuse)
+    in-out property<int> current_screen: 1;  // TODO: change back to 0 after testing
+
     // Callbacks
     callback add_peer_code();
     callback copy_my_code();
     callback next_pressed();
+    callback disconnect_pressed();
 
+    // Logo appears on all screens
     KeibiDropLogo {
-        x: 115px; // distance from left edge
-        y: 70px; // distance from top edge
+        x: 115px;
+        y: 70px;
     }
 
-    t1:=Text {
-        y: 127px;
-        horizontal-alignment: center;
-        vertical-alignment: top;
-        text: "Connect Securely";
-        color: white;
-        font-family: "Inter";
-        font-size: 23px;
-        font-weight: 800;
-        
+    // ============ SCREEN 0: Connect ============
+    if current_screen == 0: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+
+        t1 := Text {
+            y: 127px;
+            horizontal-alignment: center;
+            vertical-alignment: top;
+            text: "Connect Securely";
+            color: white;
+            font-family: "Inter";
+            font-size: 23px;
+            font-weight: 800;
+        }
+
+        Text {
+            y: t1.y + t1.height + 7px;
+            horizontal-alignment: center;
+            vertical-alignment: top;
+            text: "Exchange the secret codes to establish a secure connection";
+            color: white;
+            font-family: "Inter";
+            font-size: 16px;
+            font-weight: 400;
+        }
+
+        SectionElement {
+            x: 279px;
+            y: 262px;
+            info: "Enter Code";
+            inText <=> root.peer_code;
+            readOnly: false;
+            buttonText: "Add";
+            process_code => { root.add_peer_code() }
+            sectionNumber: 1;
+        }
+
+        snd := SectionElement {
+            x: 279px;
+            y: 437px;
+            info: "Send this Code via signal/ telegram/ email/ carrier pidgeon";
+            inText: root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
+            readOnly: true;
+            buttonText: "Copy";
+            process_code => { root.copy_my_code() }
+            sectionNumber: 2;
+        }
+
+        OutlineButton {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px;
+            text: "Next";
+            enabled: root.next_enabled;
+            clicked => { root.next_pressed() }
+        }
     }
 
-    Text {
-        y: t1.y + t1.height + 7px;
-        horizontal-alignment: center;
-        vertical-alignment: top;
-        text: "Exchange the secret codes to establish a secure connection";
-        color: white;
-        font-family: "Inter";
-        font-size: 16px;
-        font-weight: 400;
+    // ============ SCREEN 1: Connected (No FUSE) ============
+    if current_screen == 1: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+
+        // Disconnect button top-right
+        OutlineButton {
+            x: parent.width - 200px;
+            y: 70px;
+            text: "Disconnect";
+            clicked => { root.disconnect_pressed() }
+        }
+
+        // Large spinner with + icon
+        SpinnerArc {
+            x: (parent.width - self.width) / 2;
+            y: 140px;
+            size: 180px;
+            spinning: true;
+        }
+
+        // File grid
+        HorizontalLayout {
+            x: 120px;
+            y: 380px;
+            spacing: 20px;
+
+            FileCard { filename: "File 1"; downloading: true; }
+            FileCard { filename: "File 2"; downloading: true; }
+            FileCard { filename: "File 3"; downloading: false; }
+            FileCard { filename: "File 4"; saved: true; }
+        }
+
+        // Second row
+        HorizontalLayout {
+            x: 120px;
+            y: 580px;
+            spacing: 20px;
+
+            FileCard { filename: "File 5"; }
+            FileCard { filename: "File 6"; }
+            FileCard { filename: "File 7"; }
+            FileCard { filename: "File 8"; }
+        }
     }
-
-    SectionElement {
-        x: 279px;
-        y: 262px;
-        info: "Enter Code";
-        inText <=> parent.peer_code;
-        readOnly: false;
-        buttonText: "Add";
-        process_code => { parent.add_peer_code()}
-        sectionNumber: 1;
-    }
-
-    snd:= SectionElement {
-        x: 279px;
-        y: 437px;
-        info: "Send this Code via signal/ telegram/ email/ carrier pidgeon";
-        inText: parent.my_code != "" ? parent.my_code:"XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
-        readOnly: true;
-        buttonText: "Copy";
-        process_code => {parent.copy_my_code()}
-        sectionNumber: 2;
-    }
-
-
-    // TODO: Need a custom button;
-    Button {
-        x: snd.x + snd.width + 38px;
-        y: snd.y + snd.height - 34px;
-        width: 161px;
-        height: 34px;
-        text: "Next";
-        // background: #1f1f1f;
-        clicked => {parent.next_pressed()}
-    }
-
-    // CodeRectangle {
-    //     info: "Send Code";
-    // }
-
-    // ProgressSpinner {
-    //     isSending: true;
-    // }
-
 }

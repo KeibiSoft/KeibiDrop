@@ -85,23 +85,42 @@ fn main() {
                 .expect("My operating system hates me");
         });
 
-        // 7. Handle Next: create room
+        // 7. Handle Next: create room and transition to screen 1
+        let weak_next = app.as_weak();
         app.on_next_pressed(move || {
             println!("Creating room...");
-            std::thread::spawn(|| {
+            let weak = weak_next.clone();
+            std::thread::spawn(move || {
                 let res = bindings::KD_CreateRoom();
                 if res != 0 {
                     eprintln!("Failed to create room (code {}).", res);
+                    return;
                 }
+                eprintln!("Room created");
 
-                eprintln!("Room created")
+                // Transition to screen 1 (no-fuse mode)
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(app) = weak.upgrade() {
+                        app.set_current_screen(1);
+                    }
+                });
             });
         });
 
-        // 8. Run UI loop
+        // 8. Handle Disconnect: stop and return to screen 0
+        let weak_disconnect = app.as_weak();
+        app.on_disconnect_pressed(move || {
+            println!("Disconnecting...");
+            bindings::KD_Stop();
+            if let Some(app) = weak_disconnect.upgrade() {
+                app.set_current_screen(0);
+            }
+        });
+
+        // 9. Run UI loop
         app.run().unwrap();
 
-        // 9. Cleanup
+        // 10. Cleanup
         bindings::KD_Stop();
         println!("KeibiDrop stopped.");
     }
