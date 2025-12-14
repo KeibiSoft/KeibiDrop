@@ -395,14 +395,15 @@ export component MainWindow inherits Window {
     in-out property<string> peer_code: "";
     in property<bool> next_enabled: true;
 
-    // Screen state: 0 = connect, 1 = connected (no-fuse)
-    in-out property<int> current_screen: 1;  // TODO: change back to 0 after testing
+    // Screen state: 0 = connect, 1 = connected (no-fuse), 2 = connected (fuse)
+    in-out property<int> current_screen: 2;  // TODO: change back to 0 after testing
 
     // Callbacks
     callback add_peer_code();
     callback copy_my_code();
     callback next_pressed();
     callback disconnect_pressed();
+    callback open_folder_pressed();
 
     // Logo appears on all screens
     KeibiDropLogo {
@@ -513,6 +514,58 @@ export component MainWindow inherits Window {
             FileCard { filename: "File 6"; }
             FileCard { filename: "File 7"; }
             FileCard { filename: "File 8"; }
+        }
+    }
+
+    // ============ SCREEN 2: Connected (FUSE present) ============
+    if current_screen == 2: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+
+        // Disconnect button top-right
+        OutlineButton {
+            x: parent.width - 200px;
+            y: 70px;
+            text: "Disconnect";
+            clicked => { root.disconnect_pressed() }
+        }
+
+        // Center content
+        VerticalLayout {
+            alignment: center;
+            spacing: 20px;
+
+            Text {
+                text: "Connected!";
+                color: #22c55e;
+                font-size: 32px;
+                font-weight: 700;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Your shared folder is mounted and ready.";
+                color: #9ca3af;
+                font-size: 16px;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Drop files into the folder to share them with your peer.";
+                color: #666;
+                font-size: 14px;
+                horizontal-alignment: center;
+            }
+
+            // Open folder button
+            HorizontalLayout {
+                alignment: center;
+                OutlineButton {
+                    text: "Open Folder";
+                    clicked => { root.open_folder_pressed() }
+                }
+            }
         }
     }
 }

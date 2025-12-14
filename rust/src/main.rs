@@ -4,6 +4,7 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 
 use env;
 use std::ffi::{CStr, CString};
+use std::process::Command;
 
 slint::include_modules!(); // this loads ui.slint as MainWindow
 
@@ -117,10 +118,22 @@ fn main() {
             }
         });
 
-        // 9. Run UI loop
+        // 9. Handle Open Folder: open mounted folder in system file manager
+        let mount_path = env::var("TO_MOUNT_PATH").unwrap_or_else(|_| ".".to_string());
+        app.on_open_folder_pressed(move || {
+            println!("Opening folder: {}", mount_path);
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg(&mount_path).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(&mount_path).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("explorer").arg(&mount_path).spawn();
+        });
+
+        // 10. Run UI loop
         app.run().unwrap();
 
-        // 10. Cleanup
+        // 11. Cleanup
         bindings::KD_Stop();
         println!("KeibiDrop stopped.");
     }
