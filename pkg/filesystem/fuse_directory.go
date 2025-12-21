@@ -67,7 +67,7 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) int {
 }
 
 func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
-	d.logger.Info("Create", "path", path)
+	d.logger.Warn("FUSE Create", "path", path, "flags", flags, "mode", mode)
 	d.AfmLock.Lock()
 	defer d.AfmLock.Unlock()
 
@@ -79,6 +79,7 @@ func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 	logger := d.logger.With("method", "open", "path", path, "flags", flags)
 	fd, err := syscall.Open(path, flags, mode)
 	if err != nil {
+		d.logger.Warn("FUSE Create FAILED", "path", path, "flags", flags, "mode", mode, "error", err)
 		logger.Error("Failed to open path", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
 	}
@@ -100,6 +101,7 @@ func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 	d.AllFileMap[relativePath] = f
 	d.OpenFileHandlers[uint64(fd)] = f
 
+	d.logger.Warn("FUSE Create SUCCESS", "path", relativePath, "fd", fd)
 	return 0, uint64(fd)
 }
 
@@ -109,20 +111,22 @@ func (d *Dir) Destroy() {
 }
 
 func (d *Dir) Flush(path string, fh uint64) int {
-	d.logger.Info("Flush", "path", path)
+	d.logger.Warn("FUSE Flush", "path", path, "fh", fh, "note", "returning ENOSYS - macOS apps may need this!")
 	return -winfuse.ENOSYS
 }
 
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) int {
-	d.logger.Info("Fsync", "path", path)
+	d.logger.Warn("FUSE Fsync", "path", path, "datasync", datasync, "fh", fh)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "fsync", "path", path)
 	err := syscall.Fsync(int(fh))
 	if err != nil {
+		d.logger.Warn("FUSE Fsync FAILED", "path", path, "fh", fh, "error", err)
 		logger.Error("Failed to fsync", "error", err)
 		return int(convertOsErrToSyscallErrno("fsync", err))
 	}
 
+	d.logger.Warn("FUSE Fsync SUCCESS", "path", path, "fh", fh)
 	return 0
 }
 
@@ -329,7 +333,7 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) int {
 }
 
 func (d *Dir) Open(path string, flags int) (int, uint64) {
-	d.logger.Info("Open", "path", path, "inode", d.Inode)
+	d.logger.Warn("FUSE Open", "path", path, "flags", flags)
 	logger := d.logger.With("method", "open", "path", path, "flags", flags)
 
 	// TODO: Check flags. O_RW, O_RDONLY, O_WRITE, O_TRUNCATE.
@@ -341,6 +345,7 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 
 	fh, ok := d.AllFileMap[path]
 	if !ok {
+		d.logger.Warn("FUSE Open FAILED - file not in map", "path", path)
 		return -winfuse.ENOENT, 0
 	}
 
@@ -348,6 +353,7 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 	if fh.openFileCounter.CountOpenDescriptors() != 0 {
 		fh.openFileCounter.Open()
 
+		d.logger.Warn("FUSE Open SUCCESS - already open", "path", path, "fh", fh.Inode)
 		logger.Info("We already opened it", "fh", fh.Inode)
 
 		return 0, uint64(fh.Inode)
@@ -415,6 +421,12 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 
 	fh.openFileCounter.Open()
 
+	d.logger.Warn("FUSE Open SUCCESS - new open",
+		"path", path,
+		"fh", fh.Inode,
+		"isLocalPresent", fh.IsLocalPresent,
+		"notLocalSynced", fh.NotLocalSynced,
+		"hasRemoteStream", fh.RemoteFileStream != nil)
 	logger.Info("Success with inode", "inode", fh.Inode)
 
 	return 0, fh.Inode
@@ -472,86 +484,112 @@ func (d *Dir) Readlink(path string) (int, string) {
 }
 
 func (d *Dir) Release(path string, fh uint64) int {
-	d.logger.Info("Release", "path", path, "inode", d.Inode, "fh", fh)
+	d.logger.Warn("FUSE Release", "path", path, "fh", fh)
 
 	logger := d.logger.With("method", "release", "path", path, "fh", fh)
-	err := syscall.Close(int(fh))
-	if err != nil {
-		logger.Error("Failed to release", "error", err)
-		return int(convertOsErrToSyscallErrno("release", err))
-	}
 
+	// Lock FIRST to prevent race conditions with multiple releases
 	d.OpenMapLock.Lock()
 	defer d.OpenMapLock.Unlock()
+
 	f, ok := d.OpenFileHandlers[fh]
-	if ok {
-		v := f.openFileCounter.Release()
-		if v == 0 {
-			delete(d.OpenFileHandlers, fh)
-			if f.NotLocalSynced {
-				f.NotLocalSynced = false
+	if !ok {
+		// File handle not in our map - close it anyway to be safe
+		d.logger.Warn("FUSE Release - fh not in map, closing anyway", "path", path, "fh", fh)
+		err := syscall.Close(int(fh))
+		if err != nil {
+			d.logger.Warn("FUSE Release FAILED - close error", "path", path, "fh", fh, "error", err)
+			return int(convertOsErrToSyscallErrno("release", err))
+		}
+		return 0
+	}
+
+	d.logger.Warn("FUSE Release sync state",
+		"path", path,
+		"fh", fh,
+		"counter", f.openFileCounter.CountOpenDescriptors(),
+		"NotLocalSynced", f.NotLocalSynced,
+		"NotRemoteSynced", f.NotRemoteSynced,
+		"HadEdits", f.HadEdits,
+		"IsLocalPresent", f.IsLocalPresent,
+		"LocalNewer", f.LocalNewer)
+
+	// Decrement counter - only close fd when all openers have released
+	v := f.openFileCounter.Release()
+	if v == 0 {
+		// Last opener - actually close the fd
+		err := syscall.Close(int(fh))
+		if err != nil {
+			d.logger.Warn("FUSE Release FAILED - close error", "path", path, "fh", fh, "error", err)
+			logger.Error("Failed to release", "error", err)
+			return int(convertOsErrToSyscallErrno("release", err))
+		}
+
+		delete(d.OpenFileHandlers, fh)
+
+		if f.NotLocalSynced {
+			f.NotLocalSynced = false
+		}
+
+		if f.NotRemoteSynced && d.OnLocalChange != nil {
+			stgo := syscall.Stat_t{}
+			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+			err := syscall.Lstat(cleanPath, &stgo)
+			if err != nil {
+				logger.Error("Failed to lstat path", "clean-path", cleanPath, "error-code", int(convertOsErrToSyscallErrno("lstat", err)), "error", err)
+				cerr := convertOsErrToSyscallErrno("lstat", err)
+				return int(cerr)
 			}
 
-			if f.NotRemoteSynced && d.OnLocalChange != nil {
-				stgo := syscall.Stat_t{}
-				cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-				err := syscall.Lstat(cleanPath, &stgo)
-				if err != nil {
-					logger.Error("Failed to lstat path", "clean-path", cleanPath, "error-code", int(convertOsErrToSyscallErrno("lstat", err)), "error", err)
-					cerr := convertOsErrToSyscallErrno("lstat", err)
-					return int(cerr)
-				}
+			aux := &winfuse.Stat_t{}
+			copyFusestatFromGostat(aux, &stgo)
 
-				aux := &winfuse.Stat_t{}
-				copyFusestatFromGostat(aux, &stgo)
+			d.OnLocalChange(types.FileEvent{
+				Path:   path,
+				Action: types.AddFile,
+				Attr:   types.StatToAttr(aux),
+			})
 
-				d.OnLocalChange(types.FileEvent{
-					Path:   path,
-					Action: types.AddFile,
-					Attr:   types.StatToAttr(aux),
-				})
+			f.NotLocalSynced = false
+			// It was just created. Clear the edits.
+			f.HadEdits = false
+		}
 
-				f.NotLocalSynced = false
-				// It was just created. Clear the edits.
-				f.HadEdits = false
+		// It is remote synced. Add the edits.
+		if f.HadEdits && d.OnLocalChange != nil {
+			stgo := syscall.Stat_t{}
+			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+			err := syscall.Lstat(cleanPath, &stgo)
+			if err != nil {
+				logger.Error("Failed to lstat path", "clean-path", cleanPath, "error-code", int(convertOsErrToSyscallErrno("lstat", err)), "error", err)
+				cerr := convertOsErrToSyscallErrno("lstat", err)
+				return -int(cerr)
 			}
 
-			// It is remote synced. Add the edits.
-			if f.HadEdits && d.OnLocalChange != nil {
-				stgo := syscall.Stat_t{}
-				cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-				err := syscall.Lstat(cleanPath, &stgo)
-				if err != nil {
-					logger.Error("Failed to lstat path", "clean-path", cleanPath, "error-code", int(convertOsErrToSyscallErrno("lstat", err)), "error", err)
-					cerr := convertOsErrToSyscallErrno("lstat", err)
-					return -int(cerr)
-				}
+			aux := &winfuse.Stat_t{}
+			copyFusestatFromGostat(aux, &stgo)
 
-				aux := &winfuse.Stat_t{}
-				copyFusestatFromGostat(aux, &stgo)
+			d.OnLocalChange(types.FileEvent{
+				Path:   path,
+				Action: types.EditFile,
+				Attr:   types.StatToAttr(aux),
+			})
 
-				d.OnLocalChange(types.FileEvent{
-					Path:   path,
-					Action: types.EditFile,
-					Attr:   types.StatToAttr(aux),
-				})
+			f.HadEdits = false
+		}
 
-				f.HadEdits = false
+		if !f.IsLocalPresent || !f.LocalNewer || f.NotLocalSynced {
+			f.IsLocalPresent = true
+			f.LocalNewer = false
+			f.NotLocalSynced = false
+		}
+
+		if f.RemoteFileStream != nil {
+			err = f.RemoteFileStream.Close()
+			if err != nil {
+				logger.Error("Failed to close remote file stream", "error", err)
 			}
-
-			if !f.IsLocalPresent || !f.LocalNewer || f.NotLocalSynced {
-				f.IsLocalPresent = true
-				f.LocalNewer = false
-				f.NotLocalSynced = false
-			}
-
-			if f.RemoteFileStream != nil {
-				err = f.RemoteFileStream.Close()
-				if err != nil {
-					logger.Error("Failed to close remote file stream", "error", err)
-				}
-				f.RemoteFileStream = nil
-			}
+			f.RemoteFileStream = nil
 		}
 	}
 
@@ -571,17 +609,28 @@ func (d *Dir) Releasedir(path string, fh uint64) int {
 }
 
 // Mac OS High Level apps use Rename SWAP, which is really fun from my experience.
+// Note: cgofuse does not expose renamex_np with RENAME_SWAP flag.
+// When apps try atomic rename-swap, we fall back to basic rename.
 func (d *Dir) Rename(oldpath string, newpath string) int {
-	d.logger.Info("Rename", "oldpath", oldpath, "newpath", newpath, "inode", d.Inode)
-	oldpath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, oldpath))
-	newpath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
-	logger := d.logger.With("method", "rename", "old-path", oldpath, "new-path", newpath)
-	err := syscall.Rename(oldpath, newpath)
+	d.logger.Warn("FUSE Rename called",
+		"oldpath", oldpath,
+		"newpath", newpath,
+		"note", "macOS apps may use RENAME_SWAP - not supported by cgofuse")
+
+	cleanOldPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, oldpath))
+	cleanNewPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
+	logger := d.logger.With("method", "rename", "old-path", cleanOldPath, "new-path", cleanNewPath)
+
+	d.logger.Warn("FUSE Rename resolved paths", "cleanOldPath", cleanOldPath, "cleanNewPath", cleanNewPath)
+
+	err := syscall.Rename(cleanOldPath, cleanNewPath)
 	if err != nil {
+		d.logger.Warn("FUSE Rename FAILED", "oldpath", oldpath, "newpath", newpath, "error", err)
 		logger.Error("Failed to rename", "error", err)
 		return int(convertOsErrToSyscallErrno("rename", err))
 	}
 
+	d.logger.Warn("FUSE Rename SUCCESS", "oldpath", oldpath, "newpath", newpath)
 	return 0
 }
 
@@ -674,13 +723,14 @@ func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) int {
 
 // The method returns the number of bytes written.
 func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
-	d.logger.Info("Write", "path", path, "inode", d.Inode, "fh", fh)
+	d.logger.Warn("FUSE Write", "path", path, "len", len(buff), "offset", offset, "fh", fh)
 	logger := d.logger.With("method", "write", "path", path, "fh", fh, "offset", offset)
 	d.OpenMapLock.RLock()
 	defer d.OpenMapLock.RUnlock()
 
 	f, ok := d.OpenFileHandlers[fh]
 	if !ok {
+		d.logger.Warn("FUSE Write FAILED - fd not found", "path", path, "fh", fh)
 		logger.Error("Failed to find open FD", "error", syscall.EBADF)
 		return -winfuse.EBADF
 	}
@@ -689,16 +739,18 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
 
 	n, err := syscall.Pwrite(int(fh), buff, offset)
 	if err != nil {
+		d.logger.Warn("FUSE Write FAILED", "path", path, "fh", fh, "error", err)
 		logger.Error("Failed to write", "error", err)
 		return -int(convertOsErrToSyscallErrno("pwrite", err))
 	}
 
+	d.logger.Warn("FUSE Write SUCCESS", "path", path, "bytesWritten", n, "fh", fh)
 	return n
 }
 
 func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 	logger := d.logger.With("method", "read", "path", path, "fh", fh, "offset", offset)
-	logger.Info("Read")
+	d.logger.Warn("FUSE Read", "path", path, "bufLen", len(buff), "offset", offset, "fh", fh)
 
 	// Check if this file has a remote stream
 	d.OpenMapLock.RLock()
@@ -706,6 +758,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 
 	f, ok := d.OpenFileHandlers[fh]
 	if ok && f.NotLocalSynced && f.RemoteFileStream != nil {
+		d.logger.Warn("FUSE Read from REMOTE", "path", path, "offset", offset, "bufLen", len(buff))
 		// Read from remote stream
 		data, err := f.RemoteFileStream.ReadAt(context.Background(), offset, int64(len(buff)))
 		if err != nil {
@@ -735,22 +788,24 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 	}
 
 	// Fallback: read directly from local file
+	d.logger.Warn("FUSE Read from LOCAL", "path", path, "offset", offset, "bufLen", len(buff))
 	n, err := syscall.Pread(int(fh), buff, offset)
 	if err != nil {
+		d.logger.Warn("FUSE Read LOCAL FAILED", "path", path, "error", err)
 		logger.Error("Failed to read local file", "error", err)
 		return int(convertOsErrToSyscallErrno("pread", err))
 	}
 
+	d.logger.Warn("FUSE Read SUCCESS", "path", path, "bytesRead", n)
 	return n
 }
 
 func (d *Dir) Removexattr(path string, name string) int {
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "remove-xattr", "path", path, "name", name)
+	// Don't log xattr operations - too frequent
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
-	err := xattr.Remove(path, name)
+	err := xattr.Remove(cleanPath, name)
 	if err != nil {
-		logger.Error("Failed to remove xattr", "error", err)
 		return int(convertOsErrToSyscallErrno("remove-xattr", err))
 	}
 
@@ -758,12 +813,11 @@ func (d *Dir) Removexattr(path string, name string) int {
 }
 
 func (d *Dir) Listxattr(path string, fill func(name string) bool) int {
+	// Don't log xattr operations - too frequent
 	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "list-xattr", "path", path, "real-path", realPath)
 
 	res, err := xattr.List(realPath)
 	if err != nil {
-		logger.Error("Failed to list xattr", "error", err)
 		return int(convertOsErrToSyscallErrno("list-xattr", err))
 	}
 
@@ -783,12 +837,11 @@ func (d *Dir) Getxattr(path string, name string) (int, []byte) {
 	// is the last segment, this implies that you need to
 	// xattr.Get(d.RealPathOfFile+"/"+ name)
 
+	// Don't log xattr lookups - too frequent and mostly expected failures
 	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "get-xattr", "path", path, "real-path", realPath, "xattr-name", name)
 
 	res, err := xattr.Get(realPath, name)
 	if err != nil {
-		logger.Error("Failed to get xattr", "error", err)
 		return int(convertOsErrToSyscallErrno("get-xattr", err)), nil
 	}
 
@@ -796,15 +849,14 @@ func (d *Dir) Getxattr(path string, name string) (int, []byte) {
 }
 
 func (d *Dir) Setxattr(path string, name string, value []byte, flags int) int {
+	// Don't log xattr operations - too frequent
 	// I do not support flags for this version.
 	_ = flags
 
 	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "set-xattr", "path", path, "real-path", realPath, "name", name, "val", string(value), "flags", flags)
 
 	err := xattr.Set(realPath, name, value)
 	if err != nil {
-		logger.Error("Failed to set xattr", "error", err)
 		return int(convertOsErrToSyscallErrno("set-xattr", err))
 	}
 
