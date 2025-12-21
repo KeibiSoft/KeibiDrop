@@ -369,12 +369,15 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 	}
 
 	// File already opened. It exists. All good.
+	// NOTE: We do NOT increment counter here because we're returning the same fh.
+	// FUSE only calls Release once per unique fh returned from Open.
+	// If we increment counter on every Open but Release is only called once,
+	// the counter never reaches 0 and sync never happens.
 	if fh.openFileCounter.CountOpenDescriptors() != 0 {
-		fh.openFileCounter.Open()
 		inode := fh.Inode
 		d.AfmLock.Unlock()
 
-		d.logger.Warn("FUSE Open SUCCESS - already open", "path", path, "fh", inode)
+		d.logger.Warn("FUSE Open SUCCESS - already open (no counter increment)", "path", path, "fh", inode)
 		logger.Info("We already opened it", "fh", inode)
 
 		return 0, uint64(inode)
