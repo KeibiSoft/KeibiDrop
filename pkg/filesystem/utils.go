@@ -8,6 +8,7 @@ package filesystem
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 	"strings"
 	"syscall"
@@ -25,9 +26,16 @@ func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 
 	ok := errors.As(e, &targetErr)
 	if !ok {
+		slog.Warn("FUSE error conversion - unknown error type", "syscall", name, "error", err, "fallback", "EIO")
 		return syscall.EIO
 	}
 
+	// Only log unexpected errors, not common expected ones
+	// ENOENT (no such file) is normal for xattr lookups and Getattr on non-existent files
+	// Errno 93 (ENOATTR on macOS) is normal for xattr lookups
+	if targetErr != syscall.ENOENT && int(targetErr) != 93 {
+		slog.Warn("FUSE error conversion", "syscall", name, "error", err, "errno", targetErr)
+	}
 	// cgoFuse uses -errno
 	return -targetErr
 }

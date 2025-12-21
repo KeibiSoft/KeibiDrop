@@ -34,9 +34,15 @@ func NewFS(logger *slog.Logger) *FS {
 }
 
 func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
+	fs.logger.Warn("FUSE Mount starting",
+		"mountPoint", mountPoint,
+		"downloadPath", downloadPath,
+		"isSecond", isSecond)
+
 	cleanMountPoint := filepath.Clean(mountPoint)
 	pt := strings.Split(cleanMountPoint, "/")
 	if len(pt) < 1 {
+		fs.logger.Warn("FUSE Mount failed - invalid mount point", "mountPoint", mountPoint)
 		return
 	}
 
@@ -83,12 +89,22 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 
 	fs.host = host
 
-	// opts := []string{"volname=KeibiDrop", "local"}
-	fs.host.Mount(cleanMountPoint, nil)
+	// Mount options for macOS compatibility
+	// See: https://github.com/macfuse/macfuse/wiki/Mount-Options
+	opts := []string{
+		"-o", "volname=KeibiDrop",
+		"-o", "local", // Mark as local volume (not network)
+	}
+
+	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
+	fs.host.Mount(cleanMountPoint, opts)
+	fs.logger.Warn("FUSE Mount completed", "mountPoint", cleanMountPoint)
 }
 
 func (fs *FS) Unmount() {
+	fs.logger.Warn("FUSE Unmount starting", "hostNil", fs.host == nil)
 	if fs.host == nil {
+		fs.logger.Warn("FUSE Unmount skipped - host is nil")
 		return
 	}
 
@@ -96,4 +112,5 @@ func (fs *FS) Unmount() {
 
 	fs.host.Unmount()
 	fs.Root = nil
+	fs.logger.Warn("FUSE Unmount completed")
 }
