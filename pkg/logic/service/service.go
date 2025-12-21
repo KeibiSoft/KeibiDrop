@@ -294,8 +294,9 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 	}
 
 	isOpen := false
-	kd.FS.Root.AfmLock.RLock()
-	defer kd.FS.Root.AfmLock.RUnlock()
+	// NOTE: We do NOT hold AfmLock for the entire stream anymore.
+	// This was causing deadlocks with FUSE Open() which needs AfmLock.Lock().
+	// Instead, we only lock briefly to look up the file path.
 
 	var fh *os.File
 	var openedPath string
@@ -321,13 +322,22 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 		if !isOpen {
 			isOpen = true
+
+			// Only hold the lock briefly to look up the file path
+			kd.FS.Root.AfmLock.RLock()
 			f, ok := kd.FS.Root.AllFileMap[rec.Path]
+			var realPath string
+			if ok {
+				realPath = f.RealPathOfFile
+			}
+			kd.FS.Root.AfmLock.RUnlock()
+
 			if !ok {
 				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(f.RealPathOfFile)
+			fh, err = os.Open(realPath)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
