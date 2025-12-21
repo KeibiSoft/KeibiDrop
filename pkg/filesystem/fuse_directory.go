@@ -447,18 +447,22 @@ func (d *Dir) Opendir(path string) (int, uint64) {
 
 func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) int {
 	d.logger.Info("Readdir", "path", path, "inode", d.Inode)
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "readdir", "path", path, "fh", fh)
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	logger := d.logger.With("method", "readdir", "path", cleanPath, "fh", fh)
 
-	dirEn, err := os.ReadDir(path)
+	dirEn, err := os.ReadDir(cleanPath)
 	if err != nil {
 		logger.Error("Failed to read dir", "error", err)
 		return int(convertOsErrToSyscallErrno("readdir", err))
 	}
 
+	// Track local files to avoid duplicates with remote files
+	localFiles := make(map[string]struct{})
+
 	fill(".", nil, 0)
 	fill("..", nil, 0)
 	for _, dir := range dirEn {
+		localFiles[dir.Name()] = struct{}{}
 		if !fill(dir.Name(), nil, 0) {
 			break
 		}
@@ -468,10 +472,14 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 		return 0
 	}
 
+	// Only list remote files that don't exist locally
 	d.RemoteFilesLock.RLock()
 	defer d.RemoteFilesLock.RUnlock()
 	for k := range d.RemoteFiles {
-		fill(getNameFromPath(k), nil, 0)
+		name := getNameFromPath(k)
+		if _, exists := localFiles[name]; !exists {
+			fill(name, nil, 0)
+		}
 	}
 
 	return 0
