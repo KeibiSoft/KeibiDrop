@@ -338,46 +338,73 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 
 	// TODO: Check flags. O_RW, O_RDONLY, O_WRITE, O_TRUNCATE.
 
-	d.AfmLock.Lock()
-	defer d.AfmLock.Unlock()
-	d.OpenMapLock.Lock()
-	defer d.OpenMapLock.Unlock()
+	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
+	// First, check if file exists and if already open (brief lock)
+	d.AfmLock.Lock()
 	fh, ok := d.AllFileMap[path]
 	if !ok {
-		d.logger.Warn("FUSE Open FAILED - file not in map", "path", path)
-		return -winfuse.ENOENT, 0
+		// File not in map - check if it exists on disk (pre-existing local file)
+		if _, statErr := os.Stat(localPath); statErr == nil {
+			// File exists on disk but not in map - create a File struct for it
+			logger.Info("Pre-existing local file found, adding to map", "path", path)
+			fh = &File{
+				logger:          d.logger,
+				openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
+				Name:            getNameFromPath(path),
+				RelativePath:    path,
+				RealPathOfFile:  localPath,
+				IsLocalPresent:  true,
+				LocalNewer:      true,
+				OnLocalChange:   d.OnLocalChange,
+				StreamProvider:  d.OpenStreamProvider(),
+				stat:            &winfuse.Stat_t{},
+			}
+			d.AllFileMap[path] = fh
+		} else {
+			d.AfmLock.Unlock()
+			d.logger.Warn("FUSE Open FAILED - file not in map and not on disk", "path", path)
+			return -winfuse.ENOENT, 0
+		}
 	}
 
 	// File already opened. It exists. All good.
 	if fh.openFileCounter.CountOpenDescriptors() != 0 {
 		fh.openFileCounter.Open()
+		inode := fh.Inode
+		d.AfmLock.Unlock()
 
-		d.logger.Warn("FUSE Open SUCCESS - already open", "path", path, "fh", fh.Inode)
-		logger.Info("We already opened it", "fh", fh.Inode)
+		d.logger.Warn("FUSE Open SUCCESS - already open", "path", path, "fh", inode)
+		logger.Info("We already opened it", "fh", inode)
 
-		return 0, uint64(fh.Inode)
+		return 0, uint64(inode)
 	}
+
+	// Get info we need, then release lock before I/O operations
+	isLocalPresent := fh.IsLocalPresent
+	localNewer := fh.LocalNewer
+	d.AfmLock.Unlock()
 
 	// We do not have the file open.
 
-	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-
 	// Check if file is locally present.
-	if fh.IsLocalPresent && fh.LocalNewer {
+	if isLocalPresent && localNewer {
 		fd, err := syscall.Open(localPath, flags, 0)
 		if err != nil {
 			logger.Error("Failed to open path", "error", err)
 			return int(convertOsErrToSyscallErrno("open", err)), 0
 		}
 
+		// Re-acquire locks to update state
+		d.AfmLock.Lock()
+		d.OpenMapLock.Lock()
 		fh.Inode = uint64(fd)
 		fh.openFileCounter.Open()
-
 		d.OpenFileHandlers[fh.Inode] = fh
+		d.OpenMapLock.Unlock()
+		d.AfmLock.Unlock()
 
-		logger.Info("We just opened local", "fh", fh.Inode)
-
+		logger.Info("We just opened local", "fh", fd)
 		return 0, uint64(fd)
 	}
 
@@ -406,20 +433,26 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 
 	logger.Info("File inode before open", "inode", fh.Inode)
 
-	fh.Inode = uint64(fd)
-
+	// Open remote stream WITHOUT holding locks (this is a network call!)
 	fsp := d.OpenStreamProvider()
-	fh.StreamProvider = fsp
 	// TODO: need context with cancel.. on file close.
-	stream, err := fsp.OpenRemoteFile(context.Background(), fh.Inode, path)
+	stream, err := fsp.OpenRemoteFile(context.Background(), uint64(fd), path)
 	if err != nil {
+		syscall.Close(fd) // Clean up on failure
 		d.logger.Error("Failed to open remote stream", "error", err)
 		return -winfuse.EACCES, 0
 	}
+
+	// Re-acquire locks to update state
+	d.AfmLock.Lock()
+	d.OpenMapLock.Lock()
+	fh.Inode = uint64(fd)
+	fh.StreamProvider = fsp
 	fh.RemoteFileStream = stream
 	d.OpenFileHandlers[fh.Inode] = fh
-
 	fh.openFileCounter.Open()
+	d.OpenMapLock.Unlock()
+	d.AfmLock.Unlock()
 
 	d.logger.Warn("FUSE Open SUCCESS - new open",
 		"path", path,
@@ -637,6 +670,30 @@ func (d *Dir) Rename(oldpath string, newpath string) int {
 		logger.Error("Failed to rename", "error", err)
 		return int(convertOsErrToSyscallErrno("rename", err))
 	}
+
+	// Update internal maps to reflect the rename
+	d.AfmLock.Lock()
+	if f, ok := d.AllFileMap[oldpath]; ok {
+		delete(d.AllFileMap, oldpath)
+		f.RelativePath = newpath
+		f.Name = getNameFromPath(newpath)
+		f.RealPathOfFile = cleanNewPath
+		d.AllFileMap[newpath] = f
+		logger.Info("Updated AllFileMap for rename", "oldpath", oldpath, "newpath", newpath)
+	}
+	d.AfmLock.Unlock()
+
+	// Also update RemoteFiles if the file was remote
+	d.RemoteFilesLock.Lock()
+	if f, ok := d.RemoteFiles[oldpath]; ok {
+		delete(d.RemoteFiles, oldpath)
+		f.RelativePath = newpath
+		f.Name = getNameFromPath(newpath)
+		f.RealPathOfFile = cleanNewPath
+		d.RemoteFiles[newpath] = f
+		logger.Info("Updated RemoteFiles for rename", "oldpath", oldpath, "newpath", newpath)
+	}
+	d.RemoteFilesLock.Unlock()
 
 	d.logger.Warn("FUSE Rename SUCCESS", "oldpath", oldpath, "newpath", newpath)
 	return 0
@@ -876,15 +933,15 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) int {
 // Notes: I am confident that it is not a good idea to use syscall errors for GRPC called methods.
 
 func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t) error {
-	d.AfmLock.RLock()
-	defer d.AfmLock.RUnlock()
-
 	d.RemoteFilesLock.Lock()
 	defer d.RemoteFilesLock.Unlock()
-	_, ok := d.AllFileMap[path]
-	if ok {
-		logger.Error("Failed to create file, it already exists", "error", syscall.EEXIST)
-		return syscall.EEXIST
+
+	// Check if already in RemoteFiles - if so, update instead of failing
+	if existing, ok := d.RemoteFiles[path]; ok {
+		logger.Info("Remote file already exists, updating", "path", path)
+		existing.stat = stat
+		existing.NotLocalSynced = true
+		return nil
 	}
 
 	f := &File{
