@@ -96,6 +96,8 @@ func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
 		OnLocalChange:   d.OnLocalChange,
 		StreamProvider:  d.OpenStreamProvider(),
 		NotRemoteSynced: true,
+		IsLocalPresent:  true, // File was just created locally
+		LocalNewer:      true, // Local version is the only version
 	}
 
 	d.AllFileMap[relativePath] = f
