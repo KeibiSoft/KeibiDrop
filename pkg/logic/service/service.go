@@ -326,10 +326,6 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			// Only hold the lock briefly to look up the file path
 			kd.FS.Root.AfmLock.RLock()
 			f, ok := kd.FS.Root.AllFileMap[rec.Path]
-			var realPath string
-			if ok {
-				realPath = f.RealPathOfFile
-			}
 			kd.FS.Root.AfmLock.RUnlock()
 
 			if !ok {
@@ -337,7 +333,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(realPath)
+			fh, err = os.Open(f.RealPathOfFile)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
