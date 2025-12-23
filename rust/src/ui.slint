@@ -396,7 +396,7 @@ export component MainWindow inherits Window {
     in property<bool> next_enabled: true;
 
     // Screen state: 0 = connect, 1 = connected (no-fuse), 2 = connected (fuse)
-    in-out property<int> current_screen: 2;  // TODO: change back to 0 after testing
+    in-out property<int> current_screen: 0;  // TODO: change back to 0 after testing
 
     // Callbacks
     callback add_peer_code();

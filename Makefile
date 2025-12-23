@@ -22,3 +22,6 @@ protoc:
 
 test:
 	go test -timeout 30s -v ./...
+
+build-static-rust-bridge:
+	go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
