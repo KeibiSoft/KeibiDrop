@@ -4,9 +4,33 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 
 use env;
 use std::ffi::{CStr, CString};
+use std::path::Path;
 use std::process::Command;
 
 slint::include_modules!(); // this loads ui.slint as MainWindow
+
+/// Check if FUSE is present on the system (mirrors Go's checkfuse.IsFUSEPresent)
+fn is_fuse_present() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        Path::new("/usr/local/lib/libfuse.dylib").exists()
+            || Path::new("/Library/Filesystems/macfuse.fs").exists()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Path::new("/lib/x86_64-linux-gnu/libfuse.so.2").exists()
+            || Path::new("/usr/lib/libfuse.so").exists()
+            || Path::new("/usr/lib/x86_64-linux-gnu/libfuse3.so").exists()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Path::new(r"C:\Windows\System32\winfsp-x64.dll").exists()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        false
+    }
+}
 
 fn main() {
     let mut ctx = ClipboardContext::new().unwrap();
@@ -24,6 +48,15 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(26002);
 
+    // Determine if FUSE should be used (mirrors Go CLI logic)
+    let no_fuse_env = env::var("NO_FUSE").is_ok();
+    let fuse_present = is_fuse_present();
+    let use_fuse = fuse_present && !no_fuse_env;
+    println!(
+        "FUSE present: {}, NO_FUSE env: {}, using FUSE: {}",
+        fuse_present, no_fuse_env, use_fuse
+    );
+
     // Convert to CString
     let relay_c = CString::new(relay).unwrap();
     let to_mount_c = CString::new(to_mount).unwrap();
@@ -36,6 +69,7 @@ fn main() {
             outbound,
             to_mount_c.into_raw(),
             to_save_c.into_raw(),
+            if use_fuse { 1 } else { 0 },
         );
 
         if result != 0 {
@@ -86,32 +120,42 @@ fn main() {
                 .expect("My operating system hates me");
         });
 
-        // 7. Handle Next: create room and transition to screen 1
+        // 7. Handle Next: create room and transition to connected screen
+        // Screen 1 = no-fuse (file list), Screen 2 = fuse (mounted folder)
         let weak_next = app.as_weak();
+        let target_screen = if use_fuse { 2 } else { 1 };
         app.on_next_pressed(move || {
             println!("Creating room...");
             let weak = weak_next.clone();
             std::thread::spawn(move || {
                 let res = bindings::KD_CreateRoom();
                 if res != 0 {
-                    eprintln!("Failed to create room (code {}).", res);
-                    return;
+                    eprintln!("Failed to create room (code {}), trying to join...", res);
+                    // If create fails, try to join (peer might have already created)
+                    let join_res = bindings::KD_JoinRoom();
+                    if join_res != 0 {
+                        eprintln!("Failed to join room (code {}).", join_res);
+                        return;
+                    }
+                    eprintln!("Room joined successfully");
+                } else {
+                    eprintln!("Room created successfully");
                 }
-                eprintln!("Room created");
 
-                // Transition to screen 1 (no-fuse mode)
+                // Transition to appropriate screen based on FUSE availability
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(app) = weak.upgrade() {
-                        app.set_current_screen(1);
+                        app.set_current_screen(target_screen);
                     }
                 });
             });
         });
 
-        // 8. Handle Disconnect: stop and return to screen 0
+        // 8. Handle Disconnect: unmount filesystem, stop, and return to screen 0
         let weak_disconnect = app.as_weak();
         app.on_disconnect_pressed(move || {
             println!("Disconnecting...");
+            bindings::KD_UnmountFilesystem();
             bindings::KD_Stop();
             if let Some(app) = weak_disconnect.upgrade() {
                 app.set_current_screen(0);

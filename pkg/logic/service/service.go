@@ -327,7 +327,6 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			kd.FS.Root.AfmLock.RLock()
 			f, ok := kd.FS.Root.AllFileMap[rec.Path]
 			kd.FS.Root.AfmLock.RUnlock()
-
 			if !ok {
 				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")

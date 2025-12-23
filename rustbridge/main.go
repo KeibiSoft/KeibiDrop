@@ -24,10 +24,11 @@ var kd *common.KeibiDrop
 var cancel context.CancelFunc
 
 //export KD_Initialize
-func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C.char) C.int {
+func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C.char, useFUSE C.int) C.int {
 	r := C.GoString(relayURL)
 	m := C.GoString(toMount)
 	s := C.GoString(toSave)
+	fuse := useFUSE != 0
 
 	parsed, err := url.Parse(r)
 	if err != nil {
@@ -40,7 +41,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	ctx, c := context.WithCancel(context.Background())
 	cancel = c
 
-	instance, err := common.NewKeibiDrop(ctx, logger, false, parsed, int(inbound), int(outbound), m, s)
+	instance, err := common.NewKeibiDrop(ctx, logger, fuse, parsed, int(inbound), int(outbound), m, s)
 	if err != nil {
 		return -2
 	}
