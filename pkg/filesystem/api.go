@@ -22,6 +22,10 @@ type FS struct {
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
 
+	// Collab sync options (set from env before Mount).
+	PrefetchOnOpen bool // If true, fetch entire file on Open() and write to local disk.
+	PushOnWrite    bool // If true, async push deltas to peer on Write().
+
 	// Host.
 	host *winfuse.FileSystemHost
 	Root *Dir
@@ -72,6 +76,9 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 
 		OnLocalChange:      fs.OnLocalChange,
 		OpenStreamProvider: fs.OpenStreamProvider,
+
+		PrefetchOnOpen: fs.PrefetchOnOpen,
+		PushOnWrite:    fs.PushOnWrite,
 
 		RemoteFilesLock: sync.RWMutex{},
 		RemoteFiles:     make(map[string]*File),

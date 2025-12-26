@@ -61,6 +61,10 @@ type Dir struct {
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
 
+	// Collab sync options (propagated from FS).
+	PrefetchOnOpen bool // If true, fetch entire file on Open() and write to local disk.
+	PushOnWrite    bool // If true, async push deltas to peer on Write().
+
 	RemoteFilesLock sync.RWMutex
 	RemoteFiles     map[string]*File
 }

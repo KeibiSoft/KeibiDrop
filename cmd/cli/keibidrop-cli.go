@@ -32,6 +32,8 @@ const TO_MOUNT_PATH_ENV = "TO_MOUNT_PATH"
 const TO_SAVE_PATH_ENV = "TO_SAVE_PATH"
 const LOG_FILE_ENV = "LOG_FILE"
 const NO_FUSE_ENV = "NO_FUSE"
+const PREFETCH_ON_OPEN_ENV = "KEIBIDROP_PREFETCH_ON_OPEN"
+const PUSH_ON_WRITE_ENV = "KEIBIDROP_PUSH_ON_WRITE"
 
 type cliContext struct {
 	kd *common.KeibiDrop
@@ -357,9 +359,14 @@ func main() {
 
 	finalVal := isFuse && !noFUSE
 
+	// Collab sync options (off by default).
+	_, prefetchOnOpen := os.LookupEnv(PREFETCH_ON_OPEN_ENV)
+	_, pushOnWrite := os.LookupEnv(PUSH_ON_WRITE_ENV)
+	logger.Info("Collab sync options", "prefetchOnOpen", prefetchOnOpen, "pushOnWrite", pushOnWrite)
+
 	kdctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	kd, err := common.NewKeibiDrop(kdctx, logger, finalVal, relayURL, inbound, outbound, toMount, toSave)
+	kd, err := common.NewKeibiDrop(kdctx, logger, finalVal, relayURL, inbound, outbound, toMount, toSave, prefetchOnOpen, pushOnWrite)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		os.Exit(1)

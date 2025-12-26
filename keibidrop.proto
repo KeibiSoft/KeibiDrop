@@ -58,10 +58,16 @@ message ReadRequest {
   string path = 2;
   uint64 offset = 3;
   uint32 size = 4;
+  bool prefetch = 5;           // If true, stream entire file (ignore offset/size).
+  uint64 local_size = 6;       // Local file size (for delta detection).
+  uint64 local_mtime = 7;      // Local mtime (for delta detection).
 }
 
 message ReadResponse {
   bytes data = 1;
+  uint64 offset = 2;           // For delta sync: offset where this chunk applies.
+  bool is_delta = 3;           // True if this is a delta chunk (not full file).
+  uint64 total_size = 4;       // Total file size (for prefetch completion).
 }
 
 message FsyncRequest {
