@@ -57,6 +57,14 @@ fn main() {
         fuse_present, no_fuse_env, use_fuse
     );
 
+    // Collab sync options (off by default)
+    let prefetch_on_open = env::var("KEIBIDROP_PREFETCH_ON_OPEN").is_ok();
+    let push_on_write = env::var("KEIBIDROP_PUSH_ON_WRITE").is_ok();
+    println!(
+        "Collab sync: prefetch_on_open={}, push_on_write={}",
+        prefetch_on_open, push_on_write
+    );
+
     // Convert to CString
     let relay_c = CString::new(relay).unwrap();
     let to_mount_c = CString::new(to_mount).unwrap();
@@ -70,6 +78,8 @@ fn main() {
             to_mount_c.into_raw(),
             to_save_c.into_raw(),
             if use_fuse { 1 } else { 0 },
+            if prefetch_on_open { 1 } else { 0 },
+            if push_on_write { 1 } else { 0 },
         );
 
         if result != 0 {

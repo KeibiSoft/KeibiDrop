@@ -214,6 +214,10 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs := filesystem.NewFS(logger)
 	kd.FS = fs
 
+	// Set collab sync options.
+	fs.PrefetchOnOpen = kd.PrefetchOnOpen
+	fs.PushOnWrite = kd.PushOnWrite
+
 	fs.OnLocalChange = func(event types.FileEvent) {
 		if kd.session == nil || kd.session.GRPCClient == nil {
 			return

@@ -55,6 +55,10 @@ type KeibiDrop struct {
 	ToMount string
 	ToSave  string
 
+	// Collab sync options.
+	PrefetchOnOpen bool
+	PushOnWrite    bool
+
 	// Signals for loop management.
 	signals chan TaskSignal
 	running bool
@@ -78,7 +82,7 @@ const (
 )
 
 // Factory-style constructor
-func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string) (*KeibiDrop, error) {
+func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string, prefetchOnOpen bool, pushOnWrite bool) (*KeibiDrop, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -127,6 +131,8 @@ func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayUR
 		refreshSession:  refreshSession,
 		ToMount:         toMount,
 		ToSave:          toSave,
+		PrefetchOnOpen:  prefetchOnOpen,
+		PushOnWrite:     pushOnWrite,
 		filesystemReady: make(chan struct{}),
 		serverReadyMu:   sync.Mutex{},
 		SyncTracker:     synctracker.NewSyncTracker(),

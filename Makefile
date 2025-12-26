@@ -25,3 +25,13 @@ test:
 
 build-static-rust-bridge:
 	go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+
+# Regenerate Rust bindings from the C header (requires bindgen)
+# Install: cargo install bindgen-cli
+rust-bindings: build-static-rust-bridge
+	bindgen libkeibidrop.h -o rust/src/bindings.rs
+
+# Preview Slint UI (requires slint-viewer)
+# Install: cargo install slint-viewer
+slint-preview:
+	slint-viewer rust/src/ui.slint

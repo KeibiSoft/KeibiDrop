@@ -802,6 +802,7 @@ extern "C" {
         outbound: ::std::os::raw::c_int,
         toMount: *mut ::std::os::raw::c_char,
         toSave: *mut ::std::os::raw::c_char,
+        useFUSE: ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
