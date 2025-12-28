@@ -18,19 +18,31 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/pkg/xattr"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
+// recoverPanic recovers from panics in FUSE handlers and logs the error.
+// Pass a pointer to the error return value to set it to EIO on panic.
+func (d *Dir) recoverPanic(funcName string, errCode *int) {
+	if r := recover(); r != nil {
+		d.logger.Error("PANIC in FUSE handler", "function", funcName, "error", r)
+		if errCode != nil {
+			*errCode = -winfuse.EIO
+		}
+	}
+}
+
 // Info about methods:
 // https://pkg.go.dev/github.com/winfsp/cgofuse/fuse#FileSystemInterface
 
-func (d *Dir) Access(path string, _mask uint32) int {
+func (d *Dir) Access(path string, _mask uint32) (errCode int) {
+	defer d.recoverPanic("Access", &errCode)
 	logger := d.logger.With("method", "access", "path", path)
 	logger.Debug("Access START", "path", path)
 	defer logger.Debug("Access END", "path", path)
@@ -57,21 +69,24 @@ func (d *Dir) Access(path string, _mask uint32) int {
 	return 0
 }
 
-func (d *Dir) Chmod(path string, mode uint32) int {
+func (d *Dir) Chmod(path string, mode uint32) (errCode int) {
+	defer d.recoverPanic("Chmod", &errCode)
 	// Return success. But we do not implement it.
 	d.logger.Info("Chmod", "path", path)
 	return 0
 	// return -winfuse.ENOSYS
 }
 
-func (d *Dir) Chown(path string, uid uint32, gid uint32) int {
+func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
+	defer d.recoverPanic("Chown", &errCode)
 	d.logger.Info("Chown", "path", path)
 	// Return success but we do not implement it.
 	return 0
 	// return -winfuse.ENOSYS
 }
 
-func (d *Dir) Create(path string, flags int, mode uint32) (int, uint64) {
+func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint64) {
+	defer d.recoverPanic("Create", &errCode)
 	d.logger.Warn("FUSE Create START", "path", path, "flags", flags, "mode", mode)
 	defer d.logger.Warn("FUSE Create END", "path", path)
 	logger := d.logger.With("method", "create", "path", path)
@@ -122,12 +137,14 @@ func (d *Dir) Destroy() {
 	d.logger.Info("Destroy")
 }
 
-func (d *Dir) Flush(path string, fh uint64) int {
+func (d *Dir) Flush(path string, fh uint64) (errCode int) {
+	defer d.recoverPanic("Flush", &errCode)
 	d.logger.Warn("FUSE Flush", "path", path, "fh", fh, "note", "returning ENOSYS - macOS apps may need this!")
 	return -winfuse.ENOSYS
 }
 
-func (d *Dir) Fsync(path string, datasync bool, fh uint64) int {
+func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
+	defer d.recoverPanic("Fsync", &errCode)
 	d.logger.Warn("FUSE Fsync", "path", path, "datasync", datasync, "fh", fh)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "fsync", "path", path)
@@ -142,12 +159,14 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) int {
 	return 0
 }
 
-func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) int {
+func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) (errCode int) {
+	defer d.recoverPanic("Fsyncdir", &errCode)
 	d.logger.Info("Fsyncdir", "path", path)
 	return -winfuse.ENOSYS
 }
 
-func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
+func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int) {
+	defer d.recoverPanic("Getattr", &errCode)
 	logger := d.logger.With("method", "get-attr", "path", path, "fh", fh)
 	logger.Debug("Getattr START")
 	defer logger.Debug("Getattr END")
@@ -329,13 +348,15 @@ func (d *Dir) Init() {
 
 }
 
-func (d *Dir) Link(oldpath string, newpath string) int {
+func (d *Dir) Link(oldpath string, newpath string) (errCode int) {
+	defer d.recoverPanic("Link", &errCode)
 	d.logger.Info("Link", "oldPath", oldpath, "newPath", newpath, "inode", d.Inode)
 
 	return -winfuse.ENOSYS
 }
 
-func (d *Dir) Mkdir(path string, mode uint32) int {
+func (d *Dir) Mkdir(path string, mode uint32) (errCode int) {
+	defer d.recoverPanic("Mkdir", &errCode)
 	d.logger.Info("Mkdir", "path", path, "inode", d.Inode)
 	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -347,7 +368,8 @@ func (d *Dir) Mkdir(path string, mode uint32) int {
 	return 0
 }
 
-func (d *Dir) Mknod(path string, mode uint32, dev uint64) int {
+func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
+	defer d.recoverPanic("Mknod", &errCode)
 	d.logger.Info("Mknod", "path", path, "inode", d.Inode)
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -360,7 +382,8 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) int {
 	return 0
 }
 
-func (d *Dir) Open(path string, flags int) (int, uint64) {
+func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
+	defer d.recoverPanic("Open", &errCode)
 	d.logger.Warn("FUSE Open START", "path", path, "flags", flags)
 	defer d.logger.Warn("FUSE Open END", "path", path)
 	logger := d.logger.With("method", "open", "path", path, "flags", flags)
@@ -524,7 +547,8 @@ func (d *Dir) Open(path string, flags int) (int, uint64) {
 	return 0, fh.Inode
 }
 
-func (d *Dir) Opendir(path string) (int, uint64) {
+func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
+	defer d.recoverPanic("Opendir", &errCode)
 	d.logger.Info("Opendir", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "opendir", "path", path)
@@ -537,7 +561,8 @@ func (d *Dir) Opendir(path string) (int, uint64) {
 	return 0, uint64(f)
 }
 
-func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) int {
+func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) (errCode int) {
+	defer d.recoverPanic("Readdir", &errCode)
 	d.logger.Debug("Readdir START", "path", path, "inode", d.Inode)
 	defer d.logger.Debug("Readdir END", "path", path)
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -584,13 +609,15 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 	return 0
 }
 
-func (d *Dir) Readlink(path string) (int, string) {
+func (d *Dir) Readlink(path string) (errCode int, target string) {
+	defer d.recoverPanic("Readlink", &errCode)
 	d.logger.Info("Readlink", "path", path, "inode", d.Inode)
 
 	return -winfuse.ENOSYS, ""
 }
 
-func (d *Dir) Release(path string, fh uint64) int {
+func (d *Dir) Release(path string, fh uint64) (errCode int) {
+	defer d.recoverPanic("Release", &errCode)
 	d.logger.Warn("FUSE Release START", "path", path, "fh", fh)
 	defer d.logger.Warn("FUSE Release END", "path", path, "fh", fh)
 
@@ -711,7 +738,8 @@ func (d *Dir) Release(path string, fh uint64) int {
 	return 0
 }
 
-func (d *Dir) Releasedir(path string, fh uint64) int {
+func (d *Dir) Releasedir(path string, fh uint64) (errCode int) {
+	defer d.recoverPanic("Releasedir", &errCode)
 	d.logger.Info("Releasedir", "path", path, "inode", d.Inode, "fh", fh)
 	logger := d.logger.With("method", "release-dir", "path", path, "fh", fh)
 	err := syscall.Close(int(fh))
@@ -726,7 +754,8 @@ func (d *Dir) Releasedir(path string, fh uint64) int {
 // Mac OS High Level apps use Rename SWAP, which is really fun from my experience.
 // Note: cgofuse does not expose renamex_np with RENAME_SWAP flag.
 // When apps try atomic rename-swap, we fall back to basic rename.
-func (d *Dir) Rename(oldpath string, newpath string) int {
+func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
+	defer d.recoverPanic("Rename", &errCode)
 	d.logger.Warn("FUSE Rename called",
 		"oldpath", oldpath,
 		"newpath", newpath,
@@ -773,7 +802,8 @@ func (d *Dir) Rename(oldpath string, newpath string) int {
 	return 0
 }
 
-func (d *Dir) Rmdir(path string) int {
+func (d *Dir) Rmdir(path string) (errCode int) {
+	defer d.recoverPanic("Rmdir", &errCode)
 	d.logger.Info("Rmdir", "path", path, "inode", d.Inode)
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "rmdir", "path", path)
@@ -788,7 +818,8 @@ func (d *Dir) Rmdir(path string) int {
 	return 0
 }
 
-func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) int {
+func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) (errCode int) {
+	defer d.recoverPanic("Statfs", &errCode)
 	/*
 		var freeBytesAvailable uint64
 		var totalNumberOfBytes uint64
@@ -816,7 +847,8 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) int {
 	return 0
 }
 
-func (d *Dir) Symlink(target string, newpath string) int {
+func (d *Dir) Symlink(target string, newpath string) (errCode int) {
+	defer d.recoverPanic("Symlink", &errCode)
 	d.logger.Info("Symlink", "target", target, "newpath", newpath, "inode", d.Inode)
 
 	return -winfuse.ENOSYS
@@ -824,7 +856,8 @@ func (d *Dir) Symlink(target string, newpath string) int {
 
 // Note: On windows open does not have a truncate flag,
 // thus Open is immediately followed by Truncate.
-func (d *Dir) Truncate(path string, size int64, fh uint64) int {
+func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
+	defer d.recoverPanic("Truncate", &errCode)
 	d.logger.Info("Truncate", "path", path, "size", size, "inode", d.Inode, "fh", fh)
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -839,7 +872,8 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) int {
 }
 
 // Unlink removes a file.
-func (d *Dir) Unlink(path string) int {
+func (d *Dir) Unlink(path string) (errCode int) {
+	defer d.recoverPanic("Unlink", &errCode)
 	d.logger.Info("Unlink", "path", path, "inode", d.Inode)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "unlink", "path", path)
@@ -854,14 +888,16 @@ func (d *Dir) Unlink(path string) int {
 
 // Utimens changes the access and modification times of a file.
 // Note: I do not care about it :^D for this version.
-func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) int {
+func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) (errCode int) {
+	defer d.recoverPanic("Utimens", &errCode)
 	d.logger.Info("Utimens", "path", path, "inode", d.Inode)
 
 	return -winfuse.ENOSYS
 }
 
 // The method returns the number of bytes written.
-func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
+func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode int) {
+	defer d.recoverPanic("Write", &errCode)
 	d.logger.Warn("FUSE Write START", "path", path, "len", len(buff), "offset", offset, "fh", fh)
 	defer d.logger.Warn("FUSE Write END", "path", path, "fh", fh)
 	logger := d.logger.With("method", "write", "path", path, "fh", fh, "offset", offset)
@@ -891,7 +927,8 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) int {
 	return n
 }
 
-func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
+func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode int) {
+	defer d.recoverPanic("Read", &errCode)
 	logger := d.logger.With("method", "read", "path", path, "fh", fh, "offset", offset)
 	d.logger.Warn("FUSE Read START", "path", path, "bufLen", len(buff), "offset", offset, "fh", fh)
 	defer d.logger.Warn("FUSE Read END", "path", path, "fh", fh)
@@ -960,7 +997,8 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) int {
 	return n
 }
 
-func (d *Dir) Removexattr(path string, name string) int {
+func (d *Dir) Removexattr(path string, name string) (errCode int) {
+	defer d.recoverPanic("Removexattr", &errCode)
 	// Don't log xattr operations - too frequent
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
@@ -972,7 +1010,8 @@ func (d *Dir) Removexattr(path string, name string) int {
 	return 0
 }
 
-func (d *Dir) Listxattr(path string, fill func(name string) bool) int {
+func (d *Dir) Listxattr(path string, fill func(name string) bool) (errCode int) {
+	defer d.recoverPanic("Listxattr", &errCode)
 	// Don't log xattr operations - too frequent
 	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
@@ -988,7 +1027,8 @@ func (d *Dir) Listxattr(path string, fill func(name string) bool) int {
 	return 0
 }
 
-func (d *Dir) Getxattr(path string, name string) (int, []byte) {
+func (d *Dir) Getxattr(path string, name string) (errCode int, data []byte) {
+	defer d.recoverPanic("Getxattr", &errCode)
 	// Note for the reader:
 	// If the reader has a need for xattr, use the filesystem path instead of the
 	// method signature path.
@@ -1008,7 +1048,8 @@ func (d *Dir) Getxattr(path string, name string) (int, []byte) {
 	return 0, res
 }
 
-func (d *Dir) Setxattr(path string, name string, value []byte, flags int) int {
+func (d *Dir) Setxattr(path string, name string, value []byte, flags int) (errCode int) {
+	defer d.recoverPanic("Setxattr", &errCode)
 	// Don't log xattr operations - too frequent
 	// I do not support flags for this version.
 	_ = flags
