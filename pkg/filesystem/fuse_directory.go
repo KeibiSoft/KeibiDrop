@@ -815,7 +815,7 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	defer d.recoverPanic("Write", &errCode)
 	logger := d.logger.With("method", "write", "path", path, "fh", fh, "offset", offset)
 
-	// Get file handle info under brief lock
+	// Hold lock during write to prevent Release from closing fd mid-write
 	d.OpenMapLock.RLock()
 	f, ok := d.OpenFileHandlers[fh]
 	if !ok {
@@ -826,9 +826,10 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	f.HadEdits = true
 	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
 	f.LocalNewer = true
-	d.OpenMapLock.RUnlock()
 
 	n, err := syscall.Pwrite(int(fh), buff, offset)
+	d.OpenMapLock.RUnlock() // Release AFTER Pwrite to prevent race with Release
+
 	if err != nil {
 		logger.Error("Failed to write", "error", err)
 		return -int(convertOsErrToSyscallErrno("pwrite", err))
