@@ -103,6 +103,11 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 		"-o", "local",            // Mark as local volume (not network)
 		"-o", "negative_vncache", // Cache non-existent files (stops .DS_Store/.Trashes lookups)
 		"-o", "slow_statfs",      // Reduce statfs calls (Finder won't poll as aggressively)
+		"-o", "direct_io",        // Bypass kernel page cache - every read goes through FUSE (slightly slower, but required for real-time sync)
+		// TODO(windows): direct_io is ignored on Windows/WinFSP. For Windows sync, either:
+		// 1. Use FileSystemOpenEx interface to set fi.DirectIo per-file, or
+		// 2. Call WinFSP's FspFileSystemSetMountPointEx with cache control flags, or
+		// 3. Use CGO to call FlushFileBuffers/SetFileValidData on edited files
 	}
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)

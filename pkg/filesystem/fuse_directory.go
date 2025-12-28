@@ -815,22 +815,32 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	defer d.recoverPanic("Write", &errCode)
 	logger := d.logger.With("method", "write", "path", path, "fh", fh, "offset", offset)
 
+	// Get file handle info under brief lock
 	d.OpenMapLock.RLock()
-	defer d.OpenMapLock.RUnlock()
-
 	f, ok := d.OpenFileHandlers[fh]
 	if !ok {
+		d.OpenMapLock.RUnlock()
 		logger.Error("fd not found")
 		return -winfuse.EBADF
 	}
-
 	f.HadEdits = true
+	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
+	f.LocalNewer = true
+	d.OpenMapLock.RUnlock()
 
 	n, err := syscall.Pwrite(int(fh), buff, offset)
 	if err != nil {
 		logger.Error("Failed to write", "error", err)
 		return -int(convertOsErrToSyscallErrno("pwrite", err))
 	}
+
+	// Also update RemoteFiles to prevent new handles from reading stale remote data
+	d.RemoteFilesLock.Lock()
+	if rf, exists := d.RemoteFiles[path]; exists {
+		rf.NotLocalSynced = false
+		rf.LocalNewer = true
+	}
+	d.RemoteFilesLock.Unlock()
 
 	return n
 }
