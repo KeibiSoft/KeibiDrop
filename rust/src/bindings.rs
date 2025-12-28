@@ -803,6 +803,8 @@ extern "C" {
         toMount: *mut ::std::os::raw::c_char,
         toSave: *mut ::std::os::raw::c_char,
         useFUSE: ::std::os::raw::c_int,
+        prefetchOnOpen: ::std::os::raw::c_int,
+        pushOnWrite: ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
