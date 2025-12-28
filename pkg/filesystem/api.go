@@ -100,7 +100,9 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 	// See: https://github.com/macfuse/macfuse/wiki/Mount-Options
 	opts := []string{
 		"-o", "volname=KeibiDrop",
-		"-o", "local", // Mark as local volume (not network)
+		"-o", "local",            // Mark as local volume (not network)
+		"-o", "negative_vncache", // Cache non-existent files (stops .DS_Store/.Trashes lookups)
+		"-o", "slow_statfs",      // Reduce statfs calls (Finder won't poll as aggressively)
 	}
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
