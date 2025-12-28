@@ -28,7 +28,7 @@ type API struct {
 	opTimeoutSeconds int
 }
 
-func (api *API) Initialize(useLogFile bool, logFilePath string, relayURL string, inboundPort int, outboundPort int) error {
+func (api *API) Initialize(useLogFile bool, logFilePath string, relayURL string, inboundPort int, outboundPort int, prefetchOnOpen bool, pushOnWrite bool) error {
 	var wr *os.File = os.Stderr
 	if logFilePath != "" {
 		f, err := os.OpenFile(filepath.Clean(logFilePath),
@@ -59,7 +59,7 @@ func (api *API) Initialize(useLogFile bool, logFilePath string, relayURL string,
 
 	kdctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	kd, err := common.NewKeibiDrop(kdctx, logger, false, parsedURL, inboundPort, outboundPort, "", "")
+	kd, err := common.NewKeibiDrop(kdctx, logger, false, parsedURL, inboundPort, outboundPort, "", "", prefetchOnOpen, pushOnWrite)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		return err

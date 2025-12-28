@@ -129,6 +129,26 @@ func (c *cliContext) executor(in string) {
 		os.Exit(0)
 
 	default:
+		// TODO: Shell passthrough mode (tmate-style)
+		// Uncomment to enable shell commands without / prefix
+		// Required imports: "os/exec", "runtime"
+		/*
+			// Cross-platform shell execution
+			var cmd *exec.Cmd
+			switch runtime.GOOS {
+			case "windows":
+				cmd = exec.Command("cmd", "/c", in)
+			default: // macOS, Linux
+				cmd = exec.Command("sh", "-c", in)
+			}
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Stdin = os.Stdin
+			if err := cmd.Run(); err != nil {
+				color.Red("Command failed: %v", err)
+			}
+			return
+		*/
 		color.Red("Unknown command: %s", args[0])
 	}
 }
