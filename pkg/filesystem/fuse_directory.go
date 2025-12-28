@@ -508,13 +508,14 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 
 	// Open remote stream WITHOUT holding locks (this is a network call!)
 	fsp := d.OpenStreamProvider()
-	// Use timeout to prevent system freeze if peer is unresponsive
+	// Use a cancellable context that lives until the file is closed (Release)
+	// Do NOT use defer cancel here - the stream needs to stay alive for Read calls
 	logger.Debug("Open: calling OpenRemoteFile (network call)")
-	openCtx, openCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer openCancel()
-	stream, err := fsp.OpenRemoteFile(openCtx, uint64(fd), path)
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	stream, err := fsp.OpenRemoteFile(streamCtx, uint64(fd), path)
 	logger.Debug("Open: OpenRemoteFile returned", "stream", stream != nil, "err", err)
 	if err != nil {
+		streamCancel() // Cancel the context on failure
 		syscall.Close(fd) // Clean up on failure
 		d.logger.Error("Failed to open remote stream", "error", err)
 		return -winfuse.EACCES, 0
@@ -529,6 +530,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	fh.Inode = uint64(fd)
 	fh.StreamProvider = fsp
 	fh.RemoteFileStream = stream
+	fh.StreamCancel = streamCancel
 	d.OpenFileHandlers[fh.Inode] = fh
 	fh.openFileCounter.Open()
 	logger.Debug("Open: releasing OpenMapLock")
@@ -626,7 +628,13 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 	// Lock FIRST to prevent race conditions with multiple releases
 	logger.Debug("Release: acquiring OpenMapLock.Lock")
 	d.OpenMapLock.Lock()
-	defer func() { logger.Debug("Release: releasing OpenMapLock.Unlock"); d.OpenMapLock.Unlock() }()
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			logger.Debug("Release: releasing OpenMapLock.Unlock")
+			d.OpenMapLock.Unlock()
+		}
+	}()
 	logger.Debug("Release: acquired OpenMapLock")
 
 	f, ok := d.OpenFileHandlers[fh]
@@ -721,15 +729,23 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			f.NotLocalSynced = false
 		}
 
-		// Get stream reference and clear it under lock, then close OUTSIDE lock
+		// Get stream reference and cancel func, clear under lock, then close OUTSIDE lock
 		// to avoid holding OpenMapLock during network I/O
 		stream := f.RemoteFileStream
+		streamCancel := f.StreamCancel
 		f.RemoteFileStream = nil
+		f.StreamCancel = nil
 		if stream != nil {
+			logger.Debug("Release: releasing OpenMapLock.Unlock (before stream close)")
 			d.OpenMapLock.Unlock()
+			unlocked = true
 			err = stream.Close()
 			if err != nil {
 				logger.Error("Failed to close remote file stream", "error", err)
+			}
+			// Cancel the stream context after closing
+			if streamCancel != nil {
+				streamCancel()
 			}
 			return 0 // Already unlocked, just return
 		}

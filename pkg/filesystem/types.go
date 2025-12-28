@@ -7,6 +7,7 @@
 package filesystem
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 
@@ -99,6 +100,7 @@ type File struct {
 
 	StreamProvider   types.FileStreamProvider
 	RemoteFileStream types.RemoteFileStream
+	StreamCancel     context.CancelFunc // Cancel function for the stream context
 
 	OnLocalChange func(event types.FileEvent)
 
