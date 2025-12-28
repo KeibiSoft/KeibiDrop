@@ -438,11 +438,24 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 		return 0, uint64(inode)
 	}
 
-	// Get info we need, then release lock before I/O operations
+	// Get info we need, then release AfmLock BEFORE acquiring RemoteFilesLock
+	// CRITICAL: Must release AfmLock BEFORE acquiring RemoteFilesLock to maintain lock order:
+	// RemoteFilesLock → Adm → AfmLock (same as Getattr)
+	// Violating this order causes deadlock with Getattr + AddRemoteFile
 	isLocalPresent := fh.IsLocalPresent
 	localNewer := fh.LocalNewer
 	logger.Debug("Open: releasing AfmLock (first pass)", "isLocalPresent", isLocalPresent, "localNewer", localNewer)
 	d.AfmLock.Unlock()
+
+	// Check if RemoteFiles has a newer version (e.g., remote peer edited our local file)
+	// Safe to check now that AfmLock is released - no lock order violation
+	d.RemoteFilesLock.RLock()
+	if remoteFile, hasRemote := d.RemoteFiles[path]; hasRemote && remoteFile.NotLocalSynced {
+		logger.Info("Remote has newer version of local file, will stream from remote", "path", path)
+		// Override local decision: remote has newer version, so don't read stale local
+		localNewer = false
+	}
+	d.RemoteFilesLock.RUnlock()
 
 	// We do not have the file open.
 
@@ -1123,15 +1136,33 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	logger.Debug("EditRemoteFile START", "path", path)
 	defer logger.Debug("EditRemoteFile END", "path", path)
 
-	logger.Debug("EditRemoteFile: acquiring RemoteFilesLock.RLock")
-	d.RemoteFilesLock.RLock()
-	defer func() { logger.Debug("EditRemoteFile: releasing RemoteFilesLock.RUnlock"); d.RemoteFilesLock.RUnlock() }()
+	// Use write lock since we may need to add to the map
+	logger.Debug("EditRemoteFile: acquiring RemoteFilesLock.Lock")
+	d.RemoteFilesLock.Lock()
+	defer func() { logger.Debug("EditRemoteFile: releasing RemoteFilesLock.Unlock"); d.RemoteFilesLock.Unlock() }()
 	logger.Debug("EditRemoteFile: acquired RemoteFilesLock")
 
 	f, ok := d.RemoteFiles[path]
 	if !ok {
-		logger.Error("Failed to edit file, it doesn't exists", "error", syscall.ENOENT)
-		return syscall.ENOENT
+		// File is not in RemoteFiles - this means it's a LOCAL file that the remote peer edited.
+		// Add it to RemoteFiles to mark that the remote version is newer.
+		// This allows the local peer to fetch the updated version from remote on next read.
+		logger.Info("Local file edited by remote peer, adding to RemoteFiles", "path", path)
+
+		f = &File{
+			logger:          d.logger,
+			openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
+			stat:            stat,
+			RelativePath:    path,
+			IsLocalPresent:  true, // We have a local copy, but it's outdated
+			Name:            name,
+			NotLocalSynced:  true, // Remote has newer version
+			StreamProvider:  d.OpenStreamProvider(),
+			OnLocalChange:   d.OnLocalChange,
+			RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
+		}
+		d.RemoteFiles[path] = f
+		return nil
 	}
 
 	if stat.Mtim.Time().Before(f.stat.Mtim.Time()) {
