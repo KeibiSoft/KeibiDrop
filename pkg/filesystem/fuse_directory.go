@@ -31,7 +31,7 @@ import (
 
 func (d *Dir) Access(path string, _mask uint32) int {
 	logger := d.logger.With("method", "access", "path", path)
-	logger.Info("Access", "path", path)
+	logger.Debug("Access", "path", path)
 
 	d.RemoteFilesLock.RLock()
 	_, ok := d.RemoteFiles[path]
@@ -139,7 +139,7 @@ func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) int {
 
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) int {
 	logger := d.logger.With("method", "get-attr", "path", path, "fh", fh)
-	logger.Info("Getattr")
+	logger.Debug("Getattr")
 	d.Adm.Lock()
 	defer d.Adm.Unlock()
 	d.AfmLock.Lock()
