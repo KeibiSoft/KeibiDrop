@@ -72,7 +72,7 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	kd, err := common.NewKeibiDrop(ctx, logger, isFUSE, relayURL, inbound, outbound, toMount, toSave)
+	kd, err := common.NewKeibiDrop(ctx, logger, isFUSE, relayURL, inbound, outbound, toMount, toSave, false, false)
 	if err != nil {
 		logger.Error("Failed to create new Keibi Drop client", "error", err)
 		os.Exit(1)

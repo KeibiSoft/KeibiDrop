@@ -92,8 +92,10 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		btim := time.Unix(0, int64(req.Attr.BirthTime))
 
 		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+			logger.Debug("Service ADD_FILE: acquiring SyncTracker.RemoteFilesMu.Lock")
 			kd.SyncTracker.RemoteFilesMu.Lock()
-			defer kd.SyncTracker.RemoteFilesMu.Unlock()
+			defer func() { logger.Debug("Service ADD_FILE: releasing SyncTracker.RemoteFilesMu.Unlock"); kd.SyncTracker.RemoteFilesMu.Unlock() }()
+			logger.Debug("Service ADD_FILE: acquired SyncTracker.RemoteFilesMu")
 			_, ok := kd.SyncTracker.RemoteFiles[req.Path]
 			if ok {
 				logger.Error("File already exists", "error", ErrGRPCAlreadyExists)
@@ -149,8 +151,10 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		btim := time.Unix(0, int64(req.Attr.BirthTime))
 
 		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+			logger.Debug("Service EDIT_FILE: acquiring SyncTracker.RemoteFilesMu.RLock")
 			kd.SyncTracker.RemoteFilesMu.RLock()
-			defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+			defer func() { logger.Debug("Service EDIT_FILE: releasing SyncTracker.RemoteFilesMu.RUnlock"); kd.SyncTracker.RemoteFilesMu.RUnlock() }()
+			logger.Debug("Service EDIT_FILE: acquired SyncTracker.RemoteFilesMu")
 			f, ok := kd.SyncTracker.RemoteFiles[req.Path]
 			if !ok {
 				logger.Error("File does not exists", "error", ErrGRPCNotFound)
@@ -209,8 +213,10 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
 		// f,ok:= kd.SyncTracker.LocalFiles[]
+		logger.Debug("Service Read (SyncTracker): acquiring LocalFilesMu.RLock")
 		kd.SyncTracker.LocalFilesMu.RLock()
-		defer kd.SyncTracker.LocalFilesMu.RUnlock()
+		defer func() { logger.Debug("Service Read (SyncTracker): releasing LocalFilesMu.RUnlock"); kd.SyncTracker.LocalFilesMu.RUnlock() }()
+		logger.Debug("Service Read (SyncTracker): acquired LocalFilesMu")
 
 		isOpen := false
 
@@ -324,8 +330,11 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			isOpen = true
 
 			// Only hold the lock briefly to look up the file path
+			logger.Debug("Service Read (FUSE): acquiring AfmLock.RLock", "path", rec.Path)
 			kd.FS.Root.AfmLock.RLock()
+			logger.Debug("Service Read (FUSE): acquired AfmLock.RLock")
 			f, ok := kd.FS.Root.AllFileMap[rec.Path]
+			logger.Debug("Service Read (FUSE): releasing AfmLock.RUnlock", "found", ok)
 			kd.FS.Root.AfmLock.RUnlock()
 			if !ok {
 				logger.Warn("File not found", "rec", rec)
