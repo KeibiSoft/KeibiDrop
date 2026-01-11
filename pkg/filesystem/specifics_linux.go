@@ -24,7 +24,7 @@ import (
 // On linux cp (1) works with 126 KiB file block size.
 // Setting this value for the StatFS ensures optimal speed.
 
-const FilesystemBlockSize = 2 << 16
+const FilesystemBlockSize = 2 << 17 // 256 KiB - optimal for Linux cp (uses 128 KiB blocks)
 
 func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNumberFreeBytes uint64, err error) {
 	stat := unix.Statfs_t{}

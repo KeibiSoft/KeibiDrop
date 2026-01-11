@@ -30,7 +30,7 @@ import (
 // But on Mac M3 had 1.2 GB/s sometimes up to 2GB/s
 // And on Mac Intel I did not benchmark yet.
 
-const FilesystemBlockSize = 2 << 18
+const FilesystemBlockSize = 2 << 20 // 2 MiB - optimal I/O block size for cp/dd
 
 func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNumberFreeBytes uint64, err error) {
 	stat := unix.Statfs_t{}
@@ -62,11 +62,15 @@ func setuidgid() func() {
 
 func copyFusestatfsFromGostatfs(dst *fuse.Statfs_t, src *syscall.Statfs_t) {
 	*dst = fuse.Statfs_t{}
-	dst.Bsize = uint64(src.Bsize)
-	dst.Frsize = 1
-	dst.Blocks = uint64(src.Blocks)
-	dst.Bfree = uint64(src.Bfree)
-	dst.Bavail = uint64(src.Bavail)
+	// Use our custom block size for better I/O performance with cp/dd
+	// macOS cp uses fcopyfile which respects statfs block size for buffer sizing
+	dst.Bsize = FilesystemBlockSize
+	dst.Frsize = FilesystemBlockSize
+	// Recalculate block counts: (original_blocks * original_bsize) / new_bsize
+	srcBsize := uint64(src.Bsize)
+	dst.Blocks = (uint64(src.Blocks) * srcBsize) / FilesystemBlockSize
+	dst.Bfree = (uint64(src.Bfree) * srcBsize) / FilesystemBlockSize
+	dst.Bavail = (uint64(src.Bavail) * srcBsize) / FilesystemBlockSize
 	dst.Files = uint64(src.Files)
 	dst.Ffree = uint64(src.Ffree)
 	dst.Favail = uint64(src.Ffree)
@@ -86,7 +90,8 @@ func copyFusestatFromGostat(dst *winfuse.Stat_t, src *syscall.Stat_t) {
 	dst.Atim.Sec, dst.Atim.Nsec = src.Atimespec.Sec, src.Atimespec.Nsec
 	dst.Mtim.Sec, dst.Mtim.Nsec = src.Mtimespec.Sec, src.Mtimespec.Nsec
 	dst.Ctim.Sec, dst.Ctim.Nsec = src.Ctimespec.Sec, src.Ctimespec.Nsec
-	dst.Blksize = int64(src.Blksize)
+	// Use our custom block size for better I/O performance - cp uses st_blksize for buffer sizing
+	dst.Blksize = FilesystemBlockSize
 	dst.Blocks = int64(src.Blocks)
 	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtimespec.Sec, src.Birthtimespec.Nsec
 }
@@ -104,7 +109,8 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 	dst.Atim.Sec, dst.Atim.Nsec = src.Atim.Sec, src.Atim.Nsec
 	dst.Mtim.Sec, dst.Mtim.Nsec = src.Mtim.Sec, src.Mtim.Nsec
 	dst.Ctim.Sec, dst.Ctim.Nsec = src.Ctim.Sec, src.Ctim.Nsec
-	dst.Blksize = src.Blksize
+	// Use our custom block size for better I/O performance
+	dst.Blksize = FilesystemBlockSize
 	dst.Blocks = src.Blocks
 	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtim.Sec, src.Birthtim.Nsec
 }
