@@ -14,6 +14,8 @@ package filesystem
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -80,9 +82,28 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
 	// return -winfuse.ENOSYS
 }
 
+// Create creates a new file.
+//
+// From open(2) man page on Intel macOS:
+//
+//	"The flags specified for the oflag argument must include exactly one of
+//	 the following file access modes:
+//	   O_RDONLY    open for reading only
+//	   O_WRONLY    open for writing only
+//	   O_RDWR      open for reading and writing
+//
+//	 In addition any combination of the following values can be or'ed in oflag:
+//	   O_APPEND    append on each write
+//	   O_CREAT     create file if it does not exist
+//	   O_TRUNC     truncate size to 0
+//	   O_EXCL      error if O_CREAT and the file exists"
+//
+// Use winfuse.O_ACCMODE to extract access mode (portable across macOS/Linux/Windows).
 func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint64) {
 	defer d.recoverPanic("Create", &errCode)
 	logger := d.logger.With("method", "create", "path", path)
+	accessMode := flags & winfuse.O_ACCMODE
+	logger.Info("Create called", "flags", flags, "accessMode", accessMode, "mode", mode, "isRDWR", accessMode == winfuse.O_RDWR)
 
 	d.AfmLock.Lock()
 	defer d.AfmLock.Unlock()
@@ -412,6 +433,8 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 
 	// Open locally if we have newer local version
 	if isLocalPresent && localNewer {
+		accessMode := flags & winfuse.O_ACCMODE
+		logger.Info("Opening local file", "flags", flags, "accessMode", accessMode, "isReadOnly", accessMode == winfuse.O_RDONLY)
 		fd, err := syscall.Open(localPath, flags, 0)
 		if err != nil {
 			logger.Error("Failed to open local file", "error", err)
@@ -444,6 +467,8 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 		_ = f.Close()
 	}
 
+	accessMode := flags & winfuse.O_ACCMODE
+	logger.Info("Opening remote cache file", "flags", flags, "accessMode", accessMode, "isReadOnly", accessMode == winfuse.O_RDONLY)
 	fd, err := syscall.Open(localPath, flags, 0)
 	if err != nil {
 		logger.Error("Failed to open path", "error", err)
@@ -548,11 +573,9 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 
 	f, ok := d.OpenFileHandlers[fh]
 	if !ok {
-		err := syscall.Close(int(fh))
-		if err != nil {
-			logger.Error("Release failed - close error", "error", err)
-			return int(convertOsErrToSyscallErrno("release", err))
-		}
+		// fd not in map - either already released, or was a late fcopyfile handle
+		// Don't try to close - just return success
+		logger.Warn("Release called for unknown fh (already released or fcopyfile race)")
 		return 0
 	}
 
@@ -810,38 +833,141 @@ func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) (errCode int) {
 	return -winfuse.ENOSYS
 }
 
+// WriteStats tracks timing for Write operations (for profiling)
+type WriteStats struct {
+	mu              sync.Mutex
+	totalCalls      int64
+	totalBytes      int64
+	totalLockTime   time.Duration
+	totalPwriteTime time.Duration
+	totalRemoteTime time.Duration
+	lastReport      time.Time
+}
+
+var writeStats = &WriteStats{lastReport: time.Now()}
+
+func (ws *WriteStats) record(lockTime, pwriteTime, remoteTime time.Duration, bytes int) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	ws.totalCalls++
+	ws.totalBytes += int64(bytes)
+	ws.totalLockTime += lockTime
+	ws.totalPwriteTime += pwriteTime
+	ws.totalRemoteTime += remoteTime
+
+	// Report every 100 calls or every 5 seconds
+	if ws.totalCalls%100 == 0 || time.Since(ws.lastReport) > 5*time.Second {
+		ws.lastReport = time.Now()
+		totalTime := ws.totalLockTime + ws.totalPwriteTime + ws.totalRemoteTime
+		mbWritten := float64(ws.totalBytes) / 1024 / 1024
+		slog.Warn("WRITE STATS",
+			"calls", ws.totalCalls,
+			"MB", fmt.Sprintf("%.2f", mbWritten),
+			"lock_ms", ws.totalLockTime.Milliseconds(),
+			"pwrite_ms", ws.totalPwriteTime.Milliseconds(),
+			"remote_ms", ws.totalRemoteTime.Milliseconds(),
+			"total_ms", totalTime.Milliseconds(),
+			"MB/s", fmt.Sprintf("%.2f", mbWritten/(totalTime.Seconds()+0.001)),
+		)
+	}
+}
+
 // The method returns the number of bytes written.
 func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Write", &errCode)
 	logger := d.logger.With("method", "write", "path", path, "fh", fh, "offset", offset)
 
+	startTotal := time.Now()
+
 	// Hold lock during write to prevent Release from closing fd mid-write
+	startLock := time.Now()
 	d.OpenMapLock.RLock()
+	lockTime := time.Since(startLock)
+
 	f, ok := d.OpenFileHandlers[fh]
 	if !ok {
 		d.OpenMapLock.RUnlock()
-		logger.Error("fd not found")
-		return -winfuse.EBADF
+		// macOS fcopyfile() can call Write after Release - try to reopen and write
+		slog.Warn("FCOPYFILE WORKAROUND", "path", path, "fh", fh, "offset", offset, "len", len(buff))
+		cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+		startOpen := time.Now()
+		fd, err := syscall.Open(cleanPath, syscall.O_RDWR, 0)
+		openTime := time.Since(startOpen)
+		if err != nil {
+			slog.Error("FCOPYFILE OPEN FAILED", "error", err, "cleanPath", cleanPath)
+			return int(convertOsErrToSyscallErrno("open", err))
+		}
+		defer syscall.Close(fd)
+		startPw := time.Now()
+		n, err := syscall.Pwrite(fd, buff, offset)
+		pwTime := time.Since(startPw)
+		if err != nil {
+			slog.Error("FCOPYFILE PWRITE FAILED", "error", err, "fd", fd, "offset", offset, "len", len(buff))
+			return int(convertOsErrToSyscallErrno("pwrite", err))
+		}
+		writeStats.record(openTime, pwTime, 0, n)
+		slog.Info("FCOPYFILE OK", "bytes", n, "open_ms", openTime.Milliseconds(), "pwrite_ms", pwTime.Milliseconds())
+		return n
 	}
 	f.HadEdits = true
 	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
 	f.LocalNewer = true
 
+	startPwrite := time.Now()
 	n, err := syscall.Pwrite(int(fh), buff, offset)
+	pwriteTime := time.Since(startPwrite)
+
 	d.OpenMapLock.RUnlock() // Release AFTER Pwrite to prevent race with Release
 
 	if err != nil {
-		logger.Error("Failed to write", "error", err)
-		return -int(convertOsErrToSyscallErrno("pwrite", err))
+		// fd reuse race: kernel reused fd number, old FUSE handle matched new map entry
+		// but the actual fd was closed. Fallback to fcopyfile workaround.
+		// Use errors.Is for robust comparison (handles wrapped errors)
+		if errors.Is(err, syscall.EBADF) {
+			slog.Warn("EBADF on mapped fd, falling back to fcopyfile workaround", "path", path, "fh", fh)
+			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+			fd, err2 := syscall.Open(cleanPath, syscall.O_RDWR, 0)
+			if err2 != nil {
+				slog.Error("Fallback open failed", "error", err2, "cleanPath", cleanPath)
+				return int(convertOsErrToSyscallErrno("open", err2))
+			}
+			defer syscall.Close(fd)
+			n2, err2 := syscall.Pwrite(fd, buff, offset)
+			if err2 != nil {
+				slog.Error("Fallback pwrite failed", "error", err2)
+				return int(convertOsErrToSyscallErrno("pwrite", err2))
+			}
+			slog.Info("Fallback write OK", "bytes", n2)
+			return n2
+		}
+		logger.Error("Failed to write", "error", err, "fh", fh)
+		return int(convertOsErrToSyscallErrno("pwrite", err))
 	}
 
 	// Also update RemoteFiles to prevent new handles from reading stale remote data
+	startRemote := time.Now()
 	d.RemoteFilesLock.Lock()
 	if rf, exists := d.RemoteFiles[path]; exists {
 		rf.NotLocalSynced = false
 		rf.LocalNewer = true
 	}
 	d.RemoteFilesLock.Unlock()
+	remoteTime := time.Since(startRemote)
+
+	// Record stats
+	writeStats.record(lockTime, pwriteTime, remoteTime, n)
+
+	// Log slow writes (>10ms)
+	totalTime := time.Since(startTotal)
+	if totalTime > 10*time.Millisecond {
+		logger.Warn("SLOW WRITE",
+			"total_ms", totalTime.Milliseconds(),
+			"lock_ms", lockTime.Milliseconds(),
+			"pwrite_ms", pwriteTime.Milliseconds(),
+			"remote_ms", remoteTime.Milliseconds(),
+			"bytes", n,
+		)
+	}
 
 	return n
 }
