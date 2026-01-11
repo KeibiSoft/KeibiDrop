@@ -15,6 +15,7 @@ import (
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
@@ -128,6 +129,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			Ino:      req.Attr.Ino,
 			Mode:     req.Attr.Mode,
 			Nlink:    1,
+			Uid:      uint32(os.Getuid()),
+			Gid:      uint32(os.Getgid()),
 			Size:     req.Attr.Size,
 			Atim:     fuse.NewTimespec(atim),
 			Mtim:     fuse.NewTimespec(mtim),
@@ -183,6 +186,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			Ino:      req.Attr.Ino,
 			Mode:     req.Attr.Mode,
 			Nlink:    1,
+			Uid:      uint32(os.Getuid()),
+			Gid:      uint32(os.Getgid()),
 			Size:     req.Attr.Size,
 			Atim:     fuse.NewTimespec(atim),
 			Mtim:     fuse.NewTimespec(mtim),
@@ -215,8 +220,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 		var fh *os.File
 		var openedPath string
-		// hardcode buffer to 16 MiB (1<<24 is 16 MB; adjust if needed)
-		buf := make([]byte, 1<<24)
+		buf := make([]byte, config.GRPCStreamBuffer)
 
 		for {
 			rec, err := stream.Recv()

@@ -276,6 +276,10 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 				"keibipipe", // fake target name
 				grpc.WithContextDialer(dialer),
 				grpc.WithTransportCredentials(insecure.NewCredentials()),
+				grpc.WithDefaultCallOptions(
+					grpc.MaxCallRecvMsgSize(config.GRPCMaxMsgSize),
+					grpc.MaxCallSendMsgSize(config.GRPCMaxMsgSize),
+				),
 			)
 			if err != nil {
 				logger.Debug("grpc dial attempt failed, retrying", "err", err)
@@ -296,7 +300,10 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 func (kd *KeibiDrop) startGRPCServer() error {
 	kd.session.GRPCListener = kd.session.Session.Inbound
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(config.GRPCMaxMsgSize),
+		grpc.MaxSendMsgSize(config.GRPCMaxMsgSize),
+	)
 	kd.grpcServer = grpcServer
 
 	ln := NewSingleConnListener(kd.session.Session.Inbound)

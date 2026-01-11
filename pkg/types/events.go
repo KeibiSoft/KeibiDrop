@@ -34,6 +34,12 @@ type FileEvent struct {
 	Attr   *keibidrop.Attr // file attributes (from Stat_t)
 }
 
+// timespecToNano converts a fuse.Timespec to total nanoseconds since Unix epoch.
+// Uses time.Second (1e9 ns) as the constant for seconds-to-nanoseconds conversion.
+func timespecToNano(ts fuse.Timespec) uint64 {
+	return uint64(ts.Sec)*uint64(time.Second) + uint64(ts.Nsec)
+}
+
 // Convert FUSE Stat_t to protobuf Attr
 func StatToAttr(stat *fuse.Stat_t) *keibidrop.Attr {
 	if stat == nil {
@@ -45,10 +51,10 @@ func StatToAttr(stat *fuse.Stat_t) *keibidrop.Attr {
 		Ino:              stat.Ino,
 		Mode:             stat.Mode,
 		Size:             stat.Size,
-		AccessTime:       uint64(stat.Atim.Nsec),
-		ModificationTime: uint64(stat.Mtim.Nsec),
-		ChangeTime:       uint64(stat.Ctim.Nsec),
-		BirthTime:        uint64(stat.Birthtim.Nsec),
+		AccessTime:       timespecToNano(stat.Atim),
+		ModificationTime: timespecToNano(stat.Mtim),
+		ChangeTime:       timespecToNano(stat.Ctim),
+		BirthTime:        timespecToNano(stat.Birthtim),
 		Flags:            stat.Flags,
 	}
 }

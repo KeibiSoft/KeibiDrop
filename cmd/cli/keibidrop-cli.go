@@ -397,6 +397,7 @@ func main() {
 	ctx := &cliContext{kd: kd}
 
 	common.PrintBanner()
+	handleShow(kd, "fingerprint")
 
 	p := prompt.New(
 		ctx.executor,

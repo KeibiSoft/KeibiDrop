@@ -9,4 +9,16 @@ package config
 const InboundPort = 26431
 const OutboundPort = 26432
 
-const BlockSize = 2 << 17 // 128KiB * 2
+const BlockSize = 2 << 17 // 256 KiB (128KiB * 2)
+
+// gRPC message size limits
+// IMPORTANT: GRPCStreamBuffer MUST be smaller than GRPCMaxMsgSize
+// to leave room for protobuf framing overhead (~10-20 bytes per message)
+const (
+	GRPCMaxMsgSize    = 20 * 1024 * 1024 // 20 MiB - max gRPC message size
+	GRPCStreamBuffer  = 16 * 1024 * 1024 // 16 MiB - buffer for streaming reads
+	GRPCOverheadRoom  = GRPCMaxMsgSize - GRPCStreamBuffer // 4 MiB headroom
+)
+
+// Compile-time check: ensure buffer fits within max message size
+var _ = [1]struct{}{}[int(GRPCStreamBuffer)-int(GRPCMaxMsgSize)+int(GRPCOverheadRoom)]
