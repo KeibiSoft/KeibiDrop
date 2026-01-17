@@ -256,3 +256,45 @@ func ParsePeerKeys(pubMap map[string][]byte) (*PeerKeys, error) {
 		X25519Public: x25519Pub,
 	}, nil
 }
+
+// ========== RELAY PRIVACY ==========
+
+const roomPasswordSize = 32
+
+// ExtractRoomPassword extracts the first 32 bytes from a base64-encoded fingerprint.
+// This "room password" is shared out-of-band and used to derive relay encryption keys.
+func ExtractRoomPassword(fingerprint string) ([]byte, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(fingerprint)
+	if err != nil {
+		return nil, fmt.Errorf("invalid fingerprint encoding: %w", err)
+	}
+	if len(decoded) < roomPasswordSize {
+		return nil, fmt.Errorf("fingerprint too short: need %d bytes, got %d", roomPasswordSize, len(decoded))
+	}
+	return decoded[:roomPasswordSize], nil
+}
+
+// DeriveRelayKeys derives lookup and encryption keys from a room password.
+// The room password should be the first 32 bytes of the shared fingerprint.
+// Returns:
+//   - lookupKey: 32 bytes, used as relay index (base64 encoded as Bearer token)
+//   - encryptionKey: 32 bytes, used for ChaCha20-Poly1305 encryption of registration data
+func DeriveRelayKeys(roomPassword []byte) (lookupKey []byte, encryptionKey []byte, err error) {
+	if len(roomPassword) < roomPasswordSize {
+		return nil, nil, fmt.Errorf("room password must be at least %d bytes", roomPasswordSize)
+	}
+
+	// Derive lookup key (different label ensures lookup != encryption key).
+	lookupKey, err = deriveKeyInternal(sha512.New, "keibidrop-relay-lookup-v1", KeySize, roomPassword)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to derive lookup key: %w", err)
+	}
+
+	// Derive encryption key.
+	encryptionKey, err = deriveKeyInternal(sha512.New, "keibidrop-relay-encrypt-v1", KeySize, roomPassword)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to derive encryption key: %w", err)
+	}
+
+	return lookupKey, encryptionKey, nil
+}

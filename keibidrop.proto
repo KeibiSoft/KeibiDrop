@@ -23,6 +23,9 @@ service KeibiService {
   rpc Notify (NotifyRequest) returns (NotifyResponse);
 
   rpc Debug (DebugRequest) returns (DebugResponse);
+
+  // Re-keying for forward secrecy during long sessions.
+  rpc Rekey (RekeyRequest) returns (RekeyResponse);
 }
 
 // ========== MESSAGE DEFINITIONS ==========
@@ -117,5 +120,20 @@ message Attr {
   uint64 changeTime = 7;
   uint64 birthTime = 8;
   uint32 flags = 9;
+}
+
+// ========== RE-KEYING ==========
+
+// RekeyRequest initiates key rotation for forward secrecy.
+// Sent when byte/message threshold is reached.
+message RekeyRequest {
+  map<string, bytes> enc_seeds = 1;  // x25519, mlkem encapsulated seeds
+  uint64 epoch = 2;                  // monotonic key epoch counter
+}
+
+// RekeyResponse acknowledges rekey and provides peer's new seeds.
+message RekeyResponse {
+  map<string, bytes> enc_seeds = 1;  // peer's new encapsulated seeds
+  uint64 epoch = 2;                  // confirmed epoch
 }
 

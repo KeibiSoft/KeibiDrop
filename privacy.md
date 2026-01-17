@@ -24,10 +24,15 @@ We cannot and do not decrypt or inspect transferred data.
 
 ## 3. When Using the Default KeibiSoft Relay Server
 
-By default, KeibiDrop uses a public relay server operated by **KeibiSoft SRL** to facilitate metadata exchange (not file transfer).
+By default, KeibiDrop uses a public relay server operated by **KeibiSoft SRL** to facilitate key exchange (not file transfer).
+
+**The relay cannot read your metadata.** Registration data (fingerprints, public keys, connection hints) is encrypted client-side before being sent to the relay. The relay stores only opaque encrypted blobs indexed by a derived lookup key. It cannot:
+- See your fingerprint or public keys
+- Read your IP address or port from the registration
+- Correlate registrations to identities
 
 If you use this default relay:
-- **Your IP address will be logged** for abuse prevention and system monitoring.
+- **Your IP address will be logged** at the HTTP layer for abuse prevention and system monitoring.
 - **Basic metrics** are collected, such as:
   - Total requests received
   - Number of unique IPs in the last 24h, 30d, and 365d
@@ -36,7 +41,7 @@ If you use this default relay:
 
 This data is not linked to personal identity and is **not shared or sold**. It exists so we can score `brownie points` and to protect against spam.
 
-If you don’t like this, you’re free to run your own relay or use a trusted one of your choosing.
+If you don't like this, you're free to run your own relay or use a trusted one of your choosing.
 
 ---
 

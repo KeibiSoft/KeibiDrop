@@ -157,6 +157,13 @@ type ConnectionHint struct {
 	Note  string `json:"note,omitempty"` // optional: NAT behavior, etc.
 }
 
+// EncryptedRegistration is the relay-visible payload (opaque blob).
+// The relay cannot read the contents - only the peers with the shared
+// room password can decrypt it.
+type EncryptedRegistration struct {
+	Blob string `json:"blob"` // base64-encoded ChaCha20-Poly1305 ciphertext
+}
+
 // Map server status errors to semantic errors.
 type ErrorMapperFunc func(statusCode int, err error) error
 

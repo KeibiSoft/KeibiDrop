@@ -32,6 +32,7 @@ const (
 	KeibiService_Close_FullMethodName  = "/keibidrop.KeibiService/Close"
 	KeibiService_Notify_FullMethodName = "/keibidrop.KeibiService/Notify"
 	KeibiService_Debug_FullMethodName  = "/keibidrop.KeibiService/Debug"
+	KeibiService_Rekey_FullMethodName  = "/keibidrop.KeibiService/Rekey"
 )
 
 // KeibiServiceClient is the client API for KeibiService service.
@@ -45,6 +46,8 @@ type KeibiServiceClient interface {
 	Close(ctx context.Context, in *CloseRequest, opts ...grpc.CallOption) (*CloseResponse, error)
 	Notify(ctx context.Context, in *NotifyRequest, opts ...grpc.CallOption) (*NotifyResponse, error)
 	Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error)
+	// Re-keying for forward secrecy during long sessions.
+	Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error)
 }
 
 type keibiServiceClient struct {
@@ -131,6 +134,16 @@ func (c *keibiServiceClient) Debug(ctx context.Context, in *DebugRequest, opts .
 	return out, nil
 }
 
+func (c *keibiServiceClient) Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RekeyResponse)
+	err := c.cc.Invoke(ctx, KeibiService_Rekey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // KeibiServiceServer is the server API for KeibiService service.
 // All implementations must embed UnimplementedKeibiServiceServer
 // for forward compatibility.
@@ -142,6 +155,8 @@ type KeibiServiceServer interface {
 	Close(context.Context, *CloseRequest) (*CloseResponse, error)
 	Notify(context.Context, *NotifyRequest) (*NotifyResponse, error)
 	Debug(context.Context, *DebugRequest) (*DebugResponse, error)
+	// Re-keying for forward secrecy during long sessions.
+	Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error)
 	mustEmbedUnimplementedKeibiServiceServer()
 }
 
@@ -172,6 +187,9 @@ func (UnimplementedKeibiServiceServer) Notify(context.Context, *NotifyRequest) (
 }
 func (UnimplementedKeibiServiceServer) Debug(context.Context, *DebugRequest) (*DebugResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Debug not implemented")
+}
+func (UnimplementedKeibiServiceServer) Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Rekey not implemented")
 }
 func (UnimplementedKeibiServiceServer) mustEmbedUnimplementedKeibiServiceServer() {}
 func (UnimplementedKeibiServiceServer) testEmbeddedByValue()                      {}
@@ -298,6 +316,24 @@ func _KeibiService_Debug_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeibiService_Rekey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RekeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeibiServiceServer).Rekey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeibiService_Rekey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeibiServiceServer).Rekey(ctx, req.(*RekeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // KeibiService_ServiceDesc is the grpc.ServiceDesc for KeibiService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -324,6 +360,10 @@ var KeibiService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Debug",
 			Handler:    _KeibiService_Debug_Handler,
+		},
+		{
+			MethodName: "Rekey",
+			Handler:    _KeibiService_Rekey_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
