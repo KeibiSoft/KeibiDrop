@@ -62,7 +62,7 @@ func TestKeibiDropFlow(t *testing.T) {
 
 	logger := slog.New(handler).With("component", "cli")
 
-	kdAlice, err := common.NewKeibiDrop(ctx, logger, true, parsedURL, aliceInPort, aliceOutPort, absAliceMount, absAliceSave)
+	kdAlice, err := common.NewKeibiDrop(ctx, logger, true, parsedURL, aliceInPort, aliceOutPort, absAliceMount, absAliceSave, true, true)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		os.Exit(1)
@@ -70,7 +70,7 @@ func TestKeibiDropFlow(t *testing.T) {
 
 	go kdAlice.Run()
 
-	kdBob, err := common.NewKeibiDrop(ctx, logger, true, parsedURL, bobInPort, bobOutPort, absBobMount, absBobSave)
+	kdBob, err := common.NewKeibiDrop(ctx, logger, true, parsedURL, bobInPort, bobOutPort, absBobMount, absBobSave, true, true)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		os.Exit(1)

@@ -940,6 +940,113 @@ func (x *Attr) GetFlags() uint32 {
 	return 0
 }
 
+// RekeyRequest initiates key rotation for forward secrecy.
+// Sent when byte/message threshold is reached.
+type RekeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EncSeeds      map[string][]byte      `protobuf:"bytes,1,rep,name=enc_seeds,json=encSeeds,proto3" json:"enc_seeds,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // x25519, mlkem encapsulated seeds
+	Epoch         uint64                 `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`                                                                                                // monotonic key epoch counter
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RekeyRequest) Reset() {
+	*x = RekeyRequest{}
+	mi := &file_keibidrop_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RekeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RekeyRequest) ProtoMessage() {}
+
+func (x *RekeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RekeyRequest.ProtoReflect.Descriptor instead.
+func (*RekeyRequest) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *RekeyRequest) GetEncSeeds() map[string][]byte {
+	if x != nil {
+		return x.EncSeeds
+	}
+	return nil
+}
+
+func (x *RekeyRequest) GetEpoch() uint64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
+// RekeyResponse acknowledges rekey and provides peer's new seeds.
+type RekeyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EncSeeds      map[string][]byte      `protobuf:"bytes,1,rep,name=enc_seeds,json=encSeeds,proto3" json:"enc_seeds,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // peer's new encapsulated seeds
+	Epoch         uint64                 `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`                                                                                                // confirmed epoch
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RekeyResponse) Reset() {
+	*x = RekeyResponse{}
+	mi := &file_keibidrop_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RekeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RekeyResponse) ProtoMessage() {}
+
+func (x *RekeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RekeyResponse.ProtoReflect.Descriptor instead.
+func (*RekeyResponse) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *RekeyResponse) GetEncSeeds() map[string][]byte {
+	if x != nil {
+		return x.EncSeeds
+	}
+	return nil
+}
+
+func (x *RekeyResponse) GetEpoch() uint64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
 var File_keibidrop_proto protoreflect.FileDescriptor
 
 const file_keibidrop_proto_rawDesc = "" +
@@ -1005,7 +1112,19 @@ const file_keibidrop_proto_rawDesc = "" +
 	"changeTime\x18\a \x01(\x04R\n" +
 	"changeTime\x12\x1c\n" +
 	"\tbirthTime\x18\b \x01(\x04R\tbirthTime\x12\x14\n" +
-	"\x05flags\x18\t \x01(\rR\x05flags*r\n" +
+	"\x05flags\x18\t \x01(\rR\x05flags\"\xa5\x01\n" +
+	"\fRekeyRequest\x12B\n" +
+	"\tenc_seeds\x18\x01 \x03(\v2%.keibidrop.RekeyRequest.EncSeedsEntryR\bencSeeds\x12\x14\n" +
+	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x1a;\n" +
+	"\rEncSeedsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\xa7\x01\n" +
+	"\rRekeyResponse\x12C\n" +
+	"\tenc_seeds\x18\x01 \x03(\v2&.keibidrop.RekeyResponse.EncSeedsEntryR\bencSeeds\x12\x14\n" +
+	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x1a;\n" +
+	"\rEncSeedsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01*r\n" +
 	"\n" +
 	"NotifyType\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
@@ -1015,7 +1134,7 @@ const file_keibidrop_proto_rawDesc = "" +
 	"REMOVE_DIR\x10\x03\x12\x0f\n" +
 	"\vREMOVE_FILE\x10\x04\x12\f\n" +
 	"\bEDIT_DIR\x10\x05\x12\r\n" +
-	"\tEDIT_FILE\x10\x062\xb5\x03\n" +
+	"\tEDIT_FILE\x10\x062\xf1\x03\n" +
 	"\fKeibiService\x127\n" +
 	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12<\n" +
 	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse(\x01\x12;\n" +
@@ -1023,7 +1142,8 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x05Fsync\x12\x17.keibidrop.FsyncRequest\x1a\x18.keibidrop.FsyncResponse\x12:\n" +
 	"\x05Close\x12\x17.keibidrop.CloseRequest\x1a\x18.keibidrop.CloseResponse\x12=\n" +
 	"\x06Notify\x12\x18.keibidrop.NotifyRequest\x1a\x19.keibidrop.NotifyResponse\x12:\n" +
-	"\x05Debug\x12\x17.keibidrop.DebugRequest\x1a\x18.keibidrop.DebugResponseB8Z6github.com/KeibiSoft/KeibiDrop/grpc_bindings;keibidropb\x06proto3"
+	"\x05Debug\x12\x17.keibidrop.DebugRequest\x1a\x18.keibidrop.DebugResponse\x12:\n" +
+	"\x05Rekey\x12\x17.keibidrop.RekeyRequest\x1a\x18.keibidrop.RekeyResponseB8Z6github.com/KeibiSoft/KeibiDrop/grpc_bindings;keibidropb\x06proto3"
 
 var (
 	file_keibidrop_proto_rawDescOnce sync.Once
@@ -1038,7 +1158,7 @@ func file_keibidrop_proto_rawDescGZIP() []byte {
 }
 
 var file_keibidrop_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_keibidrop_proto_goTypes = []any{
 	(NotifyType)(0),        // 0: keibidrop.NotifyType
 	(*DebugRequest)(nil),   // 1: keibidrop.DebugRequest
@@ -1056,29 +1176,37 @@ var file_keibidrop_proto_goTypes = []any{
 	(*NotifyRequest)(nil),  // 13: keibidrop.NotifyRequest
 	(*NotifyResponse)(nil), // 14: keibidrop.NotifyResponse
 	(*Attr)(nil),           // 15: keibidrop.Attr
+	(*RekeyRequest)(nil),   // 16: keibidrop.RekeyRequest
+	(*RekeyResponse)(nil),  // 17: keibidrop.RekeyResponse
+	nil,                    // 18: keibidrop.RekeyRequest.EncSeedsEntry
+	nil,                    // 19: keibidrop.RekeyResponse.EncSeedsEntry
 }
 var file_keibidrop_proto_depIdxs = []int32{
 	0,  // 0: keibidrop.NotifyRequest.type:type_name -> keibidrop.NotifyType
 	15, // 1: keibidrop.NotifyRequest.attr:type_name -> keibidrop.Attr
-	3,  // 2: keibidrop.KeibiService.Open:input_type -> keibidrop.OpenRequest
-	5,  // 3: keibidrop.KeibiService.Write:input_type -> keibidrop.WriteRequest
-	7,  // 4: keibidrop.KeibiService.Read:input_type -> keibidrop.ReadRequest
-	9,  // 5: keibidrop.KeibiService.Fsync:input_type -> keibidrop.FsyncRequest
-	11, // 6: keibidrop.KeibiService.Close:input_type -> keibidrop.CloseRequest
-	13, // 7: keibidrop.KeibiService.Notify:input_type -> keibidrop.NotifyRequest
-	1,  // 8: keibidrop.KeibiService.Debug:input_type -> keibidrop.DebugRequest
-	4,  // 9: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
-	6,  // 10: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
-	8,  // 11: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
-	10, // 12: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
-	12, // 13: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
-	14, // 14: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
-	2,  // 15: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
-	9,  // [9:16] is the sub-list for method output_type
-	2,  // [2:9] is the sub-list for method input_type
-	2,  // [2:2] is the sub-list for extension type_name
-	2,  // [2:2] is the sub-list for extension extendee
-	0,  // [0:2] is the sub-list for field type_name
+	18, // 2: keibidrop.RekeyRequest.enc_seeds:type_name -> keibidrop.RekeyRequest.EncSeedsEntry
+	19, // 3: keibidrop.RekeyResponse.enc_seeds:type_name -> keibidrop.RekeyResponse.EncSeedsEntry
+	3,  // 4: keibidrop.KeibiService.Open:input_type -> keibidrop.OpenRequest
+	5,  // 5: keibidrop.KeibiService.Write:input_type -> keibidrop.WriteRequest
+	7,  // 6: keibidrop.KeibiService.Read:input_type -> keibidrop.ReadRequest
+	9,  // 7: keibidrop.KeibiService.Fsync:input_type -> keibidrop.FsyncRequest
+	11, // 8: keibidrop.KeibiService.Close:input_type -> keibidrop.CloseRequest
+	13, // 9: keibidrop.KeibiService.Notify:input_type -> keibidrop.NotifyRequest
+	1,  // 10: keibidrop.KeibiService.Debug:input_type -> keibidrop.DebugRequest
+	16, // 11: keibidrop.KeibiService.Rekey:input_type -> keibidrop.RekeyRequest
+	4,  // 12: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
+	6,  // 13: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
+	8,  // 14: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
+	10, // 15: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
+	12, // 16: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
+	14, // 17: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
+	2,  // 18: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
+	17, // 19: keibidrop.KeibiService.Rekey:output_type -> keibidrop.RekeyResponse
+	12, // [12:20] is the sub-list for method output_type
+	4,  // [4:12] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_keibidrop_proto_init() }
@@ -1092,7 +1220,7 @@ func file_keibidrop_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_keibidrop_proto_rawDesc), len(file_keibidrop_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

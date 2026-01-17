@@ -166,10 +166,65 @@ While that is sufficient for most practical sessions, key rotation is strongly a
 ### 🔧 Future TODOs
 
 * ♻️ Switch to **counter-based nonces** per stream if not already used
-* 🔑 Implement periodic session rekeying for long-lived connections
-* 📈 Track and enforce AEAD usage limits (e.g., max packets or bytes per key)
 * 🔐 Support stream resumption via authenticated key+offset resync
 * 🔄 Change the IPv6 address on session end or re-keying.
+
+---
+
+## Relay Privacy
+
+The relay server is designed to be a **blind intermediary** that cannot read peer metadata. Registration data (fingerprints, public keys, connection hints) is encrypted before being sent to the relay.
+
+### Key Derivation for Relay Privacy
+
+When Alice shares her fingerprint with Bob out-of-band, the first 32 bytes of the decoded fingerprint serve as a **room password**. From this, two keys are derived using HKDF:
+
+| Key             | Derivation                                          | Purpose                            |
+| --------------- | --------------------------------------------------- | ---------------------------------- |
+| **Lookup Key**  | `HKDF(room_password, "keibidrop-relay-lookup-v1")`  | Index for relay storage (opaque)   |
+| **Encrypt Key** | `HKDF(room_password, "keibidrop-relay-encrypt-v1")` | ChaCha20-Poly1305 encryption of blob |
+
+### Relay Storage Model
+
+The relay stores: `lookup_key -> encrypted_blob`
+
+The relay **cannot**:
+- Decode the lookup key back to the fingerprint
+- Read the contents of the encrypted blob
+- Learn peer fingerprints, public keys, or IP addresses
+
+Only peers with the shared fingerprint (exchanged out-of-band) can derive the correct keys to fetch and decrypt the registration.
+
+---
+
+## Session Re-keying (Forward Secrecy)
+
+Long-lived sessions risk nonce exhaustion and lack forward secrecy. To address this, periodic key rotation is implemented.
+
+### Thresholds
+
+Re-keying is triggered when either direction exceeds:
+- **1 GB** of data transferred, or
+- **~1 million** encrypted messages
+
+### Re-key Protocol
+
+The re-key uses the same hybrid approach as the initial key exchange:
+
+1. **Initiator** generates fresh random seeds and encapsulates them:
+   - `enc_seed_x25519 = X25519Encapsulate(seed1, own_priv, peer_pub)`
+   - `enc_seed_mlkem, seed2 = MLKEMEncapsulate(peer_mlkem_pub)`
+2. **Initiator** derives new outbound key: `HKDF(seed1 || seed2)`
+3. **Initiator** sends `RekeyRequest{enc_seeds, epoch}` via gRPC
+4. **Responder** decapsulates seeds, derives new inbound key
+5. **Responder** creates its own fresh seeds for the reverse direction
+6. **Responder** sends `RekeyResponse{enc_seeds, epoch}`
+7. **Initiator** processes response, updates keys
+8. Both parties increment epoch and reset byte counters
+
+### Forward Secrecy Guarantee
+
+Each epoch uses fresh random seeds. Compromise of one epoch's key does not expose data from other epochs, provided private keys remain secure. Old session keys are discarded after rotation.
 
 ---
 
@@ -181,7 +236,9 @@ This design currently offers:
 * Per-connection **authenticated stream encryption**
 * Deterministic and tamper-detectable fingerprints for peer validation
 * Efficient **streaming mode** suited for file transfer over any transport
+* **Relay privacy** - the relay cannot read peer metadata (encrypted blobs only)
+* **Session re-keying** for forward secrecy during long-lived connections
 
 **Cross-stream integrity is not yet implemented beyond message-level AEAD and gRPC guarantees.** The system assumes trusted handling of the full stream at the application layer.
 
-For most use cases, this provides strong encryption with reasonable performance and deployability. Future improvements will focus on tightening stream integrity guarantees and rekeying policies.
+For most use cases, this provides strong encryption with reasonable performance and deployability. Future improvements will focus on tightening stream integrity guarantees and connection resumption.

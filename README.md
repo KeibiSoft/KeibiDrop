@@ -34,9 +34,8 @@ We used **GPT-4o (in Monday mode)** for dopamine kicks, memes, and to generate s
 We gained the knowledge in this space without relying on ~AI~ sycophancy.
 
 The first version has some red flags:
-1. There is no session key renegotiation (meaning: send too many files, and the encryption becomes usless)
-2. There is no file transfer resume on lost connection.
-3. I did not make use of any TPM or such sorts, which means that the private keys and session keys linger in the memory of the machine.
+1. There is no file transfer resume on lost connection.
+2. I did not make use of any TPM or such sorts, which means that the private keys and session keys linger in the memory of the machine.
 
 Thus treat it as a functional demo. We plan to maintain it and improve it as resources permit.
 
@@ -68,6 +67,8 @@ I haven’t used these tools directly, but I liked the ideas they explored and w
 - Deterministic fingerprint verification
 - No persistent metadata or tracking
 - Designed for use over untrusted relays
+- Relay privacy - the relay sees only encrypted blobs, not your metadata
+- Session re-keying for forward secrecy during long transfers
 - Mountable filesystem with data transfer on access
 
 ---

@@ -7,8 +7,10 @@
 package session
 
 import (
+	"fmt"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -59,6 +61,13 @@ type Session struct {
 
 	// Internal timeout deadline
 	Deadline time.Time
+
+	// Re-keying state for forward secrecy.
+	RekeyMu       sync.Mutex
+	LastRekeyAt   time.Time
+	CurrentEpoch  uint64
+	RekeyPending  bool
+	PendingNewKey []byte // awaiting ACK
 
 	logger *slog.Logger
 }
@@ -162,4 +171,98 @@ func (s *Session) ReadyForEncryption() bool {
 		s.Session != nil &&
 		s.Session.Inbound != nil &&
 		s.Session.Outbound != nil
+}
+
+// ========== RE-KEYING ==========
+
+// ShouldRekey returns true if either connection has exceeded the rekey threshold.
+func (s *Session) ShouldRekey() bool {
+	if s.Session == nil {
+		return false
+	}
+	if s.Session.Inbound != nil && s.Session.Inbound.ShouldRekey() {
+		return true
+	}
+	if s.Session.Outbound != nil && s.Session.Outbound.ShouldRekey() {
+		return true
+	}
+	return false
+}
+
+// HandleRekeyRequest processes an incoming RekeyRequest from peer.
+// Updates inbound key and returns response for peer.
+func (s *Session) HandleRekeyRequest(req *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
+	s.RekeyMu.Lock()
+	defer s.RekeyMu.Unlock()
+
+	if s.OwnKeys == nil || s.PeerPubKeys == nil {
+		return nil, fmt.Errorf("session keys not initialized")
+	}
+
+	resp, newInboundKey, err := ProcessRekeyRequest(req, s.OwnKeys, s.PeerPubKeys)
+	if err != nil {
+		return nil, fmt.Errorf("process rekey request: %w", err)
+	}
+
+	// Update inbound key immediately.
+	s.SEKInbound = newInboundKey
+	if s.Session != nil && s.Session.Inbound != nil {
+		s.Session.Inbound.UpdateKey(newInboundKey)
+	}
+
+	s.CurrentEpoch = req.Epoch
+	s.LastRekeyAt = time.Now()
+	s.logger.Info("Rekey request processed", "epoch", req.Epoch)
+
+	return resp, nil
+}
+
+// HandleRekeyResponse processes an incoming RekeyResponse from peer.
+// Updates outbound key after peer acknowledged our rekey request.
+func (s *Session) HandleRekeyResponse(resp *bindings.RekeyResponse) error {
+	s.RekeyMu.Lock()
+	defer s.RekeyMu.Unlock()
+
+	if !s.RekeyPending {
+		return fmt.Errorf("unexpected rekey response, no request pending")
+	}
+
+	if s.OwnKeys == nil || s.PeerPubKeys == nil {
+		return fmt.Errorf("session keys not initialized")
+	}
+
+	// Process peer's seeds for our inbound direction.
+	newInboundKey, err := ProcessRekeyResponse(resp, s.OwnKeys, s.PeerPubKeys)
+	if err != nil {
+		return fmt.Errorf("process rekey response: %w", err)
+	}
+
+	// Activate pending outbound key.
+	if s.PendingNewKey != nil {
+		s.SEKOutbound = s.PendingNewKey
+		if s.Session != nil && s.Session.Outbound != nil {
+			s.Session.Outbound.UpdateKey(s.PendingNewKey)
+		}
+		s.PendingNewKey = nil
+	}
+
+	// Update inbound with peer's new key.
+	s.SEKInbound = newInboundKey
+	if s.Session != nil && s.Session.Inbound != nil {
+		s.Session.Inbound.UpdateKey(newInboundKey)
+	}
+
+	s.RekeyPending = false
+	s.CurrentEpoch = resp.Epoch
+	s.LastRekeyAt = time.Now()
+	s.logger.Info("Rekey completed", "epoch", resp.Epoch)
+
+	return nil
+}
+
+// GetRekeyEpoch returns the current key epoch.
+func (s *Session) GetRekeyEpoch() uint64 {
+	s.RekeyMu.Lock()
+	defer s.RekeyMu.Unlock()
+	return s.CurrentEpoch
 }

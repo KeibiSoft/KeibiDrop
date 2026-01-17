@@ -38,6 +38,20 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 
 	ownFp := kd.session.OwnFingerprint
 
+	// Extract room password and derive relay keys for privacy.
+	roomPassword, err := crypto.ExtractRoomPassword(ownFp)
+	if err != nil {
+		logger.Error("Failed to extract room password", "error", err)
+		return err
+	}
+
+	lookupKey, encryptionKey, err := crypto.DeriveRelayKeys(roomPassword)
+	if err != nil {
+		logger.Error("Failed to derive relay keys", "error", err)
+		return err
+	}
+	lookupToken := base64.RawURLEncoding.EncodeToString(lookupKey)
+
 	pkMap, err := kd.session.OwnKeys.ExportPubKeysAsMap()
 	if err != nil {
 		logger.Error("Failed to export own keys", "error", err)
@@ -56,6 +70,24 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		Timestamp:  time.Now().UnixNano(),
 	}
 
+	// Serialize and encrypt the registration.
+	plaintext, err := json.Marshal(peerReg)
+	if err != nil {
+		logger.Error("Failed to marshal registration", "error", err)
+		return err
+	}
+
+	encryptedBlob, err := crypto.Encrypt(encryptionKey, plaintext)
+	if err != nil {
+		logger.Error("Failed to encrypt registration", "error", err)
+		return err
+	}
+
+	// Send encrypted blob to relay (relay cannot read contents).
+	payload := EncryptedRegistration{
+		Blob: base64.RawURLEncoding.EncodeToString(encryptedBlob),
+	}
+
 	path, err := url.JoinPath(kd.RelayEndoint.String(), "register")
 	if err != nil {
 		logger.Error("Failed to add register path", "error", err)
@@ -68,7 +100,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		return err
 	}
 
-	resp, err := PostJSONWithURL(kd.relayClient, registerUrl, map[string]string{"Authorization": "Bearer " + ownFp}, peerReg, RegisterErrorMapper)
+	resp, err := PostJSONWithURL(kd.relayClient, registerUrl, map[string]string{"Authorization": "Bearer " + lookupToken}, payload, RegisterErrorMapper)
 	if err != nil {
 		logger.Error("Failed to register", "error", err)
 		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
@@ -99,6 +131,20 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		return ErrNilPointer
 	}
 
+	// Extract room password and derive relay keys for privacy.
+	roomPassword, err := crypto.ExtractRoomPassword(outOfBandFingerPrint)
+	if err != nil {
+		logger.Error("Failed to extract room password", "error", err)
+		return err
+	}
+
+	lookupKey, encryptionKey, err := crypto.DeriveRelayKeys(roomPassword)
+	if err != nil {
+		logger.Error("Failed to derive relay keys", "error", err)
+		return err
+	}
+	lookupToken := base64.RawURLEncoding.EncodeToString(lookupKey)
+
 	path, err := url.JoinPath(kd.RelayEndoint.String(), "fetch")
 	if err != nil {
 		logger.Error("Failed to add fetch path", "error", err)
@@ -111,7 +157,7 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		return err
 	}
 
-	resp, err := GetJSONWithURL(kd.relayClient, fetchUrl, map[string]string{"Authorization": "Bearer " + outOfBandFingerPrint}, RegisterErrorMapper)
+	resp, err := GetJSONWithURL(kd.relayClient, fetchUrl, map[string]string{"Authorization": "Bearer " + lookupToken}, RegisterErrorMapper)
 	if err != nil {
 		logger.Error("Failed to fetch", "error", err)
 		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
@@ -127,10 +173,29 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		logger.Warn("We got a weird status code", "code", resp.StatusCode)
 	}
 
-	peerReg := &PeerRegistration{}
+	// Decode encrypted response from relay.
+	var encResp EncryptedRegistration
+	if err := json.NewDecoder(resp.Body).Decode(&encResp); err != nil {
+		logger.Error("Failed to decode encrypted response", "error", err)
+		return err
+	}
+	_ = resp.Body.Close()
 
-	if err := json.NewDecoder(resp.Body).Decode(peerReg); err != nil {
-		logger.Error("Failed to decode JSON", "error", err)
+	encryptedBlob, err := base64.RawURLEncoding.DecodeString(encResp.Blob)
+	if err != nil {
+		logger.Error("Failed to decode blob", "error", err)
+		return err
+	}
+
+	plaintext, err := crypto.Decrypt(encryptionKey, encryptedBlob)
+	if err != nil {
+		logger.Error("Failed to decrypt registration", "error", err)
+		return err
+	}
+
+	peerReg := &PeerRegistration{}
+	if err := json.Unmarshal(plaintext, peerReg); err != nil {
+		logger.Error("Failed to unmarshal decrypted registration", "error", err)
 		return err
 	}
 
