@@ -289,8 +289,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		}
 
 		req := &bindings.NotifyRequest{
-			Type: bindings.NotifyType(event.Action),
-			Path: event.Path,
+			Type:    bindings.NotifyType(event.Action),
+			Path:    event.Path,
+			OldPath: event.OldPath, // For RENAME operations.
 		}
 
 		// Attr may be nil for removal events.

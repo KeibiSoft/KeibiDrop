@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	keibidrop "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/pkg/xattr"
 	winfuse "github.com/winfsp/cgofuse/fuse"
@@ -141,6 +142,293 @@ func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint6
 	return 0, uint64(fd)
 }
 
+// shouldUseDirectIo determines if a file should bypass kernel page cache.
+// Returns true for files that need real-time sync (write access, not in .git/).
+// Returns false for .git/ files (to allow mmap for git operations).
+func shouldUseDirectIo(path string, flags int) bool {
+	// .git/ files: allow page cache for mmap (git uses mmap for pack files)
+	if strings.Contains(path, "/.git/") || strings.HasPrefix(path, ".git/") {
+		return false
+	}
+
+	// Write access: use direct_io for real-time sync
+	accessMode := flags & winfuse.O_ACCMODE
+	if accessMode == winfuse.O_WRONLY || accessMode == winfuse.O_RDWR {
+		return true
+	}
+
+	// Read-only: allow page cache
+	return false
+}
+
+// CreateEx implements FileSystemOpenEx interface for per-file direct_io control.
+func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCode int) {
+	defer d.recoverPanic("CreateEx", &errCode)
+	logger := d.logger.With("method", "create-ex", "path", path)
+
+	flags := fi.Flags
+	accessMode := flags & winfuse.O_ACCMODE
+	logger.Info("CreateEx called", "flags", flags, "accessMode", accessMode, "mode", mode)
+
+	d.AfmLock.Lock()
+	defer d.AfmLock.Unlock()
+	d.OpenMapLock.Lock()
+	defer d.OpenMapLock.Unlock()
+
+	relativePath := path
+	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	fd, err := syscall.Open(localPath, flags, mode)
+	if err != nil {
+		logger.Error("Failed to create file", "error", err)
+		return int(convertOsErrToSyscallErrno("open", err))
+	}
+
+	name := strings.Split(localPath, "/")
+
+	f := &File{
+		logger:          logger,
+		openFileCounter: OpenFileCounter{mu: &sync.Mutex{}, counter: 1},
+		Inode:           uint64(fd),
+		Name:            name[len(name)-1],
+		RelativePath:    relativePath,
+		RealPathOfFile:  localPath,
+		OnLocalChange:   d.OnLocalChange,
+		StreamProvider:  d.OpenStreamProvider(),
+		NotRemoteSynced: true,
+		IsLocalPresent:  true,
+		LocalNewer:      true,
+	}
+
+	d.AllFileMap[relativePath] = f
+	d.OpenFileHandlers[uint64(fd)] = f
+
+	// Set per-file direct_io
+	fi.Fh = uint64(fd)
+	fi.DirectIo = shouldUseDirectIo(path, flags)
+	logger.Info("Created file", "fd", fd, "directIo", fi.DirectIo)
+	return 0
+}
+
+// OpenEx implements FileSystemOpenEx interface for per-file direct_io control.
+func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
+	defer d.recoverPanic("OpenEx", &errCode)
+	flags := fi.Flags
+	logger := d.logger.With("method", "open-ex", "path", path, "flags", flags)
+
+	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+
+	// Check if O_CREAT is in flags - if so, we might need to create the file
+	hasCreate := flags&syscall.O_CREAT != 0
+
+	d.AfmLock.Lock()
+	fh, ok := d.AllFileMap[path]
+	if !ok {
+		// File not in map - check if it exists on disk
+		fileExists := false
+		if _, statErr := os.Stat(localPath); statErr == nil {
+			fileExists = true
+		}
+
+		if fileExists || hasCreate {
+			fh = &File{
+				logger:          d.logger,
+				openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
+				Name:            getNameFromPath(path),
+				RelativePath:    path,
+				RealPathOfFile:  localPath,
+				IsLocalPresent:  fileExists,
+				LocalNewer:      true,
+				OnLocalChange:   d.OnLocalChange,
+				StreamProvider:  d.OpenStreamProvider(),
+				stat:            &winfuse.Stat_t{},
+			}
+			d.AllFileMap[path] = fh
+		} else {
+			d.AfmLock.Unlock()
+			logger.Debug("File not found", "localPath", localPath)
+			return -winfuse.ENOENT
+		}
+	}
+
+	// File already opened - return existing handle
+	if fh.openFileCounter.CountOpenDescriptors() != 0 {
+		inode := fh.Inode
+		d.AfmLock.Unlock()
+		fi.Fh = inode
+		fi.DirectIo = shouldUseDirectIo(path, flags)
+		return 0
+	}
+
+	isLocalPresent := fh.IsLocalPresent
+	localNewer := fh.LocalNewer
+	d.AfmLock.Unlock()
+
+	// Check if remote has newer version
+	remoteHasUpdate := false
+	var remoteTotalSize uint64
+	d.RemoteFilesLock.RLock()
+	if remoteFile, hasRemote := d.RemoteFiles[path]; hasRemote && remoteFile.NotLocalSynced {
+		logger.Info("Remote has newer version, streaming from remote", "path", path)
+		localNewer = false
+		remoteHasUpdate = true
+		if remoteFile.stat != nil {
+			remoteTotalSize = uint64(remoteFile.stat.Size)
+		}
+	}
+	d.RemoteFilesLock.RUnlock()
+
+	// Open locally if we have newer local version
+	if isLocalPresent && localNewer {
+		accessMode := flags & winfuse.O_ACCMODE
+		logger.Info("Opening local file", "flags", flags, "accessMode", accessMode, "localPath", localPath)
+
+		// Verify file actually exists before trying to open
+		if _, statErr := os.Stat(localPath); statErr != nil {
+			logger.Warn("File marked as local but doesn't exist on disk", "error", statErr, "localPath", localPath)
+			// File doesn't exist - might need to create it
+			// Fall through to remote/creation path by setting isLocalPresent=false
+			isLocalPresent = false
+		} else {
+			// Convert FUSE flags to syscall-compatible flags for opening existing file
+			var sysFlags int
+			switch accessMode {
+			case winfuse.O_RDONLY:
+				sysFlags = syscall.O_RDONLY
+			case winfuse.O_WRONLY:
+				sysFlags = syscall.O_WRONLY
+			case winfuse.O_RDWR:
+				sysFlags = syscall.O_RDWR
+			}
+			// Add append flag if present
+			if flags&syscall.O_APPEND != 0 {
+				sysFlags |= syscall.O_APPEND
+			}
+
+			fd, err := syscall.Open(localPath, sysFlags, 0)
+			if err != nil {
+				logger.Error("Failed to open local file", "error", err, "sysFlags", sysFlags)
+				return int(convertOsErrToSyscallErrno("open", err))
+			}
+
+			d.AfmLock.Lock()
+			d.OpenMapLock.Lock()
+			fh.Inode = uint64(fd)
+			fh.openFileCounter.Open()
+			d.OpenFileHandlers[fh.Inode] = fh
+			d.OpenMapLock.Unlock()
+			d.AfmLock.Unlock()
+
+			fi.Fh = uint64(fd)
+			fi.DirectIo = shouldUseDirectIo(path, flags)
+			logger.Info("Opened local file", "fh", fd, "directIo", fi.DirectIo)
+			return 0
+		}
+	}
+
+	// Handle case where file needs to be created (O_CREAT or file doesn't exist)
+	if hasCreate && !isLocalPresent {
+		// Create parent directories if needed
+		parentDir := filepath.Dir(localPath)
+		if err := os.MkdirAll(parentDir, 0755); err != nil {
+			logger.Error("Failed to create parent directories", "error", err)
+			return -winfuse.EIO
+		}
+
+		// Determine access mode for creation
+		accessMode := flags & winfuse.O_ACCMODE
+		var sysFlags int
+		switch accessMode {
+		case winfuse.O_RDONLY:
+			sysFlags = syscall.O_RDONLY | syscall.O_CREAT
+		case winfuse.O_WRONLY:
+			sysFlags = syscall.O_WRONLY | syscall.O_CREAT
+		case winfuse.O_RDWR:
+			sysFlags = syscall.O_RDWR | syscall.O_CREAT
+		default:
+			sysFlags = syscall.O_RDWR | syscall.O_CREAT
+		}
+		// Add truncate if present
+		if flags&syscall.O_TRUNC != 0 {
+			sysFlags |= syscall.O_TRUNC
+		}
+
+		fd, err := syscall.Open(localPath, sysFlags, 0644)
+		if err != nil {
+			logger.Error("Failed to create file via OpenEx", "error", err)
+			return int(convertOsErrToSyscallErrno("open", err))
+		}
+
+		d.AfmLock.Lock()
+		d.OpenMapLock.Lock()
+		fh.Inode = uint64(fd)
+		fh.openFileCounter.Open()
+		fh.IsLocalPresent = true
+		fh.NotRemoteSynced = true
+		d.OpenFileHandlers[fh.Inode] = fh
+		d.OpenMapLock.Unlock()
+		d.AfmLock.Unlock()
+
+		fi.Fh = uint64(fd)
+		fi.DirectIo = shouldUseDirectIo(path, flags)
+		logger.Info("Created file via OpenEx", "fh", fd, "directIo", fi.DirectIo)
+		return 0
+	}
+
+	// If we get here with isLocalPresent=false and no hasCreate, this is a remote file
+	if !isLocalPresent && !hasCreate {
+		// Continue to remote file handling below
+	} else if isLocalPresent && localNewer {
+		// This case was already handled above, but guard against logic errors
+		logger.Error("Logic error: isLocalPresent && localNewer should have been handled")
+		return -winfuse.EIO
+	}
+
+	// Remote file - check for partial download or create cache file
+	var existingLocalSize int64
+	localStat, err := os.Stat(localPath)
+	if err == nil {
+		existingLocalSize = localStat.Size()
+		logger.Info("Found existing partial download", "existingSize", existingLocalSize)
+	}
+
+	// Create parent directories
+	parentDir := filepath.Dir(localPath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		logger.Error("Failed to create parent directories", "error", err)
+		return -winfuse.EIO
+	}
+
+	fd, err := syscall.Open(localPath, syscall.O_RDWR|syscall.O_CREAT, 0644)
+	if err != nil {
+		logger.Error("Failed to create cache file", "error", err)
+		return int(convertOsErrToSyscallErrno("open", err))
+	}
+
+	d.AfmLock.Lock()
+	d.OpenMapLock.Lock()
+	fh.Inode = uint64(fd)
+	fh.openFileCounter.Open()
+	fh.IsLocalPresent = true
+	d.OpenFileHandlers[fh.Inode] = fh
+
+	if remoteHasUpdate {
+		fh.NotLocalSynced = true
+		fh.Download.Reset(remoteTotalSize)
+		if existingLocalSize > 0 {
+			fh.Download.BytesDownloaded.Store(uint64(existingLocalSize))
+			fh.Download.LastReadOffset.Store(existingLocalSize)
+			logger.Info("Resuming download", "fromOffset", existingLocalSize, "totalSize", remoteTotalSize)
+		}
+	}
+	d.OpenMapLock.Unlock()
+	d.AfmLock.Unlock()
+
+	fi.Fh = uint64(fd)
+	fi.DirectIo = shouldUseDirectIo(path, flags)
+	logger.Info("Opened for remote streaming", "fh", fd, "directIo", fi.DirectIo)
+	return 0
+}
+
 // Called on unmount.
 func (d *Dir) Destroy() {
 	d.logger.Info("Destroy")
@@ -148,8 +436,8 @@ func (d *Dir) Destroy() {
 
 func (d *Dir) Flush(path string, fh uint64) (errCode int) {
 	defer d.recoverPanic("Flush", &errCode)
-	d.logger.Warn("FUSE Flush", "path", path, "fh", fh, "note", "returning ENOSYS - macOS apps may need this!")
-	return -winfuse.ENOSYS
+	d.logger.Debug("FUSE Flush (stub)", "path", path, "fh", fh)
+	return 0 // Return success - actual sync happens in Fsync/Release.
 }
 
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
@@ -170,8 +458,8 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 
 func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) (errCode int) {
 	defer d.recoverPanic("Fsyncdir", &errCode)
-	d.logger.Info("Fsyncdir", "path", path)
-	return -winfuse.ENOSYS
+	d.logger.Debug("FUSE Fsyncdir (stub)", "path", path, "datasync", datasync, "fh", fh)
+	return 0 // Return success - directory syncs are no-ops for our use case.
 }
 
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int) {
@@ -347,9 +635,9 @@ func (d *Dir) Init() {
 
 func (d *Dir) Link(oldpath string, newpath string) (errCode int) {
 	defer d.recoverPanic("Link", &errCode)
-	d.logger.Info("Link", "oldPath", oldpath, "newPath", newpath, "inode", d.Inode)
-
-	return -winfuse.ENOSYS
+	d.logger.Debug("FUSE Link (stub - not supported)", "oldPath", oldpath, "newPath", newpath, "inode", d.Inode)
+	// Hard links not supported - return EPERM (more accurate than ENOSYS).
+	return -winfuse.EPERM
 }
 
 func (d *Dir) Mkdir(path string, mode uint32) (errCode int) {
@@ -598,9 +886,9 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 
 func (d *Dir) Readlink(path string) (errCode int, target string) {
 	defer d.recoverPanic("Readlink", &errCode)
-	d.logger.Info("Readlink", "path", path, "inode", d.Inode)
-
-	return -winfuse.ENOSYS, ""
+	d.logger.Debug("FUSE Readlink (stub)", "path", path, "inode", d.Inode)
+	// No symlinks in our filesystem - return EINVAL (not a symlink).
+	return -winfuse.EINVAL, ""
 }
 
 func (d *Dir) Release(path string, fh uint64) (errCode int) {
@@ -757,6 +1045,11 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 
 	d.logger.Warn("FUSE Rename resolved paths", "cleanOldPath", cleanOldPath, "cleanNewPath", cleanNewPath)
 
+	// Check if this is a remote-only file (don't notify peer about their own files).
+	d.RemoteFilesLock.RLock()
+	_, isRemote := d.RemoteFiles[oldpath]
+	d.RemoteFilesLock.RUnlock()
+
 	err := syscall.Rename(cleanOldPath, cleanNewPath)
 	if err != nil {
 		d.logger.Warn("FUSE Rename FAILED", "oldpath", oldpath, "newpath", newpath, "error", err)
@@ -787,6 +1080,26 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		logger.Info("Updated RemoteFiles for rename", "oldpath", oldpath, "newpath", newpath)
 	}
 	d.RemoteFilesLock.Unlock()
+
+	// Notify peer about the rename (only for local files, not remote-only).
+	if d.OnLocalChange != nil && !isRemote {
+		// Get stat of the renamed file.
+		stgo := syscall.Stat_t{}
+		var attr *keibidrop.Attr
+		if statErr := syscall.Lstat(cleanNewPath, &stgo); statErr == nil {
+			fuseStat := &winfuse.Stat_t{}
+			copyFusestatFromGostat(fuseStat, &stgo)
+			attr = types.StatToAttr(fuseStat)
+		}
+
+		d.OnLocalChange(types.FileEvent{
+			Path:    newpath,
+			OldPath: oldpath,
+			Action:  types.RenameFile,
+			Attr:    attr,
+		})
+		logger.Info("Notified peer about rename", "oldpath", oldpath, "newpath", newpath)
+	}
 
 	d.logger.Warn("FUSE Rename SUCCESS", "oldpath", oldpath, "newpath", newpath)
 	return 0
@@ -884,9 +1197,9 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) (errCode int) {
 
 func (d *Dir) Symlink(target string, newpath string) (errCode int) {
 	defer d.recoverPanic("Symlink", &errCode)
-	d.logger.Info("Symlink", "target", target, "newpath", newpath, "inode", d.Inode)
-
-	return -winfuse.ENOSYS
+	d.logger.Debug("FUSE Symlink (stub - not supported)", "target", target, "newpath", newpath, "inode", d.Inode)
+	// Symlinks not supported - return EPERM.
+	return -winfuse.EPERM
 }
 
 // Note: On windows open does not have a truncate flag,
@@ -972,13 +1285,12 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	return 0
 }
 
-// Utimens changes the access and modification times of a file.
-// Note: I do not care about it :^D for this version.
+// Utimens sets file access and modification times.
+// We return success but don't persist the changes (timestamps come from underlying storage).
 func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) (errCode int) {
 	defer d.recoverPanic("Utimens", &errCode)
-	d.logger.Info("Utimens", "path", path, "inode", d.Inode)
-
-	return -winfuse.ENOSYS
+	d.logger.Debug("FUSE Utimens (stub)", "path", path, "inode", d.Inode)
+	return 0 // Return success - git and other tools call this frequently.
 }
 
 // WriteStats tracks timing for Write operations (for profiling)

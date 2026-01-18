@@ -81,7 +81,7 @@ I haven’t used these tools directly, but I liked the ideas they explored and w
 
 - **Partial downloads on unshare**: If you're reading a file with offset (e.g., tailing a remote log) and the peer stops sharing, only the bytes you've already read are saved locally. The file may be incomplete/sparse.
 
-- **No mmap support**: Memory-mapped file operations (used by `git`, some IDEs) may cause "bus error". Use regular file operations or copy files out of the mount first.
+- **Selective mmap support**: Per-file `direct_io` is used for write operations (for real-time sync) but disabled for `.git/` directories (to allow mmap for git pack files). See [DD-002](docs/DesignDecisions.md#dd-002-per-file-directio-for-mmapcache-compatibility).
 
 - **Symlinks not implemented**: Symlink operations return ENOSYS.
 
