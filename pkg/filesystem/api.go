@@ -103,6 +103,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 		"-o", "local",            // Mark as local volume (not network)
 		"-o", "negative_vncache", // Cache non-existent files (stops .DS_Store/.Trashes lookups)
 		"-o", "slow_statfs",      // Reduce statfs calls (Finder won't poll as aggressively)
+		"-o", "allow_other",      // Allow other users (including root/sudo) to access the mount
 		// NOTE: direct_io was removed because it disables mmap, which breaks git clone.
 		// Git uses mmap for pack files. Without direct_io, the kernel page cache is used,
 		// which means file changes may not be immediately visible. For real-time sync,
