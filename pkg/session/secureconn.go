@@ -27,18 +27,40 @@ const (
 	RekeyMsgsThreshold  = 1 << 20 // ~1M messages
 )
 
+// Nonce prefixes for direction separation (prevents nonce reuse with same key).
+const (
+	NoncePrefixOutbound uint32 = 0x4F555442 // "OUTB"
+	NoncePrefixInbound  uint32 = 0x494E4244 // "INBD"
+)
+
 // SecureWriter encrypts messages and writes them to an underlying writer.
+// Uses deterministic counter-based nonces for performance (~500ns -> ~1ns per nonce).
 type SecureWriter struct {
-	w   io.Writer
-	kek []byte
+	w     io.Writer
+	kek   []byte
+	nonce *kbc.NonceGenerator
 }
 
 func NewSecureWriter(w io.Writer, kek []byte) *SecureWriter {
-	return &SecureWriter{w: w, kek: kek}
+	return &SecureWriter{
+		w:     w,
+		kek:   kek,
+		nonce: kbc.NewNonceGenerator(NoncePrefixOutbound),
+	}
+}
+
+// NewSecureWriterWithPrefix creates a writer with a custom nonce prefix.
+func NewSecureWriterWithPrefix(w io.Writer, kek []byte, prefix uint32) *SecureWriter {
+	return &SecureWriter{
+		w:     w,
+		kek:   kek,
+		nonce: kbc.NewNonceGenerator(prefix),
+	}
 }
 
 func (s *SecureWriter) Write(p []byte) (int, error) {
-	encrypted, err := kbc.Encrypt(s.kek, p)
+	nonce := s.nonce.Next()
+	encrypted, err := kbc.EncryptWithNonce(s.kek, p, nonce)
 	if err != nil {
 		return 0, fmt.Errorf("encryption failed: %w", err)
 	}

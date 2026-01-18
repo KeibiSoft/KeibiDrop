@@ -449,11 +449,15 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 
 	// Check if remote has newer version
 	remoteHasUpdate := false
+	var remoteTotalSize uint64
 	d.RemoteFilesLock.RLock()
 	if remoteFile, hasRemote := d.RemoteFiles[path]; hasRemote && remoteFile.NotLocalSynced {
 		logger.Info("Remote has newer version, streaming from remote", "path", path)
 		localNewer = false
 		remoteHasUpdate = true
+		if remoteFile.stat != nil {
+			remoteTotalSize = uint64(remoteFile.stat.Size)
+		}
 	}
 	d.RemoteFilesLock.RUnlock()
 
@@ -478,8 +482,9 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 		return 0, uint64(fd)
 	}
 
-	// Remote file path - create local cache file if needed
-	_, err := os.Stat(localPath)
+	// Remote file path - check for partial download or create cache file.
+	var existingLocalSize int64
+	localStat, err := os.Stat(localPath)
 	if err != nil {
 		if err2 := os.MkdirAll(getPathWithoutName(localPath), 0o755); err2 != nil {
 			logger.Error("Failed to create folders", "error", err2)
@@ -491,6 +496,12 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 			return int(convertOsErrToSyscallErrno("open", err2)), 0
 		}
 		_ = f.Close()
+	} else {
+		// Local file exists - this may be a partial download from a previous session.
+		existingLocalSize = localStat.Size()
+		if existingLocalSize > 0 && remoteTotalSize > 0 && uint64(existingLocalSize) < remoteTotalSize {
+			logger.Info("Found partial download, will resume", "localSize", existingLocalSize, "remoteSize", remoteTotalSize)
+		}
 	}
 
 	accessMode := flags & winfuse.O_ACCMODE
@@ -520,13 +531,20 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	fh.StreamCancel = streamCancel
 	if remoteHasUpdate {
 		fh.NotLocalSynced = true // Ensure Read uses stream, not stale local cache
+		// Initialize download state for resume capability.
+		fh.Download.Reset(remoteTotalSize)
+		// Account for existing partial download.
+		if existingLocalSize > 0 {
+			fh.Download.BytesDownloaded.Store(uint64(existingLocalSize))
+			fh.Download.LastReadOffset.Store(existingLocalSize)
+		}
 	}
 	d.OpenFileHandlers[fh.Inode] = fh
 	fh.openFileCounter.Open()
 	d.OpenMapLock.Unlock()
 	d.AfmLock.Unlock()
 
-	logger.Info("Opened remote file", "fh", fh.Inode, "notLocalSynced", fh.NotLocalSynced, "hasStream", fh.RemoteFileStream != nil)
+	logger.Info("Opened remote file", "fh", fh.Inode, "notLocalSynced", fh.NotLocalSynced, "hasStream", fh.RemoteFileStream != nil, "totalSize", remoteTotalSize)
 	return 0, fh.Inode
 }
 
@@ -1062,20 +1080,75 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	d.OpenMapLock.RUnlock()
 
 	if ok && notLocalSynced && stream != nil {
-		logger.Info("Reading from remote", "bufLen", len(buff))
-		// Read from remote stream with timeout to prevent system freeze
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		data, err := stream.ReadAt(ctx, offset, int64(len(buff)))
-		if err != nil {
-			logger.Error("Failed to read data from remote", "error", err)
+		logger.Info("Reading from remote", "bufLen", len(buff), "progress", f.Download.Progress())
+
+		// Retry loop for resilience against transient failures.
+		var data []byte
+		var readErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			// Read from remote stream with timeout to prevent system freeze.
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			data, readErr = stream.ReadAt(ctx, offset, int64(len(buff)))
+			cancel()
+
+			if readErr == nil {
+				break // Success.
+			}
+
+			logger.Warn("Remote read failed, attempting retry", "attempt", attempt+1, "error", readErr)
+			f.Download.RecordAttempt()
+
+			if !f.Download.CanRetry() {
+				logger.Error("Max retries exceeded for remote read", "path", path)
+				break
+			}
+
+			// Try to re-establish the stream.
+			if f.StreamProvider != nil {
+				logger.Info("Attempting to re-establish stream", "path", path, "attempt", attempt+1)
+				streamCtx, streamCancel := context.WithCancel(context.Background())
+				newStream, openErr := f.StreamProvider.OpenRemoteFile(streamCtx, fh, path)
+				if openErr != nil {
+					streamCancel()
+					logger.Error("Failed to re-establish stream", "error", openErr)
+					time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Backoff.
+					continue
+				}
+
+				// Close old stream (best effort).
+				if stream != nil {
+					_ = stream.Close()
+				}
+				if f.StreamCancel != nil {
+					f.StreamCancel()
+				}
+
+				// Update file with new stream (need lock).
+				d.OpenMapLock.Lock()
+				f.RemoteFileStream = newStream
+				f.StreamCancel = streamCancel
+				d.OpenMapLock.Unlock()
+
+				stream = newStream
+				logger.Info("Stream re-established successfully", "path", path)
+			}
+
+			time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond) // Backoff.
+		}
+
+		if readErr != nil {
+			logger.Error("Failed to read data from remote after retries", "error", readErr)
 			return -winfuse.EBADF
 		}
 
-		// Copy remote data into buffer for FUSE
+		// Copy remote data into buffer for FUSE.
 		n := copy(buff, data)
 
-		// Write data into local file for caching (no lock needed - local file ops)
+		// Track download progress and update checksum.
+		f.Download.UpdateProgress(offset, n)
+		f.Download.UpdateChecksum(data[:n])
+
+		// Write data into local file for caching (no lock needed - local file ops).
 		lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			logger.Error("Failed to open local file for writing", "error", err)
@@ -1083,13 +1156,14 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		}
 		defer lf.Close()
 
-		// Write at offset (overwrite existing bytes)
+		// Write at offset (overwrite existing bytes).
 		_, err = lf.WriteAt(data, offset)
 		if err != nil {
 			logger.Error("Failed to write remote data to local file", "error", err)
 			return -winfuse.EIO
 		}
 
+		logger.Debug("Read completed", "bytes", n, "progress", f.Download.Progress(), "checksum", f.Download.Checksum())
 		return n
 	}
 
