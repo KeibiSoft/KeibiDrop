@@ -200,3 +200,163 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 
   - [POSIX rename() semantics](https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html)
   - Protocol Buffers backward compatibility (adding fields/enum values is safe)
+
+---
+
+## `DD-005`: FUSE Release/Fsync Race Condition Workaround
+
+- **Date:** 2026-01-18
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Status:** Accepted
+- **Location:** `pkg/filesystem/fuse_directory.go`
+- **Decision:**
+
+  - Handle `EBADF` in `Fsync()` by reopening the file and fsyncing it
+  - This is a fallback for when FUSE kernel calls Release before Fsync
+
+- **Rationale:**
+
+  - **Problem:** Git clone fails with "fsync error: Bad file descriptor" during `index-pack` phase. The FUSE kernel can call `Release()` before `Fsync()` completes, causing the fd to be closed before fsync can use it.
+
+  - **Root cause:** FUSE operations are asynchronous. When an application calls `close()` followed by `fsync()`, the kernel may deliver `Release` to the FUSE daemon before `Fsync`. Since `Release` closes the fd, subsequent `Fsync` calls fail with `EBADF`.
+
+  - **Sequence observed:**
+    ```
+    17:29:16.206 - CreateEx tmp_pack_1M0L8Q fd=14
+    17:29:16.971 - Release tmp_pack_1M0L8Q fh=14 → fd closed
+    17:29:16.975 - Fsync tmp_pack_1M0L8Q fh=14 → EBADF!
+    ```
+
+  - **Solution:** In `Fsync()`, if `syscall.Fsync(fh)` returns `EBADF`:
+    1. Open the file read-only by path
+    2. Call `syscall.Fsync()` on the new fd
+    3. Close the fd
+    4. If open fails (file renamed/deleted), return success - data was already committed
+
+- **Implementation:**
+
+  ```go
+  func (d *Dir) Fsync(path string, datasync bool, fh uint64) int {
+      err := syscall.Fsync(int(fh))
+      if err == nil {
+          return 0
+      }
+
+      if err == syscall.EBADF {
+          // Fallback: open, fsync, close
+          fd, openErr := syscall.Open(localPath, syscall.O_RDONLY, 0)
+          if openErr != nil {
+              return 0 // File gone - data was committed before close
+          }
+          fsyncErr := syscall.Fsync(fd)
+          syscall.Close(fd)
+          if fsyncErr != nil {
+              return -EIO
+          }
+          return 0
+      }
+      return convertError(err)
+  }
+  ```
+
+- **Trade-offs:**
+
+  - Extra syscall overhead for the fallback path (open + fsync + close)
+  - Only affects edge cases where Release races with Fsync
+
+- **Related Issues:**
+
+  - Similar pattern used in `Write()` for macOS fcopyfile workaround (DD-006 pending)
+  - Both are consequences of FUSE async delivery of operations
+
+- **Impacted Modules:**
+
+  - `pkg/filesystem/fuse_directory.go` - `Fsync()`
+
+- **References:**
+
+  - [FUSE low-level API docs](https://libfuse.github.io/doxygen/structfuse__lowlevel__ops.html) - Release/Fsync ordering
+  - [macFUSE known issues](https://github.com/macfuse/macfuse/wiki/Known-Issues)
+
+---
+
+## `DD-006`: macOS fcopyfile Late Write Workaround
+
+- **Date:** 2026-01-18
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Status:** Accepted
+- **Location:** `pkg/filesystem/fuse_directory.go`
+- **Decision:**
+
+  - Handle `EBADF` in `Write()` by reopening the file and writing via `pwrite()`
+  - This is a fallback for macOS `fcopyfile()` behavior
+
+- **Rationale:**
+
+  - **Problem:** On macOS, `cp` uses `fcopyfile()` which can send `Write` calls after `Release` has been called. This causes "bad file descriptor" errors.
+
+  - **Root cause:** macOS's `fcopyfile()` syscall internally opens/reads/writes files, but the FUSE layer sees these as coming from the original fd. When the application calls `close()`, `Release` is delivered, but `fcopyfile` may still send `Write` calls.
+
+  - **Solution:** In `Write()`, if `pwrite()` returns `EBADF`:
+    1. Log warning about fcopyfile workaround
+    2. Open the file for write by path
+    3. Call `pwrite()` with the data
+    4. Close the fd
+
+- **Trade-offs:**
+
+  - macOS-specific workaround
+  - Extra syscalls for affected operations
+
+- **Impacted Modules:**
+
+  - `pkg/filesystem/fuse_directory.go` - `Write()`
+
+- **References:**
+
+  - [macOS fcopyfile(3)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/fcopyfile.3.html)
+
+---
+
+## `DD-007`: File Permission Normalization for FUSE
+
+- **Date:** 2026-01-18
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Status:** Accepted
+- **Location:** `pkg/filesystem/fuse_directory.go`
+- **Decision:**
+
+  - In `Create()` and `CreateEx()`, always ensure owner has write permission (mode `0o200`)
+  - Strip file type bits (`S_IFREG`) from mode before passing to `syscall.Open()`
+
+- **Rationale:**
+
+  - **Problem:** Git clone fails with "Permission denied" when trying to reopen files. Git creates pack files with mode `0o444` (read-only), writes via the open fd, closes, then tries to reopen with `O_RDWR`.
+
+  - **Root cause:** The FUSE `mode` parameter includes file type bits (`S_IFREG = 0100000 = 32768`). When passed directly to `syscall.Open()`, these bits are misinterpreted. Additionally, files created with mode `0o444` cannot be reopened for write.
+
+  - **Observed:** `mode=33060` = `S_IFREG (32768) + 0o444 (292)` = read-only regular file
+
+  - **Solution:**
+    ```go
+    createMode := mode & 0o777           // Extract permission bits only
+    if createMode&0o200 == 0 {
+        createMode |= 0o200              // Ensure owner write
+    }
+    if createMode == 0 {
+        createMode = 0o644               // Default fallback
+    }
+    ```
+
+- **Trade-offs:**
+
+  - Files may have more permissive modes than requested
+  - Acceptable for a user-space filesystem where the user owns all files
+
+- **Impacted Modules:**
+
+  - `pkg/filesystem/fuse_directory.go` - `Create()`, `CreateEx()`
+
+- **References:**
+
+  - [POSIX file mode bits](https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/sys_stat.h.html)
