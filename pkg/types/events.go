@@ -25,13 +25,16 @@ const (
 	RemoveFile
 	EditDir
 	EditFile
+	RenameFile
+	RenameDir
 )
 
 // FileEvent represents a filesystem change
 type FileEvent struct {
-	Path   string          // relative path in the FS
-	Action FileAction      // type of event
-	Attr   *keibidrop.Attr // file attributes (from Stat_t)
+	Path    string          // relative path in the FS (new path for renames)
+	OldPath string          // for renames: the source path
+	Action  FileAction      // type of event
+	Attr    *keibidrop.Attr // file attributes (from Stat_t)
 }
 
 // timespecToNano converts a fuse.Timespec to total nanoseconds since Unix epoch.

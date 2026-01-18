@@ -37,6 +37,8 @@ const (
 	NotifyType_REMOVE_FILE NotifyType = 4
 	NotifyType_EDIT_DIR    NotifyType = 5
 	NotifyType_EDIT_FILE   NotifyType = 6
+	NotifyType_RENAME_FILE NotifyType = 7 // File moved/renamed. old_path -> path.
+	NotifyType_RENAME_DIR  NotifyType = 8 // Directory moved/renamed. old_path -> path.
 )
 
 // Enum value maps for NotifyType.
@@ -49,6 +51,8 @@ var (
 		4: "REMOVE_FILE",
 		5: "EDIT_DIR",
 		6: "EDIT_FILE",
+		7: "RENAME_FILE",
+		8: "RENAME_DIR",
 	}
 	NotifyType_value = map[string]int32{
 		"UNKNOWN":     0,
@@ -58,6 +62,8 @@ var (
 		"REMOVE_FILE": 4,
 		"EDIT_DIR":    5,
 		"EDIT_FILE":   6,
+		"RENAME_FILE": 7,
+		"RENAME_DIR":  8,
 	}
 )
 
@@ -726,6 +732,7 @@ type NotifyRequest struct {
 	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
 	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	Attr          *Attr                  `protobuf:"bytes,4,opt,name=attr,proto3" json:"attr,omitempty"`
+	OldPath       string                 `protobuf:"bytes,5,opt,name=old_path,json=oldPath,proto3" json:"old_path,omitempty"` // For RENAME operations: the source path.
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -786,6 +793,13 @@ func (x *NotifyRequest) GetAttr() *Attr {
 		return x.Attr
 	}
 	return nil
+}
+
+func (x *NotifyRequest) GetOldPath() string {
+	if x != nil {
+		return x.OldPath
+	}
+	return ""
 }
 
 type NotifyResponse struct {
@@ -1091,12 +1105,13 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\fCloseRequest\x12\x16\n" +
 	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\"\x0f\n" +
-	"\rCloseResponse\"\x87\x01\n" +
+	"\rCloseResponse\"\xa2\x01\n" +
 	"\rNotifyRequest\x12)\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x15.keibidrop.NotifyTypeR\x04type\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12#\n" +
-	"\x04attr\x18\x04 \x01(\v2\x0f.keibidrop.AttrR\x04attr\"(\n" +
+	"\x04attr\x18\x04 \x01(\v2\x0f.keibidrop.AttrR\x04attr\x12\x19\n" +
+	"\bold_path\x18\x05 \x01(\tR\aoldPath\"(\n" +
 	"\x0eNotifyResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\"\xf2\x01\n" +
 	"\x04Attr\x12\x10\n" +
@@ -1124,7 +1139,7 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x1a;\n" +
 	"\rEncSeedsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01*r\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01*\x93\x01\n" +
 	"\n" +
 	"NotifyType\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
@@ -1134,7 +1149,10 @@ const file_keibidrop_proto_rawDesc = "" +
 	"REMOVE_DIR\x10\x03\x12\x0f\n" +
 	"\vREMOVE_FILE\x10\x04\x12\f\n" +
 	"\bEDIT_DIR\x10\x05\x12\r\n" +
-	"\tEDIT_FILE\x10\x062\xf1\x03\n" +
+	"\tEDIT_FILE\x10\x06\x12\x0f\n" +
+	"\vRENAME_FILE\x10\a\x12\x0e\n" +
+	"\n" +
+	"RENAME_DIR\x10\b2\xf1\x03\n" +
 	"\fKeibiService\x127\n" +
 	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12<\n" +
 	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse(\x01\x12;\n" +

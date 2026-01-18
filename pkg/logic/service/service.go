@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -240,6 +241,61 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			delete(kd.SyncTracker.RemoteFiles, req.Path)
 			kd.SyncTracker.RemoteFilesMu.Unlock()
 			logger.Info("Removed file from sync tracker", "path", req.Path)
+		}
+	case bindings.NotifyType_RENAME_FILE:
+		// Peer renamed/moved a file. OldPath -> Path.
+		logger.Info("Rename file", "oldPath", req.OldPath, "newPath", req.Path)
+
+		if kd.FS != nil && kd.FS.Root != nil {
+			// Remove old path from maps and add with new path.
+			kd.FS.Root.RemoteFilesLock.Lock()
+			file, exists := kd.FS.Root.RemoteFiles[req.OldPath]
+			if exists {
+				delete(kd.FS.Root.RemoteFiles, req.OldPath)
+				file.RelativePath = req.Path
+				file.Name = filepath.Base(req.Path)
+				kd.FS.Root.RemoteFiles[req.Path] = file
+				logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
+			}
+			kd.FS.Root.RemoteFilesLock.Unlock()
+
+			// Also update AllFileMap.
+			kd.FS.Root.AfmLock.Lock()
+			if f, ok := kd.FS.Root.AllFileMap[req.OldPath]; ok {
+				delete(kd.FS.Root.AllFileMap, req.OldPath)
+				f.RelativePath = req.Path
+				f.Name = filepath.Base(req.Path)
+				kd.FS.Root.AllFileMap[req.Path] = f
+			}
+			kd.FS.Root.AfmLock.Unlock()
+		}
+
+		// Handle non-FUSE mode.
+		if kd.SyncTracker != nil {
+			kd.SyncTracker.RemoteFilesMu.Lock()
+			if f, ok := kd.SyncTracker.RemoteFiles[req.OldPath]; ok {
+				delete(kd.SyncTracker.RemoteFiles, req.OldPath)
+				f.RelativePath = req.Path
+				f.Name = filepath.Base(req.Path)
+				kd.SyncTracker.RemoteFiles[req.Path] = f
+			}
+			kd.SyncTracker.RemoteFilesMu.Unlock()
+			logger.Info("Renamed file in sync tracker", "oldPath", req.OldPath, "newPath", req.Path)
+		}
+	case bindings.NotifyType_RENAME_DIR:
+		// Peer renamed/moved a directory. OldPath -> Path.
+		logger.Info("Rename directory", "oldPath", req.OldPath, "newPath", req.Path)
+
+		if kd.FS != nil && kd.FS.Root != nil {
+			kd.FS.Root.Adm.Lock()
+			if dir, ok := kd.FS.Root.AllDirMap[req.OldPath]; ok {
+				delete(kd.FS.Root.AllDirMap, req.OldPath)
+				dir.RelativePath = req.Path
+				dir.Name = filepath.Base(req.Path)
+				kd.FS.Root.AllDirMap[req.Path] = dir
+				logger.Info("Renamed directory reference", "oldPath", req.OldPath, "newPath", req.Path)
+			}
+			kd.FS.Root.Adm.Unlock()
 		}
 	}
 

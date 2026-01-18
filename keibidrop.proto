@@ -94,6 +94,7 @@ message NotifyRequest {
   string path = 2;
   string name = 3;
   Attr attr = 4;
+  string old_path = 5;  // For RENAME operations: the source path.
 }
 
 message NotifyResponse {
@@ -108,6 +109,8 @@ enum NotifyType {
   REMOVE_FILE = 4;
   EDIT_DIR = 5;
   EDIT_FILE = 6;
+  RENAME_FILE = 7;  // File moved/renamed. old_path -> path.
+  RENAME_DIR = 8;   // Directory moved/renamed. old_path -> path.
 }
 
 message Attr {
