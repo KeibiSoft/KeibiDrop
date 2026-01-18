@@ -96,6 +96,10 @@ type File struct {
 
 	HadEdits bool
 
+	// PeerStoppedSharing is set when peer sends REMOVE_FILE but download is in progress.
+	// Once download completes (Release with 0 open handles), the file reference is removed.
+	PeerStoppedSharing bool
+
 	openFileCounter OpenFileCounter
 
 	StreamProvider   types.FileStreamProvider
@@ -108,6 +112,11 @@ type File struct {
 }
 
 func (f *File) NotifyPeer() {}
+
+// CountOpenDescriptors returns the number of open file handles.
+func (f *File) CountOpenDescriptors() uint64 {
+	return f.openFileCounter.CountOpenDescriptors()
+}
 
 // Use it as a singleton only when setting up the filesystem.
 // (In the mount command).

@@ -35,7 +35,7 @@ We gained the knowledge in this space without relying on ~AI~ sycophancy.
 
 The first version has some red flags:
 1. There is no file transfer resume on lost connection.
-2. I did not make use of any TPM or such sorts, which means that the private keys and session keys linger in the memory of the machine.
+2. Private keys and session keys are stored in memory (no TPM/secure enclave integration yet).
 
 Thus treat it as a functional demo. We plan to maintain it and improve it as resources permit.
 
@@ -70,6 +70,24 @@ I haven’t used these tools directly, but I liked the ideas they explored and w
 - Relay privacy - the relay sees only encrypted blobs, not your metadata
 - Session re-keying for forward secrecy during long transfers
 - Mountable filesystem with data transfer on access
+
+---
+
+## Known Limitations
+
+### File Sharing Behavior
+
+- **Deletions don't propagate**: When a peer deletes a file they're sharing, your local copy (if downloaded) is preserved. The file simply disappears from the shared view.
+
+- **Partial downloads on unshare**: If you're reading a file with offset (e.g., tailing a remote log) and the peer stops sharing, only the bytes you've already read are saved locally. The file may be incomplete/sparse.
+
+- **No mmap support**: Memory-mapped file operations (used by `git`, some IDEs) may cause "bus error". Use regular file operations or copy files out of the mount first.
+
+- **Symlinks not implemented**: Symlink operations return ENOSYS.
+
+### POSIX Compliance
+
+After running pjdfstest, specific unsupported operations will be documented here.
 
 ---
 

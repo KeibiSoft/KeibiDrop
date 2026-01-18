@@ -71,7 +71,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		err := kd.FS.Root.Mkdir(req.Path, 0777) // Read/Write/Execute for current user.
+		err := kd.FS.Root.MkdirFromPeer(req.Path, 0755) // Use FromPeer to avoid notification loop.
 		if err != 0 {
 			return nil, ErrGRPCFailedPrecondition
 		}
@@ -79,8 +79,15 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Edit dir is not implemented")
 		// TODO: Modify the attr time as per the client payload.
 	case bindings.NotifyType_REMOVE_DIR:
-		logger.Info("Remove dir is not implemented")
-		// TODO: Remove dir as per the client payload.
+		// Peer stopped sharing this directory. Remove from our view but keep any local data.
+		logger.Info("Remove dir reference", "path", req.Path)
+
+		if kd.FS != nil && kd.FS.Root != nil {
+			kd.FS.Root.Adm.Lock()
+			delete(kd.FS.Root.AllDirMap, req.Path)
+			kd.FS.Root.Adm.Unlock()
+			logger.Info("Removed directory reference from view", "path", req.Path)
+		}
 	case bindings.NotifyType_ADD_FILE:
 		if req.Attr == nil {
 			logger.Error("Failed to add file, invalid attr", "error", ErrGRPCInvalidArgument)
@@ -200,8 +207,40 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 	case bindings.NotifyType_REMOVE_FILE:
-		logger.Info("Remove file is not implemented")
-		// TODO: Remove file as per the client payload.
+		// Peer stopped sharing this file. Remove from our view but keep any local/partial data.
+		logger.Info("Remove file reference", "path", req.Path)
+
+		if kd.FS != nil && kd.FS.Root != nil {
+			kd.FS.Root.AfmLock.Lock()
+			file, exists := kd.FS.Root.AllFileMap[req.Path]
+			if exists && file != nil {
+				// Check if file has open handles (download in progress).
+				openCount := file.CountOpenDescriptors()
+				if openCount > 0 {
+					// Download in progress - let it complete, then remove.
+					file.PeerStoppedSharing = true
+					logger.Info("File has open handles, marking for removal after download", "path", req.Path, "openHandles", openCount)
+				} else {
+					// No active downloads - remove immediately.
+					delete(kd.FS.Root.AllFileMap, req.Path)
+					logger.Info("Removed file reference from view", "path", req.Path)
+				}
+			}
+			kd.FS.Root.AfmLock.Unlock()
+
+			// Remove from RemoteFiles (stops new remote streaming, but existing streams continue).
+			kd.FS.Root.RemoteFilesLock.Lock()
+			delete(kd.FS.Root.RemoteFiles, req.Path)
+			kd.FS.Root.RemoteFilesLock.Unlock()
+		}
+
+		// Also handle non-FUSE mode.
+		if kd.SyncTracker != nil {
+			kd.SyncTracker.RemoteFilesMu.Lock()
+			delete(kd.SyncTracker.RemoteFiles, req.Path)
+			kd.SyncTracker.RemoteFilesMu.Unlock()
+			logger.Info("Removed file from sync tracker", "path", req.Path)
+		}
 	}
 
 	logger.Info("Success")
