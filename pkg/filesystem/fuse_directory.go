@@ -354,14 +354,40 @@ func (d *Dir) Link(oldpath string, newpath string) (errCode int) {
 
 func (d *Dir) Mkdir(path string, mode uint32) (errCode int) {
 	defer d.recoverPanic("Mkdir", &errCode)
-	d.logger.Info("Mkdir", "path", path, "inode", d.Inode)
+	return d.mkdirInternal(path, mode, true)
+}
+
+// MkdirFromPeer creates a directory without notifying the peer (to avoid loops).
+func (d *Dir) MkdirFromPeer(path string, mode uint32) (errCode int) {
+	return d.mkdirInternal(path, mode, false)
+}
+
+func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode int) {
 	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	err := syscall.Mkdir(path, mode)
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	err := syscall.Mkdir(cleanPath, mode)
 	if err != nil {
-		logger.Error("Failed to mkdir", "path", path, "error", err)
+		logger.Error("Failed to mkdir", "path", cleanPath, "error", err)
 		return int(convertOsErrToSyscallErrno("mkdir", err))
 	}
+
+	// Notify peer about the new directory (only for local changes).
+	if notifyPeer && d.OnLocalChange != nil {
+		stgo := syscall.Stat_t{}
+		if statErr := syscall.Lstat(cleanPath, &stgo); statErr == nil {
+			aux := &winfuse.Stat_t{}
+			copyFusestatFromGostat(aux, &stgo)
+			d.OnLocalChange(types.FileEvent{
+				Path:   path,
+				Action: types.AddDir,
+				Attr:   types.StatToAttr(aux),
+			})
+			logger.Info("Notified peer about new directory", "path", path)
+		} else {
+			logger.Warn("Failed to stat new directory for notification", "error", statErr)
+		}
+	}
+
 	return 0
 }
 
@@ -652,6 +678,14 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			f.NotLocalSynced = false
 		}
 
+		// If peer stopped sharing and download is now complete, remove from AllFileMap.
+		if f.PeerStoppedSharing {
+			d.AfmLock.Lock()
+			delete(d.AllFileMap, path)
+			d.AfmLock.Unlock()
+			logger.Info("Removed file reference after download completed (peer stopped sharing)", "path", path)
+		}
+
 		// Get stream reference and cancel func, clear under lock, then close OUTSIDE lock
 		// to avoid holding OpenMapLock during network I/O
 		stream := f.RemoteFileStream
@@ -742,6 +776,15 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 
 func (d *Dir) Rmdir(path string) (errCode int) {
 	defer d.recoverPanic("Rmdir", &errCode)
+	return d.rmdirInternal(path, true)
+}
+
+// RmdirFromPeer removes a directory without notifying the peer (to avoid loops).
+func (d *Dir) RmdirFromPeer(path string) (errCode int) {
+	return d.rmdirInternal(path, false)
+}
+
+func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 	d.logger.Info("Rmdir", "path", path, "inode", d.Inode)
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "rmdir", "path", path)
@@ -749,6 +792,16 @@ func (d *Dir) Rmdir(path string) (errCode int) {
 	if err != nil {
 		logger.Error("Failed to remove dir", "error", err)
 		return int(convertOsErrToSyscallErrno("rmdir", err))
+	}
+
+	// Notify peer about the removed directory (only for local changes).
+	if notifyPeer && d.OnLocalChange != nil {
+		d.OnLocalChange(types.FileEvent{
+			Path:   path,
+			Action: types.RemoveDir,
+			Attr:   nil, // No attributes needed for removal
+		})
+		logger.Info("Notified peer about removed directory", "path", path)
 	}
 
 	// TODO: Remove also sub-files and sub dirs.
@@ -812,13 +865,32 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 // Unlink removes a file.
 func (d *Dir) Unlink(path string) (errCode int) {
 	defer d.recoverPanic("Unlink", &errCode)
+	return d.unlinkInternal(path, true)
+}
+
+// UnlinkFromPeer removes a file without notifying the peer (to avoid loops).
+func (d *Dir) UnlinkFromPeer(path string) (errCode int) {
+	return d.unlinkInternal(path, false)
+}
+
+func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	d.logger.Info("Unlink", "path", path, "inode", d.Inode)
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "unlink", "path", path)
-	err := syscall.Unlink(path)
+	err := syscall.Unlink(cleanPath)
 	if err != nil {
 		logger.Error("Failed to unlink", "error", err)
 		return int(convertOsErrToSyscallErrno("unlink", err))
+	}
+
+	// Notify peer about the removed file (only for local changes).
+	if notifyPeer && d.OnLocalChange != nil {
+		d.OnLocalChange(types.FileEvent{
+			Path:   path,
+			Action: types.RemoveFile,
+			Attr:   nil, // No attributes needed for removal
+		})
+		logger.Info("Notified peer about removed file", "path", path)
 	}
 
 	return 0
