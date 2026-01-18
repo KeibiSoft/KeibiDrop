@@ -9,6 +9,7 @@ require (
 	github.com/pkg/xattr v0.4.12
 	github.com/stretchr/testify v1.10.0
 	github.com/winfsp/cgofuse v1.6.0
+	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/crypto v0.43.0
 	golang.org/x/sys v0.37.0
 	google.golang.org/grpc v1.72.1
@@ -48,7 +49,6 @@ require (
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
-	github.com/zeebo/xxh3 v1.0.2 // indirect
 	golang.org/x/image v0.32.0 // indirect
 	golang.org/x/net v0.46.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
