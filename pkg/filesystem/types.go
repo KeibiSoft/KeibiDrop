@@ -10,10 +10,111 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	winfuse "github.com/winfsp/cgofuse/fuse"
+	"github.com/zeebo/xxh3"
 )
+
+// DownloadState tracks download progress for resumption on reconnect.
+type DownloadState struct {
+	TotalSize       atomic.Uint64 // Expected total bytes from peer.
+	BytesDownloaded atomic.Uint64 // Bytes successfully written to local cache.
+	LastReadOffset  atomic.Int64  // Last successfully read offset.
+	StartedAt       atomic.Int64  // Unix nano when download started.
+	LastSuccessAt   atomic.Int64  // Unix nano of last successful read.
+	AttemptCount    atomic.Int32  // Reconnection attempts since last success.
+	MaxRetries      int           // Max retries before giving up (default 5).
+
+	// Checksum tracking using xxHash3 (~30GB/s, non-cryptographic).
+	// Used to verify download integrity, not for security (data is already authenticated).
+	hasher   *xxh3.Hasher
+	hasherMu sync.Mutex
+}
+
+// Reset clears download state for a new download.
+func (ds *DownloadState) Reset(totalSize uint64) {
+	ds.TotalSize.Store(totalSize)
+	ds.BytesDownloaded.Store(0)
+	ds.LastReadOffset.Store(0)
+	ds.StartedAt.Store(time.Now().UnixNano())
+	ds.LastSuccessAt.Store(time.Now().UnixNano())
+	ds.AttemptCount.Store(0)
+
+	// Initialize fresh hasher.
+	ds.hasherMu.Lock()
+	ds.hasher = xxh3.New()
+	ds.hasherMu.Unlock()
+}
+
+// UpdateProgress records successful read progress and updates checksum.
+func (ds *DownloadState) UpdateProgress(offset int64, bytesRead int) {
+	ds.BytesDownloaded.Add(uint64(bytesRead))
+	newOffset := offset + int64(bytesRead)
+	// Only update LastReadOffset if this extends our progress.
+	for {
+		current := ds.LastReadOffset.Load()
+		if newOffset <= current {
+			break
+		}
+		if ds.LastReadOffset.CompareAndSwap(current, newOffset) {
+			break
+		}
+	}
+	ds.LastSuccessAt.Store(time.Now().UnixNano())
+	ds.AttemptCount.Store(0) // Reset retry count on success.
+}
+
+// UpdateChecksum adds data to the running checksum.
+// Call this with the actual bytes received (in order received, not by offset).
+func (ds *DownloadState) UpdateChecksum(data []byte) {
+	ds.hasherMu.Lock()
+	if ds.hasher != nil {
+		_, _ = ds.hasher.Write(data)
+	}
+	ds.hasherMu.Unlock()
+}
+
+// Checksum returns the current xxHash3 checksum of received data.
+func (ds *DownloadState) Checksum() uint64 {
+	ds.hasherMu.Lock()
+	defer ds.hasherMu.Unlock()
+	if ds.hasher == nil {
+		return 0
+	}
+	return ds.hasher.Sum64()
+}
+
+// CanRetry checks if we should attempt reconnection.
+func (ds *DownloadState) CanRetry() bool {
+	maxRetries := ds.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = 5 // Default.
+	}
+	return int(ds.AttemptCount.Load()) < maxRetries
+}
+
+// RecordAttempt increments the retry counter.
+func (ds *DownloadState) RecordAttempt() int32 {
+	return ds.AttemptCount.Add(1)
+}
+
+// Progress returns download completion percentage (0-100).
+func (ds *DownloadState) Progress() float64 {
+	total := ds.TotalSize.Load()
+	if total == 0 {
+		return 0
+	}
+	return float64(ds.BytesDownloaded.Load()) / float64(total) * 100
+}
+
+// IsComplete returns true if all bytes have been downloaded.
+func (ds *DownloadState) IsComplete() bool {
+	total := ds.TotalSize.Load()
+	return total > 0 && ds.BytesDownloaded.Load() >= total
+}
 
 // The plan is like this:
 // Mounted filesystem for Alice is visible at "mountedPath".
@@ -105,6 +206,9 @@ type File struct {
 	StreamProvider   types.FileStreamProvider
 	RemoteFileStream types.RemoteFileStream
 	StreamCancel     context.CancelFunc // Cancel function for the stream context
+
+	// Download resumption state.
+	Download DownloadState
 
 	OnLocalChange func(event types.FileEvent)
 
