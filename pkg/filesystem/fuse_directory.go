@@ -113,7 +113,18 @@ func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint6
 
 	relativePath := path
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	fd, err := syscall.Open(path, flags, mode)
+
+	// Extract permission bits only (mode may include S_IFREG file type bits).
+	// Ensure owner has write permission so file can be reopened after close.
+	createMode := mode & 0o777
+	if createMode&0o200 == 0 {
+		createMode |= 0o200 // Add owner write permission
+	}
+	if createMode == 0 {
+		createMode = 0o644 // Default if mode was 0
+	}
+
+	fd, err := syscall.Open(path, flags, createMode)
 	if err != nil {
 		logger.Error("Failed to create file", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
@@ -177,7 +188,19 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 
 	relativePath := path
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	fd, err := syscall.Open(localPath, flags, mode)
+
+	// Extract permission bits only (mode may include S_IFREG file type bits).
+	// Ensure owner has write permission so file can be reopened after close.
+	// Without this, files created with mode 0444 (read-only) cannot be reopened for write.
+	createMode := mode & 0o777
+	if createMode&0o200 == 0 {
+		createMode |= 0o200 // Add owner write permission
+	}
+	if createMode == 0 {
+		createMode = 0o644 // Default if mode was 0
+	}
+
+	fd, err := syscall.Open(localPath, flags, createMode)
 	if err != nil {
 		logger.Error("Failed to create file", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err))
