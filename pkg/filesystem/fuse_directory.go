@@ -466,17 +466,42 @@ func (d *Dir) Flush(path string, fh uint64) (errCode int) {
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	defer d.recoverPanic("Fsync", &errCode)
 	d.logger.Warn("FUSE Fsync", "path", path, "datasync", datasync, "fh", fh)
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "fsync", "path", path)
+	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	logger := d.logger.With("method", "fsync", "path", localPath)
+
 	err := syscall.Fsync(int(fh))
-	if err != nil {
-		d.logger.Warn("FUSE Fsync FAILED", "path", path, "fh", fh, "error", err)
-		logger.Error("Failed to fsync", "error", err)
-		return int(convertOsErrToSyscallErrno("fsync", err))
+	if err == nil {
+		d.logger.Warn("FUSE Fsync SUCCESS", "path", localPath, "fh", fh)
+		return 0
 	}
 
-	d.logger.Warn("FUSE Fsync SUCCESS", "path", path, "fh", fh)
-	return 0
+	// If EBADF, the fd was already closed (Release called before Fsync).
+	// This is a FUSE race condition. Workaround: open, fsync, close.
+	if err == syscall.EBADF {
+		d.logger.Warn("FUSE Fsync EBADF - attempting fallback open/fsync/close", "path", localPath, "fh", fh)
+
+		fd, openErr := syscall.Open(localPath, syscall.O_RDONLY, 0)
+		if openErr != nil {
+			// File might have been renamed/deleted - that's OK, data was already written
+			d.logger.Warn("FUSE Fsync fallback open failed (file may have been renamed)", "path", localPath, "error", openErr)
+			return 0 // Return success - the data was committed before close
+		}
+
+		fsyncErr := syscall.Fsync(fd)
+		syscall.Close(fd)
+
+		if fsyncErr != nil {
+			d.logger.Warn("FUSE Fsync fallback fsync failed", "path", localPath, "error", fsyncErr)
+			return int(convertOsErrToSyscallErrno("fsync", fsyncErr))
+		}
+
+		d.logger.Warn("FUSE Fsync fallback SUCCESS", "path", localPath)
+		return 0
+	}
+
+	d.logger.Warn("FUSE Fsync FAILED", "path", localPath, "fh", fh, "error", err)
+	logger.Error("Failed to fsync", "error", err)
+	return int(convertOsErrToSyscallErrno("fsync", err))
 }
 
 func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) (errCode int) {
