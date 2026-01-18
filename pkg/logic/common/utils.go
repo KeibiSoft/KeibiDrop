@@ -288,10 +288,14 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			return
 		}
 
-		_, err := kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+		req := &bindings.NotifyRequest{
 			Type: bindings.NotifyType(event.Action),
 			Path: event.Path,
-			Attr: &bindings.Attr{
+		}
+
+		// Attr may be nil for removal events.
+		if event.Attr != nil {
+			req.Attr = &bindings.Attr{
 				Dev:              event.Attr.Dev,
 				Ino:              event.Attr.Ino,
 				Mode:             event.Attr.Mode,
@@ -301,8 +305,10 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				ChangeTime:       event.Attr.ChangeTime,
 				BirthTime:        event.Attr.BirthTime,
 				Flags:            event.Attr.Flags,
-			},
-		})
+			}
+		}
+
+		_, err := kd.session.GRPCClient.Notify(context.Background(), req)
 		if err != nil {
 			logger.Error("Failed to notify peer", "error", err)
 		}
