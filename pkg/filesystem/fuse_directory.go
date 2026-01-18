@@ -804,16 +804,42 @@ func (d *Dir) RmdirFromPeer(path string) (errCode int) {
 
 func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 	d.logger.Info("Rmdir", "path", path, "inode", d.Inode)
-	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "rmdir", "path", path)
+
+	// Check if this is a remote-only directory (track if we removed it from map).
+	d.Adm.Lock()
+	_, isRemoteDir := d.AllDirMap[path]
+	if isRemoteDir {
+		delete(d.AllDirMap, path)
+		logger.Info("Removed directory from AllDirMap", "path", path)
+	}
+	d.Adm.Unlock()
+
+	// Try to rmdir local directory (may not exist if remote-only).
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := syscall.Rmdir(cleanPath)
 	if err != nil {
-		logger.Error("Failed to remove dir", "error", err)
-		return int(convertOsErrToSyscallErrno("rmdir", err))
+		if os.IsNotExist(err) {
+			// Directory doesn't exist locally.
+			if isRemoteDir {
+				// Remote-only dir - we already cleaned up the map, success.
+				logger.Info("Remote-only directory removed (no local copy)", "path", path)
+			} else {
+				// No remote entry and no local dir - doesn't exist.
+				logger.Error("Failed to remove dir - not found", "error", err)
+				return int(convertOsErrToSyscallErrno("rmdir", err))
+			}
+		} else {
+			// Real error (not empty, permission denied, etc.) - fail regardless.
+			logger.Error("Failed to remove dir", "error", err)
+			return int(convertOsErrToSyscallErrno("rmdir", err))
+		}
+	} else {
+		logger.Info("Local directory removed", "path", path)
 	}
 
 	// Notify peer about the removed directory (only for local changes).
-	if notifyPeer && d.OnLocalChange != nil {
+	if notifyPeer && d.OnLocalChange != nil && !isRemoteDir {
 		d.OnLocalChange(types.FileEvent{
 			Path:   path,
 			Action: types.RemoveDir,
@@ -822,7 +848,7 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 		logger.Info("Notified peer about removed directory", "path", path)
 	}
 
-	// TODO: Remove also sub-files and sub dirs.
+	// TODO: Remove also sub-files and sub dirs from maps.
 
 	return 0
 }
@@ -893,16 +919,48 @@ func (d *Dir) UnlinkFromPeer(path string) (errCode int) {
 
 func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	d.logger.Info("Unlink", "path", path, "inode", d.Inode)
-	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "unlink", "path", path)
+
+	// Check if this is a remote-only file (not downloaded locally).
+	d.RemoteFilesLock.Lock()
+	remoteFile, isRemote := d.RemoteFiles[path]
+	if isRemote {
+		delete(d.RemoteFiles, path)
+		logger.Info("Removed remote file from map", "path", path)
+	}
+	d.RemoteFilesLock.Unlock()
+
+	// Also clean up AllFileMap.
+	d.AfmLock.Lock()
+	delete(d.AllFileMap, path)
+	d.AfmLock.Unlock()
+
+	// Try to unlink local file (may not exist if remote-only).
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := syscall.Unlink(cleanPath)
 	if err != nil {
-		logger.Error("Failed to unlink", "error", err)
-		return int(convertOsErrToSyscallErrno("unlink", err))
+		if os.IsNotExist(err) {
+			// File doesn't exist locally.
+			if isRemote {
+				// Remote-only file - we already cleaned up the maps, success.
+				logger.Info("Remote-only file removed (no local copy)", "path", path)
+			} else {
+				// No remote entry and no local file - file doesn't exist.
+				logger.Error("Failed to unlink - file not found", "error", err)
+				return int(convertOsErrToSyscallErrno("unlink", err))
+			}
+		} else {
+			// Real error (permission denied, etc.) - fail regardless.
+			logger.Error("Failed to unlink", "error", err)
+			return int(convertOsErrToSyscallErrno("unlink", err))
+		}
+	} else {
+		logger.Info("Local file unlinked", "path", path)
 	}
 
 	// Notify peer about the removed file (only for local changes).
-	if notifyPeer && d.OnLocalChange != nil {
+	// Only notify if this was OUR file (not a remote file we're just hiding locally).
+	if notifyPeer && d.OnLocalChange != nil && !isRemote && remoteFile == nil {
 		d.OnLocalChange(types.FileEvent{
 			Path:   path,
 			Action: types.RemoveFile,
