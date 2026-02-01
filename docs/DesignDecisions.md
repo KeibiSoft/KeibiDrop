@@ -433,7 +433,7 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
   ```go
   func shouldUseDirectIo(path string, flags int) bool {
       // PDF/images need mmap for Preview.app
-      mmapExtensions := []string{".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".heic", ".webp"}
+      mmapExtensions := []string{".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".heic", ".webp", ".mov", ".mp4"}
       for _, ext := range mmapExtensions {
           if strings.HasSuffix(strings.ToLower(path), ext) {
               return false  // Allow page cache for mmap
