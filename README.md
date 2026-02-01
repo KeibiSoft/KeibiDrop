@@ -100,6 +100,17 @@ After running pjdfstest, specific unsupported operations will be documented here
 - **Windows**: [WinFsp](https://winfsp.dev/)
 - **Linux**: fuse3 (usually preinstalled)
 
+### macOS: Enable `allow_other` for Finder/Preview access
+
+On macOS, sandboxed apps like Finder and Preview cannot access FUSE mounts unless `allow_other` is enabled. Without this, you'll get "you don't have permission to view it" errors when opening files directly from the mount.
+
+**One-time setup:**
+```bash
+sudo sh -c 'echo "user_allow_other" > /etc/fuse.conf'
+```
+
+This creates `/etc/fuse.conf` with the `user_allow_other` option, which allows non-root users to use the `allow_other` mount flag. No reboot required - just remount the filesystem.
+
 
 ---
 

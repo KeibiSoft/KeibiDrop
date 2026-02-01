@@ -843,6 +843,21 @@ extern "C" {
 extern "C" {
     pub fn KD_PrintBanner();
 }
+extern "C" {
+    pub fn KD_GetFileCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetFileName(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetConnectionStatus() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SaveFileAt(
+        index: ::std::os::raw::c_int,
+        localPath: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
 pub type __builtin_va_list = [__va_list_tag; 1usize];
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
