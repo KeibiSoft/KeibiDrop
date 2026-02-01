@@ -197,6 +197,14 @@ type File struct {
 
 	HadEdits bool
 
+	// WasTruncatedToZero tracks if Truncate(size=0) was explicitly called.
+	// Used with HadEdits to distinguish legitimate empty files from transient states.
+	WasTruncatedToZero bool
+
+	// LastNotifiedSize tracks the file size we last sent to peer in ADD_FILE.
+	// Used to avoid sending duplicate notifications with same size during file copy.
+	LastNotifiedSize int64
+
 	// PeerStoppedSharing is set when peer sends REMOVE_FILE but download is in progress.
 	// Once download completes (Release with 0 open handles), the file reference is removed.
 	PeerStoppedSharing bool

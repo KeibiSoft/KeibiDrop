@@ -166,10 +166,10 @@ func shouldUseDirectIo(path string, flags int) bool {
 		return false
 	}
 
-	// PDF and common document/image formats need mmap for Preview.app
-	// Preview opens these with O_RDWR for annotation support, but needs mmap to read.
+	// PDF, images, and videos need mmap for Preview.app/QuickTime
+	// These apps open files with O_RDWR but need mmap to read content.
 	lowerPath := strings.ToLower(path)
-	mmapExtensions := []string{".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".heic", ".webp"}
+	mmapExtensions := []string{".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".heic", ".webp", ".mov", ".mp4"}
 	for _, ext := range mmapExtensions {
 		if strings.HasSuffix(lowerPath, ext) {
 			return false
@@ -1003,16 +1003,54 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				return int(cerr)
 			}
 
-			aux := &winfuse.Stat_t{}
-			copyFusestatFromGostat(aux, &stgo)
+			// Only notify peer if file size changed since last notification.
+			// During file copy, Finder may release the file multiple times before
+			// content is fully written. This prevents duplicate notifications.
+			if stgo.Size != f.LastNotifiedSize {
+				// If writes happened (HadEdits) but size is 0, it's transient during copy.
+				// A truncate without subsequent writes can legitimately have size=0.
+				if stgo.Size == 0 && f.HadEdits {
+					logger.Debug("Skipping size=0 notification - writes occurred, likely transient", "path", path)
+				} else if stgo.Size == 0 && f.LastNotifiedSize == 0 {
+					// First notification and size is 0. Could be:
+					// 1. Intentional empty file (touch)
+					// 2. Transient during copy (Create → Release before Write)
+					// Wait briefly and re-stat to distinguish.
+					time.Sleep(100 * time.Millisecond)
+					if err := syscall.Lstat(cleanPath, &stgo); err == nil && stgo.Size > 0 {
+						// Size increased - file is being written, skip this notification.
+						f.LastNotifiedSize = stgo.Size
+						logger.Debug("Size changed during delay, updating", "path", path, "newSize", stgo.Size)
+					} else {
+						// Size is still 0 - intentional empty file.
+						aux := &winfuse.Stat_t{}
+						copyFusestatFromGostat(aux, &stgo)
+						d.OnLocalChange(types.FileEvent{
+							Path:   path,
+							Action: types.AddFile,
+							Attr:   types.StatToAttr(aux),
+						})
+						f.LastNotifiedSize = stgo.Size
+						logger.Debug("Notified peer about empty file", "path", path)
+					}
+				} else {
+					aux := &winfuse.Stat_t{}
+					copyFusestatFromGostat(aux, &stgo)
 
-			d.OnLocalChange(types.FileEvent{
-				Path:   path,
-				Action: types.AddFile,
-				Attr:   types.StatToAttr(aux),
-			})
+					d.OnLocalChange(types.FileEvent{
+						Path:   path,
+						Action: types.AddFile,
+						Attr:   types.StatToAttr(aux),
+					})
 
-			f.NotLocalSynced = false
+					f.LastNotifiedSize = stgo.Size
+					logger.Debug("Notified peer about new file", "path", path, "size", stgo.Size)
+				}
+			} else {
+				logger.Debug("Skipping duplicate ADD_FILE notification - size unchanged", "path", path, "size", stgo.Size)
+			}
+
+			f.NotRemoteSynced = false
 			// It was just created. Clear the edits.
 			f.HadEdits = false
 		}
