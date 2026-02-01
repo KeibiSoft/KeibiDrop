@@ -492,3 +492,13 @@ func (kd *KeibidropServiceImpl) Rekey(_ context.Context, req *bindings.RekeyRequ
 	logger.Info("Rekey request processed successfully")
 	return resp, nil
 }
+
+// Heartbeat responds to connection health checks.
+// Used by HealthMonitor to detect connection loss.
+func (kd *KeibidropServiceImpl) Heartbeat(_ context.Context, req *bindings.HeartbeatRequest) (*bindings.HeartbeatResponse, error) {
+	return &bindings.HeartbeatResponse{
+		Timestamp:    uint64(time.Now().UnixNano()),
+		ReqTimestamp: req.Timestamp,
+		Seq:          req.Seq,
+	}, nil
+}

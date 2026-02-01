@@ -26,6 +26,9 @@ service KeibiService {
 
   // Re-keying for forward secrecy during long sessions.
   rpc Rekey (RekeyRequest) returns (RekeyResponse);
+
+  // Connection health monitoring for auto-reconnection.
+  rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
 }
 
 // ========== MESSAGE DEFINITIONS ==========
@@ -138,5 +141,21 @@ message RekeyRequest {
 message RekeyResponse {
   map<string, bytes> enc_seeds = 1;  // peer's new encapsulated seeds
   uint64 epoch = 2;                  // confirmed epoch
+}
+
+// ========== HEARTBEAT (CONNECTION HEALTH) ==========
+
+// HeartbeatRequest for connection health monitoring.
+// Sent every 5 seconds; 3 consecutive failures trigger reconnection.
+message HeartbeatRequest {
+  uint64 timestamp = 1;  // sender's unix nano timestamp
+  uint64 seq = 2;        // monotonic sequence number
+}
+
+// HeartbeatResponse echoes the request for RTT calculation.
+message HeartbeatResponse {
+  uint64 timestamp = 1;      // responder's unix nano timestamp
+  uint64 req_timestamp = 2;  // echo of request timestamp (for RTT)
+  uint64 seq = 3;            // echo of sequence number
 }
 

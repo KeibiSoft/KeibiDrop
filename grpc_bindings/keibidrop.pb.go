@@ -1061,6 +1061,121 @@ func (x *RekeyResponse) GetEpoch() uint64 {
 	return 0
 }
 
+// HeartbeatRequest for connection health monitoring.
+// Sent every 5 seconds; 3 consecutive failures trigger reconnection.
+type HeartbeatRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp     uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // sender's unix nano timestamp
+	Seq           uint64                 `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`             // monotonic sequence number
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeartbeatRequest) Reset() {
+	*x = HeartbeatRequest{}
+	mi := &file_keibidrop_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeartbeatRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeartbeatRequest) ProtoMessage() {}
+
+func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
+func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *HeartbeatRequest) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *HeartbeatRequest) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+// HeartbeatResponse echoes the request for RTT calculation.
+type HeartbeatResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp     uint64                 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`                           // responder's unix nano timestamp
+	ReqTimestamp  uint64                 `protobuf:"varint,2,opt,name=req_timestamp,json=reqTimestamp,proto3" json:"req_timestamp,omitempty"` // echo of request timestamp (for RTT)
+	Seq           uint64                 `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"`                                       // echo of sequence number
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeartbeatResponse) Reset() {
+	*x = HeartbeatResponse{}
+	mi := &file_keibidrop_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeartbeatResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeartbeatResponse) ProtoMessage() {}
+
+func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
+func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *HeartbeatResponse) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *HeartbeatResponse) GetReqTimestamp() uint64 {
+	if x != nil {
+		return x.ReqTimestamp
+	}
+	return 0
+}
+
+func (x *HeartbeatResponse) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
 var File_keibidrop_proto protoreflect.FileDescriptor
 
 const file_keibidrop_proto_rawDesc = "" +
@@ -1139,7 +1254,14 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x1a;\n" +
 	"\rEncSeedsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01*\x93\x01\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"B\n" +
+	"\x10HeartbeatRequest\x12\x1c\n" +
+	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12\x10\n" +
+	"\x03seq\x18\x02 \x01(\x04R\x03seq\"h\n" +
+	"\x11HeartbeatResponse\x12\x1c\n" +
+	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12#\n" +
+	"\rreq_timestamp\x18\x02 \x01(\x04R\freqTimestamp\x12\x10\n" +
+	"\x03seq\x18\x03 \x01(\x04R\x03seq*\x93\x01\n" +
 	"\n" +
 	"NotifyType\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
@@ -1152,7 +1274,7 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\tEDIT_FILE\x10\x06\x12\x0f\n" +
 	"\vRENAME_FILE\x10\a\x12\x0e\n" +
 	"\n" +
-	"RENAME_DIR\x10\b2\xf1\x03\n" +
+	"RENAME_DIR\x10\b2\xb9\x04\n" +
 	"\fKeibiService\x127\n" +
 	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12<\n" +
 	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse(\x01\x12;\n" +
@@ -1161,7 +1283,8 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x05Close\x12\x17.keibidrop.CloseRequest\x1a\x18.keibidrop.CloseResponse\x12=\n" +
 	"\x06Notify\x12\x18.keibidrop.NotifyRequest\x1a\x19.keibidrop.NotifyResponse\x12:\n" +
 	"\x05Debug\x12\x17.keibidrop.DebugRequest\x1a\x18.keibidrop.DebugResponse\x12:\n" +
-	"\x05Rekey\x12\x17.keibidrop.RekeyRequest\x1a\x18.keibidrop.RekeyResponseB8Z6github.com/KeibiSoft/KeibiDrop/grpc_bindings;keibidropb\x06proto3"
+	"\x05Rekey\x12\x17.keibidrop.RekeyRequest\x1a\x18.keibidrop.RekeyResponse\x12F\n" +
+	"\tHeartbeat\x12\x1b.keibidrop.HeartbeatRequest\x1a\x1c.keibidrop.HeartbeatResponseB8Z6github.com/KeibiSoft/KeibiDrop/grpc_bindings;keibidropb\x06proto3"
 
 var (
 	file_keibidrop_proto_rawDescOnce sync.Once
@@ -1176,34 +1299,36 @@ func file_keibidrop_proto_rawDescGZIP() []byte {
 }
 
 var file_keibidrop_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_keibidrop_proto_goTypes = []any{
-	(NotifyType)(0),        // 0: keibidrop.NotifyType
-	(*DebugRequest)(nil),   // 1: keibidrop.DebugRequest
-	(*DebugResponse)(nil),  // 2: keibidrop.DebugResponse
-	(*OpenRequest)(nil),    // 3: keibidrop.OpenRequest
-	(*OpenResponse)(nil),   // 4: keibidrop.OpenResponse
-	(*WriteRequest)(nil),   // 5: keibidrop.WriteRequest
-	(*WriteResponse)(nil),  // 6: keibidrop.WriteResponse
-	(*ReadRequest)(nil),    // 7: keibidrop.ReadRequest
-	(*ReadResponse)(nil),   // 8: keibidrop.ReadResponse
-	(*FsyncRequest)(nil),   // 9: keibidrop.FsyncRequest
-	(*FsyncResponse)(nil),  // 10: keibidrop.FsyncResponse
-	(*CloseRequest)(nil),   // 11: keibidrop.CloseRequest
-	(*CloseResponse)(nil),  // 12: keibidrop.CloseResponse
-	(*NotifyRequest)(nil),  // 13: keibidrop.NotifyRequest
-	(*NotifyResponse)(nil), // 14: keibidrop.NotifyResponse
-	(*Attr)(nil),           // 15: keibidrop.Attr
-	(*RekeyRequest)(nil),   // 16: keibidrop.RekeyRequest
-	(*RekeyResponse)(nil),  // 17: keibidrop.RekeyResponse
-	nil,                    // 18: keibidrop.RekeyRequest.EncSeedsEntry
-	nil,                    // 19: keibidrop.RekeyResponse.EncSeedsEntry
+	(NotifyType)(0),           // 0: keibidrop.NotifyType
+	(*DebugRequest)(nil),      // 1: keibidrop.DebugRequest
+	(*DebugResponse)(nil),     // 2: keibidrop.DebugResponse
+	(*OpenRequest)(nil),       // 3: keibidrop.OpenRequest
+	(*OpenResponse)(nil),      // 4: keibidrop.OpenResponse
+	(*WriteRequest)(nil),      // 5: keibidrop.WriteRequest
+	(*WriteResponse)(nil),     // 6: keibidrop.WriteResponse
+	(*ReadRequest)(nil),       // 7: keibidrop.ReadRequest
+	(*ReadResponse)(nil),      // 8: keibidrop.ReadResponse
+	(*FsyncRequest)(nil),      // 9: keibidrop.FsyncRequest
+	(*FsyncResponse)(nil),     // 10: keibidrop.FsyncResponse
+	(*CloseRequest)(nil),      // 11: keibidrop.CloseRequest
+	(*CloseResponse)(nil),     // 12: keibidrop.CloseResponse
+	(*NotifyRequest)(nil),     // 13: keibidrop.NotifyRequest
+	(*NotifyResponse)(nil),    // 14: keibidrop.NotifyResponse
+	(*Attr)(nil),              // 15: keibidrop.Attr
+	(*RekeyRequest)(nil),      // 16: keibidrop.RekeyRequest
+	(*RekeyResponse)(nil),     // 17: keibidrop.RekeyResponse
+	(*HeartbeatRequest)(nil),  // 18: keibidrop.HeartbeatRequest
+	(*HeartbeatResponse)(nil), // 19: keibidrop.HeartbeatResponse
+	nil,                       // 20: keibidrop.RekeyRequest.EncSeedsEntry
+	nil,                       // 21: keibidrop.RekeyResponse.EncSeedsEntry
 }
 var file_keibidrop_proto_depIdxs = []int32{
 	0,  // 0: keibidrop.NotifyRequest.type:type_name -> keibidrop.NotifyType
 	15, // 1: keibidrop.NotifyRequest.attr:type_name -> keibidrop.Attr
-	18, // 2: keibidrop.RekeyRequest.enc_seeds:type_name -> keibidrop.RekeyRequest.EncSeedsEntry
-	19, // 3: keibidrop.RekeyResponse.enc_seeds:type_name -> keibidrop.RekeyResponse.EncSeedsEntry
+	20, // 2: keibidrop.RekeyRequest.enc_seeds:type_name -> keibidrop.RekeyRequest.EncSeedsEntry
+	21, // 3: keibidrop.RekeyResponse.enc_seeds:type_name -> keibidrop.RekeyResponse.EncSeedsEntry
 	3,  // 4: keibidrop.KeibiService.Open:input_type -> keibidrop.OpenRequest
 	5,  // 5: keibidrop.KeibiService.Write:input_type -> keibidrop.WriteRequest
 	7,  // 6: keibidrop.KeibiService.Read:input_type -> keibidrop.ReadRequest
@@ -1212,16 +1337,18 @@ var file_keibidrop_proto_depIdxs = []int32{
 	13, // 9: keibidrop.KeibiService.Notify:input_type -> keibidrop.NotifyRequest
 	1,  // 10: keibidrop.KeibiService.Debug:input_type -> keibidrop.DebugRequest
 	16, // 11: keibidrop.KeibiService.Rekey:input_type -> keibidrop.RekeyRequest
-	4,  // 12: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
-	6,  // 13: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
-	8,  // 14: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
-	10, // 15: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
-	12, // 16: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
-	14, // 17: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
-	2,  // 18: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
-	17, // 19: keibidrop.KeibiService.Rekey:output_type -> keibidrop.RekeyResponse
-	12, // [12:20] is the sub-list for method output_type
-	4,  // [4:12] is the sub-list for method input_type
+	18, // 12: keibidrop.KeibiService.Heartbeat:input_type -> keibidrop.HeartbeatRequest
+	4,  // 13: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
+	6,  // 14: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
+	8,  // 15: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
+	10, // 16: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
+	12, // 17: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
+	14, // 18: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
+	2,  // 19: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
+	17, // 20: keibidrop.KeibiService.Rekey:output_type -> keibidrop.RekeyResponse
+	19, // 21: keibidrop.KeibiService.Heartbeat:output_type -> keibidrop.HeartbeatResponse
+	13, // [13:22] is the sub-list for method output_type
+	4,  // [4:13] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -1238,7 +1365,7 @@ func file_keibidrop_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_keibidrop_proto_rawDesc), len(file_keibidrop_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   19,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

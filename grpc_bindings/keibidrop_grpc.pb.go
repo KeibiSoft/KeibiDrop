@@ -25,14 +25,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	KeibiService_Open_FullMethodName   = "/keibidrop.KeibiService/Open"
-	KeibiService_Write_FullMethodName  = "/keibidrop.KeibiService/Write"
-	KeibiService_Read_FullMethodName   = "/keibidrop.KeibiService/Read"
-	KeibiService_Fsync_FullMethodName  = "/keibidrop.KeibiService/Fsync"
-	KeibiService_Close_FullMethodName  = "/keibidrop.KeibiService/Close"
-	KeibiService_Notify_FullMethodName = "/keibidrop.KeibiService/Notify"
-	KeibiService_Debug_FullMethodName  = "/keibidrop.KeibiService/Debug"
-	KeibiService_Rekey_FullMethodName  = "/keibidrop.KeibiService/Rekey"
+	KeibiService_Open_FullMethodName      = "/keibidrop.KeibiService/Open"
+	KeibiService_Write_FullMethodName     = "/keibidrop.KeibiService/Write"
+	KeibiService_Read_FullMethodName      = "/keibidrop.KeibiService/Read"
+	KeibiService_Fsync_FullMethodName     = "/keibidrop.KeibiService/Fsync"
+	KeibiService_Close_FullMethodName     = "/keibidrop.KeibiService/Close"
+	KeibiService_Notify_FullMethodName    = "/keibidrop.KeibiService/Notify"
+	KeibiService_Debug_FullMethodName     = "/keibidrop.KeibiService/Debug"
+	KeibiService_Rekey_FullMethodName     = "/keibidrop.KeibiService/Rekey"
+	KeibiService_Heartbeat_FullMethodName = "/keibidrop.KeibiService/Heartbeat"
 )
 
 // KeibiServiceClient is the client API for KeibiService service.
@@ -48,6 +49,8 @@ type KeibiServiceClient interface {
 	Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error)
 	// Re-keying for forward secrecy during long sessions.
 	Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error)
+	// Connection health monitoring for auto-reconnection.
+	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 }
 
 type keibiServiceClient struct {
@@ -144,6 +147,16 @@ func (c *keibiServiceClient) Rekey(ctx context.Context, in *RekeyRequest, opts .
 	return out, nil
 }
 
+func (c *keibiServiceClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HeartbeatResponse)
+	err := c.cc.Invoke(ctx, KeibiService_Heartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // KeibiServiceServer is the server API for KeibiService service.
 // All implementations must embed UnimplementedKeibiServiceServer
 // for forward compatibility.
@@ -157,6 +170,8 @@ type KeibiServiceServer interface {
 	Debug(context.Context, *DebugRequest) (*DebugResponse, error)
 	// Re-keying for forward secrecy during long sessions.
 	Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error)
+	// Connection health monitoring for auto-reconnection.
+	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	mustEmbedUnimplementedKeibiServiceServer()
 }
 
@@ -190,6 +205,9 @@ func (UnimplementedKeibiServiceServer) Debug(context.Context, *DebugRequest) (*D
 }
 func (UnimplementedKeibiServiceServer) Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Rekey not implemented")
+}
+func (UnimplementedKeibiServiceServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Heartbeat not implemented")
 }
 func (UnimplementedKeibiServiceServer) mustEmbedUnimplementedKeibiServiceServer() {}
 func (UnimplementedKeibiServiceServer) testEmbeddedByValue()                      {}
@@ -334,6 +352,24 @@ func _KeibiService_Rekey_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeibiService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HeartbeatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeibiServiceServer).Heartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeibiService_Heartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeibiServiceServer).Heartbeat(ctx, req.(*HeartbeatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // KeibiService_ServiceDesc is the grpc.ServiceDesc for KeibiService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -364,6 +400,10 @@ var KeibiService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Rekey",
 			Handler:    _KeibiService_Rekey_Handler,
+		},
+		{
+			MethodName: "Heartbeat",
+			Handler:    _KeibiService_Heartbeat_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
