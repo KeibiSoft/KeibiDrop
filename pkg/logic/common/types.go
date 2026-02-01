@@ -72,6 +72,11 @@ type KeibiDrop struct {
 	grpcServer      *grpc.Server
 	filesystemReady chan struct{}
 	serverReadyMu   sync.Mutex
+
+	// Connection resilience.
+	HealthMonitor    *session.HealthMonitor
+	ReconnectManager *session.ReconnectManager
+	RelayKeepalive   *RelayKeepalive
 }
 
 type TaskSignal int
