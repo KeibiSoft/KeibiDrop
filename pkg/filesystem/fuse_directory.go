@@ -46,24 +46,27 @@ func (d *Dir) recoverPanic(funcName string, errCode *int) {
 
 func (d *Dir) Access(path string, _mask uint32) (errCode int) {
 	defer d.recoverPanic("Access", &errCode)
-	logger := d.logger.With("method", "access", "path", path)
+	logger := d.logger.With("method", "access", "path", path, "mask", _mask)
+	logger.Debug("Access called")
 
 	d.RemoteFilesLock.RLock()
 	_, ok := d.RemoteFiles[path]
 	d.RemoteFilesLock.RUnlock()
 	if ok {
+		logger.Debug("Access OK (remote file)")
 		return 0
 	}
 
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
 	stat := &syscall.Stat_t{}
-	err := syscall.Stat(path, stat)
+	err := syscall.Stat(realPath, stat)
 	if err != nil {
-		logger.Error("Failed to stat", "error", err)
+		logger.Warn("Access FAILED", "error", err, "realPath", realPath)
 		return int(convertOsErrToSyscallErrno("stat", err))
 	}
 
+	logger.Debug("Access OK (local file)")
 	return 0
 }
 
@@ -156,10 +159,21 @@ func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint6
 // shouldUseDirectIo determines if a file should bypass kernel page cache.
 // Returns true for files that need real-time sync (write access, not in .git/).
 // Returns false for .git/ files (to allow mmap for git operations).
+// Returns false for mmap-dependent files (PDF, images) that apps like Preview need.
 func shouldUseDirectIo(path string, flags int) bool {
 	// .git/ files: allow page cache for mmap (git uses mmap for pack files)
 	if strings.Contains(path, "/.git/") || strings.HasPrefix(path, ".git/") {
 		return false
+	}
+
+	// PDF and common document/image formats need mmap for Preview.app
+	// Preview opens these with O_RDWR for annotation support, but needs mmap to read.
+	lowerPath := strings.ToLower(path)
+	mmapExtensions := []string{".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".heic", ".webp"}
+	for _, ext := range mmapExtensions {
+		if strings.HasSuffix(lowerPath, ext) {
+			return false
+		}
 	}
 
 	// Write access: use direct_io for real-time sync
@@ -1622,6 +1636,10 @@ func (d *Dir) Listxattr(path string, fill func(name string) bool) (errCode int) 
 	}
 
 	for _, s := range res {
+		// Hide quarantine xattr - macOS Gatekeeper blocks FUSE files with this
+		if s == "com.apple.quarantine" {
+			continue
+		}
 		fill(s)
 	}
 
@@ -1630,22 +1648,27 @@ func (d *Dir) Listxattr(path string, fill func(name string) bool) (errCode int) 
 
 func (d *Dir) Getxattr(path string, name string) (errCode int, data []byte) {
 	defer d.recoverPanic("Getxattr", &errCode)
-	// Note for the reader:
-	// If the reader has a need for xattr, use the filesystem path instead of the
-	// method signature path.
-	// d.RealPathOfFile is the real path of d on the system.
-	// but the catch is that the file/dir name in the method input path:
-	// is the last segment, this implies that you need to
-	// xattr.Get(d.RealPathOfFile+"/"+ name)
+	logger := d.logger.With("method", "getxattr", "path", path, "name", name)
+	logger.Debug("Getxattr called")
 
-	// Don't log xattr lookups - too frequent and mostly expected failures
+	// Block quarantine xattr - macOS Gatekeeper checks this and refuses to open
+	// files on FUSE mounts if quarantine is present. Return ENODATA to make
+	// macOS think the file isn't quarantined.
+	if name == "com.apple.quarantine" {
+		logger.Debug("Getxattr blocked quarantine xattr")
+		return -int(syscall.ENODATA), nil
+	}
+
 	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
 	res, err := xattr.Get(realPath, name)
 	if err != nil {
+		// Only log as warning for unexpected errors (not ENOATTR which is normal)
+		logger.Debug("Getxattr failed", "error", err, "realPath", realPath)
 		return int(convertOsErrToSyscallErrno("get-xattr", err)), nil
 	}
 
+	logger.Debug("Getxattr OK", "dataLen", len(res))
 	return 0, res
 }
 

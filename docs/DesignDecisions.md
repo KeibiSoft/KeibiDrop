@@ -360,3 +360,109 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 - **References:**
 
   - [POSIX file mode bits](https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/sys_stat.h.html)
+
+---
+
+## `DD-008`: macOS Sandboxed App Compatibility (Preview, Finder)
+
+- **Date:** 2026-02-01
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Status:** Accepted
+- **Location:** `pkg/filesystem/fuse_directory.go`, `pkg/filesystem/api.go`
+- **Decision:**
+
+  Three changes to enable macOS sandboxed apps (Preview, Finder, Photos) to open files from FUSE mounts:
+
+  1. **Mount option:** Use `allow_other` + configure `/etc/fuse.conf`
+  2. **Xattr filtering:** Block `com.apple.quarantine` in `Getxattr()` and `Listxattr()`
+  3. **DirectIO exemption:** Disable `direct_io` for PDF/image files
+
+- **Rationale:**
+
+  - **Problem:** Preview.app shows "file couldn't be opened" or "you don't have permission" for PDF files on FUSE mounts, even when `cat` and `md5` work correctly.
+
+  - **Root cause analysis (via dtruss):**
+
+    1. **Permission denied:** Sandboxed apps run with restricted privileges. FUSE mounts by default only allow the mounting user. The `allow_other` mount option is required, but macFUSE requires `/etc/fuse.conf` with `user_allow_other` to enable it.
+
+    2. **Gatekeeper blocks FUSE files:** macOS checks `com.apple.quarantine` xattr on downloaded files. For files on FUSE mounts, Gatekeeper cannot complete its verification and silently refuses to open the file. Preview calls `Open()` then immediately calls `Release()` without any `Read()`.
+
+    3. **mmap required:** Preview uses `mmap()` to read PDFs (for efficient page rendering). When `direct_io=true`, mmap returns EINVAL because there's no page cache. Preview opens PDFs with O_RDWR (for annotation support), which triggered `direct_io=true`.
+
+  - **Debug sequence from FUSE logs:**
+    ```
+    Open (flags=O_RDWR) → directIo=true
+    Getxattr com.apple.quarantine → returns data
+    Flush/Release → no Read() ever called!
+    ```
+
+  - **After fix:**
+    ```
+    Open (flags=O_RDWR) → directIo=false (PDF exemption)
+    Getxattr com.apple.quarantine → ENODATA (blocked)
+    Read() → actual file content
+    ```
+
+- **Implementation:**
+
+  **1. `/etc/fuse.conf` setup (one-time, documented in README):**
+  ```bash
+  sudo sh -c 'echo "user_allow_other" > /etc/fuse.conf'
+  ```
+
+  **2. Block quarantine xattr:**
+  ```go
+  func (d *Dir) Getxattr(path string, name string) (int, []byte) {
+      if name == "com.apple.quarantine" {
+          return -int(syscall.ENODATA), nil  // Pretend it doesn't exist
+      }
+      // ... normal xattr handling
+  }
+
+  func (d *Dir) Listxattr(path string, fill func(string) bool) int {
+      for _, attr := range attrs {
+          if attr == "com.apple.quarantine" {
+              continue  // Hide from listing
+          }
+          fill(attr)
+      }
+  }
+  ```
+
+  **3. DirectIO exemption for mmap-dependent files:**
+  ```go
+  func shouldUseDirectIo(path string, flags int) bool {
+      // PDF/images need mmap for Preview.app
+      mmapExtensions := []string{".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".heic", ".webp"}
+      for _, ext := range mmapExtensions {
+          if strings.HasSuffix(strings.ToLower(path), ext) {
+              return false  // Allow page cache for mmap
+          }
+      }
+      // ... rest of logic
+  }
+  ```
+
+- **Trade-offs:**
+
+  - Quarantine information is hidden from FUSE files (security metadata lost)
+  - PDF/image files use page cache even when opened for write (may show stale data if peer modifies)
+  - Acceptable for file-sharing use case where Preview compatibility is essential
+
+- **Security Considerations:**
+
+  - Hiding quarantine means downloaded files appear "safe" to macOS
+  - Users must trust the file source (their peer in KeibiDrop)
+  - This is consistent with KeibiDrop's trust model (peer-to-peer with verified fingerprints)
+
+- **Impacted Modules:**
+
+  - `pkg/filesystem/api.go` - Mount options include `allow_other`
+  - `pkg/filesystem/fuse_directory.go` - `Getxattr()`, `Listxattr()`, `shouldUseDirectIo()`
+  - `README.md` - Documents `/etc/fuse.conf` setup requirement
+
+- **References:**
+
+  - [macFUSE allow_other](https://github.com/macfuse/macfuse/wiki/Mount-Options)
+  - [Apple quarantine xattr](https://eclecticlight.co/2020/10/29/quarantine-and-the-quarantine-flag/)
+  - [FUSE direct_io and mmap incompatibility](https://libfuse.github.io/doxygen/structfuse__operations.html)

@@ -45,6 +45,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 
 	instance, err := common.NewKeibiDrop(ctx, logger, fuse, parsed, int(inbound), int(outbound), m, s, prefetch, push)
 	if err != nil {
+		logger.Error("Failed to create KeibiDrop instance", "error", err)
 		return -2
 	}
 	kd = instance
@@ -158,6 +159,61 @@ func KD_Stop() {
 //export KD_PrintBanner
 func KD_PrintBanner() {
 	common.PrintBanner()
+}
+
+//export KD_GetFileCount
+func KD_GetFileCount() C.int {
+	if kd == nil {
+		return 0
+	}
+	remote, _ := kd.ListFiles()
+	return C.int(len(remote))
+}
+
+//export KD_GetFileName
+func KD_GetFileName(index C.int) *C.char {
+	if kd == nil {
+		return nil
+	}
+	remote, _ := kd.ListFiles()
+	if int(index) >= len(remote) {
+		return nil
+	}
+	return C.CString(remote[index])
+}
+
+//export KD_GetConnectionStatus
+func KD_GetConnectionStatus() C.int {
+	if kd == nil {
+		return 0
+	}
+	if kd.HealthMonitor == nil {
+		return 2 // no monitor = assume connected
+	}
+	// Map: 0=healthy→2, 1=degraded→3, 2=disconnected→0
+	switch kd.HealthMonitor.Health() {
+	case 0:
+		return 2 // connected
+	case 1:
+		return 3 // reconnecting
+	default:
+		return 0 // disconnected
+	}
+}
+
+//export KD_SaveFileAt
+func KD_SaveFileAt(index C.int, localPath *C.char) C.int {
+	if kd == nil {
+		return -1
+	}
+	remote, _ := kd.ListFiles()
+	if int(index) >= len(remote) {
+		return -2
+	}
+	if err := kd.PullFile(remote[index], C.GoString(localPath)); err != nil {
+		return -3
+	}
+	return 0
 }
 
 func main() {}

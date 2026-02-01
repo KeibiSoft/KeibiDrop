@@ -6,8 +6,46 @@ use env;
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 slint::include_modules!(); // this loads ui.slint as MainWindow
+
+/// Start a background thread that polls Go for file list updates
+fn start_file_watcher(running: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        println!("[FileWatcher] Started");
+        while running.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+
+            unsafe {
+                let count = bindings::KD_GetFileCount();
+                if count > 0 {
+                    println!("[FileWatcher] File count: {}", count);
+                    for i in 0..count {
+                        let name_ptr = bindings::KD_GetFileName(i);
+                        if !name_ptr.is_null() {
+                            let name = CStr::from_ptr(name_ptr).to_string_lossy();
+                            println!("[FileWatcher]   [{}] {}", i, name);
+                        }
+                    }
+                }
+
+                // Also check connection status
+                let status = bindings::KD_GetConnectionStatus();
+                let status_str = match status {
+                    0 => "disconnected",
+                    1 => "connecting",
+                    2 => "connected",
+                    3 => "reconnecting",
+                    _ => "unknown",
+                };
+                println!("[FileWatcher] Connection status: {} ({})", status, status_str);
+            }
+        }
+        println!("[FileWatcher] Stopped");
+    });
+}
 
 /// Check if FUSE is present on the system (mirrors Go's checkfuse.IsFUSEPresent)
 fn is_fuse_present() -> bool {
@@ -35,7 +73,7 @@ fn is_fuse_present() -> bool {
 fn main() {
     let mut ctx = ClipboardContext::new().unwrap();
 
-    let log_file = env::var("LOG_FILE").unwrap_or_default();
+    let _log_file = env::var("LOG_FILE").unwrap_or_default();
     let to_save = env::var("TO_SAVE_PATH").unwrap_or_default();
     let to_mount = env::var("TO_MOUNT_PATH").unwrap_or_default();
     let relay = env::var("KEIBIDROP_RELAY").unwrap_or("http://0.0.0.0:54321".to_string());
@@ -134,9 +172,16 @@ fn main() {
         // Screen 1 = no-fuse (file list), Screen 2 = fuse (mounted folder)
         let weak_next = app.as_weak();
         let target_screen = if use_fuse { 2 } else { 1 };
+
+        // File watcher running flag (shared between next and disconnect)
+        let watcher_running = Arc::new(AtomicBool::new(false));
+        let watcher_running_next = watcher_running.clone();
+        let watcher_running_disconnect = watcher_running.clone();
+
         app.on_next_pressed(move || {
             println!("Creating room...");
             let weak = weak_next.clone();
+            let running = watcher_running_next.clone();
             std::thread::spawn(move || {
                 let res = bindings::KD_CreateRoom();
                 if res != 0 {
@@ -152,6 +197,10 @@ fn main() {
                     eprintln!("Room created successfully");
                 }
 
+                // Start file watcher (for NO-FUSE mode)
+                running.store(true, Ordering::Relaxed);
+                start_file_watcher(running.clone());
+
                 // Transition to appropriate screen based on FUSE availability
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(app) = weak.upgrade() {
@@ -165,6 +214,8 @@ fn main() {
         let weak_disconnect = app.as_weak();
         app.on_disconnect_pressed(move || {
             println!("Disconnecting...");
+            // Stop the file watcher
+            watcher_running_disconnect.store(false, Ordering::Relaxed);
             bindings::KD_UnmountFilesystem();
             bindings::KD_Stop();
             if let Some(app) = weak_disconnect.upgrade() {
