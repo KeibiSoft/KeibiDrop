@@ -95,6 +95,10 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCInvalidArgument
 		}
 
+		logger.Info("<<< RECEIVED ADD_FILE FROM PEER",
+			"path", req.Path,
+			"size", req.Attr.Size)
+
 		atim := time.Unix(0, int64(req.Attr.AccessTime))
 		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
 		ctim := time.Unix(0, int64(req.Attr.ChangeTime))

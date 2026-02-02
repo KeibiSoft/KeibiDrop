@@ -1003,56 +1003,26 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				return int(cerr)
 			}
 
-			// Only notify peer if file size changed since last notification.
-			// During file copy, Finder may release the file multiple times before
-			// content is fully written. This prevents duplicate notifications.
-			if stgo.Size != f.LastNotifiedSize {
-				// If writes happened (HadEdits) but size is 0, it's transient during copy.
-				// A truncate without subsequent writes can legitimately have size=0.
-				if stgo.Size == 0 && f.HadEdits {
-					logger.Debug("Skipping size=0 notification - writes occurred, likely transient", "path", path)
-				} else if stgo.Size == 0 && f.LastNotifiedSize == 0 {
-					// First notification and size is 0. Could be:
-					// 1. Intentional empty file (touch)
-					// 2. Transient during copy (Create → Release before Write)
-					// Wait briefly and re-stat to distinguish.
-					time.Sleep(100 * time.Millisecond)
-					if err := syscall.Lstat(cleanPath, &stgo); err == nil && stgo.Size > 0 {
-						// Size increased - file is being written, skip this notification.
-						f.LastNotifiedSize = stgo.Size
-						logger.Debug("Size changed during delay, updating", "path", path, "newSize", stgo.Size)
-					} else {
-						// Size is still 0 - intentional empty file.
-						aux := &winfuse.Stat_t{}
-						copyFusestatFromGostat(aux, &stgo)
-						d.OnLocalChange(types.FileEvent{
-							Path:   path,
-							Action: types.AddFile,
-							Attr:   types.StatToAttr(aux),
-						})
-						f.LastNotifiedSize = stgo.Size
-						logger.Debug("Notified peer about empty file", "path", path)
-					}
-				} else {
-					aux := &winfuse.Stat_t{}
-					copyFusestatFromGostat(aux, &stgo)
+			// Simple rule: only notify when file has content (size > 0).
+			// Skip size=0 entirely - either transient during copy or empty files (not useful to share).
+			if stgo.Size > 0 {
+				aux := &winfuse.Stat_t{}
+				copyFusestatFromGostat(aux, &stgo)
 
-					d.OnLocalChange(types.FileEvent{
-						Path:   path,
-						Action: types.AddFile,
-						Attr:   types.StatToAttr(aux),
-					})
+				d.OnLocalChange(types.FileEvent{
+					Path:   path,
+					Action: types.AddFile,
+					Attr:   types.StatToAttr(aux),
+				})
 
-					f.LastNotifiedSize = stgo.Size
-					logger.Debug("Notified peer about new file", "path", path, "size", stgo.Size)
-				}
+				f.LastNotifiedSize = stgo.Size
+				f.NotRemoteSynced = false
+				f.HadEdits = false
+				logger.Info("Notified peer about file", "path", path, "size", stgo.Size)
 			} else {
-				logger.Debug("Skipping duplicate ADD_FILE notification - size unchanged", "path", path, "size", stgo.Size)
+				// Size is 0 - don't notify, keep NotRemoteSynced=true to retry on next Release.
+				logger.Debug("Skipping size=0 notification", "path", path)
 			}
-
-			f.NotRemoteSynced = false
-			// It was just created. Clear the edits.
-			f.HadEdits = false
 		}
 
 		// It is remote synced. Add the edits.
@@ -1470,7 +1440,8 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		return n
 	}
 	f.HadEdits = true
-	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
+	f.NotLocalSynced = false  // Local write makes us authoritative - don't read from remote
+	f.NotRemoteSynced = true  // File content changed - notify peer on Release with new size
 	f.LocalNewer = true
 
 	startPwrite := time.Now()
