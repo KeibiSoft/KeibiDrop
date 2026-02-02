@@ -266,6 +266,11 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 			fileExists = true
 		}
 
+		// Check if this is a remote file (don't mark as LocalNewer if so)
+		d.RemoteFilesLock.RLock()
+		_, isRemoteFile := d.RemoteFiles[path]
+		d.RemoteFilesLock.RUnlock()
+
 		if fileExists || hasCreate {
 			fh = &File{
 				logger:          d.logger,
@@ -274,7 +279,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 				RelativePath:    path,
 				RealPathOfFile:  localPath,
 				IsLocalPresent:  fileExists,
-				LocalNewer:      true,
+				LocalNewer:      !isRemoteFile, // Remote files should not be marked as local newer
 				OnLocalChange:   d.OnLocalChange,
 				StreamProvider:  d.OpenStreamProvider(),
 				stat:            &winfuse.Stat_t{},
@@ -303,16 +308,43 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	// Check if remote has newer version
 	remoteHasUpdate := false
 	var remoteTotalSize uint64
+	needsRemark := false
 	d.RemoteFilesLock.RLock()
-	if remoteFile, hasRemote := d.RemoteFiles[path]; hasRemote && remoteFile.NotLocalSynced {
-		logger.Info("Remote has newer version, streaming from remote", "path", path)
-		localNewer = false
-		remoteHasUpdate = true
+	remoteFile, hasRemote := d.RemoteFiles[path]
+	if hasRemote {
+		logger.Info("=== REMOTE CHECK ===", "path", path, "hasRemote", hasRemote, "NotLocalSynced", remoteFile.NotLocalSynced)
 		if remoteFile.stat != nil {
 			remoteTotalSize = uint64(remoteFile.stat.Size)
 		}
+		if remoteFile.NotLocalSynced {
+			logger.Info("Remote has newer version, streaming from remote", "path", path)
+			localNewer = false
+			remoteHasUpdate = true
+		} else if remoteTotalSize > 0 {
+			// Even if NotLocalSynced=false, verify download is actually complete.
+			// IMPORTANT: Can't use file size because pre-allocation makes file look complete.
+			// Use Download.BytesDownloaded which tracks actual bytes received.
+			bytesDownloaded := remoteFile.Download.BytesDownloaded.Load()
+			if bytesDownloaded < remoteTotalSize {
+				logger.Info("Download incomplete, re-streaming from remote", "bytesDownloaded", bytesDownloaded, "remoteSize", remoteTotalSize)
+				localNewer = false
+				remoteHasUpdate = true
+				needsRemark = true
+			}
+		}
+	} else {
+		logger.Info("=== REMOTE CHECK ===", "path", path, "hasRemote", false)
 	}
 	d.RemoteFilesLock.RUnlock()
+
+	// Re-mark for streaming outside of read lock
+	if needsRemark && hasRemote {
+		d.RemoteFilesLock.Lock()
+		if rf, ok := d.RemoteFiles[path]; ok {
+			rf.NotLocalSynced = true
+		}
+		d.RemoteFilesLock.Unlock()
+	}
 
 	// Open locally if we have newer local version
 	if isLocalPresent && localNewer {
@@ -441,6 +473,22 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		return int(convertOsErrToSyscallErrno("open", err))
 	}
 
+	// Open remote stream for reading (network call - no locks held)
+	var stream types.RemoteFileStream
+	var streamCancel context.CancelFunc
+	if remoteHasUpdate {
+		fsp := d.OpenStreamProvider()
+		var streamCtx context.Context
+		streamCtx, streamCancel = context.WithCancel(context.Background())
+		stream, err = fsp.OpenRemoteFile(streamCtx, uint64(fd), path)
+		if err != nil {
+			streamCancel()
+			syscall.Close(fd)
+			logger.Error("Failed to open remote stream", "error", err)
+			return -winfuse.EACCES
+		}
+	}
+
 	d.AfmLock.Lock()
 	d.OpenMapLock.Lock()
 	fh.Inode = uint64(fd)
@@ -450,19 +498,32 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 
 	if remoteHasUpdate {
 		fh.NotLocalSynced = true
+		fh.RemoteFileStream = stream
+		fh.StreamCancel = streamCancel
 		fh.Download.Reset(remoteTotalSize)
-		if existingLocalSize > 0 {
-			fh.Download.BytesDownloaded.Store(uint64(existingLocalSize))
-			fh.Download.LastReadOffset.Store(existingLocalSize)
-			logger.Info("Resuming download", "fromOffset", existingLocalSize, "totalSize", remoteTotalSize)
+
+		// Pre-allocate local file to expected size for out-of-order writes.
+		// Without this, non-sequential reads (e.g., video moov atom at end) can cause corruption.
+		// macOS reads video files non-sequentially (header, then trailer at end, then content).
+		if existingLocalSize == 0 && remoteTotalSize > 0 {
+			if truncErr := os.Truncate(localPath, int64(remoteTotalSize)); truncErr != nil {
+				logger.Warn("Failed to pre-allocate local file", "size", remoteTotalSize, "error", truncErr)
+			} else {
+				logger.Info("Pre-allocated local file", "size", remoteTotalSize)
+			}
 		}
+
+		// NOTE: We intentionally do NOT use local file size for resume tracking.
+		// Pre-allocation creates a full-size file with zeros, which would falsely
+		// indicate the download is complete. We only trust Download.BytesDownloaded
+		// which is tracked explicitly by Read() operations.
 	}
 	d.OpenMapLock.Unlock()
 	d.AfmLock.Unlock()
 
 	fi.Fh = uint64(fd)
 	fi.DirectIo = shouldUseDirectIo(path, flags)
-	logger.Info("Opened for remote streaming", "fh", fd, "directIo", fi.DirectIo)
+	logger.Info("Opened for remote streaming", "fh", fd, "directIo", fi.DirectIo, "remoteHasUpdate", remoteHasUpdate, "fhNotLocalSynced", fh.NotLocalSynced, "fhStreamNil", fh.RemoteFileStream == nil)
 	return 0
 }
 
@@ -567,8 +628,12 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 			copyFusestatFromGostat(auxStat, &stgo)
 
 			if isModificationTimeNewer(auxStat, remFile.stat) {
-				remFile.LocalNewer = true
-				copyFusestatFromFusestat(remFile.stat, auxStat)
+				// Only mark as LocalNewer if local file has actual content.
+				// Empty files (size=0) are just placeholders created for streaming - not real local edits.
+				if auxStat.Size > 0 {
+					remFile.LocalNewer = true
+					copyFusestatFromFusestat(remFile.stat, auxStat)
+				}
 				copyFusestatFromFusestat(stat, remFile.stat)
 				return 0
 			}
@@ -766,6 +831,11 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	if !ok {
 		// File not in map - check if it exists on disk (pre-existing local file)
 		if _, statErr := os.Stat(localPath); statErr == nil {
+			// Check if this is a remote file (placeholder might have been created)
+			d.RemoteFilesLock.RLock()
+			_, isRemoteFile := d.RemoteFiles[path]
+			d.RemoteFilesLock.RUnlock()
+
 			fh = &File{
 				logger:          d.logger,
 				openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
@@ -773,7 +843,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 				RelativePath:    path,
 				RealPathOfFile:  localPath,
 				IsLocalPresent:  true,
-				LocalNewer:      true,
+				LocalNewer:      !isRemoteFile, // Remote files should not be marked as local newer
 				OnLocalChange:   d.OnLocalChange,
 				StreamProvider:  d.OpenStreamProvider(),
 				stat:            &winfuse.Stat_t{},
@@ -800,16 +870,40 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	// Check if remote has newer version
 	remoteHasUpdate := false
 	var remoteTotalSize uint64
+	var remoteMtime time.Time
+	needsRemark := false
 	d.RemoteFilesLock.RLock()
-	if remoteFile, hasRemote := d.RemoteFiles[path]; hasRemote && remoteFile.NotLocalSynced {
-		logger.Info("Remote has newer version, streaming from remote", "path", path)
-		localNewer = false
-		remoteHasUpdate = true
+	if remoteFile, hasRemote := d.RemoteFiles[path]; hasRemote {
 		if remoteFile.stat != nil {
 			remoteTotalSize = uint64(remoteFile.stat.Size)
+			remoteMtime = remoteFile.stat.Mtim.Time()
+		}
+		if remoteFile.NotLocalSynced {
+			logger.Info("Remote has newer version, streaming from remote", "path", path)
+			localNewer = false
+			remoteHasUpdate = true
+		} else if remoteTotalSize > 0 {
+			// Even if NotLocalSynced=false, verify download is actually complete.
+			// IMPORTANT: Can't use file size because pre-allocation makes file look complete.
+			bytesDownloaded := remoteFile.Download.BytesDownloaded.Load()
+			if bytesDownloaded < remoteTotalSize {
+				logger.Info("Download incomplete, re-streaming from remote", "bytesDownloaded", bytesDownloaded, "remoteSize", remoteTotalSize)
+				localNewer = false
+				remoteHasUpdate = true
+				needsRemark = true
+			}
 		}
 	}
 	d.RemoteFilesLock.RUnlock()
+
+	// Re-mark for streaming outside of read lock
+	if needsRemark {
+		d.RemoteFilesLock.Lock()
+		if rf, ok := d.RemoteFiles[path]; ok {
+			rf.NotLocalSynced = true
+		}
+		d.RemoteFilesLock.Unlock()
+	}
 
 	// Open locally if we have newer local version
 	if isLocalPresent && localNewer {
@@ -846,6 +940,11 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 			return int(convertOsErrToSyscallErrno("open", err2)), 0
 		}
 		_ = f.Close()
+		// Set placeholder mtime to match remote file's mtime.
+		// This ensures Getattr's mtime comparison favors remote stat (with correct size).
+		if !remoteMtime.IsZero() {
+			_ = os.Chtimes(localPath, remoteMtime, remoteMtime)
+		}
 	} else {
 		// Local file exists - this may be a partial download from a previous session.
 		existingLocalSize = localStat.Size()
@@ -883,11 +982,20 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 		fh.NotLocalSynced = true // Ensure Read uses stream, not stale local cache
 		// Initialize download state for resume capability.
 		fh.Download.Reset(remoteTotalSize)
-		// Account for existing partial download.
-		if existingLocalSize > 0 {
-			fh.Download.BytesDownloaded.Store(uint64(existingLocalSize))
-			fh.Download.LastReadOffset.Store(existingLocalSize)
+
+		// Pre-allocate local file to expected size for out-of-order writes.
+		// Without this, non-sequential reads (e.g., video moov atom at end) can cause corruption.
+		if existingLocalSize == 0 && remoteTotalSize > 0 {
+			if truncErr := os.Truncate(localPath, int64(remoteTotalSize)); truncErr != nil {
+				logger.Warn("Failed to pre-allocate local file", "size", remoteTotalSize, "error", truncErr)
+			} else {
+				logger.Info("Pre-allocated local file", "size", remoteTotalSize)
+			}
 		}
+
+		// NOTE: We do NOT use local file size for BytesDownloaded.
+		// Pre-allocation creates full-size file with zeros. BytesDownloaded
+		// is only updated by Read() when actual bytes are received from stream.
 	}
 	d.OpenFileHandlers[fh.Inode] = fh
 	fh.openFileCounter.Open()
@@ -936,8 +1044,10 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 	// Add remote files that don't exist locally
 	d.RemoteFilesLock.RLock()
 	defer d.RemoteFilesLock.RUnlock()
+	logger.Info("=== READDIR RemoteFiles ===", "count", len(d.RemoteFiles), "path", path)
 	for k := range d.RemoteFiles {
 		name := getNameFromPath(k)
+		logger.Info("=== READDIR checking remote ===", "key", k, "name", name, "existsLocal", localFiles[name] != struct{}{})
 		if _, exists := localFiles[name]; !exists {
 			fill(name, nil, 0)
 		}
@@ -973,13 +1083,17 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		return 0
 	}
 
-	// Log sync state for debugging
-	logger.Info("Release sync state",
-		"NotLocalSynced", f.NotLocalSynced,
-		"NotRemoteSynced", f.NotRemoteSynced,
-		"HadEdits", f.HadEdits)
-
 	v := f.openFileCounter.Release()
+
+	// Debug: log ALL relevant state at Release entry
+	logger.Info("=== RELEASE ===",
+		"path", path,
+		"openCount", v,
+		"NotRemoteSynced", f.NotRemoteSynced,
+		"HadEdits", f.HadEdits,
+		"IsLocalPresent", f.IsLocalPresent,
+		"LocalNewer", f.LocalNewer)
+
 	if v == 0 {
 		err := syscall.Close(int(fh))
 		if err != nil {
@@ -989,69 +1103,57 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 
 		delete(d.OpenFileHandlers, fh)
 
-		if f.NotLocalSynced {
-			f.NotLocalSynced = false
-		}
+		// SINGLE notification path: notify peer if file was created OR edited locally
+		needsNotify := (f.NotRemoteSynced || f.HadEdits) && d.OnLocalChange != nil
 
-		if f.NotRemoteSynced && d.OnLocalChange != nil {
+		if needsNotify {
 			stgo := syscall.Stat_t{}
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 			err := syscall.Lstat(cleanPath, &stgo)
 			if err != nil {
-				logger.Error("Failed to lstat path", "clean-path", cleanPath, "error-code", int(convertOsErrToSyscallErrno("lstat", err)), "error", err)
-				cerr := convertOsErrToSyscallErrno("lstat", err)
-				return int(cerr)
+				logger.Error("lstat failed", "cleanPath", cleanPath, "error", err)
+				return int(convertOsErrToSyscallErrno("lstat", err))
 			}
 
-			// Simple rule: only notify when file has content (size > 0).
-			// Skip size=0 entirely - either transient during copy or empty files (not useful to share).
+			logger.Info("Release lstat result", "path", path, "size", stgo.Size)
+
 			if stgo.Size > 0 {
 				aux := &winfuse.Stat_t{}
 				copyFusestatFromGostat(aux, &stgo)
 
 				d.OnLocalChange(types.FileEvent{
 					Path:   path,
-					Action: types.AddFile,
+					Action: types.AddFile, // Always AddFile - peer handles updates
 					Attr:   types.StatToAttr(aux),
 				})
 
-				f.LastNotifiedSize = stgo.Size
 				f.NotRemoteSynced = false
 				f.HadEdits = false
-				logger.Info("Notified peer about file", "path", path, "size", stgo.Size)
+				logger.Info(">>> NOTIFIED PEER", "path", path, "size", stgo.Size)
 			} else {
-				// Size is 0 - don't notify, keep NotRemoteSynced=true to retry on next Release.
-				logger.Debug("Skipping size=0 notification", "path", path)
+				// Size=0: don't notify yet, keep flags to retry on next Release
+				logger.Info("Skipping size=0 (transient)", "path", path)
 			}
 		}
 
-		// It is remote synced. Add the edits.
-		if f.HadEdits && d.OnLocalChange != nil {
-			stgo := syscall.Stat_t{}
-			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-			err := syscall.Lstat(cleanPath, &stgo)
-			if err != nil {
-				logger.Error("Failed to lstat path", "clean-path", cleanPath, "error-code", int(convertOsErrToSyscallErrno("lstat", err)), "error", err)
-				cerr := convertOsErrToSyscallErrno("lstat", err)
-				return -int(cerr)
-			}
-
-			aux := &winfuse.Stat_t{}
-			copyFusestatFromGostat(aux, &stgo)
-
-			d.OnLocalChange(types.FileEvent{
-				Path:   path,
-				Action: types.EditFile,
-				Attr:   types.StatToAttr(aux),
-			})
-
-			f.HadEdits = false
-		}
-
-		if !f.IsLocalPresent || !f.LocalNewer || f.NotLocalSynced {
-			f.IsLocalPresent = true
-			f.LocalNewer = false
+		// Reset sync state for future opens
+		f.IsLocalPresent = true
+		// Only mark as synced if download is actually COMPLETE.
+		// IMPORTANT: Can't use file size because pre-allocation makes file look complete.
+		// Use Download.BytesDownloaded which tracks actual bytes received.
+		expectedSize := f.Download.TotalSize.Load()
+		bytesDownloaded := f.Download.BytesDownloaded.Load()
+		if expectedSize > 0 && bytesDownloaded >= expectedSize {
 			f.NotLocalSynced = false
+			logger.Info("Download complete, marking as synced", "bytesDownloaded", bytesDownloaded, "expectedSize", expectedSize)
+		} else if expectedSize > 0 {
+			logger.Info("Download incomplete, keeping NotLocalSynced=true", "bytesDownloaded", bytesDownloaded, "expectedSize", expectedSize)
+		} else {
+			// No expected size tracked (local file, not from remote) - mark as synced
+			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+			if localInfo, statErr := os.Stat(cleanPath); statErr == nil && localInfo.Size() > 0 {
+				f.NotLocalSynced = false
+			}
 		}
 
 		// If peer stopped sharing and download is now complete, remove from AllFileMap.
@@ -1520,6 +1622,13 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	}
 	d.OpenMapLock.RUnlock()
 
+	logger.Info("=== READ DEBUG ===",
+		"path", path,
+		"ok", ok,
+		"notLocalSynced", notLocalSynced,
+		"streamNil", stream == nil,
+		"fh", fh)
+
 	if ok && notLocalSynced && stream != nil {
 		logger.Info("Reading from remote", "bufLen", len(buff), "progress", f.Download.Progress())
 
@@ -1612,6 +1721,25 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	d.logger.Warn("FUSE Read from LOCAL", "path", path, "offset", offset, "bufLen", len(buff))
 	n, err := syscall.Pread(int(fh), buff, offset)
 	if err != nil {
+		// EBADF fallback: fd may have been closed by fcopyfile race or fd reuse.
+		// Reopen the file and read from it.
+		if errors.Is(err, syscall.EBADF) {
+			d.logger.Warn("EBADF on pread, falling back to reopen", "path", path, "fh", fh)
+			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+			fd, err2 := syscall.Open(cleanPath, syscall.O_RDONLY, 0)
+			if err2 != nil {
+				logger.Error("Fallback open failed", "error", err2, "cleanPath", cleanPath)
+				return int(convertOsErrToSyscallErrno("open", err2))
+			}
+			defer syscall.Close(fd)
+			n2, err2 := syscall.Pread(fd, buff, offset)
+			if err2 != nil {
+				logger.Error("Fallback pread failed", "error", err2)
+				return int(convertOsErrToSyscallErrno("pread", err2))
+			}
+			d.logger.Info("Fallback read OK", "bytes", n2)
+			return n2
+		}
 		d.logger.Warn("FUSE Read LOCAL FAILED", "path", path, "error", err)
 		logger.Error("Failed to read local file", "error", err)
 		return int(convertOsErrToSyscallErrno("pread", err))
@@ -1709,6 +1837,8 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		logger.Info("Remote file exists, updating", "path", path, "size", stat.Size, "mtime", stat.Mtim.Time())
 		existing.stat = stat
 		existing.NotLocalSynced = true
+		// CRITICAL: Reset download state so BytesDownloaded doesn't carry over from previous attempts
+		existing.Download.Reset(uint64(stat.Size))
 		return nil
 	}
 
@@ -1759,5 +1889,7 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
 	f.stat = stat
 	f.NotLocalSynced = true
+	// CRITICAL: Reset download state for re-download
+	f.Download.Reset(uint64(stat.Size))
 	return nil
 }
