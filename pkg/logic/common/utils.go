@@ -307,6 +307,10 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				BirthTime:        event.Attr.BirthTime,
 				Flags:            event.Attr.Flags,
 			}
+			logger.Info(">>> SENDING NOTIFICATION TO PEER",
+				"path", event.Path,
+				"action", event.Action,
+				"size", event.Attr.Size)
 		}
 
 		_, err := kd.session.GRPCClient.Notify(context.Background(), req)
