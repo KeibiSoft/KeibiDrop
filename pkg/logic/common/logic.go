@@ -75,7 +75,7 @@ func (kd *KeibiDrop) AddFile(path string) error {
 		Attr: &bindings.Attr{
 			Dev:              0,
 			Ino:              0,
-			Mode:             uint32(finfo.Mode()),
+			Mode:             uint32(finfo.Mode().Perm()) | syscall.S_IFREG,
 			Size:             finfo.Size(),
 			AccessTime:       file.LastEditTime,
 			ModificationTime: file.LastEditTime,
@@ -109,7 +109,7 @@ func (kd *KeibiDrop) ListFiles() (remote []string, local []string) {
 	}
 
 	for k, v := range kd.SyncTracker.RemoteFiles {
-		local = append(remote, fmt.Sprintf("[Remote] Path: %v Size: %v RealPath: %v\n", k, v.Size, v.RealPathOfFile))
+		remote = append(remote, fmt.Sprintf("[Remote] Path: %v Size: %v RealPath: %v\n", k, v.Size, v.RealPathOfFile))
 	}
 
 	return remote, local
