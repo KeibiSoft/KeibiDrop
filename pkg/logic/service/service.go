@@ -108,10 +108,13 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
 			kd.SyncTracker.RemoteFilesMu.Lock()
 			defer kd.SyncTracker.RemoteFilesMu.Unlock()
-			_, ok := kd.SyncTracker.RemoteFiles[req.Path]
+			existing, ok := kd.SyncTracker.RemoteFiles[req.Path]
 			if ok {
-				logger.Error("File already exists", "error", ErrGRPCAlreadyExists)
-				return nil, ErrGRPCAlreadyExists
+				// Update existing entry (peer overwrote the file).
+				existing.Size = uint64(req.Attr.Size)
+				existing.LastEditTime = req.Attr.ModificationTime
+				logger.Info("Updated existing remote file", "path", req.Path, "newSize", req.Attr.Size)
+				return &bindings.NotifyResponse{}, nil
 			}
 
 			kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
