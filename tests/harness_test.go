@@ -169,6 +169,15 @@ func setupPeerPairImpl(t *testing.T, aliceFuse bool, bobFuse bool, timeout time.
 
 // Teardown cleanly shuts down both peers, unmounts filesystems, and cancels context.
 func (tp *TestPair) Teardown() {
+	// Step 0: Stop connection resilience (health monitor, reconnect, keepalive)
+	// before tearing down connections to prevent noisy reconnection attempts.
+	if tp.Alice != nil {
+		tp.Alice.StopConnectionResilience()
+	}
+	if tp.Bob != nil {
+		tp.Bob.StopConnectionResilience()
+	}
+
 	// Step 1: Clean unmount via KeibiDrop's FS API.
 	// This unblocks the blocking Mount() call in the Run() goroutine.
 	if tp.Alice != nil && tp.Alice.FS != nil {

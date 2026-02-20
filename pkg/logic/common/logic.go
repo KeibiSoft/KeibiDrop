@@ -299,6 +299,11 @@ func (kd *KeibiDrop) JoinRoom() error {
 		return err
 	}
 
+	// Start health monitoring, reconnection, and relay keepalive.
+	if err := kd.InitConnectionResilience(); err != nil {
+		logger.Warn("Failed to init connection resilience", "error", err)
+	}
+
 	if !kd.IsFUSE {
 		logger.Info("Success, starting without FUSE")
 		return nil
@@ -372,6 +377,11 @@ func (kd *KeibiDrop) CreateRoom() error {
 	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {
 		logger.Error("Failed to connect to grpc server after retries", "error", err)
 		return err
+	}
+
+	// Start health monitoring, reconnection, and relay keepalive.
+	if err := kd.InitConnectionResilience(); err != nil {
+		logger.Warn("Failed to init connection resilience", "error", err)
 	}
 
 	if !kd.IsFUSE {
