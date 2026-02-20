@@ -195,6 +195,7 @@ func (kd *KeibiDrop) Run() {
 		select {
 		case <-kd.ctx.Done():
 			logger.Info("Stopping KeibiDrop run instance")
+			kd.StopConnectionResilience()
 			if kd.FS != nil {
 				kd.FS.Unmount()
 				kd.FS = nil
@@ -240,6 +241,7 @@ func (kd *KeibiDrop) Run() {
 
 			case Stop:
 				logger.Info("Stop signal")
+				kd.StopConnectionResilience()
 				if kd.FS != nil {
 					kd.FS.Unmount()
 					kd.FS = nil
