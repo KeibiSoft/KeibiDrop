@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -340,7 +341,14 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 			if !isOpen {
 				isOpen = true
-				f, ok := kd.SyncTracker.LocalFiles[rec.Path]
+				// Normalize: FUSE peers send "/filename", no-FUSE uses bare "filename".
+				// LocalFiles keys use bare names (from AddFile's finfo.Name()).
+				lookupPath := strings.TrimPrefix(rec.Path, "/")
+				f, ok := kd.SyncTracker.LocalFiles[lookupPath]
+				if !ok {
+					// Fallback: try original path (e.g. full path stored by PullFile).
+					f, ok = kd.SyncTracker.LocalFiles[rec.Path]
+				}
 				if !ok {
 					logger.Warn("File not found", "rec", rec)
 					return status.Error(codes.NotFound, "file not found")
@@ -425,9 +433,15 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 		if !isOpen {
 			isOpen = true
 
+			// Normalize to FUSE convention: AllFileMap keys have leading "/".
+			fuseKey := rec.Path
+			if !strings.HasPrefix(fuseKey, "/") {
+				fuseKey = "/" + fuseKey
+			}
+
 			// Only hold the lock briefly to look up the file path
 			kd.FS.Root.AfmLock.RLock()
-			f, ok := kd.FS.Root.AllFileMap[rec.Path]
+			f, ok := kd.FS.Root.AllFileMap[fuseKey]
 			kd.FS.Root.AfmLock.RUnlock()
 			if !ok {
 				logger.Warn("File not found", "rec", rec)

@@ -1830,6 +1830,11 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) (errCo
 // Notes: I am confident that it is not a good idea to use syscall errors for GRPC called methods.
 
 func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t) error {
+	// Normalize to FUSE convention: paths must have leading "/".
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
 	d.RemoteFilesLock.Lock()
 	defer d.RemoteFilesLock.Unlock()
 
@@ -1859,6 +1864,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 }
 
 func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t) error {
+	// Normalize to FUSE convention: paths must have leading "/".
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
 	d.RemoteFilesLock.Lock()
 	defer d.RemoteFilesLock.Unlock()
 

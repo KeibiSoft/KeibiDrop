@@ -88,6 +88,19 @@ const (
 
 // Factory-style constructor
 func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string, prefetchOnOpen bool, pushOnWrite bool) (*KeibiDrop, error) {
+	ipv6, err := GetGlobalIPv6()
+	if err != nil {
+		logger.Error("Failed to get local IPv6", "error", err)
+		return nil, err
+	}
+
+	return NewKeibiDropWithIP(ctx, logger, isFuse, relayURL, inboundPort, defaultOutboundPort, toMount, toSave, prefetchOnOpen, pushOnWrite, ipv6)
+}
+
+// NewKeibiDropWithIP is identical to NewKeibiDrop but accepts an explicit IPv6
+// address instead of probing the network. This enables testing on machines
+// without a global IPv6 address.
+func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string, prefetchOnOpen bool, pushOnWrite bool, ipv6Address string) (*KeibiDrop, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -114,19 +127,13 @@ func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayUR
 		return nil, err
 	}
 
-	ipv6, err := GetGlobalIPv6() //GetLocalIPv6()
-	if err != nil {
-		logger.Error("Failed to get local IPv6", "error", err)
-		return nil, err
-	}
-
 	kd := &KeibiDrop{
 		logger:          logger,
 		IsFUSE:          isFuse,
 		relayClient:     client,
 		RelayEndoint:    relayURL,
 		session:         session,
-		LocalIPv6IP:     ipv6,
+		LocalIPv6IP:     ipv6Address,
 		inboundPort:     inboundPort,
 		listener:        listener,
 		signals:         make(chan TaskSignal, 2),
