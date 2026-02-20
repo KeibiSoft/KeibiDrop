@@ -1117,23 +1117,18 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 
 			logger.Info("Release lstat result", "path", path, "size", stgo.Size)
 
-			if stgo.Size > 0 {
-				aux := &winfuse.Stat_t{}
-				copyFusestatFromGostat(aux, &stgo)
+			aux := &winfuse.Stat_t{}
+			copyFusestatFromGostat(aux, &stgo)
 
-				d.OnLocalChange(types.FileEvent{
-					Path:   path,
-					Action: types.AddFile, // Always AddFile - peer handles updates
-					Attr:   types.StatToAttr(aux),
-				})
+			d.OnLocalChange(types.FileEvent{
+				Path:   path,
+				Action: types.AddFile, // Always AddFile - peer handles updates
+				Attr:   types.StatToAttr(aux),
+			})
 
-				f.NotRemoteSynced = false
-				f.HadEdits = false
-				logger.Info(">>> NOTIFIED PEER", "path", path, "size", stgo.Size)
-			} else {
-				// Size=0: don't notify yet, keep flags to retry on next Release
-				logger.Info("Skipping size=0 (transient)", "path", path)
-			}
+			f.NotRemoteSynced = false
+			f.HadEdits = false
+			logger.Info(">>> NOTIFIED PEER", "path", path, "size", stgo.Size)
 		}
 
 		// Reset sync state for future opens

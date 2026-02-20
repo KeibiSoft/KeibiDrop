@@ -13,15 +13,37 @@ import "C"
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
+	"sync"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
 
 var kd *common.KeibiDrop
 var cancel context.CancelFunc
+
+// Error reporting: thread-safe last error string.
+var (
+	lastErrorMu sync.Mutex
+	lastErrorMsg string
+)
+
+func setLastError(err error) {
+	lastErrorMu.Lock()
+	defer lastErrorMu.Unlock()
+	if err != nil {
+		lastErrorMsg = err.Error()
+	} else {
+		lastErrorMsg = ""
+	}
+}
+
+// Event queue: bounded channel for UI events.
+var eventChan = make(chan string, 64)
 
 //export KD_Initialize
 func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C.char, useFUSE C.int, prefetchOnOpen C.int, pushOnWrite C.int) C.int {
@@ -46,6 +68,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	instance, err := common.NewKeibiDrop(ctx, logger, fuse, parsed, int(inbound), int(outbound), m, s, prefetch, push)
 	if err != nil {
 		logger.Error("Failed to create KeibiDrop instance", "error", err)
+		setLastError(err)
 		return -2
 	}
 	kd = instance
@@ -59,6 +82,7 @@ func KD_CreateRoom() C.int {
 		return -1
 	}
 	if err := kd.CreateRoom(); err != nil {
+		setLastError(err)
 		return -2
 	}
 	return 0
@@ -70,6 +94,7 @@ func KD_JoinRoom() C.int {
 		return -1
 	}
 	if err := kd.JoinRoom(); err != nil {
+		setLastError(err)
 		return -2
 	}
 	return 0
@@ -81,6 +106,7 @@ func KD_AddPeerFingerprint(fp *C.char) C.int {
 		return -1
 	}
 	if err := kd.AddPeerFingerprint(C.GoString(fp)); err != nil {
+		setLastError(err)
 		return -2
 	}
 	return 0
@@ -101,6 +127,7 @@ func KD_AddFile(path *C.char) C.int {
 		return -1
 	}
 	if err := kd.AddFile(C.GoString(path)); err != nil {
+		setLastError(err)
 		return -2
 	}
 	return 0
@@ -128,6 +155,7 @@ func KD_PullFile(remote, local *C.char) C.int {
 		return -1
 	}
 	if err := kd.PullFile(C.GoString(remote), C.GoString(local)); err != nil {
+		setLastError(err)
 		return -2
 	}
 	return 0
@@ -211,9 +239,100 @@ func KD_SaveFileAt(index C.int, localPath *C.char) C.int {
 		return -2
 	}
 	if err := kd.PullFile(remote[index], C.GoString(localPath)); err != nil {
+		setLastError(err)
 		return -3
 	}
 	return 0
+}
+
+//export KD_GetLastError
+func KD_GetLastError() *C.char {
+	lastErrorMu.Lock()
+	defer lastErrorMu.Unlock()
+	if lastErrorMsg == "" {
+		return nil
+	}
+	return C.CString(lastErrorMsg)
+}
+
+//export KD_GetLastErrorAndClear
+func KD_GetLastErrorAndClear() *C.char {
+	lastErrorMu.Lock()
+	defer lastErrorMu.Unlock()
+	if lastErrorMsg == "" {
+		return nil
+	}
+	msg := lastErrorMsg
+	lastErrorMsg = ""
+	return C.CString(msg)
+}
+
+//export KD_PollEvent
+func KD_PollEvent() *C.char {
+	select {
+	case evt := <-eventChan:
+		return C.CString(evt)
+	default:
+		return nil
+	}
+}
+
+//export KD_SetupEventCallbacks
+func KD_SetupEventCallbacks() {
+	if kd == nil {
+		return
+	}
+
+	// Wire health monitor events into the event channel.
+	if kd.HealthMonitor != nil {
+		origOnHealthChange := kd.HealthMonitor.OnHealthChange
+		kd.HealthMonitor.OnHealthChange = func(old, new session.ConnectionHealth) {
+			if origOnHealthChange != nil {
+				origOnHealthChange(old, new)
+			}
+			pushEvent(fmt.Sprintf("health_changed:%s:%s", old.String(), new.String()))
+		}
+	}
+
+	// Wire reconnect manager events.
+	if kd.ReconnectManager != nil {
+		origOnReconnecting := kd.ReconnectManager.OnReconnecting
+		kd.ReconnectManager.OnReconnecting = func() {
+			if origOnReconnecting != nil {
+				origOnReconnecting()
+			}
+			pushEvent("reconnecting:")
+		}
+
+		origOnReconnected := kd.ReconnectManager.OnReconnected
+		kd.ReconnectManager.OnReconnected = func() {
+			if origOnReconnected != nil {
+				origOnReconnected()
+			}
+			pushEvent("reconnected:")
+		}
+
+		origOnGaveUp := kd.ReconnectManager.OnGaveUp
+		kd.ReconnectManager.OnGaveUp = func() {
+			if origOnGaveUp != nil {
+				origOnGaveUp()
+			}
+			pushEvent("gave_up:")
+		}
+	}
+}
+
+func pushEvent(evt string) {
+	select {
+	case eventChan <- evt:
+	default:
+		// Channel full, drop oldest event.
+		select {
+		case <-eventChan:
+		default:
+		}
+		eventChan <- evt
+	}
 }
 
 func main() {}
