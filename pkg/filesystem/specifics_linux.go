@@ -107,8 +107,9 @@ func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
 }
 
 // getMountOptions returns Linux-specific FUSE mount options.
+// nonempty: allow mounting on directories that already contain files (e.g. stale state from a previous session).
 // No allow_other here — that requires user_allow_other in /etc/fuse.conf.
 // The mounting user always has access without it.
 func getMountOptions() []string {
-	return nil
+	return []string{"-o", "nonempty"}
 }
