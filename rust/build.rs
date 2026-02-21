@@ -6,9 +6,11 @@ fn main() {
     println!("cargo:rustc-link-search=native=..");
     println!("cargo:rustc-link-lib=static=keibidrop");
     println!("cargo:rustc-link-lib=static=keibidrop");
-    println!("cargo:rustc-link-lib=framework=CoreFoundation");
-    println!("cargo:rustc-link-lib=framework=Security");
-    println!("cargo:rustc-link-lib=resolv");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-lib=framework=CoreFoundation");
+        println!("cargo:rustc-link-lib=framework=Security");
+        println!("cargo:rustc-link-lib=resolv");
+    }
     // _=std::env::var("SLINT_INCLUDE_GENERATED");
     // Re-run if the header changes
     println!("cargo:rerun-if-changed=../libkeibidrop.h");

@@ -118,3 +118,15 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
 	return syscall.Statfs(path, stat)
 }
+
+// getMountOptions returns macOS-specific FUSE mount options.
+// See: https://github.com/macfuse/macfuse/wiki/Mount-Options
+func getMountOptions() []string {
+	return []string{
+		"-o", "volname=KeibiDrop",
+		"-o", "local",
+		"-o", "negative_vncache",
+		"-o", "slow_statfs",
+		"-o", "allow_other",
+	}
+}
