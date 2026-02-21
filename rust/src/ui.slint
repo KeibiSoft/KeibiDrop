@@ -520,6 +520,11 @@ export component MainWindow inherits Window {
     // Error message (shown on connect screen)
     in-out property<string> error_message: "";
 
+    // Room action state: 0=none, 1=creating, 2=joining
+    in-out property<int> room_action: 0;
+    // Status message (shown below buttons on connect screen)
+    in-out property<string> status_message: "";
+
     // Dynamic file list model (populated by Rust file watcher)
     in-out property<[FileInfo]> file_list: [];
     // Set by Rust when any file is actively downloading
@@ -605,22 +610,62 @@ export component MainWindow inherits Window {
             sectionNumber: 2;
         }
 
-        OutlineButton {
+        Rectangle {
             x: snd.x + snd.width + 38px;
             y: snd.y + snd.height - 34px;
-            text: "Create Room";
-            enabled: root.next_enabled;
-            clicked => { root.create_room_pressed() }
+            width: 161px;
+            height: 34px;
+            background: root.room_action == 1 ? #3b82f6 : transparent;
+            border-width: 1px;
+            border-radius: self.height / 2;
+            border-color: root.room_action != 0 && root.room_action != 1 ? #555 : create-touch.pressed ? #2563eb : create-touch.has-hover ? #60a5fa : #3b82f6;
+            Text {
+                text: root.room_action == 1 ? "Creating..." : "Create Room";
+                color: root.room_action == 1 ? white : root.room_action != 0 ? #555 : create-touch.pressed ? #2563eb : create-touch.has-hover ? #60a5fa : #3b82f6;
+                font-size: 14px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            create-touch := TouchArea {
+                enabled: root.room_action == 0 && root.next_enabled;
+                clicked => { root.create_room_pressed() }
+            }
+            animate background { duration: 150ms; }
+            animate border-color { duration: 150ms; }
         }
 
-        OutlineButton {
+        Rectangle {
             x: snd.x + snd.width + 38px;
             y: snd.y + snd.height - 34px + 44px;
-            text: "Join Room";
-            enabled: root.next_enabled;
-            clicked => { root.join_room_pressed() }
+            width: 161px;
+            height: 34px;
+            background: root.room_action == 2 ? #3b82f6 : transparent;
+            border-width: 1px;
+            border-radius: self.height / 2;
+            border-color: root.room_action != 0 && root.room_action != 2 ? #555 : join-touch.pressed ? #2563eb : join-touch.has-hover ? #60a5fa : #3b82f6;
+            Text {
+                text: root.room_action == 2 ? "Joining..." : "Join Room";
+                color: root.room_action == 2 ? white : root.room_action != 0 ? #555 : join-touch.pressed ? #2563eb : join-touch.has-hover ? #60a5fa : #3b82f6;
+                font-size: 14px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            join-touch := TouchArea {
+                enabled: root.room_action == 0 && root.next_enabled;
+                clicked => { root.join_room_pressed() }
+            }
+            animate background { duration: 150ms; }
+            animate border-color { duration: 150ms; }
         }
 
+        // Status / error message below buttons
+        if root.status_message != "" && root.error_message == "": Text {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 98px;
+            text: root.status_message;
+            color: #94a3b8;
+            font-size: 13px;
+        }
         if root.error_message != "": Text {
             x: snd.x + snd.width + 38px;
             y: snd.y + snd.height - 34px + 98px;

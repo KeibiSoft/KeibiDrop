@@ -126,18 +126,23 @@ fn start_file_watcher(
                     if name_ptr.is_null() {
                         continue;
                     }
-                    let name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
+                    let raw_name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
+                    // Key may be a full path (from PullFile) or bare name (from AddFile)
+                    let display_name = Path::new(&raw_name)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or(raw_name.clone());
                     // Skip hidden files
-                    if is_hidden_file(&name) {
+                    if is_hidden_file(&display_name) {
                         continue;
                     }
-                    // Skip if already in remote list (peer has it too)
-                    if files.iter().any(|f| f.name.as_str() == name) {
+                    // Skip if already in remote list (peer has it too, or we downloaded it)
+                    if files.iter().any(|f| f.name.as_str() == display_name) {
                         continue;
                     }
-                    let ftype = file_type_from_name(&name);
+                    let ftype = file_type_from_name(&display_name);
                     files.push(FileInfo {
-                        name: slint::SharedString::from(&name),
+                        name: slint::SharedString::from(&display_name),
                         size_bytes: 0,
                         downloading: false,
                         uploading: false,
@@ -211,7 +216,20 @@ fn connect_room(
     create: bool,
 ) {
     let action = if create { "Creating" } else { "Joining" };
+    let room_action_val = if create { 1 } else { 2 };
     println!("{} room...", action);
+
+    // Set button state immediately on UI thread
+    let weak_pre = weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = weak_pre.upgrade() {
+            app.set_room_action(room_action_val);
+            app.set_error_message(slint::SharedString::default());
+            app.set_status_message(slint::SharedString::from(
+                if create { "Creating room..." } else { "Joining room..." },
+            ));
+        }
+    });
 
     std::thread::spawn(move || unsafe {
         let res = if create {
@@ -230,6 +248,8 @@ fn connect_room(
             let weak_err = weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(app) = weak_err.upgrade() {
+                    app.set_room_action(0);
+                    app.set_status_message(slint::SharedString::default());
                     app.set_error_message(slint::SharedString::from(err));
                 }
             });
@@ -248,6 +268,8 @@ fn connect_room(
         // Transition to connected screen
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(app) = weak.upgrade() {
+                app.set_room_action(0);
+                app.set_status_message(slint::SharedString::default());
                 app.set_error_message(slint::SharedString::default());
                 app.set_current_screen(target_screen);
             }
@@ -397,6 +419,9 @@ fn main() {
             bindings::KD_UnmountFilesystem();
             bindings::KD_Stop();
             if let Some(app) = weak_disconnect.upgrade() {
+                app.set_room_action(0);
+                app.set_status_message(slint::SharedString::default());
+                app.set_error_message(slint::SharedString::default());
                 app.set_current_screen(0);
             }
         });
