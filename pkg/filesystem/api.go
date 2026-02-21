@@ -99,7 +99,11 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 	opts := getMountOptions()
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
-	fs.host.Mount(cleanMountPoint, opts)
+	ok := fs.host.Mount(cleanMountPoint, opts)
+	if !ok {
+		fs.logger.Error("FUSE Mount failed", "mountPoint", cleanMountPoint)
+		return
+	}
 	fs.logger.Warn("FUSE Mount completed", "mountPoint", cleanMountPoint)
 }
 
