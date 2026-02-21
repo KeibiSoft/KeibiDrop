@@ -871,6 +871,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	remoteHasUpdate := false
 	var remoteTotalSize uint64
 	var remoteMtime time.Time
+	var remoteBitmap *ChunkBitmap
 	needsRemark := false
 	d.RemoteFilesLock.RLock()
 	if remoteFile, hasRemote := d.RemoteFiles[path]; hasRemote {
@@ -878,19 +879,27 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 			remoteTotalSize = uint64(remoteFile.stat.Size)
 			remoteMtime = remoteFile.stat.Mtim.Time()
 		}
+		remoteBitmap = remoteFile.Bitmap
 		if remoteFile.NotLocalSynced {
 			logger.Info("Remote has newer version, streaming from remote", "path", path)
 			localNewer = false
 			remoteHasUpdate = true
 		} else if remoteTotalSize > 0 {
 			// Even if NotLocalSynced=false, verify download is actually complete.
-			// IMPORTANT: Can't use file size because pre-allocation makes file look complete.
-			bytesDownloaded := remoteFile.Download.BytesDownloaded.Load()
-			if bytesDownloaded < remoteTotalSize {
-				logger.Info("Download incomplete, re-streaming from remote", "bytesDownloaded", bytesDownloaded, "remoteSize", remoteTotalSize)
+			// Use bitmap (preferred) or BytesDownloaded as fallback.
+			if remoteBitmap != nil && !remoteBitmap.IsComplete() {
+				logger.Info("Download incomplete (bitmap), re-streaming from remote", "progress", remoteBitmap.Progress(), "remoteSize", remoteTotalSize)
 				localNewer = false
 				remoteHasUpdate = true
 				needsRemark = true
+			} else if remoteBitmap == nil {
+				bytesDownloaded := remoteFile.Download.BytesDownloaded.Load()
+				if bytesDownloaded < remoteTotalSize {
+					logger.Info("Download incomplete, re-streaming from remote", "bytesDownloaded", bytesDownloaded, "remoteSize", remoteTotalSize)
+					localNewer = false
+					remoteHasUpdate = true
+					needsRemark = true
+				}
 			}
 		}
 	}
@@ -982,6 +991,8 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 		fh.NotLocalSynced = true // Ensure Read uses stream, not stale local cache
 		// Initialize download state for resume capability.
 		fh.Download.Reset(remoteTotalSize)
+		// Share the bitmap from RemoteFiles so Read() can check which chunks are cached.
+		fh.Bitmap = remoteBitmap
 
 		// Pre-allocate local file to expected size for out-of-order writes.
 		// Without this, non-sequential reads (e.g., video moov atom at end) can cause corruption.
@@ -992,10 +1003,6 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 				logger.Info("Pre-allocated local file", "size", remoteTotalSize)
 			}
 		}
-
-		// NOTE: We do NOT use local file size for BytesDownloaded.
-		// Pre-allocation creates full-size file with zeros. BytesDownloaded
-		// is only updated by Read() when actual bytes are received from stream.
 	}
 	d.OpenFileHandlers[fh.Inode] = fh
 	fh.openFileCounter.Open()
@@ -1117,37 +1124,84 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 
 			logger.Info("Release lstat result", "path", path, "size", stgo.Size)
 
-			aux := &winfuse.Stat_t{}
-			copyFusestatFromGostat(aux, &stgo)
+			if stgo.Size == 0 && !f.HadEdits {
+				// Size=0 with no writes: could be either:
+				// 1. macOS Finder drag: uses fcopyfile which bypasses FUSE Write.
+				//    Data lands on disk but we never see it. No second Release comes.
+				// 2. Genuinely empty file: touch, .gitkeep, etc.
+				//
+				// Defer notification by 300ms. After the delay:
+				// - If file was reopened (open→write→release cycle), skip (that Release handles it)
+				// - If file grew on disk (fcopyfile completed), notify with real size
+				// - If still size=0 (genuine empty file), notify with size=0
+				logger.Info("Deferring size=0 notification (fcopyfile or empty)", "path", path)
+				go func() {
+					time.Sleep(300 * time.Millisecond)
+					// If file was reopened for writing, that Release will handle it
+					if f.openFileCounter.CountOpenDescriptors() > 0 {
+						logger.Info("File reopened, cancelling deferred notify", "path", path)
+						return
+					}
+					// Re-lstat: fcopyfile may have written data by now
+					var recheckStat syscall.Stat_t
+					if err := syscall.Lstat(cleanPath, &recheckStat); err != nil {
+						logger.Error("Deferred lstat failed", "path", path, "error", err)
+						return
+					}
+					// Notify with whatever size we find (0 for empty, >0 for fcopyfile)
+					aux := &winfuse.Stat_t{}
+					copyFusestatFromGostat(aux, &recheckStat)
+					d.OnLocalChange(types.FileEvent{
+						Path:   path,
+						Action: types.AddFile,
+						Attr:   types.StatToAttr(aux),
+					})
+					f.NotRemoteSynced = false
+					f.HadEdits = false
+					logger.Info(">>> DEFERRED NOTIFIED PEER", "path", path, "size", recheckStat.Size)
+				}()
+			} else {
+				aux := &winfuse.Stat_t{}
+				copyFusestatFromGostat(aux, &stgo)
 
-			d.OnLocalChange(types.FileEvent{
-				Path:   path,
-				Action: types.AddFile, // Always AddFile - peer handles updates
-				Attr:   types.StatToAttr(aux),
-			})
+				d.OnLocalChange(types.FileEvent{
+					Path:   path,
+					Action: types.AddFile, // Always AddFile - peer handles updates
+					Attr:   types.StatToAttr(aux),
+				})
 
-			f.NotRemoteSynced = false
-			f.HadEdits = false
-			logger.Info(">>> NOTIFIED PEER", "path", path, "size", stgo.Size)
+				f.NotRemoteSynced = false
+				f.HadEdits = false
+				logger.Info(">>> NOTIFIED PEER", "path", path, "size", stgo.Size)
+			}
 		}
 
 		// Reset sync state for future opens
 		f.IsLocalPresent = true
 		// Only mark as synced if download is actually COMPLETE.
-		// IMPORTANT: Can't use file size because pre-allocation makes file look complete.
-		// Use Download.BytesDownloaded which tracks actual bytes received.
-		expectedSize := f.Download.TotalSize.Load()
-		bytesDownloaded := f.Download.BytesDownloaded.Load()
-		if expectedSize > 0 && bytesDownloaded >= expectedSize {
-			f.NotLocalSynced = false
-			logger.Info("Download complete, marking as synced", "bytesDownloaded", bytesDownloaded, "expectedSize", expectedSize)
-		} else if expectedSize > 0 {
-			logger.Info("Download incomplete, keeping NotLocalSynced=true", "bytesDownloaded", bytesDownloaded, "expectedSize", expectedSize)
-		} else {
-			// No expected size tracked (local file, not from remote) - mark as synced
-			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-			if localInfo, statErr := os.Stat(cleanPath); statErr == nil && localInfo.Size() > 0 {
+		// Use ChunkBitmap (preferred) or BytesDownloaded as fallback.
+		if f.Bitmap != nil {
+			if f.Bitmap.IsComplete() {
 				f.NotLocalSynced = false
+				logger.Info("Download complete (all chunks verified)", "progress", f.Bitmap.Progress())
+			} else {
+				logger.Info("Download incomplete, keeping NotLocalSynced=true", "progress", f.Bitmap.Progress())
+			}
+		} else {
+			// Fallback for files without bitmap (local-origin or legacy).
+			expectedSize := f.Download.TotalSize.Load()
+			bytesDownloaded := f.Download.BytesDownloaded.Load()
+			if expectedSize > 0 && bytesDownloaded >= expectedSize {
+				f.NotLocalSynced = false
+				logger.Info("Download complete (bytes check)", "bytesDownloaded", bytesDownloaded, "expectedSize", expectedSize)
+			} else if expectedSize > 0 {
+				logger.Info("Download incomplete, keeping NotLocalSynced=true", "bytesDownloaded", bytesDownloaded, "expectedSize", expectedSize)
+			} else {
+				// No expected size tracked (local file, not from remote) - mark as synced
+				cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+				if localInfo, statErr := os.Stat(cleanPath); statErr == nil && localInfo.Size() > 0 {
+					f.NotLocalSynced = false
+				}
 			}
 		}
 
@@ -1610,22 +1664,39 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	var stream types.RemoteFileStream
 	var realPath string
 	var notLocalSynced bool
+	var bitmap *ChunkBitmap
 	if ok {
 		stream = f.RemoteFileStream
 		realPath = f.RealPathOfFile
 		notLocalSynced = f.NotLocalSynced
+		bitmap = f.Bitmap
 	}
 	d.OpenMapLock.RUnlock()
 
-	logger.Info("=== READ DEBUG ===",
+	logger.Debug("=== READ ===",
 		"path", path,
 		"ok", ok,
 		"notLocalSynced", notLocalSynced,
 		"streamNil", stream == nil,
+		"hasBitmap", bitmap != nil,
 		"fh", fh)
 
 	if ok && notLocalSynced && stream != nil {
-		logger.Info("Reading from remote", "bufLen", len(buff), "progress", f.Download.Progress())
+		// HYBRID READ: Check bitmap to decide local vs remote.
+		// If all chunks for this range are already downloaded (by prefetch or prior read),
+		// serve from local cache. Otherwise fetch on-demand from remote.
+		if bitmap != nil && bitmap.HasRange(offset, len(buff)) {
+			// Fast path: all chunks available locally.
+			logger.Debug("Bitmap hit — reading from local cache", "offset", offset, "len", len(buff))
+			n, preadErr := syscall.Pread(int(fh), buff, offset)
+			if preadErr != nil {
+				logger.Error("Local pread failed after bitmap hit", "error", preadErr)
+				return int(convertOsErrToSyscallErrno("pread", preadErr))
+			}
+			return n
+		}
+
+		logger.Debug("Reading from remote (on-demand)", "bufLen", len(buff), "progress", f.Download.Progress())
 
 		// Retry loop for resilience against transient failures.
 		var data []byte
@@ -1693,7 +1764,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		f.Download.UpdateProgress(offset, n)
 		f.Download.UpdateChecksum(data[:n])
 
-		// Write data into local file for caching (no lock needed - local file ops).
+		// Write data into local file for caching (no lock needed - pwrite is atomic).
 		lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			logger.Error("Failed to open local file for writing", "error", err)
@@ -1701,14 +1772,18 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		}
 		defer lf.Close()
 
-		// Write at offset (overwrite existing bytes).
 		_, err = lf.WriteAt(data, offset)
 		if err != nil {
 			logger.Error("Failed to write remote data to local file", "error", err)
 			return -winfuse.EIO
 		}
 
-		logger.Debug("Read completed", "bytes", n, "progress", f.Download.Progress(), "checksum", f.Download.Checksum())
+		// Mark bitmap for the chunks we just downloaded on-demand.
+		if bitmap != nil {
+			bitmap.SetRange(offset, n)
+		}
+
+		logger.Debug("Read completed", "bytes", n, "progress", f.Download.Progress())
 		return n
 	}
 
@@ -1831,7 +1906,6 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	}
 
 	d.RemoteFilesLock.Lock()
-	defer d.RemoteFilesLock.Unlock()
 
 	if existing, ok := d.RemoteFiles[path]; ok {
 		logger.Info("Remote file exists, updating", "path", path, "size", stat.Size, "mtime", stat.Mtim.Time())
@@ -1839,11 +1913,18 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		existing.NotLocalSynced = true
 		// CRITICAL: Reset download state so BytesDownloaded doesn't carry over from previous attempts
 		existing.Download.Reset(uint64(stat.Size))
+		// Cancel old prefetch, create new bitmap, start new prefetch.
+		if existing.PrefetchCancel != nil {
+			existing.PrefetchCancel()
+		}
+		existing.Bitmap = NewChunkBitmap(stat.Size)
+		d.RemoteFilesLock.Unlock()
+		d.startPrefetch(logger, existing, path)
 		return nil
 	}
 
 	logger.Info("Adding remote file", "path", path, "size", stat.Size, "mtime", stat.Mtim.Time())
-	d.RemoteFiles[path] = &File{
+	f := &File{
 		logger:          d.logger,
 		openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
 		stat:            stat,
@@ -1854,8 +1935,129 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		StreamProvider:  d.OpenStreamProvider(),
 		OnLocalChange:   d.OnLocalChange,
 		RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
+		Bitmap:          NewChunkBitmap(stat.Size),
 	}
+	d.RemoteFiles[path] = f
+	d.RemoteFilesLock.Unlock()
+	d.startPrefetch(logger, f, path)
 	return nil
+}
+
+// startPrefetch pre-allocates the local cache file and launches a background
+// goroutine that sequentially downloads all missing chunks from the remote peer.
+func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
+	if f.Bitmap == nil {
+		// Empty file or size=0 — nothing to prefetch.
+		return
+	}
+
+	realPath := f.RealPathOfFile
+	fileSize := f.Bitmap.FileSize()
+
+	// Pre-allocate local cache file to full size so pwrite at any offset works.
+	if err := os.MkdirAll(filepath.Dir(realPath), 0o755); err != nil {
+		logger.Warn("Prefetch: failed to create dirs", "path", realPath, "error", err)
+	}
+	if err := os.Truncate(realPath, fileSize); err != nil {
+		// File may not exist yet — create it.
+		lf, createErr := os.Create(realPath)
+		if createErr != nil {
+			logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
+			return
+		}
+		if truncErr := lf.Truncate(fileSize); truncErr != nil {
+			logger.Warn("Prefetch: failed to truncate cache file", "path", realPath, "error", truncErr)
+		}
+		lf.Close()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	f.PrefetchCancel = cancel
+
+	go d.prefetchFile(ctx, logger, f, path, realPath)
+}
+
+// prefetchFile sequentially downloads all missing chunks from the remote peer.
+// It opens its own gRPC stream so it doesn't interfere with on-demand FUSE reads.
+func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, path string, realPath string) {
+	bitmap := f.Bitmap
+	if bitmap == nil {
+		return
+	}
+
+	logger = logger.With("prefetch", path)
+	logger.Info("Background prefetch starting", "chunks", bitmap.Total(), "fileSize", bitmap.FileSize())
+
+	// Open a dedicated stream for prefetch (separate from FUSE Read streams).
+	fsp := d.OpenStreamProvider()
+	if fsp == nil {
+		logger.Warn("Prefetch: no stream provider available")
+		return
+	}
+
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	defer streamCancel()
+
+	stream, err := fsp.OpenRemoteFile(streamCtx, 0, path)
+	if err != nil {
+		logger.Warn("Prefetch: failed to open remote stream", "error", err)
+		return
+	}
+	defer stream.Close()
+
+	// Open local file for writing.
+	lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		logger.Warn("Prefetch: failed to open local file", "error", err)
+		return
+	}
+	defer lf.Close()
+
+	fileSize := bitmap.FileSize()
+	for idx := 0; idx < bitmap.Total(); idx++ {
+		select {
+		case <-ctx.Done():
+			logger.Info("Prefetch cancelled", "progress", bitmap.Progress())
+			return
+		default:
+		}
+
+		if bitmap.Has(idx) {
+			continue // Already fetched by on-demand FUSE Read.
+		}
+
+		offset := int64(idx) * ChunkSize
+		size := int64(ChunkSize)
+		if offset+size > fileSize {
+			size = fileSize - offset
+		}
+
+		readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
+		data, readErr := stream.ReadAt(readCtx, offset, size)
+		readCancel()
+
+		if readErr != nil {
+			logger.Warn("Prefetch: read failed", "chunk", idx, "error", readErr)
+			// Try to continue with next chunk rather than aborting entirely.
+			continue
+		}
+
+		_, writeErr := lf.WriteAt(data, offset)
+		if writeErr != nil {
+			logger.Warn("Prefetch: write failed", "chunk", idx, "error", writeErr)
+			continue
+		}
+
+		bitmap.Set(idx)
+		f.Download.UpdateProgress(offset, len(data))
+	}
+
+	if bitmap.IsComplete() {
+		logger.Info("Prefetch complete — all chunks downloaded", "fileSize", fileSize)
+		f.NotLocalSynced = false
+	} else {
+		logger.Info("Prefetch finished with gaps", "progress", bitmap.Progress())
+	}
 }
 
 func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t) error {
@@ -1865,13 +2067,12 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	}
 
 	d.RemoteFilesLock.Lock()
-	defer d.RemoteFilesLock.Unlock()
 
 	f, ok := d.RemoteFiles[path]
 	if !ok {
 		// LOCAL file edited by remote peer - add to RemoteFiles so we fetch updated version
 		logger.Info("Local file edited by remote, marking for sync", "path", path, "mtime", stat.Mtim.Time())
-		d.RemoteFiles[path] = &File{
+		newFile := &File{
 			logger:          d.logger,
 			openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
 			stat:            stat,
@@ -1882,11 +2083,16 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 			StreamProvider:  d.OpenStreamProvider(),
 			OnLocalChange:   d.OnLocalChange,
 			RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
+			Bitmap:          NewChunkBitmap(stat.Size),
 		}
+		d.RemoteFiles[path] = newFile
+		d.RemoteFilesLock.Unlock()
+		d.startPrefetch(logger, newFile, path)
 		return nil
 	}
 
 	if stat.Mtim.Time().Before(f.stat.Mtim.Time()) {
+		d.RemoteFilesLock.Unlock()
 		logger.Warn("Remote edit rejected - local is newer", "path", path, "remoteMtime", stat.Mtim.Time(), "localMtime", f.stat.Mtim.Time())
 		return syscall.ECANCELED
 	}
@@ -1896,5 +2102,12 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	f.NotLocalSynced = true
 	// CRITICAL: Reset download state for re-download
 	f.Download.Reset(uint64(stat.Size))
+	// Cancel old prefetch, reset bitmap, start new prefetch.
+	if f.PrefetchCancel != nil {
+		f.PrefetchCancel()
+	}
+	f.Bitmap = NewChunkBitmap(stat.Size)
+	d.RemoteFilesLock.Unlock()
+	d.startPrefetch(logger, f, path)
 	return nil
 }
