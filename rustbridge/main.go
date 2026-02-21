@@ -17,11 +17,33 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
+
+// sortedRemoteKeys returns remote file map keys in sorted order.
+func sortedRemoteKeys() []string {
+	keys := make([]string, 0, len(kd.SyncTracker.RemoteFiles))
+	for k := range kd.SyncTracker.RemoteFiles {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// sortedLocalKeys returns local file map keys in sorted order.
+func sortedLocalKeys() []string {
+	keys := make([]string, 0, len(kd.SyncTracker.LocalFiles))
+	for k := range kd.SyncTracker.LocalFiles {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 var kd *common.KeibiDrop
 var cancel context.CancelFunc
@@ -194,8 +216,9 @@ func KD_GetFileCount() C.int {
 	if kd == nil {
 		return 0
 	}
-	remote, _ := kd.ListFiles()
-	return C.int(len(remote))
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+	return C.int(len(kd.SyncTracker.RemoteFiles))
 }
 
 //export KD_GetFileName
@@ -203,11 +226,92 @@ func KD_GetFileName(index C.int) *C.char {
 	if kd == nil {
 		return nil
 	}
-	remote, _ := kd.ListFiles()
-	if int(index) >= len(remote) {
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+	keys := sortedRemoteKeys()
+	if int(index) >= len(keys) {
 		return nil
 	}
-	return C.CString(remote[index])
+	return C.CString(keys[int(index)])
+}
+
+//export KD_GetLocalFileCount
+func KD_GetLocalFileCount() C.int {
+	if kd == nil {
+		return 0
+	}
+	kd.SyncTracker.LocalFilesMu.RLock()
+	defer kd.SyncTracker.LocalFilesMu.RUnlock()
+	return C.int(len(kd.SyncTracker.LocalFiles))
+}
+
+//export KD_GetLocalFileName
+func KD_GetLocalFileName(index C.int) *C.char {
+	if kd == nil {
+		return nil
+	}
+	kd.SyncTracker.LocalFilesMu.RLock()
+	defer kd.SyncTracker.LocalFilesMu.RUnlock()
+	keys := sortedLocalKeys()
+	if int(index) >= len(keys) {
+		return nil
+	}
+	return C.CString(keys[int(index)])
+}
+
+//export KD_GetFileSize
+func KD_GetFileSize(index C.int) C.long {
+	if kd == nil {
+		return 0
+	}
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+	keys := sortedRemoteKeys()
+	if int(index) >= len(keys) {
+		return 0
+	}
+	f, ok := kd.SyncTracker.RemoteFiles[keys[int(index)]]
+	if !ok {
+		return 0
+	}
+	return C.long(f.Size)
+}
+
+//export KD_GetFileSizeByName
+func KD_GetFileSizeByName(name *C.char) C.long {
+	if kd == nil {
+		return 0
+	}
+	goName := C.GoString(name)
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+	// Try exact key first, then with "/" prefix
+	f, ok := kd.SyncTracker.RemoteFiles[goName]
+	if !ok {
+		f, ok = kd.SyncTracker.RemoteFiles["/"+goName]
+	}
+	if !ok {
+		f, ok = kd.SyncTracker.RemoteFiles[strings.TrimPrefix(goName, "/")]
+	}
+	if !ok {
+		return 0
+	}
+	return C.long(f.Size)
+}
+
+//export KD_GetLocalFileRealPath
+func KD_GetLocalFileRealPath(name *C.char) *C.char {
+	if kd == nil {
+		return nil
+	}
+	goName := C.GoString(name)
+	kd.SyncTracker.LocalFilesMu.RLock()
+	defer kd.SyncTracker.LocalFilesMu.RUnlock()
+	f, ok := kd.SyncTracker.LocalFiles[goName]
+	if !ok {
+		return nil
+	}
+	return C.CString(f.RealPathOfFile)
 }
 
 //export KD_GetConnectionStatus
@@ -234,11 +338,35 @@ func KD_SaveFileAt(index C.int, localPath *C.char) C.int {
 	if kd == nil {
 		return -1
 	}
-	remote, _ := kd.ListFiles()
-	if int(index) >= len(remote) {
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	keys := sortedRemoteKeys()
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
+	if int(index) >= len(keys) {
 		return -2
 	}
-	if err := kd.PullFile(remote[index], C.GoString(localPath)); err != nil {
+	if err := kd.PullFile(keys[int(index)], C.GoString(localPath)); err != nil {
+		setLastError(err)
+		return -3
+	}
+	return 0
+}
+
+//export KD_SaveFileByName
+func KD_SaveFileByName(name *C.char, localPath *C.char) C.int {
+	if kd == nil {
+		return -1
+	}
+	goName := C.GoString(name)
+	// Try exact key, then with "/" prefix
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	_, ok := kd.SyncTracker.RemoteFiles[goName]
+	if !ok {
+		if _, ok2 := kd.SyncTracker.RemoteFiles["/"+goName]; ok2 {
+			goName = "/" + goName
+		}
+	}
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
+	if err := kd.PullFile(goName, C.GoString(localPath)); err != nil {
 		setLastError(err)
 		return -3
 	}

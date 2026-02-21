@@ -850,6 +850,23 @@ extern "C" {
     pub fn KD_GetFileName(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
 }
 extern "C" {
+    pub fn KD_GetLocalFileCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetLocalFileName(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetFileSize(index: ::std::os::raw::c_int) -> ::std::os::raw::c_long;
+}
+extern "C" {
+    pub fn KD_GetFileSizeByName(name: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_long;
+}
+extern "C" {
+    pub fn KD_GetLocalFileRealPath(
+        name: *mut ::std::os::raw::c_char,
+    ) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
     pub fn KD_GetConnectionStatus() -> ::std::os::raw::c_int;
 }
 extern "C" {
@@ -857,6 +874,24 @@ extern "C" {
         index: ::std::os::raw::c_int,
         localPath: *mut ::std::os::raw::c_char,
     ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SaveFileByName(
+        name: *mut ::std::os::raw::c_char,
+        localPath: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetLastError() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetLastErrorAndClear() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_PollEvent() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SetupEventCallbacks();
 }
 pub type __builtin_va_list = [__va_list_tag; 1usize];
 #[repr(C)]
