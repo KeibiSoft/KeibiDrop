@@ -84,11 +84,11 @@ func (c *cliContext) executor(in string) {
 		handleShow(c.kd, strings.Join(args[1:], " "))
 
 	case "register":
-		if len(args) != 3 || args[1] != "peer" {
-			fmt.Println("Usage: register peer <fingerprint>")
+		if len(args) != 2 {
+			fmt.Println("Usage: register <fingerprint>")
 			return
 		}
-		registerPeer(c.kd, args[2])
+		registerPeer(c.kd, args[1])
 
 	case "create":
 		createRoom(c.kd)
@@ -161,7 +161,7 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 		{Text: "show relay", Description: "Show the connected relay URL"},
 		{Text: "show peer", Description: "Show the peer fingerprint"},
 		{Text: "show fingerprint", Description: "Show our fingerprint"},
-		{Text: "register peer", Description: "Register peer fingerprint"},
+		{Text: "register", Description: "Register peer fingerprint"},
 		{Text: "create", Description: "Create a room"},
 		{Text: "join", Description: "Join a room by fingerprint"},
 		{Text: "reset", Description: "Reset session, rotate keys"},
@@ -183,9 +183,9 @@ show ip                      Show your IP
 show peer fingerprint        Show peer's fingerprint
 show peer ip                 Show peer's IP
 show relay                   Show the currently connected relay URL
-register peer <fingerprint>  Register a peer's fingerprint
+register <fingerprint>       Register a peer's fingerprint
 create                       Create a room
-join <fingerprint>           Join a room by peer fingerprint
+join                         Join a room
 reset                        Reset session and rotate keys
 add <filepath>               Share a file or directory
 list                         List shared files and their locations
