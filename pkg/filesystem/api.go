@@ -96,21 +96,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 
 	fs.host = host
 
-	// Mount options for macOS compatibility
-	// See: https://github.com/macfuse/macfuse/wiki/Mount-Options
-	opts := []string{
-		"-o", "volname=KeibiDrop",
-		"-o", "local",            // Mark as local volume (not network)
-		"-o", "negative_vncache", // Cache non-existent files (stops .DS_Store/.Trashes lookups)
-		"-o", "slow_statfs",      // Reduce statfs calls (Finder won't poll as aggressively)
-		"-o", "allow_other", // Allow sandboxed apps (Finder, Preview) to access files.
-		// REQUIRES: /etc/fuse.conf must contain "user_allow_other" on macOS.
-		// Without this, Preview shows "you don't have permission to view it".
-		// NOTE: direct_io was removed because it disables mmap, which breaks git clone.
-		// Git uses mmap for pack files. Without direct_io, the kernel page cache is used,
-		// which means file changes may not be immediately visible. For real-time sync,
-		// consider per-file direct_io via Open() response or cache invalidation.
-	}
+	opts := getMountOptions()
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
 	fs.host.Mount(cleanMountPoint, opts)

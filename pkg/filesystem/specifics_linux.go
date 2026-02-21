@@ -105,3 +105,10 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
 	return syscall.Statfs(path, stat)
 }
+
+// getMountOptions returns Linux-specific FUSE mount options.
+// No allow_other here — that requires user_allow_other in /etc/fuse.conf.
+// The mounting user always has access without it.
+func getMountOptions() []string {
+	return nil
+}
