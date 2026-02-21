@@ -1,4 +1,16 @@
-import { Button, VerticalBox} from "std-widgets.slint";
+import { Button, VerticalBox, ScrollView } from "std-widgets.slint";
+
+// File info model for dynamic file list
+export struct FileInfo {
+    name: string,
+    size-bytes: int,
+    downloading: bool,    // I'm downloading this file
+    uploading: bool,      // peer is downloading this file from me
+    progress: float,      // 0.0 to 1.0
+    saved: bool,
+    file-type: string,    // "pdf", "image", "video", "audio", "code", "archive", "text", "other"
+    is-local: bool,       // true = my file (shared by me), false = remote file (from peer)
+}
 
 component CustomButton inherits Rectangle {
     in-out property text <=> txt.text;
@@ -277,9 +289,10 @@ component SpinnerArc inherits Rectangle {
     }
 }
 
-// Small spinner for file cards
+// Small spinner for file cards (configurable color)
 component SmallSpinner inherits Rectangle {
     in property <bool> active: true;
+    in property <color> accent: #3b82f6;  // blue default
 
     width: 20px;
     height: 20px;
@@ -290,7 +303,7 @@ component SmallSpinner inherits Rectangle {
         width: 100%;
         height: 100%;
         border-radius: self.width / 2;
-        background: #1e3a5f;
+        background: root.accent.darker(60%);
     }
 
     Path {
@@ -300,7 +313,7 @@ component SmallSpinner inherits Rectangle {
         viewbox-y: 0;
         viewbox-width: 20;
         viewbox-height: 20;
-        stroke: #3b82f6;
+        stroke: root.accent;
         stroke-width: 2px;
         stroke-line-cap: round;
         fill: transparent;
@@ -320,11 +333,67 @@ component SmallSpinner inherits Rectangle {
     }
 }
 
-// File card for non-FUSE mode
+// File type icon (emoji-based placeholder for different file types)
+component FileTypeIcon inherits Rectangle {
+    in property <string> file-type: "other";
+
+    width: 48px;
+    height: 48px;
+    background: transparent;
+
+    // Icon text based on file type
+    Text {
+        text: root.file-type == "pdf" ? "PDF"
+            : root.file-type == "image" ? "IMG"
+            : root.file-type == "video" ? "VID"
+            : root.file-type == "audio" ? "SND"
+            : root.file-type == "code" ? "</>"
+            : root.file-type == "archive" ? "ZIP"
+            : root.file-type == "text" ? "TXT"
+            : "FILE";
+        color: root.file-type == "pdf" ? #ef4444
+             : root.file-type == "image" ? #22c55e
+             : root.file-type == "video" ? #a855f7
+             : root.file-type == "audio" ? #f59e0b
+             : root.file-type == "code" ? #3b82f6
+             : root.file-type == "archive" ? #f97316
+             : #9ca3af;
+        font-size: 16px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// Progress bar
+component ProgressBar inherits Rectangle {
+    in property <float> progress: 0.0;  // 0.0 to 1.0
+
+    width: 100%;
+    height: 4px;
+    background: #334155;
+    border-radius: 2px;
+
+    Rectangle {
+        width: parent.width * clamp(root.progress, 0, 1);
+        height: 100%;
+        background: root.progress >= 1.0 ? #22c55e : #3b82f6;
+        border-radius: 2px;
+
+        animate width { duration: 300ms; easing: ease-out; }
+        animate background { duration: 300ms; }
+    }
+}
+
+// File card for non-FUSE mode (original design + progress)
 component FileCard inherits Rectangle {
     in property <string> filename: "Project 123";
+    in property <string> file-type: "other";
     in property <bool> downloading: false;
+    in property <bool> uploading: false;
+    in property <float> progress: 0.0;
     in property <bool> saved: false;
+    in property <bool> is-local: false;
 
     callback save-clicked;
     callback open-clicked;
@@ -333,21 +402,65 @@ component FileCard inherits Rectangle {
     height: 180px;
     background: transparent;
 
-    // Preview area
+    // Preview area (original grey style)
     Rectangle {
         width: parent.width;
         height: 140px;
         background: #3a3a3a;
         border-radius: 4px;
 
-        if downloading: SmallSpinner {
+        // File type icon centered
+        FileTypeIcon {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2 - 10px;
+            file-type: root.file-type;
+        }
+
+        // Green spinner: downloading from peer (top-left)
+        if root.downloading: SmallSpinner {
             x: 8px;
             y: 8px;
             active: true;
+            accent: #22c55e;
+        }
+
+        // Blue spinner: uploading to peer (top-right)
+        if root.uploading: SmallSpinner {
+            x: parent.width - 28px;
+            y: 8px;
+            active: true;
+            accent: #3b82f6;
+        }
+
+        // Progress bar at bottom of preview area
+        if root.downloading: ProgressBar {
+            x: 8px;
+            y: parent.height - 18px;
+            width: parent.width - 16px;
+            progress: root.progress;
+        }
+
+        // Progress percentage
+        if root.downloading: Text {
+            y: parent.height - 14px;
+            horizontal-alignment: center;
+            text: Math.round(root.progress * 100) + "%";
+            color: #22c55e;
+            font-size: 10px;
+        }
+
+        // Saved checkmark
+        if root.saved && !root.downloading: Text {
+            x: parent.width - 30px;
+            y: 8px;
+            text: "OK";
+            color: #22c55e;
+            font-size: 12px;
+            font-weight: 700;
         }
     }
 
-    // Bottom row
+    // Bottom row (original style)
     HorizontalLayout {
         y: 148px;
         height: 28px;
@@ -368,14 +481,19 @@ component FileCard inherits Rectangle {
             font-size: 13px;
             vertical-alignment: center;
             horizontal-stretch: 1;
+            overflow: elide;
         }
 
         OutlineButton {
             width: 80px;
             height: 28px;
-            text: saved ? "Open" : "Save";
+            text: root.downloading ? Math.round(root.progress * 100) + "%"
+                : root.is-local ? "Open"
+                : root.saved ? "Open"
+                : "Save";
+            enabled: !root.downloading;
             clicked => {
-                if (saved) { root.open-clicked(); }
+                if (root.is-local || root.saved) { root.open-clicked(); }
                 else { root.save-clicked(); }
             }
         }
@@ -385,6 +503,7 @@ component FileCard inherits Rectangle {
 
 
 export component MainWindow inherits Window {
+    title: "KEIBIDROP";
     default-font-family: "Inter";
     width: 1144px;
     height: 729px;
@@ -396,19 +515,44 @@ export component MainWindow inherits Window {
     in property<bool> next_enabled: true;
 
     // Screen state: 0 = connect, 1 = connected (no-fuse), 2 = connected (fuse)
-    in-out property<int> current_screen: 0;  // TODO: change back to 0 after testing
+    in-out property<int> current_screen: 0;
+
+    // Error message (shown on connect screen)
+    in-out property<string> error_message: "";
+
+    // Dynamic file list model (populated by Rust file watcher)
+    in-out property<[FileInfo]> file_list: [];
+    // Set by Rust when any file is actively downloading
+    in-out property<bool> any_downloading: false;
+    // Set by Rust when a file is being dragged over the window
+    in-out property<bool> drag_hovering: false;
 
     // Callbacks
     callback add_peer_code();
     callback copy_my_code();
-    callback next_pressed();
+    callback create_room_pressed();
+    callback join_room_pressed();
     callback disconnect_pressed();
     callback open_folder_pressed();
+    callback add_file_pressed();
+    callback save_file(string);
+    callback open_file(string);
+    callback exit_pressed();
 
     // Logo appears on all screens
     KeibiDropLogo {
         x: 115px;
         y: 70px;
+    }
+
+    // Exit button (top-right, all screens)
+    OutlineButton {
+        x: parent.width - 80px;
+        y: 20px;
+        width: 60px;
+        height: 28px;
+        text: "Exit";
+        clicked => { root.exit_pressed() }
     }
 
     // ============ SCREEN 0: Connect ============
@@ -464,9 +608,25 @@ export component MainWindow inherits Window {
         OutlineButton {
             x: snd.x + snd.width + 38px;
             y: snd.y + snd.height - 34px;
-            text: "Next";
+            text: "Create Room";
             enabled: root.next_enabled;
-            clicked => { root.next_pressed() }
+            clicked => { root.create_room_pressed() }
+        }
+
+        OutlineButton {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 44px;
+            text: "Join Room";
+            enabled: root.next_enabled;
+            clicked => { root.join_room_pressed() }
+        }
+
+        if root.error_message != "": Text {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 98px;
+            text: root.error_message;
+            color: #ef4444;
+            font-size: 13px;
         }
     }
 
@@ -484,36 +644,35 @@ export component MainWindow inherits Window {
             clicked => { root.disconnect_pressed() }
         }
 
-        // Large spinner with + icon
-        SpinnerArc {
+        // Add File button next to disconnect
+        OutlineButton {
+            x: parent.width - 380px;
+            y: 70px;
+            text: "Add File";
+            clicked => { root.add_file_pressed() }
+        }
+
+        // Large spinner: visible during drag-and-drop or when files are downloading
+        if root.drag_hovering || root.any_downloading: SpinnerArc {
             x: (parent.width - self.width) / 2;
             y: 140px;
             size: 180px;
             spinning: true;
         }
 
-        // File grid
-        HorizontalLayout {
-            x: 120px;
-            y: 380px;
-            spacing: 20px;
-
-            FileCard { filename: "File 1"; downloading: true; }
-            FileCard { filename: "File 2"; downloading: true; }
-            FileCard { filename: "File 3"; downloading: false; }
-            FileCard { filename: "File 4"; saved: true; }
-        }
-
-        // Second row
-        HorizontalLayout {
-            x: 120px;
-            y: 580px;
-            spacing: 20px;
-
-            FileCard { filename: "File 5"; }
-            FileCard { filename: "File 6"; }
-            FileCard { filename: "File 7"; }
-            FileCard { filename: "File 8"; }
+        // Dynamic file grid (4 per row, positioned like original)
+        for file[idx] in root.file_list: FileCard {
+            x: 120px + mod(idx, 4) * 270px;
+            y: 380px + floor(idx / 4) * 200px;
+            filename: file.name;
+            file-type: file.file-type;
+            downloading: file.downloading;
+            uploading: file.uploading;
+            progress: file.progress;
+            saved: file.saved;
+            is-local: file.is-local;
+            save-clicked => { root.save_file(file.name) }
+            open-clicked => { root.open_file(file.name) }
         }
     }
 

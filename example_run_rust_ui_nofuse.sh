@@ -1,0 +1,1 @@
+LOG_FILE="Log_Alice.txt" NO_FUSE=1 TO_SAVE_PATH="/Users/marius/work/code/KeibiDrop/SaveAlice" TO_MOUNT_PATH="/Users/marius/work/code/KeibiDrop/MountAlice" KEIBIDROP_RELAY="http://0.0.0.0:54321" INBOUND_PORT=26001 OUTBOUND_PORT=26002 ./rust/target/release/keibidrop-rust
