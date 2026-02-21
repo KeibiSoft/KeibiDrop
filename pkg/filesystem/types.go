@@ -218,6 +218,13 @@ type File struct {
 	// Download resumption state.
 	Download DownloadState
 
+	// Bitmap tracks which 512 KiB chunks have been downloaded from the remote peer.
+	// nil for local-origin files or empty files (size=0).
+	Bitmap *ChunkBitmap
+
+	// PrefetchCancel cancels the background prefetch goroutine for this file.
+	PrefetchCancel context.CancelFunc
+
 	OnLocalChange func(event types.FileEvent)
 
 	stat *winfuse.Stat_t

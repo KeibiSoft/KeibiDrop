@@ -1,0 +1,19 @@
+FROM golang:1.23-bookworm
+
+# Install FUSE3 dev libraries for cgofuse compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfuse3-dev fuse3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+
+# Build everything to cache compilation
+RUN go build ./...
+
+# Default: run no-FUSE + relay + error + sync tests (FUSE needs --privileged)
+CMD ["go", "test", "-v", "-count=1", "-timeout", "180s", \
+     "-run", "TestNoFUSE|TestRelay|TestError|TestResilience", \
+     "./tests/"]

@@ -7,7 +7,11 @@
 package tests
 
 import (
+	"crypto/md5"
 	"crypto/rand"
+	"fmt"
+	"io"
+	mathrand "math/rand"
 	"os"
 	"path/filepath"
 	"testing"
@@ -163,5 +167,150 @@ func TestFUSESync(t *testing.T) {
 		v2, err := os.ReadFile(pullDest2)
 		require.NoError(err)
 		require.Equal(updated, v2)
+	})
+
+	t.Run("RandomJumpDownload_QuickTimePattern", func(t *testing.T) {
+		// Simulates QuickTime's read pattern on a .mov file:
+		// 1. Read header (first 4KB)
+		// 2. Read trailer (last ~13KB)
+		// 3. Skip middle ~80%
+		// Before the hybrid download fix, SaveAlice would have correct size
+		// but only header+trailer bytes — middle would be zeros = corruption.
+		// With the background prefetch, the full file should be available.
+		require := require.New(t)
+
+		// Generate 2 MiB of random binary data (simulates .mov file).
+		fileSize := 2 * 1024 * 1024
+		data := make([]byte, fileSize)
+		_, err := rand.Read(data)
+		require.NoError(err)
+
+		// Bob adds the file via no-FUSE API.
+		bobPath := filepath.Join(tp.BobSaveDir, "quicktime.mov")
+		require.NoError(os.WriteFile(bobPath, data, 0644))
+		require.NoError(tp.Bob.AddFile(bobPath))
+
+		// Alice should see it on her FUSE mount.
+		alicePath := filepath.Join(tp.AliceMountDir, "quicktime.mov")
+		WaitForFileOnMount(t, alicePath, 15*time.Second)
+
+		// Simulate QuickTime: read only header + trailer (random jumps).
+		f, err := os.Open(alicePath)
+		require.NoError(err)
+
+		// Read header: first 4KB
+		header := make([]byte, 4096)
+		n, err := f.ReadAt(header, 0)
+		require.NoError(err)
+		require.Equal(4096, n)
+		require.Equal(data[:4096], header, "header bytes mismatch")
+
+		// Read trailer: last 13KB
+		trailerOffset := int64(fileSize - 13*1024)
+		trailer := make([]byte, 13*1024)
+		n, err = f.ReadAt(trailer, trailerOffset)
+		require.NoError(err)
+		require.Equal(13*1024, n)
+		require.Equal(data[trailerOffset:], trailer, "trailer bytes mismatch")
+
+		// Random jumps in the middle (like seeking in a video player)
+		rng := mathrand.New(mathrand.NewSource(42))
+		for i := 0; i < 5; i++ {
+			jumpOffset := int64(rng.Intn(fileSize - 8192))
+			chunk := make([]byte, 8192)
+			n, err := f.ReadAt(chunk, jumpOffset)
+			require.NoError(err)
+			require.Equal(8192, n)
+			require.Equal(data[jumpOffset:jumpOffset+8192], chunk,
+				"random jump read mismatch at offset %d", jumpOffset)
+		}
+
+		f.Close()
+
+		// Wait for background prefetch to complete the full download.
+		// The prefetch goroutine fills all chunks sequentially.
+		aliceSavePath := filepath.Join(tp.AliceSaveDir, "quicktime.mov")
+		WaitForCondition(t, 30*time.Second, 500*time.Millisecond, func() bool {
+			info, err := os.Stat(aliceSavePath)
+			if err != nil {
+				return false
+			}
+			if info.Size() != int64(fileSize) {
+				return false
+			}
+			// Verify MD5 matches — this catches the zeros-in-the-middle bug.
+			saved, err := os.ReadFile(aliceSavePath)
+			if err != nil {
+				return false
+			}
+			return md5.Sum(saved) == md5.Sum(data)
+		}, "waiting for complete download with correct MD5")
+
+		// Final verification: full file read from FUSE mount should match.
+		fullRead, err := os.ReadFile(alicePath)
+		require.NoError(err)
+		require.Equal(len(data), len(fullRead), "full read size mismatch")
+
+		origMD5 := fmt.Sprintf("%x", md5.Sum(data))
+		readMD5 := fmt.Sprintf("%x", md5.Sum(fullRead))
+		require.Equal(origMD5, readMD5, "MD5 mismatch — file corruption detected")
+	})
+
+	t.Run("LargeBinaryWithRandomReads", func(t *testing.T) {
+		// Stress test: larger file with many random reads at various offsets,
+		// simulating a media player seeking through a video file.
+		require := require.New(t)
+
+		fileSize := 3 * 1024 * 1024 // 3 MiB
+		data := make([]byte, fileSize)
+		_, err := rand.Read(data)
+		require.NoError(err)
+
+		bobPath := filepath.Join(tp.BobSaveDir, "random_seek.bin")
+		require.NoError(os.WriteFile(bobPath, data, 0644))
+		require.NoError(tp.Bob.AddFile(bobPath))
+
+		alicePath := filepath.Join(tp.AliceMountDir, "random_seek.bin")
+		WaitForFileOnMount(t, alicePath, 15*time.Second)
+
+		f, err := os.Open(alicePath)
+		require.NoError(err)
+
+		// 20 random reads at various offsets and sizes.
+		rng := mathrand.New(mathrand.NewSource(99))
+		for i := 0; i < 20; i++ {
+			readSize := 1024 + rng.Intn(64*1024) // 1KB to 64KB
+			maxOffset := fileSize - readSize
+			if maxOffset <= 0 {
+				maxOffset = 1
+			}
+			offset := int64(rng.Intn(maxOffset))
+
+			buf := make([]byte, readSize)
+			n, err := f.ReadAt(buf, offset)
+			if err != nil && err != io.EOF {
+				require.NoError(err)
+			}
+			require.Equal(data[offset:offset+int64(n)], buf[:n],
+				"random read mismatch at offset=%d size=%d", offset, readSize)
+		}
+
+		f.Close()
+
+		// Wait for background prefetch, then verify full integrity.
+		aliceSavePath := filepath.Join(tp.AliceSaveDir, "random_seek.bin")
+		WaitForCondition(t, 30*time.Second, 500*time.Millisecond, func() bool {
+			saved, err := os.ReadFile(aliceSavePath)
+			if err != nil || len(saved) != fileSize {
+				return false
+			}
+			return md5.Sum(saved) == md5.Sum(data)
+		}, "waiting for full download of random_seek.bin")
+
+		origMD5 := fmt.Sprintf("%x", md5.Sum(data))
+		saved, err := os.ReadFile(aliceSavePath)
+		require.NoError(err)
+		savedMD5 := fmt.Sprintf("%x", md5.Sum(saved))
+		require.Equal(origMD5, savedMD5, "saved file MD5 mismatch")
 	})
 }
