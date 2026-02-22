@@ -262,6 +262,9 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				delete(kd.FS.Root.RemoteFiles, req.OldPath)
 				file.RelativePath = req.Path
 				file.Name = filepath.Base(req.Path)
+				// Update disk path so prefetchFile can detect the rename and move
+				// the downloaded content atomically after the goroutine completes.
+				file.RealPathOfFile = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
 				kd.FS.Root.RemoteFiles[req.Path] = file
 				logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
 			}
@@ -273,6 +276,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				delete(kd.FS.Root.AllFileMap, req.OldPath)
 				f.RelativePath = req.Path
 				f.Name = filepath.Base(req.Path)
+				f.RealPathOfFile = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
 				kd.FS.Root.AllFileMap[req.Path] = f
 			}
 			kd.FS.Root.AfmLock.Unlock()
