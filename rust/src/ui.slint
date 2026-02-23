@@ -46,8 +46,8 @@ component InputArea inherits Rectangle {
 
     width: 445px;
     height: 34px;
-    background: #222222;
-    border-color: #FFFFFF;
+    background: #2a2a2a;
+    border-color: rgba(255,255,255,0.25);
     clip: true;
     
     ti-clip := Rectangle {
@@ -63,6 +63,7 @@ component InputArea inherits Rectangle {
             horizontal-alignment: center;
             vertical-alignment: center;
             font-weight: 0.5;
+            color: white;
             text <=> root.inText;
             read-only: root.readOnly;
             single-line: true;
@@ -97,6 +98,7 @@ component DataRectangle inherits Rectangle {
         x: 36px;
         y: 0;
         text: parent.info;
+        color: #9ca3af;
     }
 
     InputArea {
@@ -114,11 +116,14 @@ component NumberedToolTip inherits Rectangle {
     width: 34px;
     height: 34px;
     border-width: 1px;
-    border-color: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.12);
     border-radius: 8px;
 
     Text {
         text: number;
+        color: white;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 }
 
@@ -134,10 +139,10 @@ component CodeRectangle inherits Rectangle {
     width: 517px;
     height: 157px;
     border-width: 1px;
-    border-color: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.20);
     border-radius: 8px;
     // padding: 18px;
-    background: #262626;
+    background: #363636;
 
     DataRectangle {
         info: parent.info;
