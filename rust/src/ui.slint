@@ -29,13 +29,6 @@ component CustomButton inherits Rectangle {
     touch := TouchArea { }
 }
 
-export component Recipe inherits Window {
-    VerticalLayout {
-        alignment: start;
-        Button { text: "Button"; }
-    }
-}
-
 component InputArea inherits Rectangle {
     in-out property <string> inText: "xxx-xxx-xxx";
     in property <bool> readOnly: false;
