@@ -559,26 +559,25 @@ export component MainWindow inherits Window {
         height: 100%;
         background: #1f1f1f;
 
-        t1 := Text {
+        VerticalLayout {
             y: 127px;
-            horizontal-alignment: center;
-            vertical-alignment: top;
-            text: "Connect Securely";
-            color: white;
-            font-family: "Inter";
-            font-size: 23px;
-            font-weight: 800;
-        }
-
-        Text {
-            y: t1.y + t1.height + 7px;
-            horizontal-alignment: center;
-            vertical-alignment: top;
-            text: "Exchange the secret codes to establish a secure connection";
-            color: white;
-            font-family: "Inter";
-            font-size: 16px;
-            font-weight: 400;
+            spacing: 7px;
+            Text {
+                text: "Connect Securely";
+                color: white;
+                font-family: "Inter";
+                font-size: 23px;
+                font-weight: 800;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "Exchange the secret codes to establish a secure connection";
+                color: white;
+                font-family: "Inter";
+                font-size: 16px;
+                font-weight: 400;
+                horizontal-alignment: center;
+            }
         }
 
         SectionElement {
