@@ -48,24 +48,29 @@ component InputArea inherits Rectangle {
     height: 34px;
     background: #222222;
     border-color: #FFFFFF;
+    clip: true;
     
-    ti := TextInput {
+    ti-clip := Rectangle {
         x: 0px;
-        width: 303px;
+        width: 297px;
         height: 34px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        font-weight: 0.5;
-        text <=> parent.inText;
-        // vertical-alignment: center;
-        // horizontal-alignment: center;
-        // clicked => { self.focus(); }
-        read-only: parent.readOnly;
-        single-line: true;
+        clip: true;
+        background: transparent;
+
+        ti := TextInput {
+            width: parent.width;
+            height: parent.height;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-weight: 0.5;
+            text <=> root.inText;
+            read-only: root.readOnly;
+            single-line: true;
+        }
     }
 
     Button{
-        x: ti.x + ti.width;
+        x: ti-clip.x + ti-clip.width + 6px;
         y: ti.y;
         text: buttonText;
         height: 34px;
@@ -505,8 +510,10 @@ component FileCard inherits Rectangle {
 export component MainWindow inherits Window {
     title: "KEIBIDROP";
     default-font-family: "Inter";
-    width: 1144px;
-    height: 729px;
+    preferred-width: 1144px;
+    preferred-height: 729px;
+    min-width: 1144px;
+    min-height: 729px;
     background: #1f1f1f;
 
     // Data bindings from Rust
@@ -544,30 +551,23 @@ export component MainWindow inherits Window {
     callback open_file(string);
     callback exit_pressed();
 
-    // Logo appears on all screens
-    KeibiDropLogo {
-        x: 115px;
-        y: 70px;
-    }
-
-    // Exit button (top-right, all screens)
-    OutlineButton {
-        x: parent.width - 80px;
-        y: 20px;
-        width: 60px;
-        height: 28px;
-        text: "Exit";
-        clicked => { root.exit_pressed() }
+    // Opaque backdrop — ensures full coverage on Wayland where
+    // Window.background alone may not fill the compositor surface.
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #1f1f1f;
     }
 
     // ============ SCREEN 0: Connect ============
     if current_screen == 0: Rectangle {
         width: 100%;
         height: 100%;
-        background: transparent;
+        background: #1f1f1f;
 
         t1 := Text {
             y: 127px;
+            width: parent.width;
             horizontal-alignment: center;
             vertical-alignment: top;
             text: "Connect Securely";
@@ -579,6 +579,7 @@ export component MainWindow inherits Window {
 
         Text {
             y: t1.y + t1.height + 7px;
+            width: parent.width;
             horizontal-alignment: center;
             vertical-alignment: top;
             text: "Exchange the secret codes to establish a secure connection";
@@ -679,7 +680,7 @@ export component MainWindow inherits Window {
     if current_screen == 1: Rectangle {
         width: 100%;
         height: 100%;
-        background: transparent;
+        background: #1f1f1f;
 
         // Disconnect button top-right
         OutlineButton {
@@ -725,7 +726,7 @@ export component MainWindow inherits Window {
     if current_screen == 2: Rectangle {
         width: 100%;
         height: 100%;
-        background: transparent;
+        background: #1f1f1f;
 
         // Disconnect button top-right
         OutlineButton {
@@ -771,5 +772,20 @@ export component MainWindow inherits Window {
                 }
             }
         }
+    }
+
+    // Logo and exit button rendered last — on top of all screen content
+    KeibiDropLogo {
+        x: 115px;
+        y: 70px;
+    }
+
+    OutlineButton {
+        x: parent.width - 80px;
+        y: 20px;
+        width: 60px;
+        height: 28px;
+        text: "Exit";
+        clicked => { root.exit_pressed() }
     }
 }
