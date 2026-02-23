@@ -16,13 +16,27 @@ fn main() {
     println!("cargo:rerun-if-changed=../libkeibidrop.h");
 
     // Use bindgen to generate bindings
-    let bindings = bindgen::Builder::default()
-        .header("../libkeibidrop.h").raw_line("#![allow(non_upper_case_globals)]")
+    let mut builder = bindgen::Builder::default()
+        .header("../libkeibidrop.h")
+        .raw_line("#![allow(non_upper_case_globals)]")
         .raw_line("#![allow(non_camel_case_types)]")
         .raw_line("#![allow(non_snake_case)]")
-        .raw_line("#![allow(dead_code)]")
-        .generate()
-        .expect("Unable to generate bindings");
+        .raw_line("#![allow(dead_code)]");
+
+    // On Linux, clang may not find stddef.h — add GCC's include path
+    if cfg!(target_os = "linux") {
+        if let Ok(output) = std::process::Command::new("gcc")
+            .arg("-print-file-name=include")
+            .output()
+        {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                builder = builder.clang_arg(format!("-I{path}"));
+            }
+        }
+    }
+
+    let bindings = builder.generate().expect("Unable to generate bindings");
 
     bindings
         .write_to_file("src/bindings.rs")
