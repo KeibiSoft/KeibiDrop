@@ -728,7 +728,7 @@ export component MainWindow inherits Window {
             clicked => { root.disconnect_pressed() }
         }
 
-        // Center content below header area
+        // Center content below header area (70px button y + 30px height + 20px margin = 120px)
         Rectangle {
             y: 120px;
             height: parent.height - 120px;
