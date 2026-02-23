@@ -2011,7 +2011,35 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		logger.Warn("Prefetch: failed to open local file", "error", err)
 		return
 	}
-	defer lf.Close()
+	// Close the local file and, if the file was renamed while the download was
+	// in flight, atomically move the content to the new disk path (Option C fix
+	// for the prefetch-rename race: git writes HEAD.lock then renames to HEAD).
+	defer func() {
+		lf.Close()
+		// Only rename if the download completed fully. Partial content must
+		// never be placed at the final path.
+		if !bitmap.IsComplete() {
+			return
+		}
+		// Read f.RealPathOfFile under RLock — the RENAME_FILE handler writes
+		// this field under RemoteFilesLock.Lock(). Release the lock before
+		// calling os.Rename so we never hold a lock across a blocking syscall.
+		d.RemoteFilesLock.RLock()
+		currentDiskPath := f.RealPathOfFile
+		d.RemoteFilesLock.RUnlock()
+		if currentDiskPath != realPath {
+			if mkErr := os.MkdirAll(filepath.Dir(currentDiskPath), 0o755); mkErr != nil {
+				logger.Warn("Prefetch: failed to create dirs for renamed path",
+					"path", currentDiskPath, "error", mkErr)
+			} else if rnErr := os.Rename(realPath, currentDiskPath); rnErr != nil {
+				logger.Warn("Prefetch: atomic rename failed",
+					"from", realPath, "to", currentDiskPath, "error", rnErr)
+			} else {
+				logger.Info("Prefetch: atomically moved content to renamed path",
+					"from", realPath, "to", currentDiskPath)
+			}
+		}
+	}()
 
 	fileSize := bitmap.FileSize()
 	for idx := 0; idx < bitmap.Total(); idx++ {
