@@ -728,39 +728,46 @@ export component MainWindow inherits Window {
             clicked => { root.disconnect_pressed() }
         }
 
-        // Center content
-        VerticalLayout {
-            alignment: center;
-            spacing: 20px;
+        // Center content below header area
+        Rectangle {
+            y: 120px;
+            height: parent.height - 120px;
+            width: 100%;
+            background: transparent;
 
-            Text {
-                text: "Connected!";
-                color: #22c55e;
-                font-size: 32px;
-                font-weight: 700;
-                horizontal-alignment: center;
-            }
-
-            Text {
-                text: "Your shared folder is mounted and ready.";
-                color: #9ca3af;
-                font-size: 16px;
-                horizontal-alignment: center;
-            }
-
-            Text {
-                text: "Drop files into the folder to share them with your peer.";
-                color: #666;
-                font-size: 14px;
-                horizontal-alignment: center;
-            }
-
-            // Open folder button
-            HorizontalLayout {
+            VerticalLayout {
                 alignment: center;
-                OutlineButton {
-                    text: "Open Folder";
-                    clicked => { root.open_folder_pressed() }
+                spacing: 20px;
+
+                Text {
+                    text: "Connected!";
+                    color: #22c55e;
+                    font-size: 32px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "Your shared folder is mounted and ready.";
+                    color: #9ca3af;
+                    font-size: 16px;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: "Drop files into the folder to share them with your peer.";
+                    color: #9ca3af;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                }
+
+                // Open folder button
+                HorizontalLayout {
+                    alignment: center;
+                    OutlineButton {
+                        text: "Open Folder";
+                        clicked => { root.open_folder_pressed() }
+                    }
                 }
             }
         }
