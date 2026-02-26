@@ -81,3 +81,59 @@ func TestStartupNoSaveDir(t *testing.T) {
 	require.NotNil(t, kd)
 	assert.Equal(t, "", kd.ToSave)
 }
+
+func TestStartupSaveDirIsFile(t *testing.T) {
+	// 1. Setup a file where the directory should be
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "not_a_dir")
+	err := os.WriteFile(filePath, []byte("i am a file"), 0644)
+	require.NoError(t, err)
+
+	// 2. Initialize KeibiDrop pointing to this file as save directory
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	relayURL, _ := url.Parse("http://localhost:12345")
+	mountDir := t.TempDir()
+
+	// os.RemoveAll(filePath) will delete the file.
+	// Then os.MkdirAll(filePath) will create a directory.
+	// This should succeed because RemoveAll handles files too.
+	kd, err := common.NewKeibiDropWithIP(ctx, logger, false, relayURL, 26105, 26106, mountDir, filePath, false, false, "::1")
+	require.NoError(t, err, "Should handle the case where toSave is a file by removing it and creating a dir")
+	require.NotNil(t, kd)
+
+	stat, err := os.Stat(filePath)
+	require.NoError(t, err)
+	assert.True(t, stat.IsDir(), "Path should now be a directory")
+}
+
+func TestStartupSaveDirPermissionError(t *testing.T) {
+	// This test might be platform specific or requires root to fail reliably in some ways,
+	// but we can simulate a failure by trying to create a directory where we don't have permission.
+	// On Linux/macOS, we can try to use a path under a read-only directory.
+	
+	if os.Getuid() == 0 {
+		t.Skip("Skipping permission test as root")
+	}
+
+	baseDir := t.TempDir()
+	readOnlyDir := filepath.Join(baseDir, "readonly")
+	err := os.Mkdir(readOnlyDir, 0555) // Read and execute, no write
+	require.NoError(t, err)
+	defer os.Chmod(readOnlyDir, 0755) // Cleanup
+
+	saveDir := filepath.Join(readOnlyDir, "should_fail")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	relayURL, _ := url.Parse("http://localhost:12345")
+	mountDir := t.TempDir()
+
+	// This should fail at os.MkdirAll
+	_, err = common.NewKeibiDropWithIP(ctx, logger, false, relayURL, 26107, 26108, mountDir, saveDir, false, false, "::1")
+	assert.Error(t, err, "Should fail when directory cannot be created due to permissions")
+}
