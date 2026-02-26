@@ -12,30 +12,6 @@ export struct FileInfo {
     is-local: bool,       // true = my file (shared by me), false = remote file (from peer)
 }
 
-component CustomButton inherits Rectangle {
-    in-out property text <=> txt.text;
-    callback clicked <=> touch.clicked;
-    border-radius: root.height / 2;
-    border-width: 1px;
-    border-color: root.background.darker(25%);
-    background: touch.pressed ? #6b8282 : touch.has-hover ? #6c616c :  #456;
-    height: txt.preferred-height * 1.33;
-    min-width: txt.preferred-width + 20px;
-    txt := Text {
-        x: (parent.width - self.width)/2 + (touch.pressed ? 2px : 0);
-        y: (parent.height - self.height)/2 + (touch.pressed ? 1px : 0);
-        color: touch.pressed ? #fff : #eee;
-    }
-    touch := TouchArea { }
-}
-
-export component Recipe inherits Window {
-    VerticalLayout {
-        alignment: start;
-        Button { text: "Button"; }
-    }
-}
-
 component InputArea inherits Rectangle {
     in-out property <string> inText: "xxx-xxx-xxx";
     in property <bool> readOnly: false;
@@ -94,22 +70,20 @@ component DataRectangle inherits Rectangle {
     width: 517px;
     height: 86px;
 
-    VerticalLayout {
-        padding-left: 36px;
-        spacing: 5px;
-        alignment: center;
+    t:= Text {
+        x: 36px;
+        y: 0;
+        text: root.info;
+        color: #9ca3af;
+    }
 
-        t:= Text {
-            text: parent.info;
-            color: #9ca3af;
-        }
-
-        InputArea {
-            inText <=> parent.inText;
-            buttonText: parent.buttonText;
-            readOnly: parent.readOnly;
-            process_code => {parent.process_code()}
-        }
+    InputArea {
+        x: 36px;
+        y: t.y + 21px;
+        inText <=> root.inText;
+        buttonText: root.buttonText;
+        readOnly: root.readOnly;
+        process_code => {root.process_code()}
     }
 }
 
@@ -147,11 +121,11 @@ component CodeRectangle inherits Rectangle {
     background: #363636;
 
     DataRectangle {
-        info: parent.info;
-        inText <=> parent.inText;
-        buttonText: parent.buttonText;
-        readOnly: parent.readOnly;
-        process_code => {parent.process_code()}
+        info: root.info;
+        inText <=> root.inText;
+        buttonText: root.buttonText;
+        readOnly: root.readOnly;
+        process_code => {root.process_code()}
     }
 
 }
@@ -168,52 +142,51 @@ component SectionElement inherits Rectangle {
     height: 157px;
     width: 569px;
 
-    HorizontalLayout {
-        spacing: 18px;
-        alignment: start;
+   nt := NumberedToolTip{
+        number: root.sectionNumber;
+        x:0;
+        y:0;
+    }
 
-        NumberedToolTip{
-            number: parent.sectionNumber;
+    CodeRectangle{
+        x: nt.x + nt.width + 18px;
+        y: 0;
+        info: root.info;
+        inText <=> root.inText;
+        readOnly: root.readOnly;
+        buttonText: root.buttonText;
+        process_code => {root.process_code()}
+    }
+
+
+}
+
+component KeibiDropLogo inherits Rectangle {
+    width: layout.preferred-width;
+    height: layout.preferred-height;
+    layout := HorizontalLayout {
+        spacing: 0px;
+        alignment: start;
+        Text {
+            text: "KEIBI";
+            color: white;
+            font-family: "Inter";
+            font-size: 26px;
+            font-weight: 700;
         }
 
-        CodeRectangle{
-            info: parent.info;
-            inText <=> parent.inText;
-            readOnly: parent.readOnly;
-            buttonText: parent.buttonText;
-            process_code => {parent.process_code()}
+        Text {
+            text: "DROP";
+            color: white;
+            font-family: "Inter";
+            font-size: 26px;
+            font-weight: 200;
         }
     }
 }
 
-component KeibiDropLogo inherits Rectangle {
-        // spacing: 1px;
-        width: keibi.width + drop.width;
-        height: keibi.height;
-
-        HorizontalLayout {
-            spacing: 0px;
-            keibi := Text {
-                text: "KEIBI";
-                color: white;
-                font-family: "Inter";
-                font-size: 26px;
-                font-weight: 700;
-            }
-
-            drop:= Text {
-                text: "DROP";
-                color: white;
-                font-family: "Inter";
-                font-size: 26px;
-                font-weight: 200;
-            }
-        }
-}
-
 
 // Outline button (blue border, transparent bg)
-// ... (rest of the file until MainWindow)
 component OutlineButton inherits Rectangle {
     in-out property <string> text: "Button";
     in property <bool> enabled: true;
@@ -813,24 +786,17 @@ export component MainWindow inherits Window {
     }
 
     // Logo and exit button rendered last — on top of all screen content
-    Rectangle {
+    KeibiDropLogo {
         x: 115px;
         y: 70px;
-        width: logo-ui.width;
-        height: logo-ui.height;
-        logo-ui := KeibiDropLogo { }
     }
 
-    Rectangle {
+    OutlineButton {
         x: parent.width - 80px;
         y: 20px;
         width: 60px;
         height: 28px;
-        OutlineButton {
-            width: 60px;
-            height: 28px;
-            text: "Exit";
-            clicked => { root.exit_pressed() }
-        }
+        text: "Exit";
+        clicked => { root.exit_pressed() }
     }
 }
