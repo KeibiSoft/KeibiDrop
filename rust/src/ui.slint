@@ -94,20 +94,22 @@ component DataRectangle inherits Rectangle {
     width: 517px;
     height: 86px;
 
-    t:= Text {
-        x: 36px;
-        y: 0;
-        text: parent.info;
-        color: #9ca3af;
-    }
+    VerticalLayout {
+        padding-left: 36px;
+        spacing: 5px;
+        alignment: center;
 
-    InputArea {
-        x: 36px;
-        y: t.y + 21px;
-        inText <=> parent.inText;
-        buttonText: parent.buttonText;
-        readOnly: parent.readOnly;
-        process_code => {parent.process_code()}
+        t:= Text {
+            text: parent.info;
+            color: #9ca3af;
+        }
+
+        InputArea {
+            inText <=> parent.inText;
+            buttonText: parent.buttonText;
+            readOnly: parent.readOnly;
+            process_code => {parent.process_code()}
+        }
     }
 }
 
@@ -166,23 +168,22 @@ component SectionElement inherits Rectangle {
     height: 157px;
     width: 569px;
 
-   nt := NumberedToolTip{
-        number: parent.sectionNumber;
-        x:0;
-        y:0;
+    HorizontalLayout {
+        spacing: 18px;
+        alignment: start;
+
+        NumberedToolTip{
+            number: parent.sectionNumber;
+        }
+
+        CodeRectangle{
+            info: parent.info;
+            inText <=> parent.inText;
+            readOnly: parent.readOnly;
+            buttonText: parent.buttonText;
+            process_code => {parent.process_code()}
+        }
     }
-
-    CodeRectangle{
-        x: nt.x + nt.width + 18px;
-        y: 0;
-        info: parent.info;
-        inText <=> parent.inText;
-        readOnly: parent.readOnly;
-        buttonText: parent.buttonText;
-        process_code => {parent.process_code()}
-    }
-
-
 }
 
 component KeibiDropLogo inherits Rectangle {
@@ -190,27 +191,29 @@ component KeibiDropLogo inherits Rectangle {
         width: keibi.width + drop.width;
         height: keibi.height;
 
-        keibi := Text {
-            text: "KEIBI";
-            color: white;
-            font-family: "Inter";
-            font-size: 26px;
-            font-weight: 700;
-        }
+        HorizontalLayout {
+            spacing: 0px;
+            keibi := Text {
+                text: "KEIBI";
+                color: white;
+                font-family: "Inter";
+                font-size: 26px;
+                font-weight: 700;
+            }
 
-        drop:= Text {
-            text: "DROP";
-            color: white;
-            font-family: "Inter";
-            font-size: 26px;
-            font-weight: 200;
-            x: keibi.x + keibi.width;
-            y: keibi.y;
+            drop:= Text {
+                text: "DROP";
+                color: white;
+                font-family: "Inter";
+                font-size: 26px;
+                font-weight: 200;
+            }
         }
 }
 
 
 // Outline button (blue border, transparent bg)
+// ... (rest of the file until MainWindow)
 component OutlineButton inherits Rectangle {
     in-out property <string> text: "Button";
     in property <bool> enabled: true;
@@ -565,180 +568,210 @@ export component MainWindow inherits Window {
     }
 
     // ============ SCREEN 0: Connect ============
-    if current_screen == 0: Rectangle {
-        width: 100%;
-        height: 100%;
-        background: #1f1f1f;
+    if current_screen == 0: VerticalLayout {
+        padding-top: 100px;
+        spacing: 30px;
+        alignment: start;
 
-        t1 := Text {
-            y: 127px;
-            width: parent.width;
-            horizontal-alignment: center;
-            vertical-alignment: top;
-            text: "Connect Securely";
-            color: white;
-            font-family: "Inter";
-            font-size: 23px;
-            font-weight: 800;
-        }
+        // Title Section
+        VerticalLayout {
+            spacing: 7px;
+            alignment: center;
 
-        Text {
-            y: t1.y + t1.height + 7px;
-            width: parent.width;
-            horizontal-alignment: center;
-            vertical-alignment: top;
-            text: "Exchange the secret codes to establish a secure connection";
-            color: white;
-            font-family: "Inter";
-            font-size: 16px;
-            font-weight: 400;
-        }
-
-        SectionElement {
-            x: 279px;
-            y: 262px;
-            info: "Enter Code";
-            inText <=> root.peer_code;
-            readOnly: false;
-            buttonText: "Add";
-            process_code => { root.add_peer_code() }
-            sectionNumber: 1;
-        }
-
-        snd := SectionElement {
-            x: 279px;
-            y: 437px;
-            info: "Send this Code via signal/ telegram/ email/ carrier pidgeon";
-            inText: root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
-            readOnly: true;
-            buttonText: "Copy";
-            process_code => { root.copy_my_code() }
-            sectionNumber: 2;
-        }
-
-        Rectangle {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px;
-            width: 161px;
-            height: 34px;
-            background: root.room_action == 1 ? #3b82f6 : transparent;
-            border-width: 1px;
-            border-radius: self.height / 2;
-            border-color: root.room_action != 0 && root.room_action != 1 ? #555 : create-touch.pressed ? #2563eb : create-touch.has-hover ? #60a5fa : #3b82f6;
-            Text {
-                text: root.room_action == 1 ? "Creating..." : "Create Room";
-                color: root.room_action == 1 ? white : root.room_action != 0 ? #555 : create-touch.pressed ? #2563eb : create-touch.has-hover ? #60a5fa : #3b82f6;
-                font-size: 14px;
+            t1 := Text {
                 horizontal-alignment: center;
-                vertical-alignment: center;
+                text: "Connect Securely";
+                color: white;
+                font-family: "Inter";
+                font-size: 23px;
+                font-weight: 800;
             }
-            create-touch := TouchArea {
-                enabled: root.room_action == 0 && root.next_enabled;
-                clicked => { root.create_room_pressed() }
-            }
-            animate background { duration: 150ms; }
-            animate border-color { duration: 150ms; }
-        }
 
-        Rectangle {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 44px;
-            width: 161px;
-            height: 34px;
-            background: root.room_action == 2 ? #3b82f6 : transparent;
-            border-width: 1px;
-            border-radius: self.height / 2;
-            border-color: root.room_action != 0 && root.room_action != 2 ? #555 : join-touch.pressed ? #2563eb : join-touch.has-hover ? #60a5fa : #3b82f6;
             Text {
-                text: root.room_action == 2 ? "Joining..." : "Join Room";
-                color: root.room_action == 2 ? white : root.room_action != 0 ? #555 : join-touch.pressed ? #2563eb : join-touch.has-hover ? #60a5fa : #3b82f6;
-                font-size: 14px;
                 horizontal-alignment: center;
-                vertical-alignment: center;
+                text: "Exchange the secret codes to establish a secure connection";
+                color: white;
+                font-family: "Inter";
+                font-size: 16px;
+                font-weight: 400;
             }
-            join-touch := TouchArea {
-                enabled: root.room_action == 0 && root.next_enabled;
-                clicked => { root.join_room_pressed() }
-            }
-            animate background { duration: 150ms; }
-            animate border-color { duration: 150ms; }
         }
 
-        // Status / error message below buttons
-        if root.status_message != "" && root.error_message == "": Text {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 98px;
-            text: root.status_message;
-            color: #94a3b8;
-            font-size: 13px;
-        }
-        if root.error_message != "": Text {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 98px;
-            text: root.error_message;
-            color: #ef4444;
-            font-size: 13px;
+        // Codes and Buttons Section
+        HorizontalLayout {
+            alignment: center;
+            spacing: 40px;
+
+            // Left side: Codes
+            VerticalLayout {
+                spacing: 20px;
+                alignment: start;
+
+                SectionElement {
+                    info: "Enter Code";
+                    inText <=> root.peer_code;
+                    readOnly: false;
+                    buttonText: "Add";
+                    process_code => { root.add_peer_code() }
+                    sectionNumber: 1;
+                }
+
+                snd := SectionElement {
+                    info: "Send this Code via signal/ telegram/ email/ carrier pidgeon";
+                    inText: root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
+                    readOnly: true;
+                    buttonText: "Copy";
+                    process_code => { root.copy_my_code() }
+                    sectionNumber: 2;
+                }
+            }
+
+            // Right side: Action Buttons & Status
+            VerticalLayout {
+                alignment: end;
+                padding-bottom: 25px;
+                spacing: 10px;
+                width: 161px;
+
+                Rectangle {
+                    width: 161px;
+                    height: 34px;
+                    background: root.room_action == 1 ? #3b82f6 : transparent;
+                    border-width: 1px;
+                    border-radius: self.height / 2;
+                    border-color: root.room_action != 0 && root.room_action != 1 ? #555 : create-touch.pressed ? #2563eb : create-touch.has-hover ? #60a5fa : #3b82f6;
+                    Text {
+                        text: root.room_action == 1 ? "Creating..." : "Create Room";
+                        color: root.room_action == 1 ? white : root.room_action != 0 ? #555 : create-touch.pressed ? #2563eb : create-touch.has-hover ? #60a5fa : #3b82f6;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    create-touch := TouchArea {
+                        enabled: root.room_action == 0 && root.next_enabled;
+                        clicked => { root.create_room_pressed() }
+                    }
+                    animate background { duration: 150ms; }
+                    animate border-color { duration: 150ms; }
+                }
+
+                Rectangle {
+                    width: 161px;
+                    height: 34px;
+                    background: root.room_action == 2 ? #3b82f6 : transparent;
+                    border-width: 1px;
+                    border-radius: self.height / 2;
+                    border-color: root.room_action != 0 && root.room_action != 2 ? #555 : join-touch.pressed ? #2563eb : join-touch.has-hover ? #60a5fa : #3b82f6;
+                    Text {
+                        text: root.room_action == 2 ? "Joining..." : "Join Room";
+                        color: root.room_action == 2 ? white : root.room_action != 0 ? #555 : join-touch.pressed ? #2563eb : join-touch.has-hover ? #60a5fa : #3b82f6;
+                        font-size: 14px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    join-touch := TouchArea {
+                        enabled: root.room_action == 0 && root.next_enabled;
+                        clicked => { root.join_room_pressed() }
+                    }
+                    animate background { duration: 150ms; }
+                    animate border-color { duration: 150ms; }
+                }
+
+                // Status / error message below buttons
+                if root.status_message != "" && root.error_message == "": Text {
+                    text: root.status_message;
+                    color: #94a3b8;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                }
+                if root.error_message != "": Text {
+                    text: root.error_message;
+                    color: #ef4444;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                }
+            }
         }
     }
 
     // ============ SCREEN 1: Connected (No FUSE) ============
-    if current_screen == 1: Rectangle {
-        width: 100%;
-        height: 100%;
-        background: #1f1f1f;
+    if current_screen == 1: VerticalLayout {
+        padding: 40px;
+        padding-top: 100px;
+        spacing: 20px;
 
-        // Disconnect button top-right
-        OutlineButton {
-            x: parent.width - 200px;
-            y: 70px;
-            text: "Disconnect";
-            clicked => { root.disconnect_pressed() }
+        // Header actions
+        HorizontalLayout {
+            alignment: end;
+            spacing: 20px;
+
+            // Add File button
+            OutlineButton {
+                text: "Add File";
+                clicked => { root.add_file_pressed() }
+            }
+
+            // Disconnect button
+            OutlineButton {
+                text: "Disconnect";
+                clicked => { root.disconnect_pressed() }
+            }
         }
 
-        // Add File button next to disconnect
-        OutlineButton {
-            x: parent.width - 380px;
-            y: 70px;
-            text: "Add File";
-            clicked => { root.add_file_pressed() }
-        }
+        // Main content area
+        Rectangle {
+            VerticalLayout {
+                alignment: center;
+                spacing: 30px;
 
-        // Large spinner: visible during drag-and-drop or when files are downloading
-        if root.drag_hovering || root.any_downloading: SpinnerArc {
-            x: (parent.width - self.width) / 2;
-            y: 140px;
-            size: 180px;
-            spinning: true;
-        }
+                // Large spinner
+                if root.drag_hovering || root.any_downloading: SpinnerArc {
+                    size: 180px;
+                    spinning: true;
+                }
 
-        // Dynamic file grid (4 per row, positioned like original)
-        for file[idx] in root.file_list: FileCard {
-            x: 120px + mod(idx, 4) * 270px;
-            y: 380px + floor(idx / 4) * 200px;
-            filename: file.name;
-            file-type: file.file-type;
-            downloading: file.downloading;
-            uploading: file.uploading;
-            progress: file.progress;
-            saved: file.saved;
-            is-local: file.is-local;
-            save-clicked => { root.save_file(file.name) }
-            open-clicked => { root.open_file(file.name) }
+                // Scrollable file grid
+                ScrollView {
+                    height: 400px;
+                    viewport-height: floor((root.file_list.length + 3) / 4) * 200px;
+
+                    // Manual grid layout using for loop and absolute positioning relative to viewport
+                    // Slint 1.x doesn't have a native wrapping FlowLayout yet, 
+                    // so we use a container with calculated positions.
+                    Rectangle {
+                        height: floor((root.file_list.length + 3) / 4) * 200px;
+                        for file[idx] in root.file_list: FileCard {
+                            x: mod(idx, 4) * 270px;
+                            y: floor(idx / 4) * 200px;
+                            filename: file.name;
+                            file-type: file.file-type;
+                            downloading: file.downloading;
+                            uploading: file.uploading;
+                            progress: file.progress;
+                            saved: file.saved;
+                            is-local: file.is-local;
+                            save-clicked => { root.save_file(file.name) }
+                            open-clicked => { root.open_file(file.name) }
+                        }
+                    }
+                }
+            }
         }
     }
 
     // ============ SCREEN 2: Connected (FUSE present) ============
-    if current_screen == 2: Rectangle {
-        width: 100%;
-        height: 100%;
-        background: #1f1f1f;
+    if current_screen == 2: VerticalLayout {
+        padding: 40px;
+        padding-top: 100px;
+        spacing: 20px;
 
         // Disconnect button top-right
-        OutlineButton {
-            x: parent.width - 200px;
-            y: 70px;
-            text: "Disconnect";
-            clicked => { root.disconnect_pressed() }
+        HorizontalLayout {
+            alignment: end;
+            OutlineButton {
+                text: "Disconnect";
+                clicked => { root.disconnect_pressed() }
+            }
         }
 
         // Center content
@@ -780,17 +813,24 @@ export component MainWindow inherits Window {
     }
 
     // Logo and exit button rendered last — on top of all screen content
-    KeibiDropLogo {
+    Rectangle {
         x: 115px;
         y: 70px;
+        width: logo-ui.width;
+        height: logo-ui.height;
+        logo-ui := KeibiDropLogo { }
     }
 
-    OutlineButton {
+    Rectangle {
         x: parent.width - 80px;
         y: 20px;
         width: 60px;
         height: 28px;
-        text: "Exit";
-        clicked => { root.exit_pressed() }
+        OutlineButton {
+            width: 60px;
+            height: 28px;
+            text: "Exit";
+            clicked => { root.exit_pressed() }
+        }
     }
 }
