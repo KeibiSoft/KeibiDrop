@@ -12,33 +12,12 @@ import (
 	"runtime"
 )
 
+// IsFUSEPresent performs a platform-specific check to see if the required
+// FUSE libraries/drivers are installed on the system.
 func IsFUSEPresent() bool {
 	slog.Warn("FUSE detection starting", "os", runtime.GOOS, "arch", runtime.GOARCH)
 
-	var result bool
-	switch runtime.GOOS {
-	case "windows":
-		path := `C:\Windows\System32\winfsp-x64.dll`
-		e := exists(path)
-		slog.Warn("FUSE windows check", "path", path, "exists", e)
-		result = e
-	case "darwin":
-		path1 := `/usr/local/lib/libfuse.dylib`
-		path2 := `/Library/Filesystems/macfuse.fs`
-		exists1, exists2 := exists(path1), exists(path2)
-		slog.Warn("FUSE darwin check", "path1", path1, "exists1", exists1, "path2", path2, "exists2", exists2)
-		result = exists1 || exists2
-	case "linux":
-		path1 := `/lib/x86_64-linux-gnu/libfuse.so.2`
-		path2 := `/usr/lib/libfuse.so`
-		path3 := `/usr/lib/x86_64-linux-gnu/libfuse3.so`
-		exists1, exists2, exists3 := exists(path1), exists(path2), exists(path3)
-		slog.Warn("FUSE linux check", "path1", path1, "exists1", exists1, "path2", path2, "exists2", exists2, "path3", path3, "exists3", exists3)
-		result = exists1 || exists2 || exists3
-	default:
-		slog.Warn("FUSE unsupported OS", "os", runtime.GOOS)
-		result = false
-	}
+	result := isFUSEPresent()
 
 	slog.Warn("FUSE detection result", "present", result)
 	return result
