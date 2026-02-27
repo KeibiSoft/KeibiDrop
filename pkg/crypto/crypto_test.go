@@ -191,12 +191,8 @@ func TestX25519KeystreamReuseAttackFails(t *testing.T) {
 	ct2, err := X25519Encapsulate(seed2, privKey, pubKey)
 	require.NoError(t, err)
 
-	// An attacker XORs the two 64-byte blobs and XORs with the known seed1,
-	// hoping to recover seed2. With unique salts, the masks differ, so this fails.
-	xorBlob := make([]byte, len(ct1))
-	for i := range ct1 {
-		xorBlob[i] = ct1[i] ^ ct2[i]
-	}
+	// Verify salts are unique
+	assert.NotEqual(t, ct1[:32], ct2[:32], "salts must be unique")
 
 	// Attempt the attack using only the ciphertext portions (bytes 32..64).
 	attackGuess := make([]byte, seedSize)
@@ -207,4 +203,15 @@ func TestX25519KeystreamReuseAttackFails(t *testing.T) {
 	}
 
 	assert.NotEqual(t, seed2, attackGuess, "keystream reuse attack must not recover seed2")
+}
+
+func TestX25519DecapsulateWrongLength(t *testing.T) {
+	privKey, pubKey, err := GenerateX25519Keypair()
+	require.NoError(t, err)
+
+	// Test with 32-byte ciphertext (old format)
+	badCt := make([]byte, 32)
+	_, err = X25519Decapsulate(badCt, privKey, pubKey)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ciphertext must be 64 bytes")
 }
