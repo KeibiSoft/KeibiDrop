@@ -9,7 +9,6 @@ package ui
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -80,43 +79,83 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 	go kd.Run()
 
 	a := app.New()
-
 	a.Settings().SetTheme(theme.DarkTheme())
 
 	w := a.NewWindow("KeibiDrop")
 
-	// Logo
-	logoFile, _ := os.Open("assets/logo.png")
-	img, _ := png.Decode(logoFile)
-	logo := canvas.NewImageFromImage(img)
-	logo.FillMode = canvas.ImageFillContain // preserve aspect ratio
-	logo.SetMinSize(fyne.NewSize(130, 125)) // ~ your logo size
-	// logo.SetMaxSize(fyne.NewSize(130, 125))
+	// --- Status Bar ---
+	statusLabel := widget.NewLabel("Status: Disconnected")
+
+	// --- Logo & Title ---
+	var logo fyne.CanvasObject
+	logoFile, err := os.Open("assets/logo.png")
+	if err == nil {
+		img, err := png.Decode(logoFile)
+		if err == nil {
+			logoImg := canvas.NewImageFromImage(img)
+			logoImg.FillMode = canvas.ImageFillContain
+			logoImg.SetMinSize(fyne.NewSize(48, 48))
+			logo = logoImg
+		}
+		_ = logoFile.Close()
+	}
+	if logo == nil {
+		logo = widget.NewIcon(theme.InfoIcon())
+	}
 
 	title := widget.NewLabelWithStyle("KeibiDrop",
 		fyne.TextAlignLeading,
 		fyne.TextStyle{Bold: true})
 
-	// place logo + title in the top bar
-	topBar := container.NewHBox(logo, layout.NewSpacer(), title)
+	topBar := container.NewHBox(logo, title, layout.NewSpacer(), statusLabel)
 
-	// --- Local info ---
+	// --- Local info (Connection Tab) ---
 	fp, err := kd.ExportFingerprint()
 	if err != nil {
-		fp = "(error generating fingerprint)"
+		fp = "(error)"
 	}
 
 	localFingerprintLabel := widget.NewLabel(fp)
 	localFingerprintLabel.Wrapping = fyne.TextWrapWord
 
-	copyBtn := widget.NewButton("Copy", func() {
+	copyBtn := widget.NewButtonWithIcon("Copy", theme.ContentCopyIcon(), func() {
 		w.Clipboard().SetContent(fp)
 	})
 
-	// File operations
+	localInfo := widget.NewLabel(fmt.Sprintf("Local IPv6: %s\nRelay: %s",
+		kd.LocalIPv6IP, relayURL.String()))
 
-	// --- File operations ---
-	addFileBtn := widget.NewButton("Add File", func() {
+	localSection := container.NewVBox(
+		widget.NewLabelWithStyle("Your Fingerprint:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		localFingerprintLabel,
+		container.NewHBox(copyBtn),
+		localInfo,
+	)
+
+	// --- Peer info (Connection Tab) ---
+	peerInput := widget.NewEntry()
+	peerInput.SetPlaceHolder("Enter peer fingerprint")
+
+	peerInfo := widget.NewLabel("Peer Fingerprint: (not set)")
+	peerInfo.Wrapping = fyne.TextWrapWord
+
+	peerInput.OnChanged = func(text string) {
+		if text != "" {
+			peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s", text))
+			_ = kd.AddPeerFingerprint(peerInput.Text)
+		} else {
+			peerInfo.SetText("Peer Fingerprint: (not set)")
+		}
+	}
+
+	peerSection := container.NewVBox(
+		widget.NewLabelWithStyle("Peer Connection:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		peerInput,
+		peerInfo,
+	)
+
+	// --- File operations (Files Tab) ---
+	addFileBtn := widget.NewButtonWithIcon("Add File to Share", theme.ContentAddIcon(), func() {
 		fd := dialog.NewFileOpen(
 			func(uc fyne.URIReadCloser, err error) {
 				if err != nil || uc == nil {
@@ -132,13 +171,13 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 		fd.Show()
 	})
 
-	listFilesBtn := widget.NewButton("List Files", func() {
+	listFilesBtn := widget.NewButtonWithIcon("Refresh/List Shared Files", theme.ListIcon(), func() {
 		remote, local := kd.ListFiles()
-		msg := "Local Files:\n"
+		msg := "Local Shared:\n"
 		for _, f := range local {
 			msg += " • " + f + "\n"
 		}
-		msg += "\nRemote Files:\n"
+		msg += "\nRemote Shared:\n"
 		for _, f := range remote {
 			msg += " • " + f + "\n"
 		}
@@ -146,9 +185,9 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 	})
 
 	pullFileEntry := widget.NewEntry()
-	pullFileEntry.SetPlaceHolder("Remote path to pull")
+	pullFileEntry.SetPlaceHolder("Remote filename to pull")
 
-	pullFileBtn := widget.NewButton("Pull File", func() {
+	pullFileBtn := widget.NewButtonWithIcon("Pull from Peer", theme.DownloadIcon(), func() {
 		remote := pullFileEntry.Text
 		if remote == "" {
 			return
@@ -161,140 +200,102 @@ func Launch(logger *slog.Logger, isFUSE bool) {
 		}
 	})
 
-	// show IPv6 + relay normally
-	localInfo := widget.NewLabel(fmt.Sprintf("Local IPv6: %s\nRelay: %s",
-		kd.LocalIPv6IP, relayURL.String()))
+	fileActions := container.NewVBox(
+		widget.NewLabelWithStyle("Share Local Files:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		addFileBtn,
+		listFilesBtn,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Download Remote Files:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		pullFileEntry,
+		pullFileBtn,
+	)
+	fileActions.Hide()
 
-	localBox := container.NewVBox(
-		widget.NewLabelWithStyle("Your Fingerprint:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewBorder(nil, nil, nil, copyBtn, localFingerprintLabel),
-		localInfo,
+	filesPlaceholder := widget.NewLabel("No active session. Go to 'Connection' tab to start.")
+	filesPlaceholder.Alignment = fyne.TextAlignCenter
+
+	// --- Tabs setup ---
+	connTab := container.NewVScroll(container.NewVBox(
+		localSection,
+		widget.NewSeparator(),
+		peerSection,
+	))
+
+	filesTab := container.NewVScroll(container.NewVBox(
+		filesPlaceholder,
+		fileActions,
+	))
+
+	tabs := container.NewAppTabs(
+		container.NewTabItemWithIcon("Connection", theme.SettingsIcon(), connTab),
+		container.NewTabItemWithIcon("Files", theme.FolderIcon(), filesTab),
 	)
 
-	// Wrap in a VBox and hide initially
-	fileBox := container.NewVBox(localBox, addFileBtn, listFilesBtn,
-		pullFileEntry,
-		pullFileBtn)
-	fileBox.Hide()
-
-	// --- Peer input & info ---
-	peerInput := widget.NewEntry()
-	peerInput.SetPlaceHolder("Enter peer fingerprint")
-
-	peerInfo := widget.NewLabel("Peer Fingerprint: (not set)")
-	peerInfo.Wrapping = fyne.TextWrapWord
-
-	peerInput.OnChanged = func(text string) {
-		if text != "" {
-			peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s", text))
-			err = kd.AddPeerFingerprint(peerInput.Text)
-			if err != nil {
-				logger.Error("Failed to add fingerprint", "error", err)
-			}
-		} else {
-			peerInfo.SetText("Peer Fingerprint: (not set)")
-		}
+	// --- Action Handlers ---
+	onConnected := func() {
+		peerFingerprint, _ := kd.GetPeerFingerprint()
+		peerIP := kd.PeerIPv6IP
+		fyne.Do(func() {
+			statusLabel.SetText("Status: Connected")
+			peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s\nPeer IPv6: %s", peerFingerprint, peerIP))
+			filesPlaceholder.Hide()
+			fileActions.Show()
+			tabs.SelectIndex(1)
+			dialog.ShowInformation("Connected", "Secure session established!", w)
+		})
 	}
 
-	joinBtn := widget.NewButton("Join Room", func() {
+	joinBtn := widget.NewButtonWithIcon("Join Room", theme.LoginIcon(), func() {
 		if peerInput.Text == "" {
+			dialog.ShowInformation("Input Error", "Please enter peer fingerprint.", w)
 			return
 		}
-
-		if kd.OpInProgress.Add(1) != 1 {
-			kd.OpInProgress.Add(-1)
-			dialog.ShowInformation("Busy", "Create/Join Room already in progress...", w)
-			return
-		}
-
+		statusLabel.SetText("Status: Joining...")
 		go func() {
-			defer kd.OpInProgress.Add(-1)
-
 			err := kd.JoinRoom()
 			if err != nil {
 				fyne.Do(func() {
-					if errors.Is(err, common.ErrRateLimitHit) {
-						dialog.ShowInformation("Rate Limit", "Free public relay allows ~3 joins per 5 min", w)
-					} else if errors.Is(err, common.ErrServerAtCapacity) {
-						dialog.ShowInformation("Relay Full", "Free public relay at capacity. Retry in 5 minutes.", w)
-					} else {
-						dialog.ShowError(err, w)
-					}
-				})
-				return
-			}
-
-			peerFingerprint, _ := kd.GetPeerFingerprint()
-			peerIP := kd.PeerIPv6IP
-
-			fyne.Do(func() {
-				peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s\nPeer IPv6: %s", peerFingerprint, peerIP))
-				peerInfo.Show()
-				dialog.ShowInformation("Joined Room", "Successfully joined room.", w)
-				fileBox.Show()
-			})
-		}()
-	})
-
-	peerBox := container.NewVBox(
-		widget.NewLabelWithStyle("Peer", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		peerInput,
-		peerInfo,
-	)
-
-	// --- Start room (Alice) ---
-	startBtn := widget.NewButton("Create Room", func() {
-		if kd.OpInProgress.Add(1) != 1 {
-			kd.OpInProgress.Add(-1)
-			dialog.ShowInformation("Busy", "Create/Join Room already in progress...", w)
-			return
-		}
-
-		go func() {
-			defer kd.OpInProgress.Add(-1)
-
-			err := kd.CreateRoom()
-			if err != nil {
-				fyne.Do(func() {
+					statusLabel.SetText("Status: Error")
 					dialog.ShowError(err, w)
 				})
 				return
 			}
-
-			peerFingerprint, _ := kd.GetPeerFingerprint()
-			peerIP := kd.PeerIPv6IP
-
-			// Update UI safely
-			fyne.Do(func() {
-				peerInfo.SetText(fmt.Sprintf("Peer Fingerprint: %s\nPeer IPv6: %s", peerFingerprint, peerIP))
-				peerInfo.Show()
-				dialog.ShowInformation("Room Created", "Room created and peer connected successfully.", w)
-				fileBox.Show()
-			})
+			onConnected()
 		}()
 	})
 
-	exitBtn := widget.NewButton("Exit", func() {
+	startBtn := widget.NewButtonWithIcon("Create Room", theme.ContentAddIcon(), func() {
+		statusLabel.SetText("Status: Creating...")
+		go func() {
+			err := kd.CreateRoom()
+			if err != nil {
+				fyne.Do(func() {
+					statusLabel.SetText("Status: Error")
+					dialog.ShowError(err, w)
+				})
+				return
+			}
+			onConnected()
+		}()
+	})
+
+	exitBtn := widget.NewButtonWithIcon("Quit", theme.LogoutIcon(), func() {
 		a.Quit()
 	})
 
-	// --- Layout ---
-	content := container.NewVBox(
-		topBar,
-		layout.NewSpacer(),
-		localBox,
-		fileBox,
-		layout.NewSpacer(),
-		peerBox,
-		layout.NewSpacer(),
-		startBtn,
-		joinBtn,
-		exitBtn,
-		layout.NewSpacer(),
-	)
+	// Add buttons to connection tab content
+	// connTab is a *container.Scroll, its Content is a *fyne.Container (VBox)
+	if content, ok := connTab.Content.(*fyne.Container); ok {
+		content.Add(widget.NewSeparator())
+		content.Add(container.NewHBox(layout.NewSpacer(), startBtn, joinBtn, layout.NewSpacer()))
+	}
 
-	w.SetContent(container.NewPadded(content))
-	w.Resize(fyne.NewSize(900, 600))
+	// --- Final Window Layout ---
+	bottomBar := container.NewHBox(layout.NewSpacer(), exitBtn)
+	mainLayout := container.NewBorder(topBar, bottomBar, nil, nil, tabs)
+
+	w.SetContent(container.NewPadded(mainLayout))
+	w.Resize(fyne.NewSize(800, 600))
 	w.ShowAndRun()
 }
 
