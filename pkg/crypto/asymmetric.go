@@ -46,28 +46,36 @@ func X25519Encapsulate(seed []byte, senderPriv *ecdh.PrivateKey, recipientPub *e
 		return nil, errors.New("seed must be 32 bytes")
 	}
 
+	salt := make([]byte, seedSize)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return nil, err
+	}
+
 	shared, err := senderPriv.ECDH(recipientPub)
 	if err != nil {
 		return nil, err
 	}
 
 	mask := make([]byte, seedSize)
-	hkdfReader := hkdf.New(sha512.New, shared, nil, []byte("x25519-shared-seed-wrap"))
+	hkdfReader := hkdf.New(sha512.New, shared, salt, []byte("x25519-shared-seed-wrap"))
 	if _, err := io.ReadFull(hkdfReader, mask); err != nil {
 		return nil, err
 	}
 
-	ciphertext := make([]byte, seedSize)
+	ct := make([]byte, seedSize)
 	for i := 0; i < seedSize; i++ {
-		ciphertext[i] = seed[i] ^ mask[i]
+		ct[i] = seed[i] ^ mask[i]
 	}
-	return ciphertext, nil
+	return append(salt, ct...), nil
 }
 
 func X25519Decapsulate(ciphertext []byte, recipientPriv *ecdh.PrivateKey, senderPub *ecdh.PublicKey) ([]byte, error) {
-	if len(ciphertext) != seedSize {
-		return nil, errors.New("ciphertext must be 32 bytes")
+	if len(ciphertext) != 2*seedSize {
+		return nil, errors.New("ciphertext must be 64 bytes")
 	}
+
+	salt := ciphertext[:seedSize]
+	ct := ciphertext[seedSize:]
 
 	shared, err := recipientPriv.ECDH(senderPub)
 	if err != nil {
@@ -75,14 +83,14 @@ func X25519Decapsulate(ciphertext []byte, recipientPriv *ecdh.PrivateKey, sender
 	}
 
 	mask := make([]byte, seedSize)
-	hkdfReader := hkdf.New(sha512.New, shared, nil, []byte("x25519-shared-seed-wrap"))
+	hkdfReader := hkdf.New(sha512.New, shared, salt, []byte("x25519-shared-seed-wrap"))
 	if _, err := io.ReadFull(hkdfReader, mask); err != nil {
 		return nil, err
 	}
 
 	seed := make([]byte, seedSize)
 	for i := range seedSize {
-		seed[i] = ciphertext[i] ^ mask[i]
+		seed[i] = ct[i] ^ mask[i]
 	}
 
 	return seed, nil
