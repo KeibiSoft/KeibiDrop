@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -44,8 +45,9 @@ func TestMkdirFromPeer_TraversalBlocked(t *testing.T) {
 
 	errCode := d.MkdirFromPeer("../../escape", 0o755)
 
-	if errCode == 0 {
-		t.Errorf("expected non-zero errCode for traversal path, got %d", errCode)
+	wantCode := -int(syscall.EPERM)
+	if errCode != wantCode {
+		t.Errorf("expected errCode %d (EPERM) for traversal path, got %d", wantCode, errCode)
 	}
 
 	escapedPath := filepath.Join(saveDir, "..", "..", "escape")
