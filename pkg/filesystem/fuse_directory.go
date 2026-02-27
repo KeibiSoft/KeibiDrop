@@ -777,10 +777,24 @@ func (d *Dir) MkdirFromPeer(path string, mode uint32) (errCode int) {
 	return d.mkdirInternal(path, mode, false)
 }
 
+// secureJoin resolves path relative to base and verifies the result stays within
+// base. Returns an error if the resolved path escapes base (KD-2026-001).
+func secureJoin(base, path string) (string, error) {
+	result := filepath.Clean(filepath.Join(base, path))
+	if result != base && !strings.HasPrefix(result, base+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path %q escapes base directory %q", path, base)
+	}
+	return result, nil
+}
+
 func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode int) {
 	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
-	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	err := syscall.Mkdir(cleanPath, mode)
+	cleanPath, err := secureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		logger.Error("Path traversal attempt blocked", "path", path, "error", err)
+		return -int(syscall.EPERM)
+	}
+	err = syscall.Mkdir(cleanPath, mode)
 	if err != nil {
 		logger.Error("Failed to mkdir", "path", cleanPath, "error", err)
 		return int(convertOsErrToSyscallErrno("mkdir", err))
