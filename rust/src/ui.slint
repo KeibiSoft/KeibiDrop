@@ -29,18 +29,10 @@ component CustomButton inherits Rectangle {
     touch := TouchArea { }
 }
 
-export component Recipe inherits Window {
-    VerticalLayout {
-        alignment: start;
-        Button { text: "Button"; }
-    }
-}
-
 component InputArea inherits Rectangle {
-    in-out property <string> inText: "xxx-xxx-xxx";
+    in-out property <string> inText: "";
     in property <bool> readOnly: false;
     in property <string> buttonText: "Copy";
-    in property <int> paddingFromTop: 35;
 
     callback process_code;
 
@@ -50,12 +42,21 @@ component InputArea inherits Rectangle {
     border-color: rgba(255,255,255,0.25);
     clip: true;
     
-    ti-clip := Rectangle {
+    // Stack TextInput and Placeholder Text
+    Rectangle {
         x: 0px;
         width: 297px;
         height: 34px;
         clip: true;
         background: transparent;
+
+        if root.inText == "" : Text {
+            text: "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
+            color: #555;
+            font-size: 14px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
 
         ti := TextInput {
             width: parent.width;
@@ -71,16 +72,26 @@ component InputArea inherits Rectangle {
     }
 
     Button{
-        x: ti-clip.x + ti-clip.width + 6px;
-        y: ti.y;
+        x: 297px + 6px;
+        y: 0px;
         text: buttonText;
         height: 34px;
-        width: 142px;
+        width: 70px;
         clicked => {
-            parent.process_code();
+            root.process_code();
         }
     }
 
+    Button {
+        x: 297px + 6px + 70px + 4px;
+        y: 0px;
+        text: "Clear";
+        height: 34px;
+        width: 68px;
+        clicked => {
+            root.inText = "";
+        }
+    }
 }
 
 component DataRectangle inherits Rectangle {
@@ -712,18 +723,25 @@ export component MainWindow inherits Window {
         }
 
         // Dynamic file grid (4 per row, positioned like original)
-        for file[idx] in root.file_list: FileCard {
-            x: 120px + mod(idx, 4) * 270px;
-            y: 380px + floor(idx / 4) * 200px;
-            filename: file.name;
-            file-type: file.file-type;
-            downloading: file.downloading;
-            uploading: file.uploading;
-            progress: file.progress;
-            saved: file.saved;
-            is-local: file.is-local;
-            save-clicked => { root.save_file(file.name) }
-            open-clicked => { root.open_file(file.name) }
+        ScrollView {
+            x: 120px;
+            y: 380px;
+            width: parent.width - 240px;
+            height: parent.height - 400px;
+            
+            for file[idx] in root.file_list: FileCard {
+                x: mod(idx, 4) * 270px;
+                y: floor(idx / 4) * 200px;
+                filename: file.name;
+                file-type: file.file-type;
+                downloading: file.downloading;
+                uploading: file.uploading;
+                progress: file.progress;
+                saved: file.saved;
+                is-local: file.is-local;
+                save-clicked => { root.save_file(file.name) }
+                open-clicked => { root.open_file(file.name) }
+            }
         }
     }
 

@@ -2,7 +2,7 @@ mod bindings;
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 
-use env;
+use std::env;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::path::Path;
@@ -429,13 +429,19 @@ fn main() {
         // Handle Open Folder (FUSE mode)
         let mount_path = env::var("TO_MOUNT_PATH").unwrap_or_else(|_| ".".to_string());
         app.on_open_folder_pressed(move || {
-            println!("Opening folder: {}", mount_path);
-            #[cfg(target_os = "macos")]
-            let _ = Command::new("open").arg(&mount_path).spawn();
-            #[cfg(target_os = "linux")]
-            let _ = Command::new("xdg-open").arg(&mount_path).spawn();
-            #[cfg(target_os = "windows")]
-            let _ = Command::new("explorer").arg(&mount_path).spawn();
+            let path = env::var("TO_MOUNT_PATH").unwrap_or_else(|_| mount_path.clone());
+            println!("Opening folder: {}", path);
+            let res = if cfg!(target_os = "macos") {
+                Command::new("open").arg(&path).spawn()
+            } else if cfg!(target_os = "windows") {
+                Command::new("explorer").arg(&path).spawn()
+            } else {
+                Command::new("xdg-open").arg(&path).spawn()
+            };
+            
+            if let Err(e) = res {
+                eprintln!("Failed to open folder '{}': {}", path, e);
+            }
         });
 
         // Handle Add File: native file picker → copy to save folder → KD_AddFile
