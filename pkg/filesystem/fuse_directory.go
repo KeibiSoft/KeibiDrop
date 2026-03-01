@@ -792,7 +792,7 @@ func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode 
 	cleanPath, err := secureJoin(d.LocalDownloadFolder, path)
 	if err != nil {
 		logger.Error("Path traversal attempt blocked", "path", path, "error", err)
-		return -int(syscall.EPERM)
+		return -int(syscall.EACCES)
 	}
 	err = syscall.Mkdir(cleanPath, mode)
 	if err != nil {
