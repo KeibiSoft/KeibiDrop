@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,7 +76,7 @@ func TestProtocolEndToEndStream(t *testing.T) {
 	// Bob encapsulates
 	seedKEM, ctKEM := alicePubMLKEM.Encapsulate()
 	seedCurve := randomBytes(t, seedSize)
-	ctCurve, err := X25519Decapsulate(seedCurve, bobPrivCurve, alicePubCurve)
+	ctCurve, err := X25519Encapsulate(seedCurve, bobPrivCurve, alicePubCurve)
 	req.NoError(err)
 
 	// Alice decapsulates
@@ -137,4 +138,80 @@ func TestProtocolMimic(t *testing.T) {
 	req.Equal(fpAlice, fpAliceCheck, "Fingerprint mismatch")
 
 	t.Logf("Fingerprint: %s", base64.RawURLEncoding.EncodeToString([]byte(fpAlice)))
+}
+
+// TestX25519EncapsulateDifferentOutputEachCall verifies that two calls with the same
+// keys and same seed produce different ciphertexts (non-deterministic due to random salt).
+func TestX25519EncapsulateDifferentOutputEachCall(t *testing.T) {
+	privKey, pubKey, err := GenerateX25519Keypair()
+	require.NoError(t, err)
+
+	seed := randomBytes(t, seedSize)
+
+	ct1, err := X25519Encapsulate(seed, privKey, pubKey)
+	require.NoError(t, err)
+
+	ct2, err := X25519Encapsulate(seed, privKey, pubKey)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, ct1, ct2, "two encapsulations of the same seed must produce different ciphertexts")
+}
+
+// TestX25519RoundTrip_WithSalt verifies that encapsulate + decapsulate recovers the original seed.
+func TestX25519RoundTrip_WithSalt(t *testing.T) {
+	senderPriv, _, err := GenerateX25519Keypair()
+	require.NoError(t, err)
+	recipientPriv, recipientPub, err := GenerateX25519Keypair()
+	require.NoError(t, err)
+	senderPub := senderPriv.PublicKey()
+
+	seed := randomBytes(t, seedSize)
+
+	ct, err := X25519Encapsulate(seed, senderPriv, recipientPub)
+	require.NoError(t, err)
+
+	recovered, err := X25519Decapsulate(ct, recipientPriv, senderPub)
+	require.NoError(t, err)
+
+	assert.Equal(t, seed, recovered, "decapsulated seed must equal original seed")
+}
+
+// TestX25519KeystreamReuseAttackFails verifies that XOR-ing two ciphertexts no longer
+// reveals the XOR of the two plaintexts (the attack that worked before the salt fix).
+func TestX25519KeystreamReuseAttackFails(t *testing.T) {
+	privKey, pubKey, err := GenerateX25519Keypair()
+	require.NoError(t, err)
+
+	seed1 := randomBytes(t, seedSize)
+	seed2 := randomBytes(t, seedSize)
+
+	ct1, err := X25519Encapsulate(seed1, privKey, pubKey)
+	require.NoError(t, err)
+
+	ct2, err := X25519Encapsulate(seed2, privKey, pubKey)
+	require.NoError(t, err)
+
+	// Verify salts are unique
+	assert.NotEqual(t, ct1[:32], ct2[:32], "salts must be unique")
+
+	// Attempt the attack using only the ciphertext portions (bytes 32..64).
+	attackGuess := make([]byte, seedSize)
+	ct1Payload := ct1[32:]
+	ct2Payload := ct2[32:]
+	for i := range seedSize {
+		attackGuess[i] = ct1Payload[i] ^ ct2Payload[i] ^ seed1[i]
+	}
+
+	assert.NotEqual(t, seed2, attackGuess, "keystream reuse attack must not recover seed2")
+}
+
+func TestX25519DecapsulateWrongLength(t *testing.T) {
+	privKey, pubKey, err := GenerateX25519Keypair()
+	require.NoError(t, err)
+
+	// Test with 32-byte ciphertext (old format)
+	badCt := make([]byte, 32)
+	_, err = X25519Decapsulate(badCt, privKey, pubKey)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ciphertext must be 64 bytes")
 }
