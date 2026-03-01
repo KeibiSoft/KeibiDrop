@@ -21,6 +21,7 @@ import (
 )
 
 const seedSize = 32
+const saltSize = 32 // random salt prepended to ciphertext: salt || encrypted_seed
 
 func GenerateMLKEMKeypair() (*mlkem.DecapsulationKey1024, *mlkem.EncapsulationKey1024, error) {
 	priv, err := mlkem.GenerateKey1024()
@@ -46,7 +47,7 @@ func X25519Encapsulate(seed []byte, senderPriv *ecdh.PrivateKey, recipientPub *e
 		return nil, errors.New("seed must be 32 bytes")
 	}
 
-	salt := make([]byte, seedSize)
+	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 		return nil, err
 	}
@@ -70,12 +71,12 @@ func X25519Encapsulate(seed []byte, senderPriv *ecdh.PrivateKey, recipientPub *e
 }
 
 func X25519Decapsulate(ciphertext []byte, recipientPriv *ecdh.PrivateKey, senderPub *ecdh.PublicKey) ([]byte, error) {
-	if len(ciphertext) != 2*seedSize {
-		return nil, errors.New("ciphertext must be 64 bytes")
+	if len(ciphertext) != saltSize+seedSize {
+		return nil, fmt.Errorf("ciphertext must be %d bytes", saltSize+seedSize)
 	}
 
-	salt := ciphertext[:seedSize]
-	ct := ciphertext[seedSize:]
+	salt := ciphertext[:saltSize]
+	ct := ciphertext[saltSize:]
 
 	shared, err := recipientPriv.ECDH(senderPub)
 	if err != nil {
