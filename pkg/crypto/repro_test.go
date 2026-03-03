@@ -5,6 +5,7 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/rand"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,25 +13,51 @@ import (
 )
 
 // ============================================================================
-// 1. REPRO: Unhandled RNG Error in Seed Generation
+// 1. REPRO: Predictable Protocol Output on Weak Entropy
 // ============================================================================
-// Attacker Goal: Force the use of a predictable "zero-key".
-// Scenario: A malicious actor on a shared server exhausts file descriptors or 
-// entropy pool. The app continues with a seed of all zeros.
-//
-// NOTE: We test this by observing that GenerateSeed() has no way to return 
-// an error, and looking at its source code reveals it ignores the error 
-// from RandomBytes.
+// Attacker Goal: Predict session keys and decrypt traffic.
+// Scenario: A weak PRNG or a compromised entropy source returns a static 
+// or predictable stream. Because KeibiDrop doesn't verify entropy quality 
+// or handle RNG errors in GenerateSeed, the entire protocol becomes deterministic.
 // ============================================================================
 
-func TestRepro_PredictableSeedOnRNGFailure_Analysis(t *testing.T) {
-	// Since we can't easily mock the package-level RandomBytes without 
-	// changing the source code, we verify the IMPACT of the current 
-	// implementation: it returns a value even if the underlying source 
-	// were to fail (verified via manual code audit).
+type staticReader struct{}
+
+func (s *staticReader) Read(p []byte) (n int, err error) {
+	for i := range p {
+		p[i] = 0x42 // Static "random" data
+	}
+	return len(p), nil
+}
+
+func TestRepro_PredictableProtocol(t *testing.T) {
+	// Setup: Mock the global RNG to return static data
+	oldReader := rand.Reader
+	rand.Reader = &staticReader{}
+	defer func() { rand.Reader = oldReader }()
+
+	// Part A: Generate Seed
+	seed1 := GenerateSeed()
+	seed2 := GenerateSeed()
+
+	// IMPACT: Seeds are identical and predictable
+	assert.Equal(t, seed1, seed2, "Seeds must be different but are identical due to weak entropy")
+	assert.Equal(t, byte(0x42), seed1[0])
+
+	// Part B: Protocol Handshake (X25519 Encapsulation)
+	priv, pub, _ := GenerateX25519Keypair()
 	
-	t.Log("Audit check: pkg/crypto/utils.go:25 uses 'res, _ := RandomBytes(seedSize)'")
-	t.Log("This means if RandomBytes fails, 'res' (all zeros) is returned silently.")
+	ct1, _ := X25519Encapsulate(seed1, priv, pub)
+	ct2, _ := X25519Encapsulate(seed1, priv, pub)
+
+	// IMPACT: The ciphertext is now DETERMINISTIC. 
+	// Because the salt is also pulled from the same weak RNG, 
+	// the same seed + same keys = same ciphertext.
+	// This allows an attacker to perform "offline dictionary attacks" or 
+	// simply recognize repeated sessions.
+	t.Logf("Ciphertext 1: %x", ct1[:16])
+	t.Logf("Ciphertext 2: %x", ct2[:16])
+	assert.Equal(t, ct1, ct2, "Protocol output is deterministic! Salt uniqueness failed.")
 }
 
 // ============================================================================
