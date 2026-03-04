@@ -8,13 +8,30 @@ package filesystem
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
+
+// SecureJoin resolves path relative to base and verifies the result stays within
+// base. Returns an error if the resolved path escapes base (KD-SEC-2026-004).
+func SecureJoin(base, path string) (string, error) {
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path of base: %w", err)
+	}
+
+	result := filepath.Clean(filepath.Join(absBase, path))
+	if result != absBase && !strings.HasPrefix(result, absBase+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path %q escapes base directory %q", path, absBase)
+	}
+	return result, nil
+}
 
 func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 	if err == nil {
