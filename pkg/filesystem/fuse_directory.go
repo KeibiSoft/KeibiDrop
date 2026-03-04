@@ -57,10 +57,14 @@ func (d *Dir) Access(path string, _mask uint32) (errCode int) {
 		return 0
 	}
 
-	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	realPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		logger.Error("Path traversal blocked in Access", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
 
 	stat := &syscall.Stat_t{}
-	err := syscall.Stat(realPath, stat)
+	err = syscall.Stat(realPath, stat)
 	if err != nil {
 		logger.Warn("Access FAILED", "error", err, "realPath", realPath)
 		return int(convertOsErrToSyscallErrno("stat", err))
@@ -115,7 +119,11 @@ func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint6
 	defer d.OpenMapLock.Unlock()
 
 	relativePath := path
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		logger.Error("Path traversal blocked in Create", "path", path, "error", err)
+		return -int(syscall.EACCES), 0
+	}
 
 	// Extract permission bits only (mode may include S_IFREG file type bits).
 	// Ensure owner has write permission so file can be reopened after close.
@@ -127,13 +135,13 @@ func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint6
 		createMode = 0o644 // Default if mode was 0
 	}
 
-	fd, err := syscall.Open(path, flags, createMode)
+	fd, err := syscall.Open(cleanPath, flags, createMode)
 	if err != nil {
 		logger.Error("Failed to create file", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
 	}
 
-	name := strings.Split(path, "/")
+	name := strings.Split(cleanPath, "/")
 
 	f := &File{
 		logger:          logger,
@@ -141,7 +149,7 @@ func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint6
 		Inode:           uint64(fd),
 		Name:            name[len(name)-1],
 		RelativePath:    relativePath,
-		RealPathOfFile:  path,
+		RealPathOfFile:  cleanPath,
 		OnLocalChange:   d.OnLocalChange,
 		StreamProvider:  d.OpenStreamProvider(),
 		NotRemoteSynced: true,
@@ -201,7 +209,11 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 	defer d.OpenMapLock.Unlock()
 
 	relativePath := path
-	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	localPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		logger.Error("Path traversal blocked in CreateEx", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
 
 	// Extract permission bits only (mode may include S_IFREG file type bits).
 	// Ensure owner has write permission so file can be reopened after close.
@@ -252,7 +264,11 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	flags := fi.Flags
 	logger := d.logger.With("method", "open-ex", "path", path, "flags", flags)
 
-	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	localPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		logger.Error("Path traversal blocked in OpenEx", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
 
 	// Check if O_CREAT is in flags - if so, we might need to create the file
 	hasCreate := flags&syscall.O_CREAT != 0
@@ -541,10 +557,14 @@ func (d *Dir) Flush(path string, fh uint64) (errCode int) {
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	defer d.recoverPanic("Fsync", &errCode)
 	d.logger.Warn("FUSE Fsync", "path", path, "datasync", datasync, "fh", fh)
-	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	localPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		d.logger.Error("Path traversal blocked in Fsync", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
 	logger := d.logger.With("method", "fsync", "path", localPath)
 
-	err := syscall.Fsync(int(fh))
+	err = syscall.Fsync(int(fh))
 	if err == nil {
 		d.logger.Warn("FUSE Fsync SUCCESS", "path", localPath, "fh", fh)
 		return 0
@@ -605,7 +625,11 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 	defer d.AfmLock.Unlock()
 
 	stgo := syscall.Stat_t{}
-	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		logger.Error("Path traversal blocked in Getattr", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
 
 	// Check if the file is on remote, and add it to local tree.
 	if isRemote {
@@ -645,7 +669,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 		}
 	}
 
-	err := syscall.Lstat(cleanPath, &stgo)
+	err = syscall.Lstat(cleanPath, &stgo)
 	if err != nil {
 		logger.Error("Failed to lstat path", "clean-path", cleanPath, "error-code", int(convertOsErrToSyscallErrno("lstat", err)), "error", err)
 		cerr := convertOsErrToSyscallErrno("lstat", err)
@@ -778,13 +802,9 @@ func (d *Dir) MkdirFromPeer(path string, mode uint32) (errCode int) {
 }
 
 // secureJoin resolves path relative to base and verifies the result stays within
-// base. Returns an error if the resolved path escapes base (KD-2026-001).
+// base. Returns an error if the resolved path escapes base (KD-SEC-2026-004).
 func secureJoin(base, path string) (string, error) {
-	result := filepath.Clean(filepath.Join(base, path))
-	if result != base && !strings.HasPrefix(result, base+string(os.PathSeparator)) {
-		return "", fmt.Errorf("path %q escapes base directory %q", path, base)
-	}
-	return result, nil
+	return SecureJoin(base, path)
 }
 
 func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode int) {
@@ -824,9 +844,13 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 	defer d.recoverPanic("Mknod", &errCode)
 	d.logger.Info("Mknod", "path", path, "inode", d.Inode)
 
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		d.logger.Error("Path traversal blocked in Mknod", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
 	logger := d.logger.With("method", "mknod", "path", path, "mode", mode, "dev", dev)
-	err := syscall.Mknod(path, mode, int(dev))
+	err = syscall.Mknod(cleanPath, mode, int(dev))
 	if err != nil {
 		logger.Error("Failed to mknor", "errro", err)
 		return int(convertOsErrToSyscallErrno("mknod", err))
@@ -838,7 +862,11 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	defer d.recoverPanic("Open", &errCode)
 	logger := d.logger.With("method", "open", "path", path, "flags", flags)
 
-	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	localPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		logger.Error("Path traversal blocked in Open", "path", path, "error", err)
+		return -int(syscall.EACCES), 0
+	}
 
 	d.AfmLock.Lock()
 	fh, ok := d.AllFileMap[path]
@@ -1030,9 +1058,16 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
 	defer d.recoverPanic("Opendir", &errCode)
 	d.logger.Info("Opendir", "path", path, "inode", d.Inode)
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "opendir", "path", path)
-	f, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		d.logger.Error("Path traversal blocked in Opendir", "path", path, "error", err)
+		return -int(syscall.EACCES), 0
+	}
+
+	logger := d.logger.With("method", "opendir", "path", cleanPath)
+	f, err := syscall.Open(cleanPath, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+
 	if err != nil {
 		logger.Error("Failed to open dir", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
@@ -1043,7 +1078,10 @@ func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
 
 func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Readdir", &errCode)
-	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		return -int(syscall.EACCES)
+	}
 	logger := d.logger.With("method", "readdir", "path", cleanPath)
 
 	dirEn, err := os.ReadDir(cleanPath)
@@ -1129,8 +1167,11 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 
 		if needsNotify {
 			stgo := syscall.Stat_t{}
-			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-			err := syscall.Lstat(cleanPath, &stgo)
+			cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+			if err != nil {
+				return -int(syscall.EACCES)
+			}
+			err = syscall.Lstat(cleanPath, &stgo)
 			if err != nil {
 				logger.Error("lstat failed", "cleanPath", cleanPath, "error", err)
 				return int(convertOsErrToSyscallErrno("lstat", err))
@@ -1212,7 +1253,10 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				logger.Info("Download incomplete, keeping NotLocalSynced=true", "bytesDownloaded", bytesDownloaded, "expectedSize", expectedSize)
 			} else {
 				// No expected size tracked (local file, not from remote) - mark as synced
-				cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+				cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+				if err != nil {
+					return -int(syscall.EACCES)
+				}
 				if localInfo, statErr := os.Stat(cleanPath); statErr == nil && localInfo.Size() > 0 {
 					f.NotLocalSynced = false
 				}
@@ -1274,8 +1318,16 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		"newpath", newpath,
 		"note", "macOS apps may use RENAME_SWAP - not supported by cgofuse")
 
-	cleanOldPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, oldpath))
-	cleanNewPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
+	cleanOldPath, err := SecureJoin(d.LocalDownloadFolder, oldpath)
+	if err != nil {
+		d.logger.Error("Path traversal blocked in Rename (oldpath)", "path", oldpath, "error", err)
+		return -int(syscall.EACCES)
+	}
+	cleanNewPath, err := SecureJoin(d.LocalDownloadFolder, newpath)
+	if err != nil {
+		d.logger.Error("Path traversal blocked in Rename (newpath)", "path", newpath, "error", err)
+		return -int(syscall.EACCES)
+	}
 	logger := d.logger.With("method", "rename", "old-path", cleanOldPath, "new-path", cleanNewPath)
 
 	d.logger.Warn("FUSE Rename resolved paths", "cleanOldPath", cleanOldPath, "cleanNewPath", cleanNewPath)
@@ -1285,7 +1337,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	_, isRemote := d.RemoteFiles[oldpath]
 	d.RemoteFilesLock.RUnlock()
 
-	err := syscall.Rename(cleanOldPath, cleanNewPath)
+	err = syscall.Rename(cleanOldPath, cleanNewPath)
 	if err != nil {
 		d.logger.Warn("FUSE Rename FAILED", "oldpath", oldpath, "newpath", newpath, "error", err)
 		logger.Error("Failed to rename", "error", err)
@@ -1364,8 +1416,12 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 	d.Adm.Unlock()
 
 	// Try to rmdir local directory (may not exist if remote-only).
-	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	err := syscall.Rmdir(cleanPath)
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		logger.Error("Path traversal blocked in Rmdir", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
+	err = syscall.Rmdir(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Directory doesn't exist locally.
@@ -1417,11 +1473,15 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) (errCode int) {
 			return winfuse.EIO
 		}
 	*/
-	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		d.logger.Error("Path traversal blocked in Statfs", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
 	logger := d.logger.With("method", "statfs", "path", path, "rea-path", cleanPath)
 
 	stgo := syscall.Statfs_t{}
-	err := syscall_Statfs(cleanPath, &stgo)
+	err = syscall_Statfs(cleanPath, &stgo)
 	if err != nil {
 		logger.Error("Failed to stat underlying folder", "error", err)
 		return int(convertOsErrToSyscallErrno("statfs", err))
@@ -1446,9 +1506,13 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Truncate", &errCode)
 	d.logger.Info("Truncate", "path", path, "size", size, "inode", d.Inode, "fh", fh)
 
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		d.logger.Error("Path traversal blocked in Truncate", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
 	logger := d.logger.With("method", "truncate", "path", path, "size", size, "fh", fh)
-	err := syscall.Truncate(path, size)
+	err = syscall.Truncate(cleanPath, size)
 	if err != nil {
 		logger.Error("Faile to truncate", "error", err)
 		return int(convertOsErrToSyscallErrno("truncate", err))
@@ -1487,8 +1551,12 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	d.AfmLock.Unlock()
 
 	// Try to unlink local file (may not exist if remote-only).
-	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	err := syscall.Unlink(cleanPath)
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		logger.Error("Path traversal blocked in Unlink", "path", path, "error", err)
+		return -int(syscall.EACCES)
+	}
+	err = syscall.Unlink(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// File doesn't exist locally.
@@ -1587,7 +1655,10 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		d.OpenMapLock.RUnlock()
 		// macOS fcopyfile() can call Write after Release - try to reopen and write
 		slog.Warn("FCOPYFILE WORKAROUND", "path", path, "fh", fh, "offset", offset, "len", len(buff))
-		cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+		cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+		if err != nil {
+			return -int(syscall.EACCES)
+		}
 		startOpen := time.Now()
 		fd, err := syscall.Open(cleanPath, syscall.O_RDWR, 0)
 		openTime := time.Since(startOpen)
@@ -1624,7 +1695,10 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		// Use errors.Is for robust comparison (handles wrapped errors)
 		if errors.Is(err, syscall.EBADF) {
 			slog.Warn("EBADF on mapped fd, falling back to fcopyfile workaround", "path", path, "fh", fh)
-			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+			cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+			if err != nil {
+				return -int(syscall.EACCES)
+			}
 			fd, err2 := syscall.Open(cleanPath, syscall.O_RDWR, 0)
 			if err2 != nil {
 				slog.Error("Fallback open failed", "error", err2, "cleanPath", cleanPath)
@@ -1812,7 +1886,10 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		// Reopen the file and read from it.
 		if errors.Is(err, syscall.EBADF) {
 			d.logger.Warn("EBADF on pread, falling back to reopen", "path", path, "fh", fh)
-			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+			cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
+			if err != nil {
+				return -int(syscall.EACCES)
+			}
 			fd, err2 := syscall.Open(cleanPath, syscall.O_RDONLY, 0)
 			if err2 != nil {
 				logger.Error("Fallback open failed", "error", err2, "cleanPath", cleanPath)
@@ -1839,9 +1916,13 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 func (d *Dir) Removexattr(path string, name string) (errCode int) {
 	defer d.recoverPanic("Removexattr", &errCode)
 	// Don't log xattr operations - too frequent
-	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	realPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		return -int(syscall.EACCES)
+	}
 
-	err := xattr.Remove(cleanPath, name)
+	err = xattr.Remove(realPath, name)
+
 	if err != nil {
 		return int(convertOsErrToSyscallErrno("remove-xattr", err))
 	}
@@ -1852,7 +1933,10 @@ func (d *Dir) Removexattr(path string, name string) (errCode int) {
 func (d *Dir) Listxattr(path string, fill func(name string) bool) (errCode int) {
 	defer d.recoverPanic("Listxattr", &errCode)
 	// Don't log xattr operations - too frequent
-	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	realPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		return -int(syscall.EACCES)
+	}
 
 	res, err := xattr.List(realPath)
 	if err != nil {
@@ -1883,7 +1967,10 @@ func (d *Dir) Getxattr(path string, name string) (errCode int, data []byte) {
 		return -int(syscall.ENODATA), nil
 	}
 
-	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	realPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		return -int(syscall.EACCES), nil
+	}
 
 	res, err := xattr.Get(realPath, name)
 	if err != nil {
@@ -1902,9 +1989,12 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) (errCo
 	// I do not support flags for this version.
 	_ = flags
 
-	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	realPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		return -int(syscall.EACCES)
+	}
 
-	err := xattr.Set(realPath, name, value)
+	err = xattr.Set(realPath, name, value)
 	if err != nil {
 		return int(convertOsErrToSyscallErrno("set-xattr", err))
 	}
@@ -1941,6 +2031,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	}
 
 	logger.Info("Adding remote file", "path", path, "size", stat.Size, "mtime", stat.Mtim.Time())
+	cleanDiskPath, err := SecureJoin(d.LocalDownloadFolder, path)
+	if err != nil {
+		d.RemoteFilesLock.Unlock()
+		return err
+	}
 	f := &File{
 		logger:          d.logger,
 		openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
@@ -1951,7 +2046,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		NotLocalSynced:  true,
 		StreamProvider:  d.OpenStreamProvider(),
 		OnLocalChange:   d.OnLocalChange,
-		RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
+		RealPathOfFile:  cleanDiskPath,
 		Bitmap:          NewChunkBitmap(stat.Size),
 	}
 	d.RemoteFiles[path] = f
@@ -2117,6 +2212,11 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	if !ok {
 		// LOCAL file edited by remote peer - add to RemoteFiles so we fetch updated version
 		logger.Info("Local file edited by remote, marking for sync", "path", path, "mtime", stat.Mtim.Time())
+		cleanDiskPath, err := SecureJoin(d.LocalDownloadFolder, path)
+		if err != nil {
+			d.RemoteFilesLock.Unlock()
+			return err
+		}
 		newFile := &File{
 			logger:          d.logger,
 			openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
@@ -2127,7 +2227,7 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 			NotLocalSynced:  true,
 			StreamProvider:  d.OpenStreamProvider(),
 			OnLocalChange:   d.OnLocalChange,
-			RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
+			RealPathOfFile:  cleanDiskPath,
 			Bitmap:          NewChunkBitmap(stat.Size),
 		}
 		d.RemoteFiles[path] = newFile
