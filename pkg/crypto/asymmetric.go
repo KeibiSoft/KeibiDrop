@@ -42,6 +42,10 @@ func GenerateX25519Keypair() (*ecdh.PrivateKey, *ecdh.PublicKey, error) {
 	return priv, pub, nil
 }
 
+func ParseX25519PublicKey(pub []byte) (*ecdh.PublicKey, error) {
+	return ecdh.X25519().NewPublicKey(pub)
+}
+
 func X25519Encapsulate(seed []byte, senderPriv *ecdh.PrivateKey, recipientPub *ecdh.PublicKey) ([]byte, error) {
 	if len(seed) != seedSize {
 		return nil, errors.New("seed must be 32 bytes")

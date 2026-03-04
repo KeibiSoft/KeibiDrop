@@ -13,33 +13,34 @@ import (
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
-// CreateRekeyRequest generates a RekeyRequest with new encapsulated seeds.
-// Returns the request, the derived new key (for outbound), and any error.
+// CreateRekeyRequest generates a RekeyRequest with fresh ephemeral keys and encapsulated seeds.
+// This ensures Perfect Forward Secrecy (PFS) by not relying solely on static identity keys.
 func CreateRekeyRequest(ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, epoch uint64) (*bindings.RekeyRequest, []byte, error) {
-	if ownKeys == nil {
-		return nil, nil, fmt.Errorf("own keys is nil")
-	}
-	if peerKeys == nil {
-		return nil, nil, fmt.Errorf("peer keys is nil")
-	}
-	if err := ownKeys.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid own keys: %w", err)
-	}
-	if err := peerKeys.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid peer keys: %w", err)
+	if ownKeys == nil || peerKeys == nil {
+		return nil, nil, fmt.Errorf("keys cannot be nil")
 	}
 
-	// Generate new random seed and encapsulate with X25519.
+	// 1. Generate ephemeral re-keying keys.
+	_, ephMlKemPub, err := kbc.GenerateMLKEMKeypair()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate ephemeral mlkem: %w", err)
+	}
+	ephXPriv, ephXPub, err := kbc.GenerateX25519Keypair()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate ephemeral x25519: %w", err)
+	}
+
+	// 2. Encapsulate seeds against peer's STATIC identity keys.
+	// Note: We use ephemeral sender keys for X25519 to provide PFS.
 	seed1 := kbc.GenerateSeed()
-	encSeed1, err := kbc.X25519Encapsulate(seed1, ownKeys.X25519Private, peerKeys.X25519Public)
+	encSeed1, err := kbc.X25519Encapsulate(seed1, ephXPriv, peerKeys.X25519Public)
 	if err != nil {
 		return nil, nil, fmt.Errorf("x25519 encapsulate failed: %w", err)
 	}
 
-	// Encapsulate with ML-KEM.
 	seed2, encSeed2 := peerKeys.MlKemPublic.Encapsulate()
 
-	// Derive the new key from both seeds.
+	// 3. Derive the new key from both seeds.
 	newKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
 	if err != nil {
 		return nil, nil, fmt.Errorf("key derivation failed: %w", err)
@@ -51,6 +52,10 @@ func CreateRekeyRequest(ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, epoch uint
 			"mlkem":  encSeed2,
 		},
 		Epoch: epoch,
+		EphemeralPublicKeys: map[string][]byte{
+			"x25519": ephXPub.Bytes(),
+			"mlkem":  ephMlKemPub.Bytes(),
+		},
 	}
 
 	return req, newKey, nil
@@ -59,19 +64,21 @@ func CreateRekeyRequest(ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, epoch uint
 // ProcessRekeyRequest handles an incoming RekeyRequest.
 // Returns a RekeyResponse, the derived new inbound key, and any error.
 func ProcessRekeyRequest(req *bindings.RekeyRequest, ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys) (*bindings.RekeyResponse, []byte, error) {
-	if ownKeys == nil {
-		return nil, nil, fmt.Errorf("own keys is nil")
-	}
-	if peerKeys == nil {
-		return nil, nil, fmt.Errorf("peer keys is nil")
-	}
-	if err := ownKeys.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid own keys: %w", err)
-	}
-	if err := peerKeys.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid peer keys: %w", err)
+	if ownKeys == nil || peerKeys == nil {
+		return nil, nil, fmt.Errorf("keys cannot be nil")
 	}
 
+	// 1. Extract peer's ephemeral public keys.
+	peerEphXBytes, ok := req.EphemeralPublicKeys["x25519"]
+	if !ok {
+		return nil, nil, fmt.Errorf("missing peer ephemeral x25519 key")
+	}
+	peerEphXPub, err := kbc.ParseX25519PublicKey(peerEphXBytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse peer ephemeral x25519: %w", err)
+	}
+
+	// 2. Decapsulate seeds using our STATIC private keys and peer's EPHEMERAL keys.
 	encSeed1, ok := req.EncSeeds["x25519"]
 	if !ok {
 		return nil, nil, fmt.Errorf("missing x25519 encapsulated seed")
@@ -81,76 +88,73 @@ func ProcessRekeyRequest(req *bindings.RekeyRequest, ownKeys *kbc.OwnKeys, peerK
 		return nil, nil, fmt.Errorf("missing mlkem encapsulated seed")
 	}
 
-	// Decapsulate X25519 seed.
-	seed1, err := kbc.X25519Decapsulate(encSeed1, ownKeys.X25519Private, peerKeys.X25519Public)
+	seed1, err := kbc.X25519Decapsulate(encSeed1, ownKeys.X25519Private, peerEphXPub)
 	if err != nil {
 		return nil, nil, fmt.Errorf("x25519 decapsulate failed: %w", err)
 	}
 
-	// Decapsulate ML-KEM seed.
 	seed2, err := ownKeys.MlKemPrivate.Decapsulate(encSeed2)
 	if err != nil {
 		return nil, nil, fmt.Errorf("mlkem decapsulate failed: %w", err)
 	}
 
-	// Derive the new inbound key.
+	// 3. Derive new inbound key.
 	newInboundKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
 	if err != nil {
 		return nil, nil, fmt.Errorf("inbound key derivation failed: %w", err)
 	}
 
-	// Create our response with new seeds for the peer's inbound direction.
+	// 4. Create response with our own fresh seeds and ephemeral keys.
 	respReq, _, err := CreateRekeyRequest(ownKeys, peerKeys, req.Epoch)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create response seeds: %w", err)
+		return nil, nil, fmt.Errorf("failed to create response: %w", err)
 	}
 
 	resp := &bindings.RekeyResponse{
-		EncSeeds: respReq.EncSeeds,
-		Epoch:    req.Epoch,
+		EncSeeds:            respReq.EncSeeds,
+		Epoch:               req.Epoch,
+		EphemeralPublicKeys: respReq.EphemeralPublicKeys,
 	}
 
 	return resp, newInboundKey, nil
 }
 
 // ProcessRekeyResponse handles an incoming RekeyResponse.
-// Returns the derived new outbound key (peer's response seeds).
 func ProcessRekeyResponse(resp *bindings.RekeyResponse, ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys) ([]byte, error) {
-	if ownKeys == nil {
-		return nil, fmt.Errorf("own keys is nil")
-	}
-	if peerKeys == nil {
-		return nil, fmt.Errorf("peer keys is nil")
-	}
-	if err := ownKeys.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid own keys: %w", err)
-	}
-	if err := peerKeys.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid peer keys: %w", err)
+	if ownKeys == nil || peerKeys == nil {
+		return nil, fmt.Errorf("keys cannot be nil")
 	}
 
+	// 1. Extract peer's ephemeral public keys.
+	peerEphXBytes, ok := resp.EphemeralPublicKeys["x25519"]
+	if !ok {
+		return nil, fmt.Errorf("missing peer ephemeral x25519 key in response")
+	}
+	peerEphXPub, err := kbc.ParseX25519PublicKey(peerEphXBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse peer ephemeral x25519 in response: %w", err)
+	}
+
+	// 2. Decapsulate peer's response seeds.
 	encSeed1, ok := resp.EncSeeds["x25519"]
 	if !ok {
-		return nil, fmt.Errorf("missing x25519 encapsulated seed in response")
+		return nil, fmt.Errorf("missing x25519 seed in response")
 	}
 	encSeed2, ok := resp.EncSeeds["mlkem"]
 	if !ok {
-		return nil, fmt.Errorf("missing mlkem encapsulated seed in response")
+		return nil, fmt.Errorf("missing mlkem seed in response")
 	}
 
-	// Decapsulate X25519 seed.
-	seed1, err := kbc.X25519Decapsulate(encSeed1, ownKeys.X25519Private, peerKeys.X25519Public)
+	seed1, err := kbc.X25519Decapsulate(encSeed1, ownKeys.X25519Private, peerEphXPub)
 	if err != nil {
-		return nil, fmt.Errorf("x25519 decapsulate failed: %w", err)
+		return nil, fmt.Errorf("x25519 decapsulate response failed: %w", err)
 	}
 
-	// Decapsulate ML-KEM seed.
 	seed2, err := ownKeys.MlKemPrivate.Decapsulate(encSeed2)
 	if err != nil {
-		return nil, fmt.Errorf("mlkem decapsulate failed: %w", err)
+		return nil, fmt.Errorf("mlkem decapsulate response failed: %w", err)
 	}
 
-	// Derive the new key for receiving from peer.
 	newKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
 	if err != nil {
 		return nil, fmt.Errorf("key derivation failed: %w", err)
