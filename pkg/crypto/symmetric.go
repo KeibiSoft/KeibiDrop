@@ -52,6 +52,54 @@ func (ng *NonceGenerator) Count() uint64 {
 	return ng.counter.Load()
 }
 
+// EncryptWithNonceAndAAD encrypts using a provided nonce and additional authenticated data.
+// Returns [nonce | ciphertext+MAC], or error.
+func EncryptWithNonceAndAAD(kek, plainText, aad []byte, nonce [NonceSize]byte) ([]byte, error) {
+	if len(kek) != KeySize {
+		return nil, errors.New("invalid key size")
+	}
+
+	aead, err := chacha20poly1305.New(kek)
+	if err != nil {
+		return nil, err
+	}
+
+	cipherText := aead.Seal(nil, nonce[:], plainText, aad)
+
+	result := make([]byte, NonceSize+len(cipherText))
+	copy(result, nonce[:])
+	copy(result[NonceSize:], cipherText)
+
+	return result, nil
+}
+
+// DecryptWithNonceAndAAD decrypts [nonce | ciphertext+MAC] using KEK and verifies AAD.
+// Returns plainText or error if authentication fails.
+func DecryptWithNonceAndAAD(kek, input, aad []byte) ([]byte, error) {
+	if len(kek) != KeySize {
+		return nil, errors.New("invalid key size")
+	}
+
+	if uint64(len(input)) < EncOverhead {
+		return nil, errors.New("input too short")
+	}
+
+	aead, err := chacha20poly1305.New(kek)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := input[:chacha20poly1305.NonceSize]
+	cipherText := input[chacha20poly1305.NonceSize:]
+
+	plainText, err := aead.Open(nil, nonce, cipherText, aad)
+	if err != nil {
+		return nil, err
+	}
+
+	return plainText, nil
+}
+
 // EncryptWithNonce encrypts using a provided nonce (for counter-based encryption).
 // Returns [nonce | ciphertext+MAC], or error.
 func EncryptWithNonce(kek, plainText []byte, nonce [NonceSize]byte) ([]byte, error) {
@@ -162,6 +210,9 @@ func DecryptedSize(cipherSize uint64) (uint64, error) {
 func EncryptChunked(kek []byte, r io.Reader, w io.Writer, plainSize uint64) error {
 	buf := make([]byte, BlockSize)
 	var totalRead uint64
+	// Use a zero prefix for file chunks - separation is handled by KEK uniqueness per session
+	ng := NewNonceGenerator(0)
+	var chunkIdx uint64
 
 	for totalRead < plainSize {
 		toRead := BlockSize
@@ -182,7 +233,12 @@ func EncryptChunked(kek []byte, r io.Reader, w io.Writer, plainSize uint64) erro
 		//#nosec:G115 // n comes from io.ReadFull and will never be negative.
 		totalRead += uint64(n)
 
-		encryptedChunk, err := Encrypt(kek, buf[:n])
+		nonce := ng.Next()
+		// Bind the chunk index to the ciphertext via AAD
+		aad := make([]byte, 8)
+		binary.BigEndian.PutUint64(aad, chunkIdx)
+
+		encryptedChunk, err := EncryptWithNonceAndAAD(kek, buf[:n], aad, nonce)
 		if err != nil {
 			return err
 		}
@@ -190,6 +246,7 @@ func EncryptChunked(kek []byte, r io.Reader, w io.Writer, plainSize uint64) erro
 		if _, err := w.Write(encryptedChunk); err != nil {
 			return err
 		}
+		chunkIdx++
 	}
 
 	return nil
@@ -198,6 +255,7 @@ func EncryptChunked(kek []byte, r io.Reader, w io.Writer, plainSize uint64) erro
 func DecryptChunked(kek []byte, r io.Reader, w io.Writer, cipherSize uint64) error {
 	var totalRead uint64
 	chunkBuf := make([]byte, BlockSize+EncOverhead)
+	var chunkIdx uint64
 
 	for totalRead < cipherSize {
 		toRead := BlockSize + EncOverhead
@@ -217,14 +275,19 @@ func DecryptChunked(kek []byte, r io.Reader, w io.Writer, cipherSize uint64) err
 		//#nosec:G115 // n comes from io.ReadFull and will never be negative.
 		totalRead += uint64(n)
 
-		plainText, err := Decrypt(kek, chunkBuf[:n])
+		// Verify chunk index binding
+		aad := make([]byte, 8)
+		binary.BigEndian.PutUint64(aad, chunkIdx)
+
+		plainText, err := DecryptWithNonceAndAAD(kek, chunkBuf[:n], aad)
 		if err != nil {
-			return fmt.Errorf("failed to decrypt chunk: %w", err)
+			return fmt.Errorf("failed to decrypt chunk %d: %w", chunkIdx, err)
 		}
 
 		if _, err := w.Write(plainText); err != nil {
 			return fmt.Errorf("failed to write decrypted data: %w", err)
 		}
+		chunkIdx++
 	}
 
 	return nil

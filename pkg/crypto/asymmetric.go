@@ -17,6 +17,7 @@ import (
 	"hash"
 	"io"
 
+	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -57,22 +58,29 @@ func X25519Encapsulate(seed []byte, senderPriv *ecdh.PrivateKey, recipientPub *e
 		return nil, err
 	}
 
-	mask := make([]byte, seedSize)
-	hkdfReader := hkdf.New(sha512.New, shared, salt, []byte("x25519-shared-seed-wrap"))
-	if _, err := io.ReadFull(hkdfReader, mask); err != nil {
+	// Derive a seed-wrapping key from the shared secret.
+	hkdfStream := hkdf.New(sha512.New, shared, salt, []byte("x25519-shared-seed-wrap-v1"))
+	wrappingKey := make([]byte, KeySize)
+	if _, err := io.ReadFull(hkdfStream, wrappingKey); err != nil {
 		return nil, err
 	}
 
-	ct := make([]byte, seedSize)
-	for i := 0; i < seedSize; i++ {
-		ct[i] = seed[i] ^ mask[i]
+	// Use ChaCha20-Poly1305 AEAD to wrap the seed (nonce is zero because key is unique to salt/shared).
+	aead, err := chacha20poly1305.New(wrappingKey)
+	if err != nil {
+		return nil, err
 	}
+
+	var zeroNonce [chacha20poly1305.NonceSize]byte
+	ct := aead.Seal(nil, zeroNonce[:], seed, nil)
+
 	return append(salt, ct...), nil
 }
 
 func X25519Decapsulate(ciphertext []byte, recipientPriv *ecdh.PrivateKey, senderPub *ecdh.PublicKey) ([]byte, error) {
-	if len(ciphertext) != saltSize+seedSize {
-		return nil, fmt.Errorf("ciphertext must be %d bytes", saltSize+seedSize)
+	const ctSize = seedSize + 16 // seed + Poly1305 tag
+	if len(ciphertext) != saltSize+ctSize {
+		return nil, fmt.Errorf("ciphertext must be %d bytes", saltSize+ctSize)
 	}
 
 	salt := ciphertext[:saltSize]
@@ -83,15 +91,22 @@ func X25519Decapsulate(ciphertext []byte, recipientPriv *ecdh.PrivateKey, sender
 		return nil, err
 	}
 
-	mask := make([]byte, seedSize)
-	hkdfReader := hkdf.New(sha512.New, shared, salt, []byte("x25519-shared-seed-wrap"))
-	if _, err := io.ReadFull(hkdfReader, mask); err != nil {
+	// Derive the same wrapping key.
+	hkdfStream := hkdf.New(sha512.New, shared, salt, []byte("x25519-shared-seed-wrap-v1"))
+	wrappingKey := make([]byte, KeySize)
+	if _, err := io.ReadFull(hkdfStream, wrappingKey); err != nil {
 		return nil, err
 	}
 
-	seed := make([]byte, seedSize)
-	for i := range seedSize {
-		seed[i] = ct[i] ^ mask[i]
+	aead, err := chacha20poly1305.New(wrappingKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var zeroNonce [chacha20poly1305.NonceSize]byte
+	seed, err := aead.Open(nil, zeroNonce[:], ct, nil)
+	if err != nil {
+		return nil, fmt.Errorf("seed decapsulation failed (integrity check failed): %w", err)
 	}
 
 	return seed, nil

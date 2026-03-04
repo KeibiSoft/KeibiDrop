@@ -213,5 +213,5 @@ func TestX25519DecapsulateWrongLength(t *testing.T) {
 	badCt := make([]byte, 32)
 	_, err = X25519Decapsulate(badCt, privKey, pubKey)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "ciphertext must be 64 bytes")
+	assert.Contains(t, err.Error(), "ciphertext must be 80 bytes")
 }
