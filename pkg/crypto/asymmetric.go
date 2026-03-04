@@ -293,15 +293,21 @@ func DeriveRelayKeys(roomPassword []byte) (lookupKey []byte, encryptionKey []byt
 		return nil, nil, fmt.Errorf("room password must be at least %d bytes", roomPasswordSize)
 	}
 
-	// Derive lookup key (different label ensures lookup != encryption key).
-	lookupKey, err = deriveKeyInternal(sha512.New, "keibidrop-relay-lookup-v1", KeySize, roomPassword)
-	if err != nil {
+	// Use a static global salt for lookup keys to prevent global rainbow tables 
+	// while still allowing peers to find each other.
+	lookupSalt := []byte("keibidrop-relay-lookup-salt-v1-2026")
+
+	// 1. Derive lookup key (the index the relay sees).
+	lookupHKDF := hkdf.New(sha512.New, roomPassword, lookupSalt, []byte("keibidrop-relay-lookup-v1"))
+	lookupKey = make([]byte, KeySize)
+	if _, err := io.ReadFull(lookupHKDF, lookupKey); err != nil {
 		return nil, nil, fmt.Errorf("failed to derive lookup key: %w", err)
 	}
 
-	// Derive encryption key.
-	encryptionKey, err = deriveKeyInternal(sha512.New, "keibidrop-relay-encrypt-v1", KeySize, roomPassword)
-	if err != nil {
+	// 2. Derive encryption key (for the blob contents).
+	encryptionHKDF := hkdf.New(sha512.New, roomPassword, nil, []byte("keibidrop-relay-encrypt-v1"))
+	encryptionKey = make([]byte, KeySize)
+	if _, err := io.ReadFull(encryptionHKDF, encryptionKey); err != nil {
 		return nil, nil, fmt.Errorf("failed to derive encryption key: %w", err)
 	}
 
