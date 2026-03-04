@@ -26,13 +26,16 @@ func SecureJoin(base, path string) (string, error) {
 		return "", fmt.Errorf("failed to get absolute path of base: %w", err)
 	}
 
+	// Join and Clean will handle leading slashes by making them relative to absBase.
+	// e.g. Join("/base", "/foo") -> "/base/foo"
 	result := filepath.Clean(filepath.Join(absBase, path))
+
+	// Verify the result is still within absBase.
 	if result != absBase && !strings.HasPrefix(result, absBase+string(os.PathSeparator)) {
 		return "", fmt.Errorf("path %q escapes base directory %q", path, absBase)
 	}
 	return result, nil
 }
-
 func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 	if err == nil {
 		return 0
