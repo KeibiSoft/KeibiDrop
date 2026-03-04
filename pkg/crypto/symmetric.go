@@ -43,13 +43,63 @@ func NewNonceGenerator(prefix uint32) *NonceGenerator {
 func (ng *NonceGenerator) Next() [NonceSize]byte {
 	var nonce [NonceSize]byte
 	copy(nonce[:4], ng.prefix[:])
-	binary.BigEndian.PutUint64(nonce[4:], ng.counter.Add(1))
+	// Use Add and subtract 1 to get the value BEFORE increment, atomically.
+	val := ng.counter.Add(1) - 1
+	binary.BigEndian.PutUint64(nonce[4:], val)
 	return nonce
 }
 
 // Count returns the current counter value (for monitoring/debugging).
 func (ng *NonceGenerator) Count() uint64 {
 	return ng.counter.Load()
+}
+
+// EncryptWithNonceAndAAD encrypts using a provided nonce and additional authenticated data.
+// Returns [nonce | ciphertext+MAC], or error.
+func EncryptWithNonceAndAAD(kek, plainText, aad []byte, nonce [NonceSize]byte) ([]byte, error) {
+	if len(kek) != KeySize {
+		return nil, errors.New("invalid key size")
+	}
+
+	aead, err := chacha20poly1305.New(kek)
+	if err != nil {
+		return nil, err
+	}
+
+	cipherText := aead.Seal(nil, nonce[:], plainText, aad)
+
+	result := make([]byte, NonceSize+len(cipherText))
+	copy(result, nonce[:])
+	copy(result[NonceSize:], cipherText)
+
+	return result, nil
+}
+
+// DecryptWithNonceAndAAD decrypts [nonce | ciphertext+MAC] using KEK and verifies AAD.
+// Returns plainText or error if authentication fails.
+func DecryptWithNonceAndAAD(kek, input, aad []byte) ([]byte, error) {
+	if len(kek) != KeySize {
+		return nil, errors.New("invalid key size")
+	}
+
+	if uint64(len(input)) < EncOverhead {
+		return nil, errors.New("input too short")
+	}
+
+	aead, err := chacha20poly1305.New(kek)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := input[:chacha20poly1305.NonceSize]
+	cipherText := input[chacha20poly1305.NonceSize:]
+
+	plainText, err := aead.Open(nil, nonce, cipherText, aad)
+	if err != nil {
+		return nil, err
+	}
+
+	return plainText, nil
 }
 
 // EncryptWithNonce encrypts using a provided nonce (for counter-based encryption).

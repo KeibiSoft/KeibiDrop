@@ -64,6 +64,7 @@ I haven’t used these tools directly, but I liked the ideas they explored and w
 
 - Post-quantum hybrid key exchange using ML-KEM-1024 and X25519
 - ChaCha20-Poly1305 symmetric encryption
+- **Stream Integrity**: Sequence-bound AEAD prevents message reordering/replay
 - Deterministic fingerprint verification
 - No persistent metadata or tracking
 - Designed for use over untrusted relays

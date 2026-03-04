@@ -113,17 +113,25 @@ This section outlines the handshake process used to establish a secure file tran
 Session_KEK = HKDF(sharedX || sharedKEM) # Where || means concatenation.
 ```
 
-## Stream Encryption and Limitations
+## Stream Encryption and Integrity
 
-The system now uses **ChaCha20-Poly1305 AEAD encryption applied at the transport stream layer**, not at the file or chunk level. This encryption is layered beneath the gRPC framing logic, meaning:
+The system uses **ChaCha20-Poly1305 AEAD encryption** applied at the transport stream layer. To prevent message reordering, duplication, or replay attacks (**KD-SEC-2026-002**), the encryption layer binds each message to its position in the stream:
 
-* File contents are passed over a **secure, AEAD-encrypted duplex stream**.
-* Encryption is **connection-oriented**, rather than chunk-based.
-* Each connection has its own **ephemeral symmetric session key** and independent AEAD state.
+* **Monotonic Nonces**: Every message uses a unique, incrementing 96-bit nonce.
+* **Sequence-Bound AAD**: The nonce itself is included as **Additional Authenticated Data (AAD)** in the AEAD construction.
+* **Integrity Guarantee**: Decryption will fail if a message is received out of order, as the expected sequence AAD will not match the ciphertext's MAC.
 
-Encryption is handled transparently within the gRPC transport layer using authenticated stream wrappers written in Go. Data is encrypted continuously and decrypted on the fly as it flows across the connection.
+File transfers also use this construction at the chunk level, ensuring that large files cannot be silently corrupted by swapping or dropping blocks.
 
-This model simplifies the handling of large files, avoids intermediate buffering and chunking logic, and ensures **confidentiality and integrity of the transport stream itself**.
+---
+
+## Seed Encapsulation Integrity
+
+To prevent malleability in the key exchange (**KD-SEC-2026-003**), X25519 seed wrapping has been hardened:
+
+* **AEAD Wrapper**: Seeds are no longer masked with raw XOR. Instead, they are wrapped using **ChaCha20-Poly1305 AEAD**.
+* **Key Derivation**: A dedicated wrapping key is derived from the X25519 shared secret and a random salt using HKDF-SHA512.
+* **Authentication**: The KEM payload now includes a 16-byte Poly1305 MAC, ensuring that any tampering with the encapsulated seeds is detected before key derivation.
 
 ---
 

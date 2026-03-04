@@ -60,7 +60,8 @@ func NewSecureWriterWithPrefix(w io.Writer, kek []byte, prefix uint32) *SecureWr
 
 func (s *SecureWriter) Write(p []byte) (int, error) {
 	nonce := s.nonce.Next()
-	encrypted, err := kbc.EncryptWithNonce(s.kek, p, nonce)
+	// Bind the nonce (sequence) to the ciphertext via AAD
+	encrypted, err := kbc.EncryptWithNonceAndAAD(s.kek, p, nonce[:], nonce)
 	if err != nil {
 		return 0, fmt.Errorf("encryption failed: %w", err)
 	}
@@ -83,12 +84,17 @@ func (s *SecureWriter) Write(p []byte) (int, error) {
 
 // SecureReader reads encrypted messages and decrypts them.
 type SecureReader struct {
-	r   io.Reader
-	kek []byte
+	r     io.Reader
+	kek   []byte
+	nonce *kbc.NonceGenerator
 }
 
 func NewSecureReader(r io.Reader, kek []byte) *SecureReader {
-	return &SecureReader{r: r, kek: kek}
+	return &SecureReader{
+		r:     r,
+		kek:   kek,
+		nonce: kbc.NewNonceGenerator(NoncePrefixInbound),
+	}
 }
 
 func (s *SecureReader) Read() ([]byte, error) {
@@ -103,9 +109,22 @@ func (s *SecureReader) Read() ([]byte, error) {
 		return nil, fmt.Errorf("read encrypted block failed: %w", err)
 	}
 
-	plaintext, err := kbc.Decrypt(s.kek, encrypted)
+	// Verify sequence binding using monotonic nonce
+	expectedNonce := s.nonce.Next()
+	
+	// The first 12 bytes of the encrypted payload is the nonce (per EncryptWithNonceAndAAD)
+	if len(encrypted) < 12 {
+		return nil, fmt.Errorf("encrypted block too short")
+	}
+	receivedNonce := encrypted[:12]
+	if !bytes.Equal(receivedNonce, expectedNonce[:]) {
+		return nil, fmt.Errorf("decryption failed: nonce mismatch (expected %x, got %x)", expectedNonce, receivedNonce)
+	}
+
+	// DecryptWithNonceAndAAD also extracts the nonce from 'encrypted'
+	plaintext, err := kbc.DecryptWithNonceAndAAD(s.kek, encrypted, receivedNonce)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed: %w", err)
+		return nil, fmt.Errorf("decryption failed (possible message reordering/replay): %w", err)
 	}
 
 	return plaintext, nil

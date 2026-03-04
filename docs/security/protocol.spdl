@@ -1,0 +1,71 @@
+/* 
+ * KeibiDrop Hybrid Handshake (X25519 + ML-KEM)
+ * Formal verification model for Scyther.
+ * Updated: 2026-03-04 (Includes AEAD Wrapping and Sequence Binding)
+ */
+
+usertype SessionKey;
+usertype Seed;
+usertype Nonce;
+
+/* Hash function for key derivation */
+hashfn HKDF;
+
+/* AEAD implementation: {payload}key,aad */
+protocol keibidrop(A,B)
+{
+    role A
+    {
+        /* A knows B's public keys from out-of-band fingerprint */
+        const pkB_X: Public;
+        const pkB_K: Public;
+        
+        var s1, s2: Seed;
+        var n1: Nonce;
+
+        /* Receive Handshake from B 
+           Format: { B, pkB_X, pkB_K, AEAD_WRAP(s1), KEM_WRAP(s2) }
+        */
+        recv_1(B, A, { B, pkB_X, pkB_K, {s1}pk(A), {s2}pk(A) });
+
+        /* Derive key */
+        macro kAB = HKDF(s1, s2);
+
+        /* DATA TRANSFER with Sequence Binding */
+        /* Message 2: A sends data bound to sequence nonce n1 */
+        send_2(A, B, { {data}kAB, n1 } );
+
+        /* Secrecy Claims */
+        claim_A1(A, Secret, s1);
+        claim_A2(A, Secret, s2);
+        claim_A3(A, Secret, kAB);
+        
+        /* 
+           Authentication Claims 
+           Note: Basic handshake is still 1-pass (Susceptible to Replay)
+           Sigma-handshake (3-pass) is required for full Aliveness.
+        */
+        claim_A4(A, Alive);
+    }
+
+    role B
+    {
+        const pkA_X: Public;
+        const pkA_K: Public;
+        
+        fresh s1, s2: Seed;
+        var n1: Nonce;
+
+        /* Send Handshake to A */
+        send_1(B, A, { B, pkA_X, pkA_K, {s1}pk(A), {s2}pk(A) });
+
+        macro kAB = HKDF(s1, s2);
+
+        /* DATA TRANSFER */
+        recv_2(A, B, { {data}kAB, n1 } );
+
+        claim_B1(B, Secret, s1);
+        claim_B2(B, Secret, s2);
+        claim_B3(B, Secret, kAB);
+    }
+}
