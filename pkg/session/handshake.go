@@ -148,7 +148,11 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 
 	logger := session.logger.With("phase", "outbound-handshake")
 
-	seed1 := kbc.GenerateSeed()
+	seed1, err := kbc.GenerateSeed()
+	if err != nil {
+		logger.Error("Failed to generate seed1", "error", err)
+		return err
+	}
 	encSeed1X25519, err := kbc.X25519Encapsulate(seed1, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
 	if err != nil {
 		logger.Error("Failed to encapsulate x25519 seed", "error", err)
