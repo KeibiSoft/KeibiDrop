@@ -21,9 +21,8 @@ func RandomBytes(size int) ([]byte, error) {
 	return b, nil
 }
 
-func GenerateSeed() []byte {
-	res, _ := RandomBytes(seedSize)
-	return res
+func GenerateSeed() ([]byte, error) {
+	return RandomBytes(seedSize)
 }
 
 // TODO: Remove it?
