@@ -1,2 +1,24 @@
-rust/target/*
+# Rust build artifacts
+rust/target/
 
+# Go build artifacts
+libkeibidrop.a
+libkeibidrop.h
+
+# Project session notes and temporary docs
+docs/session-*.md
+
+# Local test logs
+Log_Alice.txt
+Log_Bob.txt
+
+# Local test directories
+MountAlice/
+MountBob/
+SaveAlice/
+SaveBob/
+
+# System / IDE files
+.DS_Store
+.vscode/
+.idea/
