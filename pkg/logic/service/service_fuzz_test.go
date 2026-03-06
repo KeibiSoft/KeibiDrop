@@ -44,6 +44,9 @@ func seeds() []*bindings.NotifyRequest {
 	}
 }
 
+// maxFuzzInputSize caps fuzzed input to avoid excessive allocation in proto.Unmarshal.
+const maxFuzzInputSize = 4096
+
 func FuzzNotify(f *testing.F) {
 	// Serialize each seed and add to the corpus.
 	for _, seed := range seeds() {
@@ -54,11 +57,22 @@ func FuzzNotify(f *testing.F) {
 		f.Add(data)
 	}
 
+	// Hoist logger outside the closure: level set high so Enabled() returns
+	// false and no formatting occurs. Eliminates per-iteration slog overhead
+	// that causes GC-induced stalls during long fuzz runs.
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{
+		Level: slog.Level(9999),
+	}))
+
 	f.Fuzz(func(t *testing.T, data []byte) {
-		// Set up a fresh SyncTracker-backed service for each iteration.
+		if len(data) > maxFuzzInputSize {
+			return
+		}
+
+		// Fresh SyncTracker per iteration for isolation.
 		tracker := synctracker.NewSyncTracker()
 		svc := &KeibidropServiceImpl{
-			Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Logger:      logger,
 			SyncTracker: tracker,
 		}
 
