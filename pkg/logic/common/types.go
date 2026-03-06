@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -125,6 +126,18 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 	listener, err := net.Listen("tcp6", addr)
 	if err != nil {
 		return nil, err
+	}
+
+	// Clear stale state from previous sessions in the Save directory.
+	if toSave != "" {
+		logger.Info("Cleaning up Save directory", "path", toSave)
+		if err := os.RemoveAll(toSave); err != nil {
+			logger.Warn("Failed to clear Save directory", "path", toSave, "error", err)
+		}
+		if err := os.MkdirAll(toSave, 0755); err != nil {
+			logger.Error("Failed to re-create Save directory", "path", toSave, "error", err)
+			return nil, err
+		}
 	}
 
 	kd := &KeibiDrop{
