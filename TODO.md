@@ -21,10 +21,10 @@
 - [x] **1.1.d** Post-merge verify: `go test -timeout 300s ./...` — all green
 
 ### 1.2 — PR #41: Path traversal fix via SecureJoin [CRITICAL] (Branch: `security/fix-path-traversal`)
-- [ ] **1.2.a** Verify branch: `git checkout security/fix-path-traversal && make test`
-- [ ] **1.2.b** E2E Verification on branch: Build + Smoke Test (Alice + Bob)
-- [ ] **1.2.c** Merge: `git checkout main && git merge security/fix-path-traversal`
-- [ ] **1.2.d** Post-merge verify: `make test`
+- [x] **1.2.a** Verify branch: `git checkout security/fix-path-traversal && make test`
+- [x] **1.2.b** E2E Verification on branch: Build + Smoke Test (Alice + Bob)
+- [x] **1.2.c** Merged via GitHub PR #41
+- [x] **1.2.d** Post-merge verify: `go test -timeout 300s ./...` — all green
 
 ### 1.3 — PR #40: Handle RNG errors in GenerateSeed() [MEDIUM] (Branch: `security/fix-rng-error`)
 - [ ] **1.3.a** Verify branch: `git checkout security/fix-rng-error && make test`
