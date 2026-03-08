@@ -108,8 +108,11 @@ func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
 
 // getMountOptions returns Linux-specific FUSE mount options.
 // nonempty: allow mounting on directories that already contain files (e.g. stale state from a previous session).
+// attr_timeout=0: disables kernel attribute caching so every stat() goes to FUSE.
+// entry_timeout=0: disables kernel dentry caching so removals/renames are visible immediately.
+// Both are required for a sync filesystem where remote peers can modify the namespace at any time.
 // No allow_other here — that requires user_allow_other in /etc/fuse.conf.
 // The mounting user always has access without it.
 func getMountOptions() []string {
-	return []string{"-o", "nonempty"}
+	return []string{"-o", "nonempty,attr_timeout=0,entry_timeout=0"}
 }

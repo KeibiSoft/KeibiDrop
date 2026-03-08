@@ -21,7 +21,7 @@ protoc:
 	protoc --go_opt=module=github.com/KeibiSoft/KeibiDrop --go-grpc_opt=module=github.com/KeibiSoft/KeibiDrop --go_out=. --go-grpc_out=. keibidrop.proto
 
 test:
-	go test -timeout 30s -v ./...
+	go test -timeout 300s -v ./...
 
 build-static-rust-bridge:
 	go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge

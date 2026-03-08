@@ -58,7 +58,7 @@ func BenchmarkLocalDisk(b *testing.B) {
 // Run with: go test -bench=BenchmarkFUSEMount -benchtime=10s ./tests/...
 // Make sure MountAlice is mounted first!
 func BenchmarkFUSEMount(b *testing.B) {
-	mountPath := "/Users/marius/work/code/KeibiDrop/MountAlice"
+	mountPath := "../MountAlice"
 
 	// Check if mount exists
 	if _, err := os.Stat(mountPath); os.IsNotExist(err) {
@@ -106,7 +106,7 @@ func TestMeasureLatency(t *testing.T) {
 		t.Skip("Skipping latency test in short mode")
 	}
 
-	mountPath := "/Users/marius/work/code/KeibiDrop/MountAlice"
+	mountPath := "../MountAlice"
 	if _, err := os.Stat(mountPath); os.IsNotExist(err) {
 		t.Skip("MountAlice not mounted, skipping latency test")
 	}
@@ -200,7 +200,7 @@ func TestThroughput(t *testing.T) {
 		t.Skip("Skipping throughput test in short mode")
 	}
 
-	mountPath := "/Users/marius/work/code/KeibiDrop/MountAlice"
+	mountPath := "../MountAlice"
 	if _, err := os.Stat(mountPath); os.IsNotExist(err) {
 		t.Skip("MountAlice not mounted, skipping throughput test")
 	}
@@ -245,7 +245,7 @@ func TestOpenCloseLatency(t *testing.T) {
 		t.Skip("Skipping open/close latency test in short mode")
 	}
 
-	mountPath := "/Users/marius/work/code/KeibiDrop/MountAlice"
+	mountPath := "../MountAlice"
 	if _, err := os.Stat(mountPath); os.IsNotExist(err) {
 		t.Skip("MountAlice not mounted, skipping latency test")
 	}
