@@ -297,15 +297,25 @@ func WaitForFileAbsent(t *testing.T, path string, timeout time.Duration) {
 	}, "waiting for file removal at: "+path)
 }
 
-// getFreePortInRange finds an available TCP6 port within [low, high].
+// getFreePortInRange finds an available port within [low, high] checking both IPv4 and IPv6.
 func getFreePortInRange(t *testing.T, low, high int) int {
 	t.Helper()
 	for port := low; port <= high; port++ {
-		ln, err := net.Listen("tcp6", fmt.Sprintf("[::]:%d", port))
+		// Check IPv4
+		ln4, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
-			continue // port in use
+			continue
 		}
-		ln.Close()
+		
+		// Check IPv6
+		ln6, err := net.Listen("tcp6", fmt.Sprintf("[::1]:%d", port))
+		if err != nil {
+			ln4.Close()
+			continue
+		}
+		
+		ln4.Close()
+		ln6.Close()
 		return port
 	}
 	t.Fatalf("no free port found in range [%d, %d]", low, high)
