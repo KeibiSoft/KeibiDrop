@@ -41,27 +41,32 @@ func setupTestEnvironment(t *testing.T) (*TestConfig, *common.KeibiDrop, *common
 	require := require.New(t)
 	ctx := context.Background()
 
-	basePath := "/Users/marius/work/code/KeibiDrop/tests"
+	basePath := t.TempDir()
+
+	// Start mock relay
+	relay := NewMockRelay()
+
+	// Allocate ports in the 26000-27000 range (enforced by handshake)
+	aliceInPort := getFreePortInRange(t, 26100, 26249)
+	aliceOutPort := getFreePortInRange(t, 26250, 26399)
+	bobInPort := getFreePortInRange(t, 26400, 26549)
+	bobOutPort := getFreePortInRange(t, 26550, 26699)
 
 	cfg := &TestConfig{
-		RelayURL:     "http://0.0.0.0:54321",
-		AliceSave:    basePath + "/SaveAlice_test",
-		BobSave:      basePath + "/SaveBob_test",
-		AliceMount:   basePath + "/MountAlice_test",
-		BobMount:     basePath + "/MountBob_test",
-		AliceInPort:  27001,
-		AliceOutPort: 27002,
-		BobInPort:    27003,
-		BobOutPort:   27004,
+		RelayURL:     relay.URL(),
+		AliceSave:    filepath.Join(basePath, "SaveAlice_test"),
+		BobSave:      filepath.Join(basePath, "SaveBob_test"),
+		AliceMount:   filepath.Join(basePath, "MountAlice_test"),
+		BobMount:     filepath.Join(basePath, "MountBob_test"),
+		AliceInPort:  aliceInPort,
+		AliceOutPort: aliceOutPort,
+		BobInPort:    bobInPort,
+		BobOutPort:   bobOutPort,
 	}
 
 	// Clean up any previous test runs
-	os.RemoveAll(cfg.AliceSave)
-	os.RemoveAll(cfg.BobSave)
 	exec.Command("umount", "-f", cfg.AliceMount).Run()
 	exec.Command("umount", "-f", cfg.BobMount).Run()
-	os.RemoveAll(cfg.AliceMount)
-	os.RemoveAll(cfg.BobMount)
 
 	// Create directories
 	require.NoError(os.MkdirAll(cfg.AliceSave, 0755))
@@ -77,14 +82,14 @@ func setupTestEnvironment(t *testing.T) (*TestConfig, *common.KeibiDrop, *common
 	})
 	logger := slog.New(handler)
 
-	// Create Alice
-	kdAlice, err := common.NewKeibiDrop(ctx, logger.With("peer", "alice"),
-		true, parsedURL, cfg.AliceInPort, cfg.AliceOutPort, cfg.AliceMount, cfg.AliceSave, true, true)
+	// Create Alice with ::1 loopback
+	kdAlice, err := common.NewKeibiDropWithIP(ctx, logger.With("peer", "alice"),
+		true, parsedURL, cfg.AliceInPort, cfg.AliceOutPort, cfg.AliceMount, cfg.AliceSave, true, true, "::1")
 	require.NoError(err)
 
-	// Create Bob
-	kdBob, err := common.NewKeibiDrop(ctx, logger.With("peer", "bob"),
-		true, parsedURL, cfg.BobInPort, cfg.BobOutPort, cfg.BobMount, cfg.BobSave, true, true)
+	// Create Bob with ::1 loopback
+	kdBob, err := common.NewKeibiDropWithIP(ctx, logger.With("peer", "bob"),
+		true, parsedURL, cfg.BobInPort, cfg.BobOutPort, cfg.BobMount, cfg.BobSave, true, true, "::1")
 	require.NoError(err)
 
 	// Exchange fingerprints
@@ -101,18 +106,18 @@ func setupTestEnvironment(t *testing.T) (*TestConfig, *common.KeibiDrop, *common
 	go kdBob.Run()
 
 	// Create and join room
-	var wg sync.WaitGroup
-	wg.Add(2)
+	var roomWg sync.WaitGroup
+	roomWg.Add(2)
 
 	go func() {
-		defer wg.Done()
+		defer roomWg.Done()
 		kdAlice.CreateRoom()
 	}()
 
 	time.Sleep(500 * time.Millisecond)
 
 	go func() {
-		defer wg.Done()
+		defer roomWg.Done()
 		kdBob.JoinRoom()
 	}()
 
@@ -122,13 +127,16 @@ func setupTestEnvironment(t *testing.T) (*TestConfig, *common.KeibiDrop, *common
 	cleanup := func() {
 		kdAlice.Stop()
 		kdBob.Stop()
+		relay.Close()
 		time.Sleep(500 * time.Millisecond)
+		
+		// Try fusermount first (Linux specific, more reliable for FUSE)
+		exec.Command("fusermount", "-u", "-z", cfg.AliceMount).Run()
+		exec.Command("fusermount", "-u", "-z", cfg.BobMount).Run()
+		
+		// Fallback/Standard umount
 		exec.Command("umount", "-f", cfg.AliceMount).Run()
 		exec.Command("umount", "-f", cfg.BobMount).Run()
-		os.RemoveAll(cfg.AliceSave)
-		os.RemoveAll(cfg.BobSave)
-		os.RemoveAll(cfg.AliceMount)
-		os.RemoveAll(cfg.BobMount)
 	}
 
 	return cfg, kdAlice, kdBob, cleanup
@@ -183,17 +191,18 @@ func TestBasicFileOperations(t *testing.T) {
 		newPath := filepath.Join(cfg.AliceMount, "newname.txt")
 
 		require.NoError(os.WriteFile(oldPath, []byte("rename test"), 0644))
-		time.Sleep(2 * time.Second)
+		WaitForFileOnMount(t, filepath.Join(cfg.BobMount, "oldname.txt"), 5*time.Second)
 
+		time.Sleep(1 * time.Second) // Allow system to settle
 		require.NoError(os.Rename(oldPath, newPath))
-		time.Sleep(2 * time.Second)
-
+		
 		// Old should not exist on Bob
-		_, err := os.Stat(filepath.Join(cfg.BobMount, "oldname.txt"))
-		require.True(os.IsNotExist(err))
+		WaitForFileAbsent(t, filepath.Join(cfg.BobMount, "oldname.txt"), 5*time.Second)
 
 		// New should exist on Bob
-		data, err := os.ReadFile(filepath.Join(cfg.BobMount, "newname.txt"))
+		bobNewPath := filepath.Join(cfg.BobMount, "newname.txt")
+		WaitForFileOnMount(t, bobNewPath, 5*time.Second)
+		data, err := os.ReadFile(bobNewPath)
 		require.NoError(err)
 		require.Equal("rename test", string(data))
 	})
@@ -202,20 +211,14 @@ func TestBasicFileOperations(t *testing.T) {
 		path := filepath.Join(cfg.AliceMount, "todelete.txt")
 
 		require.NoError(os.WriteFile(path, []byte("will be deleted"), 0644))
-		time.Sleep(2 * time.Second)
-
-		// Verify exists on Bob
 		bobPath := filepath.Join(cfg.BobMount, "todelete.txt")
-		_, err := os.Stat(bobPath)
-		require.NoError(err)
+		WaitForFileOnMount(t, bobPath, 5*time.Second)
 
 		// Delete on Alice
 		require.NoError(os.Remove(path))
-		time.Sleep(2 * time.Second)
-
+		
 		// Should not exist on Bob
-		_, err = os.Stat(bobPath)
-		require.True(os.IsNotExist(err))
+		WaitForFileAbsent(t, bobPath, 5*time.Second)
 	})
 }
 
@@ -232,10 +235,11 @@ func TestDirectoryOperations(t *testing.T) {
 	t.Run("CreateDirectory", func(t *testing.T) {
 		dirPath := filepath.Join(cfg.AliceMount, "newdir")
 		require.NoError(os.Mkdir(dirPath, 0755))
-		time.Sleep(2 * time.Second)
-
+		
 		// Check on Bob
-		info, err := os.Stat(filepath.Join(cfg.BobMount, "newdir"))
+		bobPath := filepath.Join(cfg.BobMount, "newdir")
+		WaitForFileOnMount(t, bobPath, 5*time.Second)
+		info, err := os.Stat(bobPath)
 		require.NoError(err)
 		require.True(info.IsDir())
 	})
@@ -247,10 +251,10 @@ func TestDirectoryOperations(t *testing.T) {
 		// Create file in nested dir
 		filePath := filepath.Join(nestedPath, "deep.txt")
 		require.NoError(os.WriteFile(filePath, []byte("deep content"), 0644))
-		time.Sleep(3 * time.Second)
 
 		// Check on Bob
 		bobPath := filepath.Join(cfg.BobMount, "level1", "level2", "level3", "deep.txt")
+		WaitForFileOnMount(t, bobPath, 5*time.Second)
 		data, err := os.ReadFile(bobPath)
 		require.NoError(err)
 		require.Equal("deep content", string(data))
@@ -259,13 +263,13 @@ func TestDirectoryOperations(t *testing.T) {
 	t.Run("RemoveDirectory", func(t *testing.T) {
 		dirPath := filepath.Join(cfg.AliceMount, "toremove")
 		require.NoError(os.Mkdir(dirPath, 0755))
-		time.Sleep(2 * time.Second)
+		bobPath := filepath.Join(cfg.BobMount, "toremove")
+		WaitForFileOnMount(t, bobPath, 5*time.Second)
 
+		time.Sleep(1 * time.Second) // Allow system to settle
 		require.NoError(os.Remove(dirPath))
-		time.Sleep(2 * time.Second)
-
-		_, err := os.Stat(filepath.Join(cfg.BobMount, "toremove"))
-		require.True(os.IsNotExist(err))
+		
+		WaitForFileAbsent(t, bobPath, 10*time.Second)
 	})
 }
 
@@ -339,12 +343,10 @@ func TestLargeFiles(t *testing.T) {
 			path := filepath.Join(cfg.AliceMount, fmt.Sprintf("large_%d.bin", size))
 			require.NoError(os.WriteFile(path, data, 0644))
 
-			// Wait proportionally to size
-			waitTime := 2*time.Second + time.Duration(size/1024/100)*time.Second
-			time.Sleep(waitTime)
-
 			// Verify on Bob
 			bobPath := filepath.Join(cfg.BobMount, fmt.Sprintf("large_%d.bin", size))
+			WaitForFileOnMount(t, bobPath, 10*time.Second)
+
 			readData, err := os.ReadFile(bobPath)
 			require.NoError(err)
 			require.Equal(len(data), len(readData))
