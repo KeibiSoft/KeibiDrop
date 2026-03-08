@@ -1386,8 +1386,11 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 		logger.Info("Local directory removed", "path", path)
 	}
 
-	// Notify peer about the removed directory (only for local changes).
-	if notifyPeer && d.OnLocalChange != nil && !isRemoteDir {
+	// Notify peer about the removed directory (only for local changes, i.e. notifyPeer=true).
+	// Do not use isRemoteDir to gate this — AllDirMap contains both local and peer-received dirs
+	// (Getattr lazily adds local dirs), so membership is not a reliable peer-origin indicator.
+	// Loop prevention is handled by RmdirFromPeer (notifyPeer=false).
+	if notifyPeer && d.OnLocalChange != nil {
 		d.OnLocalChange(types.FileEvent{
 			Path:   path,
 			Action: types.RemoveDir,

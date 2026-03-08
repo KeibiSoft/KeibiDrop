@@ -81,7 +81,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Edit dir is not implemented")
 		// TODO: Modify the attr time as per the client payload.
 	case bindings.NotifyType_REMOVE_DIR:
-		// Peer stopped sharing this directory. Remove from our view but keep any local data.
+		// Peer stopped sharing this directory. Remove from our view and from local disk.
 		logger.Info("Remove dir reference", "path", req.Path)
 
 		if kd.FS != nil && kd.FS.Root != nil {
@@ -89,6 +89,12 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			delete(kd.FS.Root.AllDirMap, req.Path)
 			kd.FS.Root.Adm.Unlock()
 			logger.Info("Removed directory reference from view", "path", req.Path)
+
+			// Remove the local directory so Getattr doesn't find a stale disk entry.
+			localDir := filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+			if err := os.RemoveAll(localDir); err != nil && !os.IsNotExist(err) {
+				logger.Warn("Failed to remove local dir on peer remove", "path", localDir, "error", err)
+			}
 		}
 	case bindings.NotifyType_ADD_FILE:
 		if req.Attr == nil {
@@ -220,9 +226,22 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Remove file reference", "path", req.Path)
 
 		if kd.FS != nil && kd.FS.Root != nil {
+			// Get local path from RemoteFiles before removal (populated directly by AddRemoteFile,
+			// unlike AllFileMap which is populated lazily by Getattr).
+			var localPath string
+			kd.FS.Root.RemoteFilesLock.Lock()
+			if rf, ok := kd.FS.Root.RemoteFiles[req.Path]; ok {
+				localPath = rf.RealPathOfFile
+			}
+			delete(kd.FS.Root.RemoteFiles, req.Path)
+			kd.FS.Root.RemoteFilesLock.Unlock()
+
 			kd.FS.Root.AfmLock.Lock()
 			file, exists := kd.FS.Root.AllFileMap[req.Path]
 			if exists && file != nil {
+				if localPath == "" {
+					localPath = file.RealPathOfFile
+				}
 				// Check if file has open handles (download in progress).
 				openCount := file.CountOpenDescriptors()
 				if openCount > 0 {
@@ -237,10 +256,15 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			}
 			kd.FS.Root.AfmLock.Unlock()
 
-			// Remove from RemoteFiles (stops new remote streaming, but existing streams continue).
-			kd.FS.Root.RemoteFilesLock.Lock()
-			delete(kd.FS.Root.RemoteFiles, req.Path)
-			kd.FS.Root.RemoteFilesLock.Unlock()
+			// Fallback: compute local path from root if still unknown.
+			if localPath == "" {
+				localPath = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+			}
+
+			// Remove the local placeholder file so Getattr doesn't find a stale disk entry.
+			if err := os.Remove(localPath); err != nil && !os.IsNotExist(err) {
+				logger.Warn("Failed to remove local file on peer remove", "path", localPath, "error", err)
+			}
 		}
 
 		// Also handle non-FUSE mode.
@@ -255,16 +279,19 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Rename file", "oldPath", req.OldPath, "newPath", req.Path)
 
 		if kd.FS != nil && kd.FS.Root != nil {
+			var oldLocalPath, newLocalPath string
 			// Remove old path from maps and add with new path.
 			kd.FS.Root.RemoteFilesLock.Lock()
 			file, exists := kd.FS.Root.RemoteFiles[req.OldPath]
 			if exists {
+				oldLocalPath = file.RealPathOfFile
 				delete(kd.FS.Root.RemoteFiles, req.OldPath)
 				file.RelativePath = req.Path
 				file.Name = filepath.Base(req.Path)
 				// Update disk path so prefetchFile can detect the rename and move
 				// the downloaded content atomically after the goroutine completes.
-				file.RealPathOfFile = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+				newLocalPath = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+				file.RealPathOfFile = newLocalPath
 				kd.FS.Root.RemoteFiles[req.Path] = file
 				logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
 			}
@@ -276,10 +303,22 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				delete(kd.FS.Root.AllFileMap, req.OldPath)
 				f.RelativePath = req.Path
 				f.Name = filepath.Base(req.Path)
-				f.RealPathOfFile = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+				if newLocalPath == "" {
+					newLocalPath = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+				}
+				f.RealPathOfFile = newLocalPath
 				kd.FS.Root.AllFileMap[req.Path] = f
 			}
 			kd.FS.Root.AfmLock.Unlock()
+
+			// Rename the local placeholder file so Getattr doesn't find a stale disk entry.
+			if oldLocalPath != "" && newLocalPath != "" {
+				if err := os.MkdirAll(filepath.Dir(newLocalPath), 0o755); err != nil {
+					logger.Warn("Failed to create dir for renamed local file", "path", newLocalPath, "error", err)
+				} else if err := os.Rename(oldLocalPath, newLocalPath); err != nil && !os.IsNotExist(err) {
+					logger.Warn("Failed to rename local file on peer rename", "old", oldLocalPath, "new", newLocalPath, "error", err)
+				}
+			}
 		}
 
 		// Handle non-FUSE mode.
@@ -320,9 +359,10 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 	logger := kd.Logger.With("method", "server-read")
 
 	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
-		kd.SyncTracker.LocalFilesMu.RLock()
-		defer kd.SyncTracker.LocalFilesMu.RUnlock()
-
+		// NOTE: We do NOT hold LocalFilesMu for the entire stream.
+		// Long-lived read locks block PullFile's write lock, causing deadlocks
+		// when background prefetch goroutines hold the read lock indefinitely.
+		// Instead, we only hold the lock briefly to look up the real file path.
 		isOpen := false
 
 		var fh *os.File
@@ -350,18 +390,26 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				isOpen = true
 				// Normalize: FUSE peers send "/filename", no-FUSE uses bare "filename".
 				// LocalFiles keys use bare names (from AddFile's finfo.Name()).
+				// Only hold the lock briefly to look up the real file path.
 				lookupPath := strings.TrimPrefix(rec.Path, "/")
+				kd.SyncTracker.LocalFilesMu.RLock()
 				f, ok := kd.SyncTracker.LocalFiles[lookupPath]
 				if !ok {
 					// Fallback: try original path (e.g. full path stored by PullFile).
 					f, ok = kd.SyncTracker.LocalFiles[rec.Path]
 				}
+				var realPath string
+				if ok {
+					realPath = f.RealPathOfFile
+				}
+				kd.SyncTracker.LocalFilesMu.RUnlock()
+
 				if !ok {
 					logger.Warn("File not found", "rec", rec)
 					return status.Error(codes.NotFound, "file not found")
 				}
 
-				fh, err = os.Open(f.RealPathOfFile)
+				fh, err = os.Open(realPath)
 				if err != nil {
 					logger.Error("Failed to open real file", "error", err)
 					return status.Error(codes.Internal, "error accessing file")

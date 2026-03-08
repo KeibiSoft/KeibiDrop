@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"sync"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 
@@ -26,6 +27,10 @@ func NewImplStreamProvider(cli bindings.KeibiServiceClient) *ImplFileStreamProvi
 }
 
 type ImplRemoteFileStream struct {
+	// mu serializes Send+Recv pairs: concurrent FUSE reads on the same file
+	// handle share this stream, so each ReadAt must be atomic to avoid
+	// response mismatches (goroutine A gets goroutine B's response).
+	mu     sync.Mutex
 	stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse]
 	handle uint64
 	path   string
@@ -39,15 +44,18 @@ func NewImplRemoteFileStream(stream grpc.BidiStreamingClient[bindings.ReadReques
 	}
 }
 func (rfs *ImplRemoteFileStream) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
+	// Serialize Send+Recv pairs so concurrent FUSE reads on the same file handle
+	// don't interleave requests and responses on the shared gRPC stream.
+	rfs.mu.Lock()
+	defer rfs.mu.Unlock()
+
 	err := rfs.stream.Send(&bindings.ReadRequest{Handle: rfs.handle, Path: rfs.path, Offset: uint64(offset), Size: uint32(size)})
 	if err != nil {
-		// TODO: Log err.
 		return nil, err
 	}
 
 	resp, err := rfs.stream.Recv()
 	if err != nil {
-		// TODO: Log err.
 		return nil, err
 	}
 
