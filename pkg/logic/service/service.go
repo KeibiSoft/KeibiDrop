@@ -284,14 +284,21 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			kd.FS.Root.RemoteFilesLock.Lock()
 			file, exists := kd.FS.Root.RemoteFiles[req.OldPath]
 			if exists {
+				// Validate new path before applying
+				cleanPath, err := filesystem.SecureJoin(kd.FS.Root.RealPathOfFile, req.Path)
+				if err != nil {
+					logger.Error("Path traversal blocked in RENAME_FILE", "path", req.Path, "error", err)
+					kd.FS.Root.RemoteFilesLock.Unlock()
+					return nil, ErrGRPCInvalidArgument
+				}
 				oldLocalPath = file.RealPathOfFile
+				newLocalPath = cleanPath
 				delete(kd.FS.Root.RemoteFiles, req.OldPath)
 				file.RelativePath = req.Path
 				file.Name = filepath.Base(req.Path)
 				// Update disk path so prefetchFile can detect the rename and move
 				// the downloaded content atomically after the goroutine completes.
-				newLocalPath = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
-				file.RealPathOfFile = newLocalPath
+				file.RealPathOfFile = cleanPath
 				kd.FS.Root.RemoteFiles[req.Path] = file
 				logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
 			}
@@ -300,11 +307,17 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			// Also update AllFileMap.
 			kd.FS.Root.AfmLock.Lock()
 			if f, ok := kd.FS.Root.AllFileMap[req.OldPath]; ok {
+				cleanPath, err := filesystem.SecureJoin(kd.FS.Root.RealPathOfFile, req.Path)
+				if err != nil {
+					logger.Error("Path traversal blocked in RENAME_FILE (AFM)", "path", req.Path, "error", err)
+					kd.FS.Root.AfmLock.Unlock()
+					return nil, ErrGRPCInvalidArgument
+				}
 				delete(kd.FS.Root.AllFileMap, req.OldPath)
 				f.RelativePath = req.Path
 				f.Name = filepath.Base(req.Path)
 				if newLocalPath == "" {
-					newLocalPath = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+					newLocalPath = cleanPath
 				}
 				f.RealPathOfFile = newLocalPath
 				kd.FS.Root.AllFileMap[req.Path] = f
@@ -340,6 +353,12 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		if kd.FS != nil && kd.FS.Root != nil {
 			kd.FS.Root.Adm.Lock()
 			if dir, ok := kd.FS.Root.AllDirMap[req.OldPath]; ok {
+				// Validate new path before applying
+				if _, err := filesystem.SecureJoin(kd.FS.Root.RealPathOfFile, req.Path); err != nil {
+					logger.Error("Path traversal blocked in RENAME_DIR", "path", req.Path, "error", err)
+					kd.FS.Root.Adm.Unlock()
+					return nil, ErrGRPCInvalidArgument
+				}
 				delete(kd.FS.Root.AllDirMap, req.OldPath)
 				dir.RelativePath = req.Path
 				dir.Name = filepath.Base(req.Path)
