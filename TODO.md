@@ -1,24 +1,24 @@
 # KeibiDrop v0.1.0 Implementation Plan
 
 ## Phase 0: Establish Baseline
-- [ ] **0.1** Run `make test` on current `main` — confirm green
+- [x] **0.1** Run `make test` on current `main` — confirm green
 - [ ] **0.2** Run `make lint && make sec` — confirm clean
 - [ ] **0.3** Build full binary: `make build-static-rust-bridge && cd rust && cargo build --release`
-- [ ] **0.4** Manual smoke test (Alice + Bob via relay)
-  - [ ] Start Relay
-  - [ ] Alice: Create Room
-  - [ ] Bob: Join Room
-  - [ ] Alice -> Bob: Transfer file
-  - [ ] Bob -> Alice: Transfer file
-  - [ ] Disconnect
+- [x] **0.4** Manual smoke test (Alice + Bob via relay)
+  - [x] Start Relay
+  - [x] Alice: Create Room
+  - [x] Bob: Join Room
+  - [x] Alice -> Bob: Transfer file
+  - [x] Bob -> Alice: Transfer file
+  - [x] Disconnect
 
 ## Phase 1: Security PRs — Wave 1 (Independent, Safe)
 
 ### 1.1 — PR #55: Fuzz gRPC Notify handler (Branch: `test/grpc-notify-fuzz`)
-- [ ] **1.1.a** Verify branch: `git checkout test/grpc-notify-fuzz && go test -fuzz=FuzzNotifyHandler -fuzztime=30s ./pkg/logic/service/`
-- [ ] **1.1.b** E2E Verification on branch: Build + Smoke Test (Alice + Bob)
-- [ ] **1.1.c** Merge: `git checkout main && git merge test/grpc-notify-fuzz`
-- [ ] **1.1.d** Post-merge verify: `make test`
+- [x] **1.1.a** Verify branch: fuzz test run 30s — no findings
+- [x] **1.1.b** E2E Verification: Alice→Bob and Bob→Alice file transfer (incl. 35MB binary)
+- [x] **1.1.c** Merged via GitHub PR #55
+- [x] **1.1.d** Post-merge verify: `go test -timeout 300s ./...` — all green
 
 ### 1.2 — PR #41: Path traversal fix via SecureJoin [CRITICAL] (Branch: `security/fix-path-traversal`)
 - [ ] **1.2.a** Verify branch: `git checkout security/fix-path-traversal && make test`
