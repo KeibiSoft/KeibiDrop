@@ -1,0 +1,62 @@
+/* 
+ * KeibiDrop Hybrid Handshake (X25519 + ML-KEM)
+ * Formal verification model for Scyther.
+ */
+
+usertype SessionKey;
+usertype Seed;
+
+/* Hash function for key derivation */
+hashfn HKDF;
+
+protocol keibidrop(A,B)
+{
+    role A
+    {
+        /* A knows B's public keys from out-of-band fingerprint */
+        const pkB_X: Public;
+        const pkB_K: Public;
+        
+        var s1, s2: Seed;
+
+        /* Receive Handshake from B 
+           Note: Bob sends static keys (pkB) and encapsulated seeds (s1, s2)
+        */
+        recv_1(B, A, { B, pkB_X, pkB_K, {s1}pk(A), {s2}pk(A) });
+
+        /* Derive key */
+        macro kAB = HKDF(s1, s2);
+
+        /* Secrecy Claims */
+        claim_A1(A, Secret, s1);
+        claim_A2(A, Secret, s2);
+        claim_A3(A, Secret, kAB);
+        
+        /* 
+           Authentication Claims (Likely to FAIL)
+           A cannot be sure B actually sent message 1 because it's not signed
+           nor does it contain a challenge from A.
+        */
+        claim_A4(A, Alive);
+        claim_A5(A, Weakagree);
+    }
+
+    role B
+    {
+        const pkA_X: Public;
+        const pkA_K: Public;
+        
+        fresh s1, s2: Seed;
+
+        /* Send Handshake to A */
+        send_1(B, A, { B, pkA_X, pkA_K, {s1}pk(A), {s2}pk(A) });
+
+        macro kAB = HKDF(s1, s2);
+
+        claim_B1(B, Secret, s1);
+        claim_B2(B, Secret, s2);
+        claim_B3(B, Secret, kAB);
+        
+        /* Bob can claim aliveness if Alice responds, but currently Alice doesn't respond! */
+    }
+}
