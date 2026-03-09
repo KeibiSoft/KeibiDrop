@@ -37,6 +37,19 @@ func NewFS(logger *slog.Logger) *FS {
 	}
 }
 
+// resolveDownloadPath returns the real (symlink-resolved) absolute path for the
+// download directory. If resolution fails it falls back to filepath.Clean so the
+// application can still start, logging a warning.
+func resolveDownloadPath(logger *slog.Logger, downloadPath string) string {
+	resolved, err := filepath.EvalSymlinks(downloadPath)
+	if err != nil {
+		logger.Warn("Could not resolve symlinks in download path; using cleaned path",
+			"downloadPath", downloadPath, "error", err)
+		return filepath.Clean(downloadPath)
+	}
+	return resolved
+}
+
 func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 	fs.logger.Warn("FUSE Mount starting",
 		"mountPoint", mountPoint,
@@ -62,8 +75,9 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 		PeerLastEdit:   0,
 		Parent:         nil,
 
-		// IDK about this one.
-		LocalDownloadFolder: filepath.Clean(downloadPath),
+		// Resolve symlinks so SecureJoin prefix checks work correctly when
+		// downloadPath is itself a symlink (e.g. a home directory behind /home → /data).
+		LocalDownloadFolder: resolveDownloadPath(fs.logger, downloadPath),
 
 		OpenMapLock:      sync.RWMutex{},
 		OpenFileHandlers: make(map[uint64]*File),

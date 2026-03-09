@@ -801,15 +801,9 @@ func (d *Dir) MkdirFromPeer(path string, mode uint32) (errCode int) {
 	return d.mkdirInternal(path, mode, false)
 }
 
-// secureJoin resolves path relative to base and verifies the result stays within
-// base. Returns an error if the resolved path escapes base (KD-SEC-2026-004).
-func secureJoin(base, path string) (string, error) {
-	return SecureJoin(base, path)
-}
-
 func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode int) {
 	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
-	cleanPath, err := secureJoin(d.LocalDownloadFolder, path)
+	cleanPath, err := SecureJoin(d.LocalDownloadFolder, path)
 	if err != nil {
 		logger.Error("Path traversal attempt blocked", "path", path, "error", err)
 		return -int(syscall.EACCES)
