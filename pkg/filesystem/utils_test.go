@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,7 +57,7 @@ func TestSecureJoin(t *testing.T) {
 				assert.Empty(t, got)
 			} else {
 				assert.NoError(t, err, "Unexpected error for path: %s", tt.path)
-				assert.True(t, filepath.HasPrefix(got, absBase), "Result %q should be within %q", got, absBase)
+				assert.True(t, got == absBase || strings.HasPrefix(got, absBase+string(filepath.Separator)), "Result %q should be within %q", got, absBase)
 			}
 		})
 	}
