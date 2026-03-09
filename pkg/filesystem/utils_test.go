@@ -18,7 +18,11 @@ func TestSecureJoin(t *testing.T) {
 	// Create a temporary base directory
 	base, err := os.MkdirTemp("", "keibidrop-test-base")
 	require.NoError(t, err)
-	defer os.RemoveAll(base)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(base); err != nil {
+			t.Logf("cleanup: failed to remove temp dir: %v", err)
+		}
+	})
 
 	absBase, err := filepath.Abs(base)
 	require.NoError(t, err)

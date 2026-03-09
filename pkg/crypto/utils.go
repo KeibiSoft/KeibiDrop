@@ -23,4 +23,3 @@ func RandomBytes(size int) ([]byte, error) {
 func GenerateSeed() ([]byte, error) {
 	return RandomBytes(seedSize)
 }
-
