@@ -30,7 +30,10 @@ func CreateRekeyRequest(ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, epoch uint
 	}
 
 	// Generate new random seed and encapsulate with X25519.
-	seed1 := kbc.GenerateSeed()
+	seed1, err := kbc.GenerateSeed()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate seed1: %w", err)
+	}
 	encSeed1, err := kbc.X25519Encapsulate(seed1, ownKeys.X25519Private, peerKeys.X25519Public)
 	if err != nil {
 		return nil, nil, fmt.Errorf("x25519 encapsulate failed: %w", err)
