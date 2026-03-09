@@ -138,6 +138,11 @@ func TestSecureJoin_EmptyAndDotPaths(t *testing.T) {
 			assert.NoError(t, err, "path %q should not escape base", tc.path)
 			assert.True(t, got == absBase || strings.HasPrefix(got, absBase+string(filepath.Separator)),
 				"path %q resolved to %q, expected within %q", tc.path, got, absBase)
+			// For paths with a concrete leaf, verify the exact resolved path.
+			if tc.name == "dot-slash-file" {
+				assert.Equal(t, absBase+string(filepath.Separator)+"file.txt", got,
+					"dot-slash-file must resolve to exactly base/file.txt")
+			}
 		})
 	}
 }
@@ -175,12 +180,14 @@ func TestSecureJoin_UnicodeNormalization(t *testing.T) {
 	}
 }
 
-// TestSecureJoin_CaseSensitiveLinux verifies that on Linux (case-sensitive FS),
-// a path using a different case for the base directory name is treated as a distinct
-// path and correctly rejected when it escapes.
-func TestSecureJoin_CaseSensitiveLinux(t *testing.T) {
+// TestSecureJoin_UpperCasedParentEscapeIsRejected verifies that a path using `..`
+// to escape base is rejected even when the sibling directory name happens to differ
+// only in case from the base directory. The rejection occurs because `..` lands
+// outside base — not because of any filesystem case-sensitivity logic in SecureJoin
+// itself. Skipped on non-Linux where temp dir name patterns differ.
+func TestSecureJoin_UpperCasedParentEscapeIsRejected(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("Case-sensitivity test targets Linux only")
+		t.Skip("Temp dir naming is OS-specific; this test targets Linux only")
 	}
 
 	base, err := os.MkdirTemp("", "keibidrop-CaseTest")
@@ -191,10 +198,10 @@ func TestSecureJoin_CaseSensitiveLinux(t *testing.T) {
 		}
 	})
 
-	// Attempt escape using upper-cased base directory name.
+	// `..` escapes base; the uppercased sibling name is a different path.
 	upperBase := strings.ToUpper(filepath.Base(base))
 	escapePath := "../" + upperBase + "/outside.txt"
 
 	_, err = SecureJoin(base, escapePath)
-	assert.Error(t, err, "Path %q should be rejected even if it only differs in case from base", escapePath)
+	assert.Error(t, err, "Path %q must be rejected because `..` escapes base", escapePath)
 }

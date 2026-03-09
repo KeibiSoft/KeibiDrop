@@ -21,6 +21,12 @@ import (
 // SecureJoin resolves path relative to base and verifies the result stays within
 // base. Returns an error if the resolved path escapes base (KD-SEC-2026-004).
 // Symlinks are resolved when the path exists to prevent symlink-escape attacks.
+//
+// Threat model: local write access to base is assumed to be trusted. A TOCTOU
+// window exists between EvalSymlinks validation and the caller's subsequent
+// syscall; closing it requires kernel-level openat(2)/O_NOFOLLOW chains, which
+// is out of scope for this guard. In KeibiDrop, the FUSE Symlink handler returns
+// EPERM so no remote peer can introduce symlinks inside base.
 func SecureJoin(base, path string) (string, error) {
 	absBase, err := filepath.Abs(base)
 	if err != nil {
@@ -52,6 +58,7 @@ func SecureJoin(base, path string) (string, error) {
 
 	return result, nil
 }
+
 func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 	if err == nil {
 		return 0
