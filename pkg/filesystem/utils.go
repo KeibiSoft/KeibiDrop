@@ -20,6 +20,13 @@ import (
 
 // SecureJoin resolves path relative to base and verifies the result stays within
 // base. Returns an error if the resolved path escapes base (KD-SEC-2026-004).
+// Symlinks are resolved when the path exists to prevent symlink-escape attacks.
+//
+// Threat model: local write access to base is assumed to be trusted. A TOCTOU
+// window exists between EvalSymlinks validation and the caller's subsequent
+// syscall; closing it requires kernel-level openat(2)/O_NOFOLLOW chains, which
+// is out of scope for this guard. In KeibiDrop, the FUSE Symlink handler returns
+// EPERM so no remote peer can introduce symlinks inside base.
 func SecureJoin(base, path string) (string, error) {
 	absBase, err := filepath.Abs(base)
 	if err != nil {
@@ -30,12 +37,28 @@ func SecureJoin(base, path string) (string, error) {
 	// e.g. Join("/base", "/foo") -> "/base/foo"
 	result := filepath.Clean(filepath.Join(absBase, path))
 
-	// Verify the result is still within absBase.
+	// Verify the result is still within absBase before resolving symlinks.
 	if result != absBase && !strings.HasPrefix(result, absBase+string(os.PathSeparator)) {
 		return "", fmt.Errorf("path %q escapes base directory %q", path, absBase)
 	}
+
+	// Resolve symlinks if the path exists. A symlink inside base could point
+	// to a location outside base, bypassing the prefix check above.
+	// If EvalSymlinks fails (path does not exist yet), the initial check suffices.
+	if resolved, evalErr := filepath.EvalSymlinks(result); evalErr == nil {
+		absResolved, absErr := filepath.Abs(resolved)
+		if absErr != nil {
+			return "", fmt.Errorf("failed to get absolute path of resolved symlink: %w", absErr)
+		}
+		if absResolved != absBase && !strings.HasPrefix(absResolved, absBase+string(os.PathSeparator)) {
+			return "", fmt.Errorf("path %q escapes base directory via symlink", path)
+		}
+		return absResolved, nil
+	}
+
 	return result, nil
 }
+
 func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 	if err == nil {
 		return 0
