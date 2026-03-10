@@ -1,3 +1,9 @@
 rust/target/*
 
 TODO.md
+
+# AI-generated docs (keep locally, not in repo)
+docs/SECURITY_ADVISORY.md
+docs/next-session.md
+docs/plans/2026-03-06-grpc-notify-fuzz.md
+docs/plans/RELEASE_V0_ROADMAP.md
