@@ -18,7 +18,7 @@ component CustomButton inherits Rectangle {
     border-radius: root.height / 2;
     border-width: 1px;
     border-color: root.background.darker(25%);
-    background: touch.pressed ? #6b8282 : touch.has-hover ? #6c616c :  #456;
+    background: touch.pressed ? #1d4ed8 : touch.has-hover ? #2563eb : #3b82f6;
     height: txt.preferred-height * 1.33;
     min-width: txt.preferred-width + 20px;
     txt := Text {
@@ -139,10 +139,10 @@ component CodeRectangle inherits Rectangle {
     width: 517px;
     height: 157px;
     border-width: 1px;
-    border-color: rgba(255,255,255,0.20);
+    border-color: rgba(255,255,255,0.10);
     border-radius: 8px;
     // padding: 18px;
-    background: #363636;
+    background: rgba(255,255,255,0.04);
 
     DataRectangle {
         info: parent.info;
@@ -411,6 +411,16 @@ component FileCard inherits Rectangle {
     width: 250px;
     height: 180px;
     background: transparent;
+
+    // Glass card background
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.03);
+        border-width: 1px;
+        border-color: rgba(255,255,255,0.08);
+    }
 
     // Preview area (original grey style)
     Rectangle {
