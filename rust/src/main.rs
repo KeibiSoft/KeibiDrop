@@ -312,7 +312,7 @@ fn main() {
 
     // Convert to CString
     let relay_c = CString::new(relay).unwrap();
-    let to_mount_c = CString::new(to_mount).unwrap();
+    let to_mount_c = CString::new(to_mount.clone()).unwrap();
     let to_save_c = CString::new(to_save.clone()).unwrap();
 
     // Shared download state
@@ -349,6 +349,7 @@ fn main() {
         // Build UI
         let app = MainWindow::new().expect("Failed to create MainWindow");
         app.set_my_code(slint::SharedString::from(my_fp.clone()));
+        app.set_mount_path(slint::SharedString::from(to_mount.clone()));
 
         // Handle Add: register peer fingerprint
         let weak = app.as_weak();
@@ -362,6 +363,11 @@ fn main() {
                 let result = bindings::KD_AddPeerFingerprint(c_peer_code.as_ptr() as *mut i8);
                 if result != 0 {
                     println!("Received error code: {}", result);
+                    app.set_peer_code_added(false);
+                    app.set_peer_code_error(true);
+                } else {
+                    app.set_peer_code_error(false);
+                    app.set_peer_code_added(true);
                 }
             }
         });
@@ -422,6 +428,8 @@ fn main() {
                 app.set_room_action(0);
                 app.set_status_message(slint::SharedString::default());
                 app.set_error_message(slint::SharedString::default());
+                app.set_peer_code_added(false);
+                app.set_peer_code_error(false);
                 app.set_current_screen(0);
             }
         });

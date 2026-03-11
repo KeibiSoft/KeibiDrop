@@ -18,7 +18,7 @@ component CustomButton inherits Rectangle {
     border-radius: root.height / 2;
     border-width: 1px;
     border-color: root.background.darker(25%);
-    background: touch.pressed ? #6b8282 : touch.has-hover ? #6c616c :  #456;
+    background: touch.pressed ? #1d4ed8 : touch.has-hover ? #2563eb : #3b82f6;
     height: txt.preferred-height * 1.33;
     min-width: txt.preferred-width + 20px;
     txt := Text {
@@ -139,10 +139,10 @@ component CodeRectangle inherits Rectangle {
     width: 517px;
     height: 157px;
     border-width: 1px;
-    border-color: rgba(255,255,255,0.20);
+    border-color: rgba(255,255,255,0.10);
     border-radius: 8px;
     // padding: 18px;
-    background: #363636;
+    background: rgba(255,255,255,0.04);
 
     DataRectangle {
         info: parent.info;
@@ -218,7 +218,7 @@ component OutlineButton inherits Rectangle {
 
     width: 161px;
     height: 34px;
-    background: transparent;
+    background: touch.pressed ? rgba(59,130,246,0.15) : touch.has-hover ? rgba(59,130,246,0.08) : transparent;
     border-width: 1px;
     border-radius: self.height / 2;
     border-color: !enabled ? #555 : touch.pressed ? #2563eb : touch.has-hover ? #60a5fa : #3b82f6;
@@ -237,6 +237,7 @@ component OutlineButton inherits Rectangle {
     }
 
     animate border-color { duration: 150ms; }
+    animate background { duration: 150ms; }
 }
 
 // Simple rotating spinner arc
@@ -412,6 +413,16 @@ component FileCard inherits Rectangle {
     height: 180px;
     background: transparent;
 
+    // Glass card background
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.03);
+        border-width: 1px;
+        border-color: rgba(255,255,255,0.08);
+    }
+
     // Preview area (original grey style)
     Rectangle {
         width: parent.width;
@@ -476,15 +487,6 @@ component FileCard inherits Rectangle {
         height: 28px;
         spacing: 8px;
 
-        // Checkbox placeholder
-        Rectangle {
-            width: 20px;
-            height: 20px;
-            border-width: 1px;
-            border-color: #666;
-            border-radius: 4px;
-        }
-
         Text {
             text: filename;
             color: white;
@@ -543,6 +545,11 @@ export component MainWindow inherits Window {
     in-out property<bool> any_downloading: false;
     // Set by Rust when a file is being dragged over the window
     in-out property<bool> drag_hovering: false;
+    // Mount path for FUSE mode (Screen 2)
+    in property<string> mount_path: "";
+    // Peer code feedback: set by Rust after KD_AddPeerFingerprint
+    in-out property<bool> peer_code_added: false;
+    in-out property<bool> peer_code_error: false;
 
     // Callbacks
     callback add_peer_code();
@@ -569,6 +576,10 @@ export component MainWindow inherits Window {
         width: 100%;
         height: 100%;
         background: #1f1f1f;
+        property <float> alpha: 0.0;
+        opacity: alpha;
+        animate opacity { duration: 300ms; easing: ease-out; }
+        init => { alpha = 1.0; }
 
         t1 := Text {
             y: 127px;
@@ -595,9 +606,9 @@ export component MainWindow inherits Window {
         }
 
         SectionElement {
-            x: 279px;
+            x: 188px;
             y: 262px;
-            info: "Enter Code";
+            info: "Their Code";
             inText <=> root.peer_code;
             readOnly: false;
             buttonText: "Add";
@@ -605,10 +616,26 @@ export component MainWindow inherits Window {
             sectionNumber: 1;
         }
 
+        // Peer code feedback — inside card 1's empty bottom zone
+        if root.peer_code_added: Text {
+            x: 300px;
+            y: 383px;
+            text: "✓ Code added";
+            color: #22c55e;
+            font-size: 13px;
+        }
+        if root.peer_code_error: Text {
+            x: 300px;
+            y: 383px;
+            text: "✗ Invalid code";
+            color: #ef4444;
+            font-size: 13px;
+        }
+
         snd := SectionElement {
-            x: 279px;
+            x: 188px;
             y: 437px;
-            info: "Send this Code via signal/ telegram/ email/ carrier pidgeon";
+            info: "Your Code — share via Signal, Telegram, or email";
             inText: root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
             readOnly: true;
             buttonText: "Copy";
@@ -672,12 +699,26 @@ export component MainWindow inherits Window {
             color: #94a3b8;
             font-size: 13px;
         }
-        if root.error_message != "": Text {
+        if root.error_message != "": Rectangle {
             x: snd.x + snd.width + 38px;
             y: snd.y + snd.height - 34px + 98px;
-            text: root.error_message;
-            color: #ef4444;
-            font-size: 13px;
+            width: 161px;
+            height: 40px;
+            border-radius: 8px;
+            background: rgba(239,68,68,0.10);
+            border-width: 1px;
+            border-color: rgba(239,68,68,0.30);
+
+            Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.error_message;
+                color: #ef4444;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
         }
     }
 
@@ -686,44 +727,135 @@ export component MainWindow inherits Window {
         width: 100%;
         height: 100%;
         background: #1f1f1f;
+        property <float> alpha: 0.0;
+        opacity: alpha;
+        animate opacity { duration: 300ms; easing: ease-out; }
+        init => { alpha = 1.0; }
 
-        // Disconnect button top-right
-        OutlineButton {
-            x: parent.width - 200px;
-            y: 70px;
-            text: "Disconnect";
-            clicked => { root.disconnect_pressed() }
+        // ── Header bar ──────────────────────────────────────────
+        Rectangle {
+            x: 0; y: 0;
+            width: parent.width;
+            height: 56px;
+            background: rgba(255,255,255,0.03);
+            border-width: 1px;
+            border-color: rgba(255,255,255,0.08);
+
+            // Status dot
+            Rectangle {
+                x: 120px;
+                y: (parent.height - self.height) / 2;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: #22c55e;
+            }
+            // Status label
+            Text {
+                x: 136px;
+                y: 0;
+                height: 56px;
+                text: "Connected";
+                color: #22c55e;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+
+            // Add File button
+            OutlineButton {
+                x: parent.width - 440px;
+                y: (parent.height - self.height) / 2;
+                text: "Add File";
+                clicked => { root.add_file_pressed() }
+            }
+
+            // Disconnect button
+            OutlineButton {
+                x: parent.width - 260px;
+                y: (parent.height - self.height) / 2;
+                text: "Disconnect";
+                clicked => { root.disconnect_pressed() }
+            }
         }
 
-        // Add File button next to disconnect
-        OutlineButton {
-            x: parent.width - 380px;
-            y: 70px;
-            text: "Add File";
-            clicked => { root.add_file_pressed() }
+        // ── Empty state (when no files) ──────────────────────────
+        if root.file_list.length == 0: Rectangle {
+            y: 56px;
+            width: parent.width;
+            height: parent.height - 56px;
+            background: transparent;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                HorizontalLayout {
+                    alignment: center;
+
+                Rectangle {
+                    width: 320px;
+                    height: 160px;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: rgba(255,255,255,0.08);
+                    background: rgba(255,255,255,0.02);
+                    horizontal-stretch: 0;
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Text {
+                            text: "+";
+                            font-size: 40px;
+                            color: rgba(255,255,255,0.15);
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "No files yet";
+                            font-size: 15px;
+                            color: #9ca3af;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Add a file or wait for your peer";
+                            font-size: 13px;
+                            color: #555;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+                } // HorizontalLayout
+            }
         }
 
-        // Large spinner: visible during drag-and-drop or when files are downloading
-        if root.drag_hovering || root.any_downloading: SpinnerArc {
-            x: (parent.width - self.width) / 2;
-            y: 140px;
-            size: 180px;
-            spinning: true;
-        }
+        // ── File grid (when files exist) ────────────────────────
+        if root.file_list.length > 0: Rectangle {
+            y: 56px;
+            width: parent.width;
+            height: parent.height - 56px;
+            background: transparent;
 
-        // Dynamic file grid (4 per row, positioned like original)
-        for file[idx] in root.file_list: FileCard {
-            x: 120px + mod(idx, 4) * 270px;
-            y: 380px + floor(idx / 4) * 200px;
-            filename: file.name;
-            file-type: file.file-type;
-            downloading: file.downloading;
-            uploading: file.uploading;
-            progress: file.progress;
-            saved: file.saved;
-            is-local: file.is-local;
-            save-clicked => { root.save_file(file.name) }
-            open-clicked => { root.open_file(file.name) }
+            // Download spinner (top-right, small)
+            if root.any_downloading: SpinnerArc {
+                x: parent.width - 60px;
+                y: 12px;
+                size: 36px;
+                spinning: true;
+            }
+
+            for file[idx] in root.file_list: FileCard {
+                x: 120px + mod(idx, 4) * 270px;
+                y: 80px + floor(idx / 4) * 200px;
+                filename: file.name;
+                file-type: file.file-type;
+                downloading: file.downloading;
+                uploading: file.uploading;
+                progress: file.progress;
+                saved: file.saved;
+                is-local: file.is-local;
+                save-clicked => { root.save_file(file.name) }
+                open-clicked => { root.open_file(file.name) }
+            }
         }
     }
 
@@ -732,43 +864,98 @@ export component MainWindow inherits Window {
         width: 100%;
         height: 100%;
         background: #1f1f1f;
+        property <float> alpha: 0.0;
+        opacity: alpha;
+        animate opacity { duration: 300ms; easing: ease-out; }
+        init => { alpha = 1.0; }
 
-        // Disconnect button top-right
-        OutlineButton {
-            x: parent.width - 200px;
-            y: 70px;
-            text: "Disconnect";
-            clicked => { root.disconnect_pressed() }
+        // ── Header bar (matches Screen 1) ───────────────────────
+        Rectangle {
+            x: 0; y: 0;
+            width: parent.width;
+            height: 56px;
+            background: rgba(255,255,255,0.03);
+            border-width: 1px;
+            border-color: rgba(255,255,255,0.08);
+
+            Rectangle {
+                x: 120px;
+                y: (parent.height - self.height) / 2;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: #22c55e;
+            }
+            Text {
+                x: 136px;
+                y: 0;
+                height: 56px;
+                text: "Connected · FUSE mounted";
+                color: #22c55e;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+
+            OutlineButton {
+                x: parent.width - 260px;
+                y: (parent.height - self.height) / 2;
+                text: "Disconnect";
+                clicked => { root.disconnect_pressed() }
+            }
         }
 
-        // Center content
+        // ── Main content ─────────────────────────────────────────
         VerticalLayout {
+            y: 56px;
+            height: parent.height - 56px;
             alignment: center;
-            spacing: 20px;
+            spacing: 16px;
+            padding-left: 120px;
+            padding-right: 120px;
 
             Text {
-                text: "Connected!";
-                color: #22c55e;
-                font-size: 32px;
+                text: "📁";
+                font-size: 56px;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Shared folder is live";
+                color: white;
+                font-size: 24px;
                 font-weight: 700;
                 horizontal-alignment: center;
             }
 
             Text {
-                text: "Your shared folder is mounted and ready.";
+                text: "Drop files into the folder to share them instantly with your peer.";
                 color: #9ca3af;
-                font-size: 16px;
+                font-size: 15px;
                 horizontal-alignment: center;
             }
 
-            Text {
-                text: "Drop files into the folder to share them with your peer.";
-                color: #666;
-                font-size: 14px;
-                horizontal-alignment: center;
+            if root.mount_path != "": Rectangle {
+                height: 38px;
+                border-radius: 19px;
+                background: rgba(255,255,255,0.05);
+                border-width: 1px;
+                border-color: rgba(255,255,255,0.10);
+                horizontal-stretch: 0;
+
+                HorizontalLayout {
+                    alignment: center;
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    Text {
+                        text: root.mount_path;
+                        color: #64748b;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
             }
 
-            // Open folder button
             HorizontalLayout {
                 alignment: center;
                 OutlineButton {
@@ -779,17 +966,17 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Logo and exit button rendered last — on top of all screen content
-    KeibiDropLogo {
+    // Logo shown only on connect screen; exit button always on top
+    if current_screen == 0: KeibiDropLogo {
         x: 115px;
         y: 70px;
     }
 
     OutlineButton {
         x: parent.width - 80px;
-        y: 20px;
+        y: 11px;
         width: 60px;
-        height: 28px;
+        height: 34px;
         text: "Exit";
         clicked => { root.exit_pressed() }
     }
