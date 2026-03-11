@@ -1094,13 +1094,16 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 		}
 	}
 
-	// Add remote files that don't exist locally
+	// Add remote files/dirs that don't exist locally, filtered to direct children of this path.
 	d.RemoteFilesLock.RLock()
 	defer d.RemoteFilesLock.RUnlock()
-	logger.Info("=== READDIR RemoteFiles ===", "count", len(d.RemoteFiles), "path", path)
-	for k := range d.RemoteFiles {
-		name := getNameFromPath(k)
-		logger.Info("=== READDIR checking remote ===", "key", k, "name", name, "existsLocal", localFiles[name] != struct{}{})
+	remoteFiles, remoteDirs := remoteChildrenForDir(d.RemoteFiles, path)
+	for name := range remoteFiles {
+		if _, exists := localFiles[name]; !exists {
+			fill(name, nil, 0)
+		}
+	}
+	for name := range remoteDirs {
 		if _, exists := localFiles[name]; !exists {
 			fill(name, nil, 0)
 		}

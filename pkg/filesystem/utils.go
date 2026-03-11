@@ -96,6 +96,37 @@ func getNameFromPath(path string) string {
 	return aux[len(aux)-1]
 }
 
+// remoteChildrenForDir returns the direct file and directory children of dirPath
+// found within the remoteFiles map. Prevents phantom entries at wrong directory level.
+func remoteChildrenForDir(remoteFiles map[string]*File, dirPath string) (files map[string]struct{}, dirs map[string]struct{}) {
+	files = make(map[string]struct{})
+	dirs = make(map[string]struct{})
+
+	var prefix string
+	if dirPath == "/" || dirPath == "" {
+		prefix = "/"
+	} else {
+		prefix = strings.TrimRight(dirPath, "/") + "/"
+	}
+
+	for k := range remoteFiles {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		rest := k[len(prefix):]
+		if rest == "" {
+			continue
+		}
+		slashIdx := strings.Index(rest, "/")
+		if slashIdx == -1 {
+			files[rest] = struct{}{} // direct file child
+		} else {
+			dirs[rest[:slashIdx]] = struct{}{} // intermediate directory
+		}
+	}
+	return
+}
+
 func getPathWithoutName(path string) string {
 	aux := strings.Split(path, "/")
 	if len(aux) == 0 {
