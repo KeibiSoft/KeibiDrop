@@ -199,6 +199,13 @@ func KD_UnmountFilesystem() {
 	}
 }
 
+//export KD_Disconnect
+func KD_Disconnect() {
+	if kd != nil {
+		kd.Stop()
+	}
+}
+
 //export KD_Stop
 func KD_Stop() {
 	if cancel != nil {

@@ -373,10 +373,15 @@ fn main() {
         });
 
         // Handle Copy: copy fingerprint to clipboard
+        let weak_copy = app.as_weak();
         app.on_copy_my_code(move || {
-            let my_fp = my_fp.clone();
-            println!("Copy pressed: {}", my_fp);
-            ctx.set_contents(my_fp)
+            let fp = if let Some(app) = weak_copy.upgrade() {
+                app.get_my_code().to_string()
+            } else {
+                my_fp.clone()
+            };
+            println!("Copy pressed: {}", fp);
+            ctx.set_contents(fp)
                 .expect("My operating system hates me");
         });
 
@@ -423,8 +428,16 @@ fn main() {
             println!("Disconnecting...");
             watcher_running_disconnect.store(false, Ordering::Relaxed);
             bindings::KD_UnmountFilesystem();
-            bindings::KD_Stop();
+            bindings::KD_Disconnect();
             if let Some(app) = weak_disconnect.upgrade() {
+                // Refresh fingerprint — session keys are regenerated on disconnect.
+                let ptr = bindings::KD_Fingerprint();
+                if !ptr.is_null() {
+                    let new_fp = CStr::from_ptr(ptr).to_string_lossy().to_string();
+                    println!("New fingerprint after disconnect: {}", new_fp);
+                    app.set_my_code(slint::SharedString::from(new_fp));
+                }
+                app.set_peer_code(slint::SharedString::default());
                 app.set_room_action(0);
                 app.set_status_message(slint::SharedString::default());
                 app.set_error_message(slint::SharedString::default());

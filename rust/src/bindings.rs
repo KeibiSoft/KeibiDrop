@@ -458,6 +458,9 @@ extern "C" {
     pub fn KD_UnmountFilesystem();
 }
 extern "C" {
+    pub fn KD_Disconnect();
+}
+extern "C" {
     pub fn KD_Stop();
 }
 extern "C" {

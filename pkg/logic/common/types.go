@@ -44,9 +44,10 @@ type KeibiDrop struct {
 	listener    net.Listener
 
 	// Filesystem.
-	FS       *filesystem.FS
-	KDSvc    *service.KeibidropServiceImpl
-	KDClient bindings.KeibiServiceClient
+	FS             *filesystem.FS
+	KDSvc          *service.KeibidropServiceImpl
+	KDClient       bindings.KeibiServiceClient
+	grpcClientConn *grpc.ClientConn
 
 	// Non-FUSE fallback.
 	SyncTracker *synctracker.SyncTracker
@@ -60,10 +61,11 @@ type KeibiDrop struct {
 	PushOnWrite    bool
 
 	// Signals for loop management.
-	signals chan TaskSignal
-	running bool
-	ctx     context.Context
-	mu      sync.Mutex
+	signals  chan TaskSignal
+	running  bool
+	stopDone chan struct{} // closed when Stop handler completes
+	ctx      context.Context
+	mu       sync.Mutex
 
 	// For session refresh.
 	refreshSession func() *session.Session
@@ -186,7 +188,11 @@ func (kd *KeibiDrop) Start() {
 }
 
 func (kd *KeibiDrop) Stop() {
+	kd.running = false
+	done := make(chan struct{})
+	kd.stopDone = done
 	kd.signals <- Stop
+	<-done // wait for Stop handler to complete
 }
 
 // Run as a go-routine.
@@ -247,14 +253,16 @@ func (kd *KeibiDrop) Run() {
 					kd.FS = nil
 				}
 				if kd.grpcServer != nil {
-					kd.grpcServer.GracefulStop()
+					kd.grpcServer.Stop()
 					kd.grpcServer = nil
 				}
 
-				// Close and nil gRPC client
-				if kd.KDClient != nil {
-					kd.KDClient = nil
+				// Close and nil gRPC client connection.
+				if kd.grpcClientConn != nil {
+					kd.grpcClientConn.Close()
+					kd.grpcClientConn = nil
 				}
+				kd.KDClient = nil
 
 				if kd.KDSvc != nil {
 					kd.KDSvc = nil
@@ -268,6 +276,10 @@ func (kd *KeibiDrop) Run() {
 				kd.session = kd.refreshSession()
 
 				kd.running = false
+				logger.Info("Stop signal completed, ready for next session")
+				if kd.stopDone != nil {
+					close(kd.stopDone)
+				}
 			}
 		}
 	}
