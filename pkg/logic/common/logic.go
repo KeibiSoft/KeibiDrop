@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -291,6 +292,8 @@ func (kd *KeibiDrop) JoinRoom() error {
 		return err
 	}
 
+	kd.filesystemReady = make(chan struct{})
+	kd.filesystemReadyOnce = sync.Once{}
 	kd.Start()
 
 	// retry dialing until gRPC server is ready
@@ -372,6 +375,8 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
+	kd.filesystemReady = make(chan struct{})
+	kd.filesystemReadyOnce = sync.Once{}
 	kd.Start()
 
 	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {

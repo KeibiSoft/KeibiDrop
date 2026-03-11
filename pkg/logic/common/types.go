@@ -70,8 +70,9 @@ type KeibiDrop struct {
 
 	// For stopping the grpc server.
 	grpcServer      *grpc.Server
-	filesystemReady chan struct{}
-	serverReadyMu   sync.Mutex
+	filesystemReady     chan struct{}
+	filesystemReadyOnce sync.Once
+	serverReadyMu       sync.Mutex
 
 	// Connection resilience.
 	HealthMonitor    *session.HealthMonitor
@@ -216,7 +217,6 @@ func (kd *KeibiDrop) Run() {
 
 				logger.Info("Signal start success")
 
-				kd.filesystemReady = make(chan struct{})
 				// prepare serverReady channel
 				go func() {
 					err := kd.startGRPCServer()

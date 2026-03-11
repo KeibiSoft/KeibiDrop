@@ -324,7 +324,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	}
 
 	if ready != nil {
-		close(ready)
+		kd.filesystemReadyOnce.Do(func() {
+			close(ready)
+		})
 	}
 
 	return nil
