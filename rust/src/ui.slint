@@ -487,15 +487,6 @@ component FileCard inherits Rectangle {
         height: 28px;
         spacing: 8px;
 
-        // Checkbox placeholder
-        Rectangle {
-            width: 20px;
-            height: 20px;
-            border-width: 1px;
-            border-color: #666;
-            border-radius: 4px;
-        }
-
         Text {
             text: filename;
             color: white;
@@ -556,6 +547,9 @@ export component MainWindow inherits Window {
     in-out property<bool> drag_hovering: false;
     // Mount path for FUSE mode (Screen 2)
     in property<string> mount_path: "";
+    // Peer code feedback: set by Rust after KD_AddPeerFingerprint
+    in-out property<bool> peer_code_added: false;
+    in-out property<bool> peer_code_error: false;
 
     // Callbacks
     callback add_peer_code();
@@ -620,6 +614,22 @@ export component MainWindow inherits Window {
             buttonText: "Add";
             process_code => { root.add_peer_code() }
             sectionNumber: 1;
+        }
+
+        // Peer code feedback — inside card 1's empty bottom zone
+        if root.peer_code_added: Text {
+            x: 300px;
+            y: 383px;
+            text: "✓ Code added";
+            color: #22c55e;
+            font-size: 13px;
+        }
+        if root.peer_code_error: Text {
+            x: 300px;
+            y: 383px;
+            text: "✗ Invalid code";
+            color: #ef4444;
+            font-size: 13px;
         }
 
         snd := SectionElement {
@@ -753,7 +763,7 @@ export component MainWindow inherits Window {
 
             // Add File button
             OutlineButton {
-                x: parent.width - 350px;
+                x: parent.width - 440px;
                 y: (parent.height - self.height) / 2;
                 text: "Add File";
                 clicked => { root.add_file_pressed() }
@@ -761,7 +771,7 @@ export component MainWindow inherits Window {
 
             // Disconnect button
             OutlineButton {
-                x: parent.width - 180px;
+                x: parent.width - 260px;
                 y: (parent.height - self.height) / 2;
                 text: "Disconnect";
                 clicked => { root.disconnect_pressed() }
@@ -778,6 +788,9 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 alignment: center;
                 spacing: 12px;
+
+                HorizontalLayout {
+                    alignment: center;
 
                 Rectangle {
                     width: 320px;
@@ -811,6 +824,7 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+                } // HorizontalLayout
             }
         }
 
@@ -883,7 +897,7 @@ export component MainWindow inherits Window {
             }
 
             OutlineButton {
-                x: parent.width - 180px;
+                x: parent.width - 260px;
                 y: (parent.height - self.height) / 2;
                 text: "Disconnect";
                 clicked => { root.disconnect_pressed() }
@@ -952,17 +966,17 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Logo and exit button rendered last — on top of all screen content
-    KeibiDropLogo {
+    // Logo shown only on connect screen; exit button always on top
+    if current_screen == 0: KeibiDropLogo {
         x: 115px;
         y: 70px;
     }
 
     OutlineButton {
         x: parent.width - 80px;
-        y: 20px;
+        y: 11px;
         width: 60px;
-        height: 28px;
+        height: 34px;
         text: "Exit";
         clicked => { root.exit_pressed() }
     }
