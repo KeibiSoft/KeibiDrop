@@ -39,6 +39,7 @@ const (
 	NotifyType_EDIT_FILE   NotifyType = 6
 	NotifyType_RENAME_FILE NotifyType = 7 // File moved/renamed. old_path -> path.
 	NotifyType_RENAME_DIR  NotifyType = 8 // Directory moved/renamed. old_path -> path.
+	NotifyType_DISCONNECT  NotifyType = 9 // Graceful peer disconnect notification.
 )
 
 // Enum value maps for NotifyType.
@@ -53,6 +54,7 @@ var (
 		6: "EDIT_FILE",
 		7: "RENAME_FILE",
 		8: "RENAME_DIR",
+		9: "DISCONNECT",
 	}
 	NotifyType_value = map[string]int32{
 		"UNKNOWN":     0,
@@ -64,6 +66,7 @@ var (
 		"EDIT_FILE":   6,
 		"RENAME_FILE": 7,
 		"RENAME_DIR":  8,
+		"DISCONNECT":  9,
 	}
 )
 
@@ -1261,7 +1264,7 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x11HeartbeatResponse\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12#\n" +
 	"\rreq_timestamp\x18\x02 \x01(\x04R\freqTimestamp\x12\x10\n" +
-	"\x03seq\x18\x03 \x01(\x04R\x03seq*\x93\x01\n" +
+	"\x03seq\x18\x03 \x01(\x04R\x03seq*\xa3\x01\n" +
 	"\n" +
 	"NotifyType\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
@@ -1274,7 +1277,9 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\tEDIT_FILE\x10\x06\x12\x0f\n" +
 	"\vRENAME_FILE\x10\a\x12\x0e\n" +
 	"\n" +
-	"RENAME_DIR\x10\b2\xb9\x04\n" +
+	"RENAME_DIR\x10\b\x12\x0e\n" +
+	"\n" +
+	"DISCONNECT\x10\t2\xb9\x04\n" +
 	"\fKeibiService\x127\n" +
 	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12<\n" +
 	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse(\x01\x12;\n" +

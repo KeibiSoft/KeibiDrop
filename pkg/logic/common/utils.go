@@ -395,6 +395,18 @@ func (kd *KeibiDrop) startGRPCServer() error {
 		Session:     kd.session,
 		Logger:      kd.logger.With("component", "keibidrop-server"),
 		SyncTracker: kd.SyncTracker,
+		OnEvent:     kd.OnEvent,
+		OnDisconnect: func() {
+			// Unmount first to unblock Mount() in Run()'s Start handler.
+			// Mount() blocks the select loop, so ctx.Done() can't fire
+			// until Mount() returns (which only happens on Unmount).
+			if kd.FS != nil {
+				kd.FS.Unmount()
+			}
+			if kd.Cancel != nil {
+				kd.Cancel()
+			}
+		},
 	}
 
 	kd.KDSvc = svc

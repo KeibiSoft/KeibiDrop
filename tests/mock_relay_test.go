@@ -54,6 +54,13 @@ func (mr *MockRelay) EntryCount() int {
 	return len(mr.store)
 }
 
+// Clear removes all stored registrations.
+func (mr *MockRelay) Clear() {
+	mr.mu.Lock()
+	defer mr.mu.Unlock()
+	mr.store = make(map[string]string)
+}
+
 func (mr *MockRelay) extractToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {

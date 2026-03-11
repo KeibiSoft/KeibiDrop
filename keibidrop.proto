@@ -114,6 +114,7 @@ enum NotifyType {
   EDIT_FILE = 6;
   RENAME_FILE = 7;  // File moved/renamed. old_path -> path.
   RENAME_DIR = 8;   // Directory moved/renamed. old_path -> path.
+  DISCONNECT = 9;   // Graceful peer disconnect notification.
 }
 
 message Attr {

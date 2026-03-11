@@ -61,6 +61,55 @@ fn start_file_watcher(
         while running.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(500));
 
+            // Poll Go events (peer_disconnected, health_changed, etc.)
+            unsafe {
+                loop {
+                    let evt_ptr = bindings::KD_PollEvent();
+                    if evt_ptr.is_null() {
+                        break;
+                    }
+                    let evt = CStr::from_ptr(evt_ptr).to_string_lossy().to_string();
+                    libc::free(evt_ptr as *mut libc::c_void);
+                    println!("[Event] {}", evt);
+
+                    // React to disconnect events: graceful peer disconnect OR
+                    // health monitor timeout OR reconnect gave up.
+                    let is_disconnect = evt.starts_with("peer_disconnected:")
+                        || evt.starts_with("gave_up:");
+                    if is_disconnect {
+                        println!("[Event] Disconnect detected ({}), cleaning up...", evt);
+                        let r = running.clone();
+                        r.store(false, Ordering::Relaxed);
+                        bindings::KD_UnmountFilesystem();
+                        bindings::KD_Disconnect();
+                        let weak_clone = weak.clone();
+                        let msg = if evt.starts_with("peer_disconnected:") {
+                            "Peer disconnected"
+                        } else {
+                            "Connection lost"
+                        };
+                        let msg = String::from(msg);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(app) = weak_clone.upgrade() {
+                                let ptr = bindings::KD_Fingerprint();
+                                if !ptr.is_null() {
+                                    let new_fp = CStr::from_ptr(ptr).to_string_lossy().to_string();
+                                    app.set_my_code(slint::SharedString::from(new_fp));
+                                }
+                                app.set_peer_code(slint::SharedString::default());
+                                app.set_room_action(0);
+                                app.set_status_message(slint::SharedString::from(msg.as_str()));
+                                app.set_error_message(slint::SharedString::default());
+                                app.set_peer_code_added(false);
+                                app.set_peer_code_error(false);
+                                app.set_current_screen(0);
+                            }
+                        });
+                        break;
+                    }
+                }
+            }
+
             unsafe {
                 let count = bindings::KD_GetFileCount();
 
@@ -260,6 +309,9 @@ fn connect_room(
             "Room {} successfully",
             if create { "created" } else { "joined" }
         );
+
+        // Wire health/reconnect events into the Go event channel.
+        bindings::KD_SetupEventCallbacks();
 
         // Start file watcher
         running.store(true, Ordering::Relaxed);

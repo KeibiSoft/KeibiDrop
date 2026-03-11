@@ -28,7 +28,7 @@ build-static-rust-bridge:
 
 # Regenerate Rust bindings from the C header (requires bindgen)
 # Install: cargo install bindgen-cli
-rust-bindings: build-static-rust-bridge
+rust-bindings: protoc build-static-rust-bridge
 	bindgen libkeibidrop.h -o rust/src/bindings.rs
 
 # Preview Slint UI (requires slint-viewer)

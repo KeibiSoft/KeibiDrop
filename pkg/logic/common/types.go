@@ -62,9 +62,11 @@ type KeibiDrop struct {
 
 	// Signals for loop management.
 	signals  chan TaskSignal
-	running  bool
+	running  atomic.Bool
 	stopDone chan struct{} // closed when Stop handler completes
 	ctx      context.Context
+	Cancel   context.CancelFunc // exported so FFI layer can call it for app exit
+	shutdown chan struct{}       // closed by Shutdown() to permanently exit Run()
 	mu       sync.Mutex
 
 	// For session refresh.
@@ -75,6 +77,9 @@ type KeibiDrop struct {
 	filesystemReady     chan struct{}
 	filesystemReadyOnce sync.Once
 	serverReadyMu       sync.Mutex
+
+	// Event callback (wired by FFI layer to push events to the UI).
+	OnEvent func(string)
 
 	// Connection resilience.
 	HealthMonitor    *session.HealthMonitor
@@ -130,6 +135,9 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		return nil, err
 	}
 
+	// Wrap incoming context so Cancel is always available for disconnect handling.
+	ctx, cancel := context.WithCancel(ctx)
+
 	kd := &KeibiDrop{
 		logger:          logger,
 		IsFUSE:          isFuse,
@@ -140,8 +148,10 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		inboundPort:     inboundPort,
 		listener:        listener,
 		signals:         make(chan TaskSignal, 2),
-		running:         false,
+		// running is zero-value (false) by default.
 		ctx:             ctx,
+		Cancel:          cancel,
+		shutdown:        make(chan struct{}),
 		mu:              sync.Mutex{},
 		refreshSession:  refreshSession,
 		ToMount:         toMount,
@@ -182,17 +192,39 @@ type EncryptedRegistration struct {
 // Map server status errors to semantic errors.
 type ErrorMapperFunc func(statusCode int, err error) error
 
+// IsRunning returns whether the KeibiDrop instance is in a connected session.
+func (kd *KeibiDrop) IsRunning() bool {
+	return kd.running.Load()
+}
+
 // Running process for KeibiDrop.
 func (kd *KeibiDrop) Start() {
 	kd.signals <- Start
 }
 
 func (kd *KeibiDrop) Stop() {
-	kd.running = false
+	kd.running.Store(false)
 	done := make(chan struct{})
 	kd.stopDone = done
-	kd.signals <- Stop
-	<-done // wait for Stop handler to complete
+	select {
+	case kd.signals <- Stop:
+		<-done // wait for Stop handler to complete
+	case <-kd.ctx.Done():
+		// Context already cancelled — Run() loop will handle its own cleanup.
+		// Just refresh context here so Run() can continue.
+		ctx, c := context.WithCancel(context.Background())
+		kd.ctx = ctx
+		kd.Cancel = c
+	}
+}
+
+// Shutdown permanently stops the Run() goroutine. Use this for app exit.
+// For temporary disconnects (peer left), use Stop() instead.
+func (kd *KeibiDrop) Shutdown() {
+	close(kd.shutdown)
+	if kd.Cancel != nil {
+		kd.Cancel()
+	}
 }
 
 // Run as a go-routine.
@@ -201,17 +233,47 @@ func (kd *KeibiDrop) Run() {
 	for {
 		select {
 		case <-kd.ctx.Done():
-			logger.Info("Stopping KeibiDrop run instance")
+			logger.Info("Stopping KeibiDrop run instance (ctx cancelled)")
 			kd.StopConnectionResilience()
+			// Nil out managers so late health-monitor callbacks are no-ops.
+			kd.HealthMonitor = nil
+			kd.ReconnectManager = nil
+			kd.RelayKeepalive = nil
 			if kd.FS != nil {
 				kd.FS.Unmount()
 				kd.FS = nil
 			}
 			if kd.grpcServer != nil {
-				kd.grpcServer.GracefulStop()
+				kd.grpcServer.Stop() // Force stop — GracefulStop blocks on open streams.
 				kd.grpcServer = nil
 			}
-			return
+			if kd.grpcClientConn != nil {
+				kd.grpcClientConn.Close()
+				kd.grpcClientConn = nil
+			}
+			kd.KDClient = nil
+			kd.KDSvc = nil
+			kd.session = nil
+			kd.PeerIPv6IP = ""
+
+			// Permanent shutdown — exit the goroutine.
+			select {
+			case <-kd.shutdown:
+				kd.running.Store(false)
+				logger.Info("Run loop: permanent shutdown")
+				return
+			default:
+			}
+
+			// Temporary disconnect — refresh session and context BEFORE
+			// setting running=false, so callers can use the session immediately.
+			kd.session = kd.refreshSession()
+			ctx, c := context.WithCancel(context.Background())
+			kd.ctx = ctx
+			kd.Cancel = c
+			kd.running.Store(false)
+			logger.Info("Run loop: context refreshed, ready for next session")
+			continue
 		case s := <-kd.signals:
 			switch s {
 			case Start:
@@ -231,8 +293,13 @@ func (kd *KeibiDrop) Run() {
 					}
 				}()
 
-				// mount filesystem here
-				<-kd.filesystemReady
+				// Wait for filesystem setup (or context cancellation).
+				select {
+				case <-kd.filesystemReady:
+				case <-kd.ctx.Done():
+					logger.Info("Context cancelled while waiting for filesystem")
+					continue
+				}
 
 				if kd.FS != nil {
 					logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
@@ -243,11 +310,27 @@ func (kd *KeibiDrop) Run() {
 					logger.Warn("No FS to mount")
 				}
 
-				kd.running = true
+				// Only mark running if we haven't been asked to stop while
+				// Mount() was blocking. Check both context cancellation AND
+				// whether FS was externally unmounted (nilled by UnmountFilesystem).
+				if kd.FS == nil && kd.IsFUSE {
+					logger.Info("FS externally unmounted during mount, skipping running=true")
+					continue
+				}
+				select {
+				case <-kd.ctx.Done():
+					logger.Info("Context cancelled during mount, skipping running=true")
+					continue
+				default:
+					kd.running.Store(true)
+				}
 
 			case Stop:
 				logger.Info("Stop signal")
 				kd.StopConnectionResilience()
+				kd.HealthMonitor = nil
+				kd.ReconnectManager = nil
+				kd.RelayKeepalive = nil
 				if kd.FS != nil {
 					kd.FS.Unmount()
 					kd.FS = nil
@@ -275,7 +358,7 @@ func (kd *KeibiDrop) Run() {
 				kd.PeerIPv6IP = ""
 				kd.session = kd.refreshSession()
 
-				kd.running = false
+				kd.running.Store(false)
 				logger.Info("Stop signal completed, ready for next session")
 				if kd.stopDone != nil {
 					close(kd.stopDone)
