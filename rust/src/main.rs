@@ -312,7 +312,7 @@ fn main() {
 
     // Convert to CString
     let relay_c = CString::new(relay).unwrap();
-    let to_mount_c = CString::new(to_mount).unwrap();
+    let to_mount_c = CString::new(to_mount.clone()).unwrap();
     let to_save_c = CString::new(to_save.clone()).unwrap();
 
     // Shared download state
@@ -349,6 +349,7 @@ fn main() {
         // Build UI
         let app = MainWindow::new().expect("Failed to create MainWindow");
         app.set_my_code(slint::SharedString::from(my_fp.clone()));
+        app.set_mount_path(slint::SharedString::from(to_mount.clone()));
 
         // Handle Add: register peer fingerprint
         let weak = app.as_weak();

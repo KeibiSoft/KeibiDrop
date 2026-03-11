@@ -543,6 +543,8 @@ export component MainWindow inherits Window {
     in-out property<bool> any_downloading: false;
     // Set by Rust when a file is being dragged over the window
     in-out property<bool> drag_hovering: false;
+    // Mount path for FUSE mode (Screen 2)
+    in property<string> mount_path: "";
 
     // Callbacks
     callback add_peer_code();
@@ -816,42 +818,93 @@ export component MainWindow inherits Window {
         height: 100%;
         background: #1f1f1f;
 
-        // Disconnect button top-right
-        OutlineButton {
-            x: parent.width - 200px;
-            y: 70px;
-            text: "Disconnect";
-            clicked => { root.disconnect_pressed() }
+        // ── Header bar (matches Screen 1) ───────────────────────
+        Rectangle {
+            x: 0; y: 0;
+            width: parent.width;
+            height: 56px;
+            background: rgba(255,255,255,0.03);
+            border-width: 1px;
+            border-color: rgba(255,255,255,0.08);
+
+            Rectangle {
+                x: 120px;
+                y: (parent.height - self.height) / 2;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: #22c55e;
+            }
+            Text {
+                x: 136px;
+                y: 0;
+                height: 56px;
+                text: "Connected · FUSE mounted";
+                color: #22c55e;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+
+            OutlineButton {
+                x: parent.width - 180px;
+                y: (parent.height - self.height) / 2;
+                text: "Disconnect";
+                clicked => { root.disconnect_pressed() }
+            }
         }
 
-        // Center content
+        // ── Main content ─────────────────────────────────────────
         VerticalLayout {
+            y: 56px;
+            height: parent.height - 56px;
             alignment: center;
-            spacing: 20px;
+            spacing: 16px;
+            padding-left: 120px;
+            padding-right: 120px;
 
             Text {
-                text: "Connected!";
-                color: #22c55e;
-                font-size: 32px;
+                text: "📁";
+                font-size: 56px;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Shared folder is live";
+                color: white;
+                font-size: 24px;
                 font-weight: 700;
                 horizontal-alignment: center;
             }
 
             Text {
-                text: "Your shared folder is mounted and ready.";
+                text: "Drop files into the folder to share them instantly with your peer.";
                 color: #9ca3af;
-                font-size: 16px;
+                font-size: 15px;
                 horizontal-alignment: center;
             }
 
-            Text {
-                text: "Drop files into the folder to share them with your peer.";
-                color: #666;
-                font-size: 14px;
-                horizontal-alignment: center;
+            if root.mount_path != "": Rectangle {
+                height: 38px;
+                border-radius: 19px;
+                background: rgba(255,255,255,0.05);
+                border-width: 1px;
+                border-color: rgba(255,255,255,0.10);
+                horizontal-stretch: 0;
+
+                HorizontalLayout {
+                    alignment: center;
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    Text {
+                        text: root.mount_path;
+                        color: #64748b;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
             }
 
-            // Open folder button
             HorizontalLayout {
                 alignment: center;
                 OutlineButton {
