@@ -687,43 +687,126 @@ export component MainWindow inherits Window {
         height: 100%;
         background: #1f1f1f;
 
-        // Disconnect button top-right
-        OutlineButton {
-            x: parent.width - 200px;
-            y: 70px;
-            text: "Disconnect";
-            clicked => { root.disconnect_pressed() }
+        // ── Header bar ──────────────────────────────────────────
+        Rectangle {
+            x: 0; y: 0;
+            width: parent.width;
+            height: 56px;
+            background: rgba(255,255,255,0.03);
+            border-width: 1px;
+            border-color: rgba(255,255,255,0.08);
+
+            // Status dot
+            Rectangle {
+                x: 120px;
+                y: (parent.height - self.height) / 2;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: #22c55e;
+            }
+            // Status label
+            Text {
+                x: 136px;
+                y: 0;
+                height: 56px;
+                text: "Connected";
+                color: #22c55e;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+
+            // Add File button
+            OutlineButton {
+                x: parent.width - 350px;
+                y: (parent.height - self.height) / 2;
+                text: "Add File";
+                clicked => { root.add_file_pressed() }
+            }
+
+            // Disconnect button
+            OutlineButton {
+                x: parent.width - 180px;
+                y: (parent.height - self.height) / 2;
+                text: "Disconnect";
+                clicked => { root.disconnect_pressed() }
+            }
         }
 
-        // Add File button next to disconnect
-        OutlineButton {
-            x: parent.width - 380px;
-            y: 70px;
-            text: "Add File";
-            clicked => { root.add_file_pressed() }
+        // ── Empty state (when no files) ──────────────────────────
+        if root.file_list.length == 0: Rectangle {
+            y: 56px;
+            width: parent.width;
+            height: parent.height - 56px;
+            background: transparent;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                Rectangle {
+                    width: 320px;
+                    height: 160px;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: rgba(255,255,255,0.08);
+                    background: rgba(255,255,255,0.02);
+                    horizontal-stretch: 0;
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Text {
+                            text: "+";
+                            font-size: 40px;
+                            color: rgba(255,255,255,0.15);
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "No files yet";
+                            font-size: 15px;
+                            color: #9ca3af;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Add a file or wait for your peer";
+                            font-size: 13px;
+                            color: #555;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
         }
 
-        // Large spinner: visible during drag-and-drop or when files are downloading
-        if root.drag_hovering || root.any_downloading: SpinnerArc {
-            x: (parent.width - self.width) / 2;
-            y: 140px;
-            size: 180px;
-            spinning: true;
-        }
+        // ── File grid (when files exist) ────────────────────────
+        if root.file_list.length > 0: Rectangle {
+            y: 56px;
+            width: parent.width;
+            height: parent.height - 56px;
+            background: transparent;
 
-        // Dynamic file grid (4 per row, positioned like original)
-        for file[idx] in root.file_list: FileCard {
-            x: 120px + mod(idx, 4) * 270px;
-            y: 380px + floor(idx / 4) * 200px;
-            filename: file.name;
-            file-type: file.file-type;
-            downloading: file.downloading;
-            uploading: file.uploading;
-            progress: file.progress;
-            saved: file.saved;
-            is-local: file.is-local;
-            save-clicked => { root.save_file(file.name) }
-            open-clicked => { root.open_file(file.name) }
+            // Download spinner (top-right, small)
+            if root.any_downloading: SpinnerArc {
+                x: parent.width - 60px;
+                y: 12px;
+                size: 36px;
+                spinning: true;
+            }
+
+            for file[idx] in root.file_list: FileCard {
+                x: 120px + mod(idx, 4) * 270px;
+                y: 80px + floor(idx / 4) * 200px;
+                filename: file.name;
+                file-type: file.file-type;
+                downloading: file.downloading;
+                uploading: file.uploading;
+                progress: file.progress;
+                saved: file.saved;
+                is-local: file.is-local;
+                save-clicked => { root.save_file(file.name) }
+                open-clicked => { root.open_file(file.name) }
+            }
         }
     }
 
