@@ -29,6 +29,45 @@ type testPeer struct {
 	mu     sync.Mutex // serializes command/response pairs
 }
 
+// sendMultiLine sends a command and reads response lines until termLine (or a line
+// starting with "ERR:") is received. Returns all lines including the terminator.
+func (p *testPeer) sendMultiLine(t *testing.T, command string, termLine string, timeout time.Duration) []string {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	_, err := fmt.Fprintln(p.stdin, command)
+	if err != nil {
+		t.Fatalf("sendMultiLine: failed to send %q: %v", command, err)
+	}
+
+	var lines []string
+	deadline := time.Now().Add(timeout)
+	for {
+		done := make(chan string, 1)
+		go func() {
+			if p.stdout.Scan() {
+				done <- p.stdout.Text()
+			} else {
+				done <- "ERR:scanner closed"
+			}
+		}()
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			t.Fatalf("sendMultiLine: timeout waiting for %q after command %q (got so far: %v)", termLine, command, lines)
+		}
+		select {
+		case line := <-done:
+			lines = append(lines, line)
+			if line == termLine || strings.HasPrefix(line, "ERR:") {
+				return lines
+			}
+		case <-time.After(remaining):
+			t.Fatalf("sendMultiLine: timeout waiting for %q after command %q (got so far: %v)", termLine, command, lines)
+		}
+	}
+}
+
 // send writes a command and waits for the response line.
 func (p *testPeer) send(t *testing.T, command string, timeout time.Duration) string {
 	t.Helper()
@@ -352,5 +391,148 @@ func TestFUSEtoFUSE(t *testing.T) {
 		require.Len(parts, 3)
 		require.Equal("BobData", parts[2])
 	})
+}
+
+// TestFUSEtoFUSE_ReaddirNoPhantoms is the E2E regression test for issue #63.
+// Alice creates a nested directory structure on her FUSE mount. Bob's FUSE
+// mount must show directory names at the correct hierarchy level — never raw
+// file basenames from deeper levels (phantoms).
+func TestFUSEtoFUSE_ReaddirNoPhantoms(t *testing.T) {
+	skipIfNoFUSE(t)
+
+	binary := getTestPeerBinary(t)
+
+	relay := NewMockRelay()
+	defer relay.Close()
+
+	aliceIn := getFreePortInRange(t, 26700, 26749)
+	aliceOut := getFreePortInRange(t, 26750, 26799)
+	bobIn := getFreePortInRange(t, 26800, 26849)
+	bobOut := getFreePortInRange(t, 26850, 26899)
+
+	aliceMount := t.TempDir()
+	aliceSave := t.TempDir()
+	bobMount := t.TempDir()
+	bobSave := t.TempDir()
+	aliceLog := filepath.Join(t.TempDir(), "alice.log")
+	bobLog := filepath.Join(t.TempDir(), "bob.log")
+
+	alice := spawnPeer(t, binary, map[string]string{
+		"RELAY_URL":     relay.URL(),
+		"INBOUND_PORT":  fmt.Sprintf("%d", aliceIn),
+		"OUTBOUND_PORT": fmt.Sprintf("%d", aliceOut),
+		"MOUNT_DIR":     aliceMount,
+		"SAVE_DIR":      aliceSave,
+		"USE_FUSE":      "1",
+		"LOG_FILE":      aliceLog,
+	})
+
+	bob := spawnPeer(t, binary, map[string]string{
+		"RELAY_URL":     relay.URL(),
+		"INBOUND_PORT":  fmt.Sprintf("%d", bobIn),
+		"OUTBOUND_PORT": fmt.Sprintf("%d", bobOut),
+		"MOUNT_DIR":     bobMount,
+		"SAVE_DIR":      bobSave,
+		"USE_FUSE":      "1",
+		"LOG_FILE":      bobLog,
+	})
+
+	t.Cleanup(func() {
+		for _, p := range []*testPeer{alice, bob} {
+			fmt.Fprintln(p.stdin, "quit")
+			done := make(chan error, 1)
+			go func() { done <- p.cmd.Wait() }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				p.cmd.Process.Kill()
+				<-done
+			}
+		}
+		for _, dir := range []string{aliceMount, bobMount} {
+			exec.Command("/sbin/umount", "-f", dir).Run()
+			waitForUnmount(dir, 5*time.Second)
+		}
+	})
+
+	require := require.New(t)
+
+	aliceFP := alice.send(t, "fingerprint", 5*time.Second)
+	require.True(strings.HasPrefix(aliceFP, "FP:"))
+	aliceFP = strings.TrimPrefix(aliceFP, "FP:")
+
+	bobFP := bob.send(t, "fingerprint", 5*time.Second)
+	require.True(strings.HasPrefix(bobFP, "FP:"))
+	bobFP = strings.TrimPrefix(bobFP, "FP:")
+
+	require.Equal("OK", alice.send(t, "register "+bobFP, 5*time.Second))
+	require.Equal("OK", bob.send(t, "register "+aliceFP, 5*time.Second))
+
+	aliceConn := alice.sendAsync(t, "create")
+	WaitForCondition(t, 10*time.Second, 100*time.Millisecond, func() bool {
+		return relay.EntryCount() > 0
+	}, "waiting for Alice to register on relay")
+	bobConn := bob.sendAsync(t, "join")
+
+	select {
+	case resp := <-aliceConn:
+		require.Equal("CONNECTED", resp)
+	case <-time.After(30 * time.Second):
+		t.Fatal("timeout: Alice create room")
+	}
+	select {
+	case resp := <-bobConn:
+		require.Equal("CONNECTED", resp)
+	case <-time.After(30 * time.Second):
+		t.Fatal("timeout: Bob join room")
+	}
+
+	waitForFUSEMount(t, aliceMount, 15*time.Second)
+	waitForFUSEMount(t, bobMount, 15*time.Second)
+	t.Log("Both FUSE mounts ready")
+
+	// Alice creates the nested directory structure from the bug report.
+	require.Equal("OK", alice.send(t, "mkdir_p test_repo/Documentation", 5*time.Second))
+	require.Equal("OK", alice.send(t, "write_file test_repo/Documentation/git.adoc git reference doc", 10*time.Second))
+	require.Equal("OK", alice.send(t, "write_file test_repo/README.md readme content", 10*time.Second))
+	require.Equal("OK", alice.send(t, "write_file top.txt top level file", 10*time.Second))
+
+	// Wait until Bob can see the deepest file via FUSE stat — proves propagation is complete.
+	resp := bob.send(t, "wait_file test_repo/Documentation/git.adoc 20", 25*time.Second)
+	require.Equal("OK", resp, "Bob should see nested file via FUSE")
+
+	// List Bob's root — must NOT contain phantom basenames from nested paths.
+	rootEntries := listDir(t, bob, "/", 10*time.Second)
+	t.Logf("Bob root entries: %v", rootEntries)
+	require.NotContains(rootEntries, "git.adoc", "phantom: deep file basename must not appear at root")
+	require.NotContains(rootEntries, "README.md", "phantom: nested file basename must not appear at root")
+	require.Contains(rootEntries, "test_repo", "directory entry must appear at root")
+	require.Contains(rootEntries, "top.txt", "direct file must appear at root")
+
+	// List test_repo/ — must contain Documentation/ and README.md, not git.adoc.
+	repoEntries := listDir(t, bob, "test_repo", 10*time.Second)
+	t.Logf("Bob test_repo entries: %v", repoEntries)
+	require.NotContains(repoEntries, "git.adoc", "phantom: deep file must not appear at test_repo level")
+	require.Contains(repoEntries, "Documentation", "subdir must appear at test_repo level")
+	require.Contains(repoEntries, "README.md", "direct file must appear at test_repo level")
+
+	// List test_repo/Documentation/ — must contain git.adoc at its correct depth.
+	docEntries := listDir(t, bob, "test_repo/Documentation", 10*time.Second)
+	t.Logf("Bob test_repo/Documentation entries: %v", docEntries)
+	require.Contains(docEntries, "git.adoc", "file must appear at its correct depth")
+}
+
+// listDir sends a list_dir command to a testPeer and returns the entry names
+// (ENTRY: prefix stripped, terminal END line excluded).
+func listDir(t *testing.T, p *testPeer, path string, timeout time.Duration) []string {
+	t.Helper()
+	raw := p.sendMultiLine(t, "list_dir "+path, "END", timeout)
+	var entries []string
+	for _, line := range raw {
+		if strings.HasPrefix(line, "ENTRY:") {
+			entries = append(entries, strings.TrimPrefix(line, "ENTRY:"))
+		}
+	}
+	return entries
 }
 

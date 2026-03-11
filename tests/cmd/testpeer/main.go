@@ -191,6 +191,37 @@ func main() {
 				fmt.Println("OK")
 			}
 
+		case "mkdir_p":
+			// mkdir_p <relative-path> — create directory tree on the mount (recursive)
+			if len(args) < 2 {
+				fmt.Println("ERR:usage: mkdir_p <path>")
+				continue
+			}
+			p := filepath.Join(mountDir, strings.Join(args[1:], " "))
+			if err := os.MkdirAll(p, 0o755); err != nil {
+				fmt.Println("ERR:" + err.Error())
+			} else {
+				fmt.Println("OK")
+			}
+
+		case "list_dir":
+			// list_dir <relative-path> — list direct children of a directory on the mount.
+			// Prints ENTRY:<name> per child, then END.
+			if len(args) < 2 {
+				fmt.Println("ERR:usage: list_dir <path>")
+				continue
+			}
+			p := filepath.Join(mountDir, strings.Join(args[1:], " "))
+			entries, err := os.ReadDir(p)
+			if err != nil {
+				fmt.Println("ERR:" + err.Error())
+			} else {
+				for _, e := range entries {
+					fmt.Println("ENTRY:" + e.Name())
+				}
+				fmt.Println("END")
+			}
+
 		case "quit":
 			_ = kd.UnmountFilesystem()
 			cancel()
