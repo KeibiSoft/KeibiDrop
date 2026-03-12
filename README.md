@@ -96,7 +96,7 @@ I haven’t used these tools directly, but I liked the ideas they explored and w
 - Deterministic fingerprint verification
 - No persistent metadata or tracking
 - Designed for use over untrusted relays
-- Relay privacy - the relay sees only encrypted blobs, not your metadata
+- Relay privacy - the relay sees only encrypted blobs of your IPv6 address, port, and public keys
 - Session re-keying for forward secrecy during long transfers
 - Mountable filesystem with data transfer on access
 
