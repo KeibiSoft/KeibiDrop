@@ -403,9 +403,7 @@ func (kd *KeibiDrop) startGRPCServer() error {
 			if kd.FS != nil {
 				kd.FS.Unmount()
 			}
-			if kd.Cancel != nil {
-				kd.Cancel()
-			}
+			kd.cancelContext()
 		},
 	}
 

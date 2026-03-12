@@ -57,22 +57,37 @@ component InputArea inherits Rectangle {
         clip: true;
         background: transparent;
 
-        ti := TextInput {
+        // Read-only: use Text with elide (TextInput ignores parent clip)
+        if root.readOnly: Text {
+            x: 4px;
+            width: parent.width - 8px;
+            height: parent.height;
+            text: root.inText;
+            color: white;
+            font-family: "monospace";
+            font-size: 11px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        // Editable: TextInput with scroll
+        if !root.readOnly: ti := TextInput {
             width: parent.width;
             height: parent.height;
-            horizontal-alignment: center;
+            horizontal-alignment: left;
             vertical-alignment: center;
-            font-weight: 0.5;
+            font-family: "monospace";
+            font-size: 12px;
             color: white;
             text <=> root.inText;
-            read-only: root.readOnly;
             single-line: true;
+            accepted => { root.process_code(); }
         }
     }
 
-    Button{
+    Button {
         x: ti-clip.x + ti-clip.width + 6px;
-        y: ti.y;
+        y: 0px;
         text: buttonText;
         height: 34px;
         width: 142px;
@@ -557,6 +572,7 @@ export component MainWindow inherits Window {
     callback create_room_pressed();
     callback join_room_pressed();
     callback disconnect_pressed();
+    callback cancel_connect_pressed();
     callback open_folder_pressed();
     callback add_file_pressed();
     callback save_file(string);
@@ -691,17 +707,25 @@ export component MainWindow inherits Window {
             animate border-color { duration: 150ms; }
         }
 
+        // Cancel button — visible while creating or joining
+        if root.room_action != 0: OutlineButton {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 88px;
+            text: "Cancel";
+            clicked => { root.cancel_connect_pressed() }
+        }
+
         // Status / error message below buttons
         if root.status_message != "" && root.error_message == "": Text {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 98px;
+            y: snd.y + snd.height - 34px + 132px;
             text: root.status_message;
             color: #94a3b8;
             font-size: 13px;
         }
         if root.error_message != "": Rectangle {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 98px;
+            y: snd.y + snd.height - 34px + 132px;
             width: 161px;
             height: 40px;
             border-radius: 8px;

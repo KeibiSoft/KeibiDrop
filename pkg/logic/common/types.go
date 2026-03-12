@@ -66,8 +66,9 @@ type KeibiDrop struct {
 	stopDone chan struct{} // closed when Stop handler completes
 	ctx      context.Context
 	Cancel   context.CancelFunc // exported so FFI layer can call it for app exit
-	shutdown chan struct{}       // closed by Shutdown() to permanently exit Run()
-	mu       sync.Mutex
+	shutdown     chan struct{}   // closed by Shutdown() to permanently exit Run()
+	shutdownOnce sync.Once
+	mu           sync.Mutex
 
 	// For session refresh.
 	refreshSession func() *session.Session
@@ -202,29 +203,43 @@ func (kd *KeibiDrop) Start() {
 	kd.signals <- Start
 }
 
+// Stop cleanly disconnects the current session. Run() continues after cleanup,
+// ready for the next CreateRoom/JoinRoom. Thread-safe.
 func (kd *KeibiDrop) Stop() {
-	kd.running.Store(false)
+	logger := kd.logger.With("method", "stop")
+	kd.mu.Lock()
+	if !kd.running.Load() {
+		kd.mu.Unlock()
+		logger.Info("Stop called but not running, returning")
+		return
+	}
 	done := make(chan struct{})
 	kd.stopDone = done
-	select {
-	case kd.signals <- Stop:
-		<-done // wait for Stop handler to complete
-	case <-kd.ctx.Done():
-		// Context already cancelled — Run() loop will handle its own cleanup.
-		// Just refresh context here so Run() can continue.
-		ctx, c := context.WithCancel(context.Background())
-		kd.ctx = ctx
-		kd.Cancel = c
+	cancel := kd.Cancel
+	kd.mu.Unlock()
+	logger.Info("Stop: cancelling context")
+	if cancel != nil {
+		cancel()
+	}
+	<-done
+	logger.Info("Stop: completed")
+}
+
+// cancelContext cancels the current context under mutex protection.
+func (kd *KeibiDrop) cancelContext() {
+	kd.mu.Lock()
+	cancel := kd.Cancel
+	kd.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 
 // Shutdown permanently stops the Run() goroutine. Use this for app exit.
 // For temporary disconnects (peer left), use Stop() instead.
 func (kd *KeibiDrop) Shutdown() {
-	close(kd.shutdown)
-	if kd.Cancel != nil {
-		kd.Cancel()
-	}
+	kd.shutdownOnce.Do(func() { close(kd.shutdown) })
+	kd.cancelContext()
 }
 
 // Run as a go-routine.
@@ -260,18 +275,31 @@ func (kd *KeibiDrop) Run() {
 			select {
 			case <-kd.shutdown:
 				kd.running.Store(false)
+				kd.mu.Lock()
+				done := kd.stopDone
+				kd.stopDone = nil
+				kd.mu.Unlock()
+				if done != nil {
+					close(done)
+				}
 				logger.Info("Run loop: permanent shutdown")
 				return
 			default:
 			}
 
-			// Temporary disconnect — refresh session and context BEFORE
-			// setting running=false, so callers can use the session immediately.
+			// Temporary disconnect — refresh session and context, signal completion.
 			kd.session = kd.refreshSession()
 			ctx, c := context.WithCancel(context.Background())
+			kd.running.Store(false)
+			kd.mu.Lock()
 			kd.ctx = ctx
 			kd.Cancel = c
-			kd.running.Store(false)
+			done := kd.stopDone
+			kd.stopDone = nil
+			kd.mu.Unlock()
+			if done != nil {
+				close(done)
+			}
 			logger.Info("Run loop: context refreshed, ready for next session")
 			continue
 		case s := <-kd.signals:
@@ -301,6 +329,11 @@ func (kd *KeibiDrop) Run() {
 					continue
 				}
 
+				// Mark running BEFORE the blocking Mount() call so that
+				// external code (tests, FFI) can observe the transition
+				// from running→not-running when a disconnect happens.
+				kd.running.Store(true)
+
 				if kd.FS != nil {
 					logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
 					kd.KDSvc.FS = kd.FS
@@ -310,59 +343,19 @@ func (kd *KeibiDrop) Run() {
 					logger.Warn("No FS to mount")
 				}
 
-				// Only mark running if we haven't been asked to stop while
-				// Mount() was blocking. Check both context cancellation AND
-				// whether FS was externally unmounted (nilled by UnmountFilesystem).
+				// If we were asked to stop while Mount() was blocking,
+				// don't stay running — the ctx.Done handler will clean up.
 				if kd.FS == nil && kd.IsFUSE {
-					logger.Info("FS externally unmounted during mount, skipping running=true")
+					logger.Info("FS externally unmounted during mount")
 					continue
 				}
 				select {
 				case <-kd.ctx.Done():
-					logger.Info("Context cancelled during mount, skipping running=true")
+					logger.Info("Context cancelled during mount")
 					continue
 				default:
-					kd.running.Store(true)
 				}
 
-			case Stop:
-				logger.Info("Stop signal")
-				kd.StopConnectionResilience()
-				kd.HealthMonitor = nil
-				kd.ReconnectManager = nil
-				kd.RelayKeepalive = nil
-				if kd.FS != nil {
-					kd.FS.Unmount()
-					kd.FS = nil
-				}
-				if kd.grpcServer != nil {
-					kd.grpcServer.Stop()
-					kd.grpcServer = nil
-				}
-
-				// Close and nil gRPC client connection.
-				if kd.grpcClientConn != nil {
-					kd.grpcClientConn.Close()
-					kd.grpcClientConn = nil
-				}
-				kd.KDClient = nil
-
-				if kd.KDSvc != nil {
-					kd.KDSvc = nil
-				}
-
-				if kd.session != nil {
-					kd.session = nil
-				}
-
-				kd.PeerIPv6IP = ""
-				kd.session = kd.refreshSession()
-
-				kd.running.Store(false)
-				logger.Info("Stop signal completed, ready for next session")
-				if kd.stopDone != nil {
-					close(kd.stopDone)
-				}
 			}
 		}
 	}
