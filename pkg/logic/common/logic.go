@@ -125,6 +125,14 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 
 	localPath = filepath.Clean(localPath)
 
+	// Ensure parent directories exist (for files in subdirectories).
+	if dir := filepath.Dir(localPath); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			logger.Error("Failed to create parent directories", "error", err)
+			return err
+		}
+	}
+
 	f, err := os.Create(localPath)
 	if err != nil {
 		logger.Error("Failed to create local file", "error", err)

@@ -237,8 +237,14 @@ func (kd *KeibiDrop) cancelContext() {
 
 // Shutdown permanently stops the Run() goroutine. Use this for app exit.
 // For temporary disconnects (peer left), use Stop() instead.
+// Safe to call multiple times from any goroutine.
 func (kd *KeibiDrop) Shutdown() {
-	kd.shutdownOnce.Do(func() { close(kd.shutdown) })
+	select {
+	case <-kd.shutdown:
+		// Already closed — nothing to do.
+	default:
+		kd.shutdownOnce.Do(func() { close(kd.shutdown) })
+	}
 	kd.cancelContext()
 }
 
