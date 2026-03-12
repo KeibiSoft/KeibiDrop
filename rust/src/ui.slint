@@ -46,8 +46,8 @@ component InputArea inherits Rectangle {
 
     width: 445px;
     height: 34px;
-    background: #2a2a2a;
-    border-color: rgba(255,255,255,0.25);
+    background: #222222;
+    border-color: #FFFFFF;
     clip: true;
     
     ti-clip := Rectangle {
@@ -113,7 +113,6 @@ component DataRectangle inherits Rectangle {
         x: 36px;
         y: 0;
         text: parent.info;
-        color: #9ca3af;
     }
 
     InputArea {
@@ -131,7 +130,7 @@ component NumberedToolTip inherits Rectangle {
     width: 34px;
     height: 34px;
     border-width: 1px;
-    border-color: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.06);
     border-radius: 8px;
 
     Text {
@@ -154,10 +153,10 @@ component CodeRectangle inherits Rectangle {
     width: 517px;
     height: 157px;
     border-width: 1px;
-    border-color: rgba(255,255,255,0.10);
+    border-color: rgba(255,255,255,0.06);
     border-radius: 8px;
     // padding: 18px;
-    background: rgba(255,255,255,0.04);
+    background: #262626;
 
     DataRectangle {
         info: parent.info;
@@ -225,22 +224,29 @@ component KeibiDropLogo inherits Rectangle {
 }
 
 
-// Outline button (blue border, transparent bg)
+// Outline button - white/grey by default, set accent: true for blue
 component OutlineButton inherits Rectangle {
     in-out property <string> text: "Button";
     in property <bool> enabled: true;
+    in property <bool> accent: false;
     callback clicked;
 
     width: 161px;
     height: 34px;
-    background: touch.pressed ? rgba(59,130,246,0.15) : touch.has-hover ? rgba(59,130,246,0.08) : transparent;
+    background: touch.pressed ? (accent ? rgba(59,130,246,0.15) : rgba(255,255,255,0.08))
+              : touch.has-hover ? (accent ? rgba(59,130,246,0.08) : rgba(255,255,255,0.04))
+              : transparent;
     border-width: 1px;
-    border-radius: self.height / 2;
-    border-color: !enabled ? #555 : touch.pressed ? #2563eb : touch.has-hover ? #60a5fa : #3b82f6;
+    border-radius: 8px;
+    border-color: !enabled ? #555
+               : accent ? (touch.pressed ? #2563eb : touch.has-hover ? #60a5fa : #3b82f6)
+               : (touch.pressed ? #ccc : touch.has-hover ? #bbb : #888);
 
     Text {
         text: root.text;
-        color: !root.enabled ? #555 : touch.pressed ? #2563eb : touch.has-hover ? #60a5fa : #3b82f6;
+        color: !root.enabled ? #555
+             : root.accent ? (touch.pressed ? #2563eb : touch.has-hover ? #60a5fa : #3b82f6)
+             : (touch.pressed ? #fff : touch.has-hover ? #ddd : #aaa);
         font-size: 14px;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -255,10 +261,11 @@ component OutlineButton inherits Rectangle {
     animate background { duration: 150ms; }
 }
 
-// Simple rotating spinner arc
+// Spinner arc with always-visible "+" center, clickable
 component SpinnerArc inherits Rectangle {
     in property <length> size: 180px;
-    in property <bool> spinning: true;
+    in property <bool> spinning: false;
+    callback clicked;
 
     width: size;
     height: size;
@@ -266,7 +273,7 @@ component SpinnerArc inherits Rectangle {
     // Continuous rotation using animation-tick
     property <float> angle: mod(animation-tick() / 8ms, 360);
 
-    // Background ring
+    // Background ring (always visible)
     Rectangle {
         width: 100%;
         height: 100%;
@@ -276,8 +283,8 @@ component SpinnerArc inherits Rectangle {
         background: transparent;
     }
 
-    // Rotating arc
-    Path {
+    // Rotating arc (only when spinning)
+    if root.spinning: Path {
         x: 0;
         y: 0;
         width: root.size;
@@ -291,7 +298,7 @@ component SpinnerArc inherits Rectangle {
         stroke-line-cap: round;
         fill: transparent;
 
-        property <float> start: spinning ? angle : 0;
+        property <float> start: angle;
         property <float> arc-len: 90;
         property <float> r: 47;
         property <float> cx: 50;
@@ -305,26 +312,34 @@ component SpinnerArc inherits Rectangle {
         commands: "M " + x1 + " " + y1 + " A " + r + " " + r + " 0 0 1 " + x2 + " " + y2;
     }
 
-    // Center "+" icon
+    // Center "+" icon (always visible)
     Text {
         text: "+";
         font-size: root.size * 0.35;
-        color: #3b82f6;
+        color: spinner-touch.has-hover ? #60a5fa : #3b82f6;
         horizontal-alignment: center;
         vertical-alignment: center;
+        animate color { duration: 150ms; }
+    }
+
+    spinner-touch := TouchArea {
+        clicked => { root.clicked() }
     }
 }
 
-// Small spinner for file cards (configurable color)
+// Small spinner for file cards - shows progress 0->100%
 component SmallSpinner inherits Rectangle {
     in property <bool> active: true;
     in property <color> accent: #3b82f6;  // blue default
+    in property <float> progress: 0.0;    // 0.0 to 1.0
 
     width: 20px;
     height: 20px;
 
-    property <float> angle: active ? mod(animation-tick() / 6ms, 360) : 0;
+    // Slow rotation so it looks alive even at fixed progress
+    property <float> angle: active ? mod(animation-tick() / 10ms, 360) : 0;
 
+    // Background circle (track)
     Rectangle {
         width: 100%;
         height: 100%;
@@ -332,6 +347,7 @@ component SmallSpinner inherits Rectangle {
         background: root.accent.darker(60%);
     }
 
+    // Progress arc: arc-len = progress * 360° (min 30° so it's always visible when active)
     Path {
         width: 100%;
         height: 100%;
@@ -348,14 +364,16 @@ component SmallSpinner inherits Rectangle {
         property <float> cx: 10;
         property <float> cy: 10;
         property <float> start: angle;
-        property <float> arc-len: 120;
+        property <float> arc-len: clamp(root.progress * 340, 30, 340);
+        // large-arc flag: 1 if arc > 180°
+        property <float> large: arc-len > 180 ? 1 : 0;
 
         property <float> x1: cx + r * sin(start * 1deg);
         property <float> y1: cy - r * cos(start * 1deg);
         property <float> x2: cx + r * sin((start + arc-len) * 1deg);
         property <float> y2: cy - r * cos((start + arc-len) * 1deg);
 
-        commands: "M " + x1 + " " + y1 + " A " + r + " " + r + " 0 0 1 " + x2 + " " + y2;
+        commands: "M " + x1 + " " + y1 + " A " + r + " " + r + " 0 " + large + " 1 " + x2 + " " + y2;
     }
 }
 
@@ -496,11 +514,27 @@ component FileCard inherits Rectangle {
         }
     }
 
-    // Bottom row (original style)
+    // Bottom row (matches design: checkbox + name + button)
     HorizontalLayout {
         y: 148px;
         height: 28px;
         spacing: 8px;
+
+        // Checkbox - shows progress spinner while downloading
+        if root.downloading: SmallSpinner {
+            width: 20px;
+            height: 20px;
+            active: true;
+            accent: #22c55e;
+            progress: root.progress;
+        }
+        if !root.downloading: Rectangle {
+            width: 20px;
+            height: 20px;
+            border-width: 1px;
+            border-color: #666;
+            border-radius: 4px;
+        }
 
         Text {
             text: filename;
@@ -514,6 +548,8 @@ component FileCard inherits Rectangle {
         OutlineButton {
             width: 80px;
             height: 28px;
+            // "Open" is blue accent, "Save" is white/grey
+            accent: root.is-local || root.saved;
             text: root.downloading ? Math.round(root.progress * 100) + "%"
                 : root.is-local ? "Open"
                 : root.saved ? "Open"
@@ -577,9 +613,10 @@ export component MainWindow inherits Window {
     callback add_file_pressed();
     callback save_file(string);
     callback open_file(string);
+    callback save_all_pressed();
     callback exit_pressed();
 
-    // Opaque backdrop — ensures full coverage on Wayland where
+    // Opaque backdrop - ensures full coverage on Wayland where
     // Window.background alone may not fill the compositor surface.
     Rectangle {
         width: 100%;
@@ -596,6 +633,12 @@ export component MainWindow inherits Window {
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
+
+        // Logo top-left
+        KeibiDropLogo {
+            x: 115px;
+            y: 24px;
+        }
 
         t1 := Text {
             y: 127px;
@@ -622,9 +665,9 @@ export component MainWindow inherits Window {
         }
 
         SectionElement {
-            x: 188px;
+            x: 279px;
             y: 262px;
-            info: "Their Code";
+            info: "Peer Code";
             inText <=> root.peer_code;
             readOnly: false;
             buttonText: "Add";
@@ -632,16 +675,16 @@ export component MainWindow inherits Window {
             sectionNumber: 1;
         }
 
-        // Peer code feedback — inside card 1's empty bottom zone
+        // Peer code feedback - inside card 1's empty bottom zone
         if root.peer_code_added: Text {
-            x: 300px;
+            x: 390px;
             y: 383px;
             text: "✓ Code added";
             color: #22c55e;
             font-size: 13px;
         }
         if root.peer_code_error: Text {
-            x: 300px;
+            x: 390px;
             y: 383px;
             text: "✗ Invalid code";
             color: #ef4444;
@@ -649,9 +692,9 @@ export component MainWindow inherits Window {
         }
 
         snd := SectionElement {
-            x: 188px;
+            x: 279px;
             y: 437px;
-            info: "Your Code — share via Signal, Telegram, or email";
+            info: "Your Code - share via Signal, Telegram, or email";
             inText: root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
             readOnly: true;
             buttonText: "Copy";
@@ -707,7 +750,7 @@ export component MainWindow inherits Window {
             animate border-color { duration: 150ms; }
         }
 
-        // Cancel button — visible while creating or joining
+        // Cancel button - visible while creating or joining
         if root.room_action != 0: OutlineButton {
             x: snd.x + snd.width + 38px;
             y: snd.y + snd.height - 34px + 88px;
@@ -756,123 +799,81 @@ export component MainWindow inherits Window {
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
 
-        // ── Header bar ──────────────────────────────────────────
-        Rectangle {
-            x: 0; y: 0;
-            width: parent.width;
-            height: 56px;
-            background: rgba(255,255,255,0.03);
-            border-width: 1px;
-            border-color: rgba(255,255,255,0.08);
+        // Logo top-left (matches design)
+        KeibiDropLogo {
+            x: 115px;
+            y: 24px;
+        }
 
-            // Status dot
+        // Connected status - below logo, vertically aligned
+        HorizontalLayout {
+            x: 115px;
+            y: 55px;
+            height: 14px;
+            spacing: 6px;
+            alignment: start;
+
             Rectangle {
-                x: 120px;
-                y: (parent.height - self.height) / 2;
                 width: 8px;
                 height: 8px;
+                y: (parent.height - self.height) / 2;
                 border-radius: 4px;
                 background: #22c55e;
             }
-            // Status label
             Text {
-                x: 136px;
-                y: 0;
-                height: 56px;
                 text: "Connected";
                 color: #22c55e;
                 font-size: 13px;
                 vertical-alignment: center;
             }
-
-            // Add File button
-            OutlineButton {
-                x: parent.width - 440px;
-                y: (parent.height - self.height) / 2;
-                text: "Add File";
-                clicked => { root.add_file_pressed() }
-            }
-
-            // Disconnect button
-            OutlineButton {
-                x: parent.width - 260px;
-                y: (parent.height - self.height) / 2;
-                text: "Disconnect";
-                clicked => { root.disconnect_pressed() }
-            }
         }
 
-        // Large spinner: visible during drag-and-drop or when files are downloading
-        if root.drag_hovering || root.any_downloading: SpinnerArc {
+        // Disconnect button top-right - aligned with Exit
+        OutlineButton {
+            x: parent.width - 90px - 10px - 161px;
+            y: 20px;
+            text: "Disconnect";
+            clicked => { root.disconnect_pressed() }
+        }
+
+        // Save All button
+        OutlineButton {
+            x: parent.width - 90px - 10px - 161px - 10px - 120px;
+            y: 20px;
+            width: 120px;
+            text: "Save All";
+            clicked => { root.save_all_pressed() }
+        }
+
+        // "+" circle always visible, spins only during drag-hover or active transfers
+        SpinnerArc {
             x: (parent.width - self.width) / 2;
-            y: 100px;
+            y: 90px;
             size: 180px;
-            spinning: true;
+            spinning: root.drag_hovering || root.any_downloading;
+            clicked => { root.add_file_pressed() }
         }
 
-        // Empty state (no spinner, no files)
-        if root.file_list.length == 0 && !root.drag_hovering && !root.any_downloading: Rectangle {
-            y: 56px;
+        // Scrollable file grid
+        ScrollView {
+            y: 310px;
             width: parent.width;
-            height: parent.height - 56px;
-            background: transparent;
+            height: parent.height - 310px;
+            viewport-height: Math.ceil(root.file_list.length / 4) * 200px;
 
-            VerticalLayout {
-                alignment: center;
-                spacing: 12px;
-
-                HorizontalLayout {
-                    alignment: center;
-
-                Rectangle {
-                    width: 320px;
-                    height: 160px;
-                    border-radius: 12px;
-                    border-width: 1px;
-                    border-color: rgba(255,255,255,0.08);
-                    background: rgba(255,255,255,0.02);
-                    horizontal-stretch: 0;
-
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 8px;
-                        Text {
-                            text: "+";
-                            font-size: 40px;
-                            color: rgba(255,255,255,0.15);
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: "No files yet";
-                            font-size: 15px;
-                            color: #9ca3af;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: "Add a file or wait for your peer";
-                            font-size: 13px;
-                            color: #555;
-                            horizontal-alignment: center;
-                        }
-                    }
-                }
-                } // HorizontalLayout
+            for file[idx] in root.file_list: FileCard {
+                x: 40px + mod(idx, 4) * 265px;
+                y: floor(idx / 4) * 200px;
+                filename: file.name;
+                file-type: file.file-type;
+                downloading: file.downloading;
+                uploading: file.uploading;
+                progress: file.progress;
+                saved: file.saved;
+                is-local: file.is-local;
+                save-clicked => { root.save_file(file.name) }
+                open-clicked => { root.open_file(file.name) }
             }
-        }
-
-        // File grid
-        for file[idx] in root.file_list: FileCard {
-            x: 120px + mod(idx, 4) * 270px;
-            y: 340px + floor(idx / 4) * 200px;
-            filename: file.name;
-            file-type: file.file-type;
-            downloading: file.downloading;
-            uploading: file.uploading;
-            progress: file.progress;
-            saved: file.saved;
-            is-local: file.is-local;
-            save-clicked => { root.save_file(file.name) }
-            open-clicked => { root.open_file(file.name) }
         }
     }
 
@@ -886,45 +887,45 @@ export component MainWindow inherits Window {
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
 
-        // ── Header bar (matches Screen 1) ───────────────────────
-        Rectangle {
-            x: 0; y: 0;
-            width: parent.width;
-            height: 56px;
-            background: rgba(255,255,255,0.03);
-            border-width: 1px;
-            border-color: rgba(255,255,255,0.08);
+        // Logo top-left (matches design)
+        KeibiDropLogo {
+            x: 115px;
+            y: 24px;
+        }
+
+        // Connected status - below logo, vertically aligned
+        HorizontalLayout {
+            x: 115px;
+            y: 55px;
+            height: 14px;
+            spacing: 6px;
+            alignment: start;
 
             Rectangle {
-                x: 120px;
-                y: (parent.height - self.height) / 2;
                 width: 8px;
                 height: 8px;
+                y: (parent.height - self.height) / 2;
                 border-radius: 4px;
                 background: #22c55e;
             }
             Text {
-                x: 136px;
-                y: 0;
-                height: 56px;
                 text: "Connected · FUSE mounted";
                 color: #22c55e;
                 font-size: 13px;
                 vertical-alignment: center;
             }
+        }
 
-            OutlineButton {
-                x: parent.width - 260px;
-                y: (parent.height - self.height) / 2;
-                text: "Disconnect";
-                clicked => { root.disconnect_pressed() }
-            }
+        // Disconnect button top-right - aligned with Exit
+        OutlineButton {
+            x: parent.width - 90px - 10px - 161px;
+            y: 20px;
+            text: "Disconnect";
+            clicked => { root.disconnect_pressed() }
         }
 
         // ── Main content ─────────────────────────────────────────
         VerticalLayout {
-            y: 56px;
-            height: parent.height - 56px;
             alignment: center;
             spacing: 16px;
             padding-left: 120px;
@@ -983,16 +984,11 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Logo shown only on connect screen; exit button always on top
-    if current_screen == 0: KeibiDropLogo {
-        x: 115px;
-        y: 70px;
-    }
-
+    // Exit button (top-right, all screens)
     OutlineButton {
-        x: parent.width - 80px;
-        y: 11px;
-        width: 60px;
+        x: parent.width - 90px;
+        y: 20px;
+        width: 70px;
         height: 34px;
         text: "Exit";
         clicked => { root.exit_pressed() }

@@ -1,2 +1,5 @@
 rust/target/*
+rust/src/bindings.rs
+libkeibidrop.a
+libkeibidrop.h
 

@@ -31,6 +31,11 @@ build-static-rust-bridge:
 rust-bindings: protoc build-static-rust-bridge
 	bindgen libkeibidrop.h -o rust/src/bindings.rs
 
+# One-step build: Go static lib → bindgen → Rust release binary
+# bindgen runs automatically in rust/build.rs (platform-correct, no manual step)
+build-rust: protoc build-static-rust-bridge
+	cd rust && cargo build --release
+
 # Preview Slint UI (requires slint-viewer)
 # Install: cargo install slint-viewer
 slint-preview:

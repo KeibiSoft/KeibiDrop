@@ -538,13 +538,14 @@ fn main() {
             let c_name = CString::new(name.clone()).unwrap();
             let size = bindings::KD_GetFileSizeByName(c_name.as_ptr() as *mut i8);
 
-            // Ensure save directory exists
-            if let Err(e) = std::fs::create_dir_all(&save_path) {
-                eprintln!("Failed to create save directory {}: {}", save_path, e);
-                return;
-            }
-
             let local_path = format!("{}/{}", save_path, name);
+            // Create parent directories (handles nested paths like screenshots/foo.png)
+            if let Some(parent) = Path::new(&local_path).parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!("Failed to create directory {}: {}", parent.display(), e);
+                    return;
+                }
+            }
 
             println!("Saving file {} -> {}", name, local_path);
 
@@ -608,11 +609,83 @@ fn main() {
             let _ = Command::new("explorer").arg(&local_path).spawn();
         });
 
-        // Handle Exit: clean shutdown
+        // Handle Save All: save every remote unsaved file
+        let downloads_all = downloads.clone();
+        let save_path_all = to_save.clone();
+        app.on_save_all_pressed(move || {
+            // Collect remote file names that haven't been saved yet
+            // Use same name format as file watcher: trim leading "/" but keep subdirs
+            let file_count = bindings::KD_GetFileCount();
+            let mut to_save_names: Vec<String> = Vec::new();
+            for i in 0..file_count {
+                let name_ptr = bindings::KD_GetFileName(i);
+                if name_ptr.is_null() {
+                    continue;
+                }
+                let raw = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
+                let name = raw.trim_start_matches('/').to_string();
+                // Skip already-saved or currently-downloading
+                let dl = downloads_all.lock().unwrap();
+                let dominated = dl.get(&name).map_or(false, |d| d.saved || d.downloading);
+                drop(dl);
+                if !dominated && !is_hidden_file(&name) {
+                    to_save_names.push(name);
+                }
+            }
+            println!("Save All: {} files to save", to_save_names.len());
+
+            let downloads = downloads_all.clone();
+            let base = save_path_all.clone();
+            for name in to_save_names {
+                let c_name = CString::new(name.clone()).unwrap();
+                let size = bindings::KD_GetFileSizeByName(c_name.as_ptr() as *mut i8);
+                let local_path = format!("{}/{}", base, name);
+                // Create parent directories (handles nested paths like screenshots/foo.png)
+                if let Some(parent) = Path::new(&local_path).parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        eprintln!("Failed to create directory {}: {}", parent.display(), e);
+                        continue;
+                    }
+                }
+                {
+                    let mut dl = downloads.lock().unwrap();
+                    dl.insert(
+                        name.clone(),
+                        DownloadInfo {
+                            local_path: local_path.clone(),
+                            expected_size: size,
+                            downloading: true,
+                            saved: false,
+                        },
+                    );
+                }
+                let dl_clone = downloads.clone();
+                let n = name.clone();
+                std::thread::spawn(move || {
+                    let c_n = CString::new(n.clone()).unwrap();
+                    let c_p = CString::new(local_path.clone()).unwrap();
+                    let res = bindings::KD_SaveFileByName(c_n.into_raw(), c_p.into_raw());
+                    let mut dl = dl_clone.lock().unwrap();
+                    if let Some(info) = dl.get_mut(&n) {
+                        info.downloading = false;
+                        if res == 0 {
+                            info.saved = true;
+                            println!("Download complete: {}", n);
+                        } else {
+                            let err = get_last_error();
+                            eprintln!("Download failed for {}: {}", n, err);
+                        }
+                    }
+                });
+            }
+        });
+
+        // Handle Exit: notify peer + clean shutdown
         let weak_exit = app.as_weak();
         app.on_exit_pressed(move || {
             println!("Exit pressed, shutting down...");
             bindings::KD_UnmountFilesystem();
+            bindings::KD_Disconnect();
             bindings::KD_Stop();
             if let Some(app) = weak_exit.upgrade() {
                 let _ = app.hide();
