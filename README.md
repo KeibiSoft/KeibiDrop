@@ -58,15 +58,15 @@ The sender and receiver perform a secure key exchange via a short-lived relay se
 
 ## Disclaimer
 
-We used **GPT-4o (in Monday mode)** for dopamine kicks, memes, and to generate some code and docs.
+We used **GPT-4o (in Monday mode)** for dopamine kicks, memes, and to generate some code and docs. Since November 2025, we also use **Claude Code** for development.
 
 We gained the knowledge in this space without relying on ~AI~ sycophancy.
 
-The first version has some red flags:
-1. There is no file transfer resume on lost connection.
-2. Private keys and session keys are stored in memory (no TPM/secure enclave integration yet).
+Current status:
+- File transfers resume automatically on reconnection.
+- Private keys and session keys live in memory only — they are destroyed on application exit (no TPM/secure enclave integration yet).
 
-Thus treat it as a functional demo. We plan to maintain it and improve it as resources permit.
+Treat it as a functional demo. We plan to maintain it and improve it as resources permit.
 
 > Re-reading all this word soup in the README, makes me think about writing novels inside a code project, where the foot notes live inside the git commit message, the comments provide the narrators voice, and the code the action flow.
 
@@ -120,7 +120,7 @@ After running pjdfstest, specific unsupported operations will be documented here
 
 ---
 
-## ⚠️ Requirements
+## Requirements
 
 - **All platforms**: [go 1.24](tip.golang.org/doc/go1.24)
 - **All platforms**: Requires `cgo` (due to `cgofuse` from WinFsp)
@@ -143,7 +143,7 @@ This creates `/etc/fuse.conf` with the `user_allow_other` option, which allows n
 
 ---
 
-## ⚠️ Networking Requirements
+## Networking Requirements
 
 KeibiDrop uses **direct P2P communication over IPv6**. (Mainly because I did not want to bother with STUN/TURN servers.)
 
@@ -163,13 +163,15 @@ This approach avoids leaking IP metadata to third-party STUN servers, aligning w
 
 ## Repository Structure
 
-```md
-cmd/ # Main entry point
-pkg/crypto/ # Cryptographic primitives
-pkg/filesystem # FUSE filesystem
-go.mod # Module definition
-go.sum # Dependencies
-Security.md # Protocol-level cryptographic design
+```
+cmd/                # Go entry points (GUI + CLI)
+pkg/crypto/         # Cryptographic primitives (ML-KEM, X25519, ChaCha20)
+pkg/logic/          # Core logic, gRPC service, connection handling
+pkg/filesystem/     # FUSE virtual filesystem
+rust/               # Slint UI (Rust), FFI bindings to Go
+rustbridge/         # Go-to-Rust FFI bridge (c-archive)
+Makefile            # Build targets (build-rust, build-static-rust-bridge, etc.)
+Security.md         # Protocol-level cryptographic design
 ```
 
 ---
