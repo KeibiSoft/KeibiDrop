@@ -55,8 +55,9 @@ type ReconnectManager struct {
 	AcceptConn      func(timeout time.Duration) (net.Conn, error)             // Accept incoming connection
 
 	// Control
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx     context.Context
+	cancel  context.CancelFunc
+	stopped atomic.Bool // prevents new loops after Stop()
 }
 
 // NewReconnectManager creates a new reconnection manager with default settings.
@@ -102,6 +103,10 @@ func (r *ReconnectManager) OnDisconnect() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if r.stopped.Load() {
+		return // Manager has been permanently stopped
+	}
+
 	if ReconnectState(r.state.Load()) == ReconnectStateReconnecting {
 		return // Already reconnecting
 	}
@@ -117,10 +122,14 @@ func (r *ReconnectManager) OnDisconnect() {
 	go r.reconnectLoop()
 }
 
-// Stop halts any ongoing reconnection attempts.
+// Stop halts any ongoing reconnection attempts and prevents new ones.
 func (r *ReconnectManager) Stop() {
-	if r.cancel != nil {
-		r.cancel()
+	r.stopped.Store(true)
+	r.mu.Lock()
+	cancel := r.cancel
+	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }
 

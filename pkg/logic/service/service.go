@@ -36,10 +36,12 @@ var (
 
 type KeibidropServiceImpl struct {
 	bindings.UnimplementedKeibiServiceServer
-	Session     *session.Session
-	Logger      *slog.Logger
-	FS          *filesystem.FS
-	SyncTracker *synctracker.SyncTracker
+	Session      *session.Session
+	Logger       *slog.Logger
+	FS           *filesystem.FS
+	SyncTracker  *synctracker.SyncTracker
+	OnEvent      func(string)
+	OnDisconnect func() // Called (in goroutine) when peer sends DISCONNECT; cancels context to trigger cleanup.
 }
 
 func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (*bindings.DebugResponse, error) {
@@ -50,6 +52,21 @@ func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (
 
 func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRequest) (*bindings.NotifyResponse, error) {
 	logger := kd.Logger.With("method", "notify", "req-type", req.Type)
+
+	// Handle DISCONNECT before FS checks — it doesn't need a mounted filesystem.
+	if req.Type == bindings.NotifyType_DISCONNECT {
+		logger.Info("Peer requested graceful disconnect")
+		if kd.OnEvent != nil {
+			kd.OnEvent("peer_disconnected:")
+		}
+		// Cancel context in a goroutine to trigger Run()'s ctx.Done() cleanup.
+		// Must not call Stop() directly here — it tears down the gRPC server
+		// we're currently handling a request on, which would deadlock.
+		if kd.OnDisconnect != nil {
+			go kd.OnDisconnect()
+		}
+		return &bindings.NotifyResponse{Status: "ok"}, nil
+	}
 
 	if kd.FS == nil && kd.SyncTracker == nil {
 		logger.Warn("Filesystem not mounted")

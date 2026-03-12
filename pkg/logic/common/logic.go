@@ -125,6 +125,14 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 
 	localPath = filepath.Clean(localPath)
 
+	// Ensure parent directories exist (for files in subdirectories).
+	if dir := filepath.Dir(localPath); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			logger.Error("Failed to create parent directories", "error", err)
+			return err
+		}
+	}
+
 	f, err := os.Create(localPath)
 	if err != nil {
 		logger.Error("Failed to create local file", "error", err)
@@ -252,7 +260,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
 	}
-	if kd.running {
+	if kd.running.Load() {
 		logger.Warn("Already running, aborting...")
 		return ErrAlreadyRunning
 	}
@@ -308,6 +316,8 @@ func (kd *KeibiDrop) JoinRoom() error {
 	}
 
 	if !kd.IsFUSE {
+		// Unblock Run()'s <-filesystemReady so it can process signals.
+		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
 		logger.Info("Success, starting without FUSE")
 		return nil
 	}
@@ -327,7 +337,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
 	}
-	if kd.running {
+	if kd.running.Load() {
 		logger.Warn("Already running, aborting...")
 		return ErrAlreadyRunning
 	}
@@ -390,6 +400,8 @@ func (kd *KeibiDrop) CreateRoom() error {
 	}
 
 	if !kd.IsFUSE {
+		// Unblock Run()'s <-filesystemReady so it can process signals.
+		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
 		logger.Info("Success, starting without FUSE")
 		return nil
 	}
@@ -401,6 +413,26 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 	logger.Info("Success")
 	return nil
+}
+
+// NotifyDisconnect sends a best-effort DISCONNECT notification to the peer
+// so they can clean up immediately instead of waiting for health monitor timeout.
+func (kd *KeibiDrop) NotifyDisconnect() {
+	logger := kd.logger.With("method", "notify-disconnect")
+	if kd.session == nil || kd.session.GRPCClient == nil {
+		logger.Warn("Skipping disconnect notification: no session or gRPC client")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := kd.session.GRPCClient.Notify(ctx, &bindings.NotifyRequest{
+		Type: bindings.NotifyType_DISCONNECT,
+	})
+	if err != nil {
+		logger.Warn("Failed to send disconnect notification", "error", err)
+	} else {
+		logger.Info("Disconnect notification sent successfully")
+	}
 }
 
 // This is blocking.

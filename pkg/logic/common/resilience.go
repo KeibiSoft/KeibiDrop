@@ -81,6 +81,11 @@ func (kd *KeibiDrop) onDisconnect() {
 	logger := kd.logger.With("event", "disconnect")
 	logger.Warn("Connection lost, initiating reconnection")
 
+	// Push event to UI so it can react immediately.
+	if kd.OnEvent != nil {
+		kd.OnEvent("peer_disconnected:health_timeout")
+	}
+
 	// Pause relay keepalive during reconnection
 	if kd.RelayKeepalive != nil {
 		kd.RelayKeepalive.Pause()
