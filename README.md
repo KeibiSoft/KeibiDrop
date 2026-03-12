@@ -145,12 +145,15 @@ Security.md # Protocol-level cryptographic design
 
 ---
 
-## Build
+## Setup & Build
+
+For a complete step-by-step guide (prerequisites, build options, running, troubleshooting), see **[SETUP.md](./SETUP.md)**.
+
+Quick build:
 
 ```bash
 go build -o keibidrop-gui ./cmd/keibidrop.go
 go build -o keibidrop-cli ./cmd/cli/keibidrop-cli.go
-
 ```
 
 ---
