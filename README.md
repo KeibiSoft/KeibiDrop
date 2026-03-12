@@ -22,8 +22,29 @@ The sender and receiver perform a secure key exchange via a short-lived relay se
 
 > In even simpler terms: Share with your peer the "long password" via chat and start sharing files.
 
-⚙️ Usage example, CLI + GUI instructions coming soon.  
-📷 Screenshots and GIFs will be added after the v0 transport is finalized.
+### How it works
+
+**Step 1** — Both peers start KeibiDrop. Copy your code and send it to your peer via Signal, Telegram, or any chat.
+
+| Peer A (fresh) | Peer B (code exchanged) |
+|---|---|
+| ![Home screen](demo-photos/HomeScreen1-Client1.png) | ![Code added](demo-photos/HomeScreen2-Client2.png) |
+
+**Step 2** — Paste each other's codes, then Create Room / Join Room. Connection establishes automatically.
+
+| Creating room... |
+|---|
+| ![Creating room](demo-photos/HomeScreen3-Client2.png) |
+
+**Step 3** — Connected! Share files in real time.
+
+| FUSE mode (virtual folder in Finder) | No-FUSE mode (drag & drop UI) |
+|---|---|
+| ![FUSE connected](demo-photos/ConnectedScreenFUSE-Client1.png) | ![No-FUSE connected](demo-photos/ConnectedScreen-NO-FUSE-CLient2.png) |
+
+| FUSE folder open in Finder | File received (no-FUSE) |
+|---|---|
+| ![FUSE Finder](demo-photos/ConnectedScreenFUSE2-Client1.png) | ![File received](demo-photos/ConnectedScreen-NO-FUSE2-Client2.png) |
 
 ---
 
@@ -147,13 +168,15 @@ Security.md # Protocol-level cryptographic design
 
 ## Setup & Build
 
-For a complete step-by-step guide (prerequisites, build options, running, troubleshooting), see **[SETUP.md](./SETUP.md)**.
+Requires **Go 1.24.3+**, **Rust toolchain**, and **CGO enabled**. On macOS, Apple's `clang` must be the C compiler (`go env CC` should show `clang`, not `gcc`).
 
-Quick build:
+For the full setup guide (prerequisites, troubleshooting, environment variables), see **[SETUP.md](./SETUP.md)**.
+
+Quick build (Rust UI):
 
 ```bash
-go build -o keibidrop-gui ./cmd/keibidrop.go
-go build -o keibidrop-cli ./cmd/cli/keibidrop-cli.go
+make build-static-rust-bridge
+cd rust && cargo build --release
 ```
 
 ---
