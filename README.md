@@ -42,9 +42,17 @@ The sender and receiver perform a secure key exchange via a short-lived relay se
 |---|---|
 | ![FUSE connected](demo-photos/ConnectedScreenFUSE-Client1.png) | ![No-FUSE connected](demo-photos/ConnectedScreen-NO-FUSE-CLient2.png) |
 
-| FUSE folder open in Finder | File received (no-FUSE) |
+**Step 4** — Peer drags a file in. It appears instantly on the other side.
+
+| Image arrives in FUSE folder (Finder) | Image received in no-FUSE UI |
 |---|---|
-| ![FUSE Finder](demo-photos/ConnectedScreenFUSE2-Client1.png) | ![File received](demo-photos/ConnectedScreen-NO-FUSE2-Client2.png) |
+| ![FUSE file received](demo-photos/ConnectedScreenFUSE3-Client1.png) | ![No-FUSE file received](demo-photos/ConnectedScreen-NO-FUSE3-Client2.png) |
+
+**Step 5** — Share more files, including video. Open directly from the UI or FUSE mount.
+
+| Image + video in FUSE folder | Image + video in no-FUSE UI |
+|---|---|
+| ![FUSE multiple files](demo-photos/ConnectedScreen-FUSE4-Client1.png) | ![No-FUSE multiple files](demo-photos/ConnectedScreen-NO-FUSE6-Client2.png) |
 
 ---
 
