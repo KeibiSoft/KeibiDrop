@@ -46,7 +46,6 @@ func sortedLocalKeys() []string {
 }
 
 var kd *common.KeibiDrop
-var cancel context.CancelFunc
 
 // Error reporting: thread-safe last error string.
 var (
@@ -85,7 +84,6 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	logger := slog.New(handler).With("component", "rustbridge")
 
 	ctx, c := context.WithCancel(context.Background())
-	cancel = c
 
 	instance, err := common.NewKeibiDrop(ctx, logger, fuse, parsed, int(inbound), int(outbound), m, s, prefetch, push)
 	if err != nil {
@@ -94,6 +92,8 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		return -2
 	}
 	kd = instance
+	kd.Cancel = c
+	kd.OnEvent = pushEvent
 	go kd.Run()
 	return 0
 }
@@ -199,10 +199,18 @@ func KD_UnmountFilesystem() {
 	}
 }
 
+//export KD_Disconnect
+func KD_Disconnect() {
+	if kd != nil {
+		kd.NotifyDisconnect()
+		kd.Stop()
+	}
+}
+
 //export KD_Stop
 func KD_Stop() {
-	if cancel != nil {
-		cancel()
+	if kd != nil {
+		kd.Shutdown()
 	}
 }
 

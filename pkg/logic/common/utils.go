@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -324,7 +325,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	}
 
 	if ready != nil {
-		close(ready)
+		kd.filesystemReadyOnce.Do(func() {
+			close(ready)
+		})
 	}
 
 	return nil
@@ -341,11 +344,14 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 			return fmt.Errorf("timeout connecting to grpc server")
 		}
 
-		// only try if the inbound connection (single-conn listener) is non-nil
-		if kd.session != nil && kd.session.Session != nil && kd.session.Session.Inbound != nil {
-			// create gRPC client using the hijacked outbound conn
+		// only try if the outbound connection is available
+		if kd.session != nil && kd.session.Session != nil && kd.session.Session.Outbound != nil {
+			// Capture the outbound conn so the dialer closure is safe even
+			// if kd.session is nil'd later by the Stop handler.
+			outboundConn := kd.session.Session.Outbound
+
 			dialer := func(ctx context.Context, _ string) (net.Conn, error) {
-				return kd.session.Session.Outbound, nil
+				return outboundConn, nil
 			}
 
 			conn, err := grpc.Dial(
@@ -360,6 +366,7 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 			if err != nil {
 				logger.Debug("grpc dial attempt failed, retrying", "err", err)
 			} else {
+				kd.grpcClientConn = conn
 				kd.session.GRPCClient = bindings.NewKeibiServiceClient(conn)
 				kd.KDClient = kd.session.GRPCClient
 				logger.Info("connected to grpc server")
@@ -388,6 +395,16 @@ func (kd *KeibiDrop) startGRPCServer() error {
 		Session:     kd.session,
 		Logger:      kd.logger.With("component", "keibidrop-server"),
 		SyncTracker: kd.SyncTracker,
+		OnEvent:     kd.OnEvent,
+		OnDisconnect: func() {
+			// Unmount first to unblock Mount() in Run()'s Start handler.
+			// Mount() blocks the select loop, so ctx.Done() can't fire
+			// until Mount() returns (which only happens on Unmount).
+			if kd.FS != nil {
+				kd.FS.Unmount()
+			}
+			kd.cancelContext()
+		},
 	}
 
 	kd.KDSvc = svc
@@ -402,49 +419,40 @@ func (kd *KeibiDrop) startGRPCServer() error {
 }
 
 type singleConnListener struct {
-	conn   net.Conn
-	done   chan struct{}
-	inUse  bool
-	closed chan struct{}
+	conn     net.Conn
+	addr     net.Addr
+	done     chan struct{}
+	inUse    bool
+	closeOnce sync.Once
 }
 
 func NewSingleConnListener(conn net.Conn) net.Listener {
 	return &singleConnListener{
-		conn:   conn,
-		done:   make(chan struct{}),
-		closed: make(chan struct{}),
-		inUse:  false,
+		conn: conn,
+		addr: conn.LocalAddr(),
+		done: make(chan struct{}),
 	}
 }
 
 func (l *singleConnListener) Accept() (net.Conn, error) {
-	select {
-	case <-l.done:
+	if l.inUse {
+		// Block until Close is called, then return EOF.
+		<-l.done
 		return nil, io.EOF
-	default:
-		if l.inUse {
-			<-l.closed
-			return nil, nil
-		}
-		l.inUse = true
-		conn := l.conn
-		l.conn = nil
-		return conn, nil
 	}
+	l.inUse = true
+	conn := l.conn
+	l.conn = nil
+	return conn, nil
 }
 
 func (l *singleConnListener) Close() error {
-	if l.conn != nil {
-		close(l.closed)
+	l.closeOnce.Do(func() {
 		close(l.done)
-		return l.conn.Close()
-	}
+	})
 	return nil
 }
 
 func (l *singleConnListener) Addr() net.Addr {
-	if l.conn != nil {
-		return l.conn.LocalAddr()
-	}
-	return &net.TCPAddr{IP: net.IPv6loopback, Port: 0}
+	return l.addr
 }

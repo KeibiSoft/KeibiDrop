@@ -187,8 +187,13 @@ func (tp *TestPair) Teardown() {
 		tp.Bob.FS.Unmount()
 	}
 
-	// Step 2: Cancel context (tells Run() to exit after Mount() returns).
-	tp.Cancel()
+	// Step 2: Shutdown permanently stops Run() goroutines.
+	if tp.Alice != nil {
+		tp.Alice.Shutdown()
+	}
+	if tp.Bob != nil {
+		tp.Bob.Shutdown()
+	}
 
 	// Step 3: Wait for Run() goroutines to fully exit.
 	// This prevents ghost goroutines from re-mounting after teardown.

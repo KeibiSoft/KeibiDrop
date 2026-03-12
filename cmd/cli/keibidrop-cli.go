@@ -123,7 +123,11 @@ func (c *cliContext) executor(in string) {
 		}
 		deleteFile(c.kd, args[1])
 
+	case "disconnect":
+		disconnectRoom(c.kd)
+
 	case "exit", "quit":
+		c.kd.NotifyDisconnect()
 		c.kd.UnmountFilesystem()
 		fmt.Println("Goodbye.")
 		os.Exit(0)
@@ -164,6 +168,7 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 		{Text: "register", Description: "Register peer fingerprint"},
 		{Text: "create", Description: "Create a room"},
 		{Text: "join", Description: "Join a room by fingerprint"},
+		{Text: "disconnect", Description: "Disconnect from peer and reset session"},
 		{Text: "reset", Description: "Reset session, rotate keys"},
 		{Text: "add", Description: "Add file or folder to share"},
 		{Text: "list", Description: "List shared files"},
@@ -186,6 +191,7 @@ show relay                   Show the currently connected relay URL
 register <fingerprint>       Register a peer's fingerprint
 create                       Create a room
 join                         Join a room
+disconnect                   Disconnect from peer and reset session
 reset                        Reset session and rotate keys
 add <filepath>               Share a file or directory
 list                         List shared files and their locations
@@ -315,6 +321,18 @@ func pullFile(kd *common.KeibiDrop, remote, local string) {
 	fmt.Printf("Pulled '%s' to '%s'\n", remote, local)
 }
 
+func disconnectRoom(kd *common.KeibiDrop) {
+	kd.NotifyDisconnect()
+	_ = kd.UnmountFilesystem()
+	kd.Stop()
+	fp, err := kd.ExportFingerprint()
+	if err != nil {
+		color.Red("Failed to get new fingerprint: %v", err)
+		return
+	}
+	fmt.Println("Disconnected. New fingerprint:", fp)
+}
+
 func deleteFile(kd *common.KeibiDrop, path string) {
 	_ = kd
 	fmt.Println("[TODO] Unshared:", path)
@@ -389,6 +407,7 @@ func main() {
 	kd, err := common.NewKeibiDrop(kdctx, logger, finalVal, relayURL, inbound, outbound, toMount, toSave, prefetchOnOpen, pushOnWrite)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
+		color.Red("Fatal: %v", err)
 		os.Exit(1)
 	}
 
