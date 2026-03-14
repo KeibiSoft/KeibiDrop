@@ -226,8 +226,6 @@ cp ./myfile.pdf ./mount/               # share files with peer
 ./kd stop                              # shutdown
 ```
 
-FUSE mode is also supported — after connecting, remote files appear in `KD_MOUNT_PATH` as a virtual folder.
-
 See **[docs/kd-agent-guide.md](./docs/kd-agent-guide.md)** for the full agent integration guide.
 
 ---
