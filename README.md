@@ -56,6 +56,14 @@ KeibiDrop can be used in three ways: a [desktop GUI](#how-it-works) (Rust/Slint)
 |---|---|
 | ![FUSE multiple files](demo-photos/ConnectedScreen-FUSE4-Client1.png) | ![No-FUSE multiple files](demo-photos/ConnectedScreen-NO-FUSE6-Client2.png) |
 
+### Interactive CLI
+
+The interactive CLI (`keibidrop-cli`) provides the same functionality through a terminal REPL. Type commands, see results.
+
+| Interactive CLI session |
+|---|
+| ![Interactive CLI](demo-photos/KeibiDrop-Interactive-CLI.png) |
+
 ---
 
 ## Disclaimer
