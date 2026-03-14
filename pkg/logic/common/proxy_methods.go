@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"sync"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 
@@ -29,6 +30,7 @@ type ImplRemoteFileStream struct {
 	stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse]
 	handle uint64
 	path   string
+	mu     sync.Mutex // serializes Send+Recv pairs (gRPC streams are not concurrency-safe)
 }
 
 func NewImplRemoteFileStream(stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse], inode uint64, path string) *ImplRemoteFileStream {
@@ -39,15 +41,20 @@ func NewImplRemoteFileStream(stream grpc.BidiStreamingClient[bindings.ReadReques
 	}
 }
 func (rfs *ImplRemoteFileStream) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
+	// Serialize Send+Recv: gRPC bidirectional streams are not safe for
+	// concurrent Send() or concurrent Recv() from multiple goroutines.
+	// FUSE issues parallel reads (readahead), so without this lock the
+	// stream framing gets corrupted → ResourceExhausted with garbage sizes.
+	rfs.mu.Lock()
+	defer rfs.mu.Unlock()
+
 	err := rfs.stream.Send(&bindings.ReadRequest{Handle: rfs.handle, Path: rfs.path, Offset: uint64(offset), Size: uint32(size)})
 	if err != nil {
-		// TODO: Log err.
 		return nil, err
 	}
 
 	resp, err := rfs.stream.Recv()
 	if err != nil {
-		// TODO: Log err.
 		return nil, err
 	}
 
