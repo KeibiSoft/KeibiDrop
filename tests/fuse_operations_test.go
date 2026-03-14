@@ -41,33 +41,17 @@ func setupTestEnvironment(t *testing.T) (*TestConfig, *common.KeibiDrop, *common
 	require := require.New(t)
 	ctx := context.Background()
 
-	basePath := "/Users/marius/work/code/KeibiDrop/tests"
-
 	cfg := &TestConfig{
 		RelayURL:     "http://0.0.0.0:54321",
-		AliceSave:    basePath + "/SaveAlice_test",
-		BobSave:      basePath + "/SaveBob_test",
-		AliceMount:   basePath + "/MountAlice_test",
-		BobMount:     basePath + "/MountBob_test",
+		AliceSave:    t.TempDir(),
+		BobSave:      t.TempDir(),
+		AliceMount:   t.TempDir(),
+		BobMount:     t.TempDir(),
 		AliceInPort:  27001,
 		AliceOutPort: 27002,
 		BobInPort:    27003,
 		BobOutPort:   27004,
 	}
-
-	// Clean up any previous test runs
-	os.RemoveAll(cfg.AliceSave)
-	os.RemoveAll(cfg.BobSave)
-	exec.Command("umount", "-f", cfg.AliceMount).Run()
-	exec.Command("umount", "-f", cfg.BobMount).Run()
-	os.RemoveAll(cfg.AliceMount)
-	os.RemoveAll(cfg.BobMount)
-
-	// Create directories
-	require.NoError(os.MkdirAll(cfg.AliceSave, 0755))
-	require.NoError(os.MkdirAll(cfg.BobSave, 0755))
-	require.NoError(os.MkdirAll(cfg.AliceMount, 0755))
-	require.NoError(os.MkdirAll(cfg.BobMount, 0755))
 
 	parsedURL, err := url.Parse(cfg.RelayURL)
 	require.NoError(err)
@@ -123,12 +107,10 @@ func setupTestEnvironment(t *testing.T) (*TestConfig, *common.KeibiDrop, *common
 		kdAlice.Stop()
 		kdBob.Stop()
 		time.Sleep(500 * time.Millisecond)
-		exec.Command("umount", "-f", cfg.AliceMount).Run()
-		exec.Command("umount", "-f", cfg.BobMount).Run()
-		os.RemoveAll(cfg.AliceSave)
-		os.RemoveAll(cfg.BobSave)
-		os.RemoveAll(cfg.AliceMount)
-		os.RemoveAll(cfg.BobMount)
+		// Cross-platform unmount: /sbin/umount -f works on both
+		// Darwin and Linux. t.TempDir() handles dir cleanup.
+		exec.Command("/sbin/umount", "-f", cfg.AliceMount).Run()
+		exec.Command("/sbin/umount", "-f", cfg.BobMount).Run()
 	}
 
 	return cfg, kdAlice, kdBob, cleanup
