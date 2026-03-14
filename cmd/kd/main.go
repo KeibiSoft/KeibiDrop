@@ -1,0 +1,530 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// ABOUTME: kd is a non-interactive CLI for KeibiDrop, designed for AI agents.
+// ABOUTME: "kd start" runs a daemon; all other commands talk to it via Unix socket.
+
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/url"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+
+	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
+	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
+)
+
+// socketPath returns the Unix socket path for daemon<->client communication.
+func socketPath() string {
+	if s := os.Getenv("KD_SOCKET"); s != "" {
+		return s
+	}
+	return filepath.Join(os.TempDir(), "kd.sock")
+}
+
+// --- JSON protocol ---
+
+type Request struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
+}
+
+type Response struct {
+	OK    bool            `json:"ok"`
+	Data  json.RawMessage `json:"data,omitempty"`
+	Error string          `json:"error,omitempty"`
+}
+
+func okResponse(data any) Response {
+	b, _ := json.Marshal(data)
+	return Response{OK: true, Data: b}
+}
+
+func errResponse(msg string) Response {
+	return Response{OK: false, Error: msg}
+}
+
+// --- Daemon ---
+
+func runDaemon() {
+	sock := socketPath()
+
+	// Clean up stale socket
+	if _, err := os.Stat(sock); err == nil {
+		// Try connecting to see if another daemon is running
+		conn, err := net.Dial("unix", sock)
+		if err == nil {
+			conn.Close()
+			fmt.Fprintf(os.Stderr, `{"ok":false,"error":"daemon already running at %s"}`+"\n", sock)
+			os.Exit(1)
+		}
+		os.Remove(sock)
+	}
+
+	// Parse config from env
+	relayStr := os.Getenv("KD_RELAY")
+	if relayStr == "" {
+		relayStr = "https://keibidroprelay.keibisoft.com"
+	}
+	relayURL, err := url.Parse(relayStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"invalid KD_RELAY: %s"}`+"\n", err)
+		os.Exit(1)
+	}
+
+	inbound := envInt("KD_INBOUND_PORT", config.InboundPort)
+	outbound := envInt("KD_OUTBOUND_PORT", config.OutboundPort)
+	savePath := os.Getenv("KD_SAVE_PATH")
+	mountPath := os.Getenv("KD_MOUNT_PATH")
+	_, noFuse := os.LookupEnv("KD_NO_FUSE")
+	isFuse := checkfuse.IsFUSEPresent() && !noFuse
+	logFile := os.Getenv("KD_LOG_FILE")
+
+	// Setup logger
+	var logWriter *os.File = os.Stderr
+	if logFile != "" {
+		f, err := os.OpenFile(filepath.Clean(logFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err == nil {
+			logWriter = f
+			defer f.Close()
+		}
+	}
+	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "kd")
+
+	// Create KeibiDrop instance
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	kd, err := common.NewKeibiDrop(ctx, logger, isFuse, relayURL, inbound, outbound, mountPath, savePath, false, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"init failed: %s"}`+"\n", err)
+		os.Exit(1)
+	}
+	go kd.Run()
+
+	// Listen on Unix socket
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"socket listen: %s"}`+"\n", err)
+		os.Exit(1)
+	}
+	defer ln.Close()
+	defer os.Remove(sock)
+
+	// Handle signals for clean shutdown
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	fp, _ := kd.ExportFingerprint()
+	startData := map[string]any{
+		"socket":      sock,
+		"fingerprint": fp,
+		"relay":       relayStr,
+		"ip":          kd.LocalIPv6IP,
+		"fuse":        isFuse,
+		"save_path":   savePath,
+		"mount_path":  mountPath,
+	}
+	b, _ := json.Marshal(Response{OK: true, Data: mustMarshal(startData)})
+	fmt.Println(string(b))
+
+	var wg sync.WaitGroup
+	go func() {
+		<-sigCh
+		logger.Info("Shutting down")
+		kd.NotifyDisconnect()
+		kd.UnmountFilesystem()
+		kd.Shutdown()
+		ln.Close()
+	}()
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			break // listener closed
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			handleConn(conn, kd, cancel, ln)
+		}()
+	}
+	wg.Wait()
+}
+
+func handleConn(conn net.Conn, kd *common.KeibiDrop, cancel context.CancelFunc, ln net.Listener) {
+	defer conn.Close()
+
+	scanner := bufio.NewScanner(conn)
+	if !scanner.Scan() {
+		return
+	}
+
+	var req Request
+	if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+		writeResponse(conn, errResponse("invalid request JSON"))
+		return
+	}
+
+	resp := dispatch(kd, req, cancel, ln)
+	writeResponse(conn, resp)
+}
+
+func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln net.Listener) Response {
+	switch req.Command {
+	case "show":
+		return cmdShow(kd, req.Args)
+
+	case "register":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd register <fingerprint>")
+		}
+		err := kd.AddPeerFingerprint(req.Args[0])
+		if err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"registered": req.Args[0]})
+
+	case "create":
+		return cmdCreateOrJoin(kd, "create")
+
+	case "join":
+		return cmdCreateOrJoin(kd, "join")
+
+	case "add":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd add <filepath>")
+		}
+		err := kd.AddFile(req.Args[0])
+		if err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"added": req.Args[0]})
+
+	case "list":
+		return cmdList(kd)
+
+	case "pull":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd pull <remote-name> [local-path]")
+		}
+		remoteName := req.Args[0]
+		localPath := remoteName
+		if len(req.Args) >= 2 {
+			localPath = req.Args[1]
+		}
+		err := kd.PullFile(remoteName, localPath)
+		if err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"pulled": remoteName, "to": localPath})
+
+	case "status":
+		return cmdStatus(kd)
+
+	case "disconnect":
+		kd.NotifyDisconnect()
+		_ = kd.UnmountFilesystem()
+		kd.Stop()
+		fp, _ := kd.ExportFingerprint()
+		return okResponse(map[string]string{
+			"status":          "disconnected",
+			"new_fingerprint": fp,
+		})
+
+	case "stop", "quit":
+		kd.NotifyDisconnect()
+		kd.UnmountFilesystem()
+		kd.Shutdown()
+		go func() {
+			ln.Close()
+		}()
+		return okResponse(map[string]string{"status": "stopped"})
+
+	default:
+		return errResponse(fmt.Sprintf("unknown command: %s", req.Command))
+	}
+}
+
+func cmdShow(kd *common.KeibiDrop, args []string) Response {
+	data := map[string]string{}
+
+	// If no args, show everything
+	showAll := len(args) == 0
+
+	what := ""
+	if len(args) > 0 {
+		what = strings.Join(args, " ")
+	}
+
+	if showAll || what == "fingerprint" {
+		fp, err := kd.ExportFingerprint()
+		if err != nil {
+			return errResponse(err.Error())
+		}
+		data["fingerprint"] = fp
+	}
+	if showAll || what == "ip" {
+		data["ip"] = kd.LocalIPv6IP
+	}
+	if showAll || what == "peer" || what == "peer fingerprint" {
+		pfp, _ := kd.GetPeerFingerprint()
+		data["peer_fingerprint"] = pfp
+	}
+	if showAll || what == "peer ip" {
+		data["peer_ip"] = kd.PeerIPv6IP
+	}
+	if showAll || what == "relay" {
+		data["relay"] = kd.RelayEndoint.String()
+	}
+	if showAll || what == "status" {
+		data["connected"] = fmt.Sprintf("%v", kd.IsRunning())
+		data["connection_status"] = kd.ConnectionStatus()
+	}
+
+	if len(data) == 0 {
+		return errResponse(fmt.Sprintf("unknown show target: %s", what))
+	}
+	return okResponse(data)
+}
+
+func cmdCreateOrJoin(kd *common.KeibiDrop, mode string) Response {
+	if kd.OpInProgress.Add(1) != 1 {
+		kd.OpInProgress.Add(-1)
+		return errResponse("create/join already in progress")
+	}
+	defer kd.OpInProgress.Add(-1)
+
+	var err error
+	if mode == "create" {
+		err = kd.CreateRoom()
+	} else {
+		err = kd.JoinRoom()
+	}
+	if err != nil {
+		return errResponse(err.Error())
+	}
+
+	return okResponse(map[string]string{
+		"status":  "connected",
+		"peer_ip": kd.PeerIPv6IP,
+	})
+}
+
+func cmdList(kd *common.KeibiDrop) Response {
+	type fileInfo struct {
+		Name   string `json:"name"`
+		Size   uint64 `json:"size"`
+		Path   string `json:"path"`
+		Source string `json:"source"` // "local" or "remote"
+	}
+
+	var files []fileInfo
+
+	kd.SyncTracker.LocalFilesMu.RLock()
+	for k, v := range kd.SyncTracker.LocalFiles {
+		files = append(files, fileInfo{
+			Name:   k,
+			Size:   v.Size,
+			Path:   v.RealPathOfFile,
+			Source: "local",
+		})
+	}
+	kd.SyncTracker.LocalFilesMu.RUnlock()
+
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	for k, v := range kd.SyncTracker.RemoteFiles {
+		files = append(files, fileInfo{
+			Name:   k,
+			Size:   v.Size,
+			Path:   v.RealPathOfFile,
+			Source: "remote",
+		})
+	}
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
+
+	if files == nil {
+		files = []fileInfo{}
+	}
+	return okResponse(map[string]any{"files": files})
+}
+
+func cmdStatus(kd *common.KeibiDrop) Response {
+	fp, _ := kd.ExportFingerprint()
+	pfp, _ := kd.GetPeerFingerprint()
+
+	data := map[string]any{
+		"running":           kd.IsRunning(),
+		"connection_status": kd.ConnectionStatus(),
+		"fingerprint":       fp,
+		"peer_fingerprint":  pfp,
+		"ip":                kd.LocalIPv6IP,
+		"peer_ip":           kd.PeerIPv6IP,
+		"relay":             kd.RelayEndoint.String(),
+		"fuse":              kd.IsFUSE,
+		"mount_path":        kd.ToMount,
+		"save_path":         kd.ToSave,
+	}
+
+	// File counts
+	kd.SyncTracker.LocalFilesMu.RLock()
+	data["local_files"] = len(kd.SyncTracker.LocalFiles)
+	kd.SyncTracker.LocalFilesMu.RUnlock()
+
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	data["remote_files"] = len(kd.SyncTracker.RemoteFiles)
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
+
+	return okResponse(data)
+}
+
+// --- Client ---
+
+func runClient(cmd string, args []string) {
+	sock := socketPath()
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"daemon not running (socket: %s)"}`+"\n", sock)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	req := Request{Command: cmd, Args: args}
+	b, _ := json.Marshal(req)
+	fmt.Fprintf(conn, "%s\n", b)
+
+	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer for large responses
+	if scanner.Scan() {
+		fmt.Println(scanner.Text())
+	}
+}
+
+// --- Helpers ---
+
+func writeResponse(conn net.Conn, resp Response) {
+	b, _ := json.Marshal(resp)
+	fmt.Fprintf(conn, "%s\n", b)
+}
+
+func mustMarshal(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
+}
+
+func envInt(key string, fallback int) int {
+	s := os.Getenv(key)
+	if s == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"invalid %s: %s"}`+"\n", key, s)
+		os.Exit(1)
+	}
+	return v
+}
+
+func printHelp() {
+	help := `kd - KeibiDrop CLI for agents
+
+USAGE:
+  kd start                       Start daemon (foreground). Configure via env vars.
+  kd stop                        Stop the daemon.
+  kd show [what]                 Show info (fingerprint, ip, peer, relay, status, or all).
+  kd register <fingerprint>      Register peer's fingerprint.
+  kd create                      Create a room (you are the initiator).
+  kd join                        Join a room (peer must have created first).
+  kd add <filepath>              Share a file with the peer.
+  kd list                        List all shared files (local + remote).
+  kd pull <name> [local-path]    Download a remote file.
+  kd status                      Connection status and session info.
+  kd disconnect                  Disconnect (keys rotate, ready for new session).
+  kd stop                        Shutdown daemon.
+  kd help                        Show this help.
+
+ENVIRONMENT (for "kd start"):
+  KD_RELAY           Relay URL        (default: https://keibidroprelay.keibisoft.com)
+  KD_INBOUND_PORT    Listen port      (default: 26431)
+  KD_OUTBOUND_PORT   Outbound port    (default: 26432)
+  KD_SAVE_PATH       Where to save received files
+  KD_MOUNT_PATH      FUSE mount point
+  KD_NO_FUSE         Set to disable FUSE (any value)
+  KD_LOG_FILE        Log file path    (default: stderr)
+  KD_SOCKET          Unix socket path (default: /tmp/kd.sock)
+
+MODES:
+  FUSE mode:    Files appear in KD_MOUNT_PATH as a virtual folder.
+                Read/write files directly from the mount (like a shared drive).
+                After connecting, "kd status" shows the mount_path.
+
+  no-FUSE mode: Use "kd add <file>" to share and "kd pull <name> [path]" to download.
+                Set KD_NO_FUSE=1 to use this mode.
+
+EXAMPLE (agent workflow, no-FUSE):
+  # Terminal 1: start daemon
+  KD_SAVE_PATH=./received KD_NO_FUSE=1 kd start
+
+  # Terminal 2 (or from agent):
+  kd show fingerprint              # get your fingerprint, send to peer
+  kd register <peer-fingerprint>   # paste peer's fingerprint
+  kd create                        # or "kd join" if peer creates
+  kd add ./myfile.pdf              # share a file
+  kd list                          # see remote files
+  kd pull somefile.txt ./local.txt # download from peer
+  kd disconnect                    # done, keys rotated
+  kd stop                          # shutdown daemon
+
+EXAMPLE (agent workflow, FUSE):
+  # Terminal 1: start daemon with FUSE mount
+  KD_SAVE_PATH=./saved KD_MOUNT_PATH=./mount kd start
+
+  # Terminal 2 (or from agent):
+  kd show fingerprint              # get your fingerprint, send to peer
+  kd register <peer-fingerprint>   # paste peer's fingerprint
+  kd create                        # or "kd join" if peer creates
+  # After connecting, peer's files appear in ./mount/
+  ls ./mount/                      # see shared files from peer
+  cat ./mount/readme.txt           # read a remote file directly
+  cp ./myfile.pdf ./mount/         # share a file (copy into mount)
+  kd disconnect                    # done
+  kd stop                          # shutdown daemon
+
+All output is JSON: {"ok":true,"data":{...}} or {"ok":false,"error":"..."}
+Use "kd status" after connecting to see mount_path, save_path, and peer info.`
+
+	fmt.Println(help)
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		printHelp()
+		os.Exit(0)
+	}
+
+	cmd := os.Args[1]
+	switch cmd {
+	case "start":
+		runDaemon()
+	case "help", "--help", "-h":
+		printHelp()
+	default:
+		runClient(cmd, os.Args[2:])
+	}
+}
