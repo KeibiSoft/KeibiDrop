@@ -467,12 +467,31 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			kd.FS.Root.AfmLock.RLock()
 			f, ok := kd.FS.Root.AllFileMap[fuseKey]
 			kd.FS.Root.AfmLock.RUnlock()
-			if !ok {
+
+			// Fallback: files added via drag-and-drop (AddFile) live in
+			// SyncTracker.LocalFiles, not in FUSE's AllFileMap.
+			var realPath string
+			if ok {
+				realPath = f.RealPathOfFile
+			} else if kd.SyncTracker != nil {
+				lookupPath := strings.TrimPrefix(rec.Path, "/")
+				kd.SyncTracker.LocalFilesMu.RLock()
+				lf, lfOk := kd.SyncTracker.LocalFiles[lookupPath]
+				if !lfOk {
+					lf, lfOk = kd.SyncTracker.LocalFiles[rec.Path]
+				}
+				kd.SyncTracker.LocalFilesMu.RUnlock()
+				if lfOk {
+					realPath = lf.RealPathOfFile
+				}
+			}
+
+			if realPath == "" {
 				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(f.RealPathOfFile)
+			fh, err = os.Open(realPath)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
