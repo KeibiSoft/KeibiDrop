@@ -164,13 +164,15 @@ This approach avoids leaking IP metadata to third-party STUN servers, aligning w
 ## Repository Structure
 
 ```
-cmd/                # Go entry points (GUI + CLI)
+cmd/kd/             # Non-interactive CLI for AI agents (daemon + Unix socket)
+cmd/cli/            # Interactive CLI (prompt-based)
+cmd/                # Go entry points (GUI)
 pkg/crypto/         # Cryptographic primitives (ML-KEM, X25519, ChaCha20)
 pkg/logic/          # Core logic, gRPC service, connection handling
 pkg/filesystem/     # FUSE virtual filesystem
 rust/               # Slint UI (Rust), FFI bindings to Go
 rustbridge/         # Go-to-Rust FFI bridge (c-archive)
-Makefile            # Build targets (build-rust, build-static-rust-bridge, etc.)
+Makefile            # Build targets (build-rust, build-kd, etc.)
 Security.md         # Protocol-level cryptographic design
 ```
 
@@ -188,6 +190,41 @@ Quick build (Rust UI):
 make build-static-rust-bridge
 cd rust && cargo build --release
 ```
+
+Quick build (Agent CLI):
+
+```bash
+make build-kd
+```
+
+---
+
+## Agent / Scripting Mode
+
+`kd` is a non-interactive CLI designed for AI agents (Claude Code, etc.) and scripts. It runs as a daemon and accepts one-shot commands — no interactive prompts, all output is JSON.
+
+```bash
+# Start daemon
+KD_SAVE_PATH=./received KD_NO_FUSE=1 ./kd start
+
+# Exchange fingerprints and connect
+./kd show fingerprint                  # send this to peer
+./kd register <peer-fingerprint>       # register peer
+./kd create                            # or "./kd join"
+
+# Share and receive files
+./kd add ./myfile.pdf                  # share a file
+./kd list                              # list all files
+./kd pull report.txt ./report.txt      # download from peer
+
+# Cleanup
+./kd disconnect                        # rotate keys
+./kd stop                              # shutdown
+```
+
+FUSE mode is also supported — after connecting, remote files appear in `KD_MOUNT_PATH` as a virtual folder.
+
+See **[docs/kd-agent-guide.md](./docs/kd-agent-guide.md)** for the full agent integration guide.
 
 ---
 
