@@ -143,8 +143,8 @@ Every command returns a single JSON line:
 
 ## Security Notes
 
-- No login or accounts. Identity is a cryptographic fingerprint (ML-KEM + X25519).
-- Keys are generated fresh on startup and rotated on every disconnect.
+- No login or accounts. Identity is an ephemeral cryptographic fingerprint (ML-KEM + X25519).
+- Keys are generated fresh on startup and rotated on every disconnect. Identity disappears after the session.
 - All traffic is encrypted end-to-end (ChaCha20-Poly1305).
 - The relay only sees encrypted blobs — it cannot read your files or metadata.
 - Fingerprint exchange is the trust anchor. Send it via a secure channel (Signal, etc.).
@@ -153,10 +153,111 @@ Every command returns a single JSON line:
 
 When building an agent tool that uses `kd`:
 
-1. Start the daemon in a background process before issuing commands.
+1. Start the daemon with FUSE enabled (`KD_MOUNT_PATH=./mount`). This is the recommended mode for agents.
 2. Parse all output as JSON — check the `ok` field.
 3. `kd create` and `kd join` are blocking — they wait for the peer. Run them in the background or with a timeout.
-4. After connecting, use `kd status` to get `mount_path` and `save_path` — these are the directories your agent should read from / write to.
-5. In FUSE mode, the `mount_path` is a live view of the peer's shared files. Just read/write normally.
-6. In no-FUSE mode, use `kd add` to share and `kd pull` to download.
-7. Each daemon instance needs unique ports and a unique `KD_SOCKET`.
+4. After connecting, use `kd status` to get the `mount_path` — this is the synced folder your agent should use.
+5. The `mount_path` is a live, bidirectional view of shared files. Read remote files and write local files directly to/from this folder. No need for `kd add` or `kd pull` — just use normal file I/O.
+6. Each daemon instance needs unique ports and a unique `KD_SOCKET`.
+
+## Full Example with Outputs
+
+Below is a real session showing every command and its JSON output.
+
+### 1. Start the daemon
+
+```bash
+$ KD_SAVE_PATH=./SaveAlice KD_MOUNT_PATH=./MountAlice \
+    KD_INBOUND_PORT=26001 KD_OUTBOUND_PORT=26002 \
+    KD_SOCKET=/tmp/kd-alice.sock ./kd start
+```
+```json
+{"ok":true,"data":{"fingerprint":"6c_RJID9Twnm7o1QtyHgtSPlOjLz74D5a8doUExb-4QhzY_UFl3GWa-o-1tHGktv6U1FLfxvpL1bWixaAO8ayQ","fuse":true,"ip":"2a02:2f00:c40d:4a00:c86:145:393d:ea31","mount_path":"./MountAlice","relay":"https://keibidroprelay.keibisoft.com","save_path":"./SaveAlice","socket":"/tmp/kd-alice.sock"}}
+```
+
+### 2. Get your fingerprint
+
+```bash
+$ KD_SOCKET=/tmp/kd-alice.sock ./kd show fingerprint
+```
+```json
+{"ok":true,"data":{"fingerprint":"6c_RJID9Twnm7o1QtyHgtSPlOjLz74D5a8doUExb-4QhzY_UFl3GWa-o-1tHGktv6U1FLfxvpL1bWixaAO8ayQ"}}
+```
+
+Send this fingerprint to your peer via Signal, Telegram, or any secure channel.
+
+### 3. Register peer's fingerprint
+
+```bash
+$ KD_SOCKET=/tmp/kd-alice.sock ./kd register "Y9cykk9ez6blXF_3-hAQrIr8WGCWiUFd4f7-eoWeLafK87IkXmLFUwuW7M9geff3ePPelQlthF0Jy6KJtev_oQ"
+```
+```json
+{"ok":true,"data":{"registered":"Y9cykk9ez6blXF_3-hAQrIr8WGCWiUFd4f7-eoWeLafK87IkXmLFUwuW7M9geff3ePPelQlthF0Jy6KJtev_oQ"}}
+```
+
+### 4. Create room (or join)
+
+```bash
+$ KD_SOCKET=/tmp/kd-alice.sock ./kd create
+```
+```json
+{"ok":true,"data":{"peer_ip":"2a02:2f00:c40d:4a00:c86:145:393d:ea31","status":"connected"}}
+```
+
+This blocks until the peer joins. The peer runs `./kd join` on their side.
+
+### 5. Check status
+
+```bash
+$ KD_SOCKET=/tmp/kd-alice.sock ./kd status
+```
+```json
+{"ok":true,"data":{"connection_status":"healthy","fingerprint":"6c_RJID9Twnm7o1Q...","fuse":true,"ip":"2a02:2f00:c40d:4a00:...","local_files":0,"mount_path":"./MountAlice","peer_fingerprint":"Y9cykk9ez6blXF_3...","peer_ip":"2a02:2f00:c40d:4a00:...","relay":"https://keibidroprelay.keibisoft.com","remote_files":0,"running":true,"save_path":"./SaveAlice"}}
+```
+
+The `mount_path` in the response is the synced folder. Use it for all file operations.
+
+### 6. Use the synced folder
+
+After connecting, peer's files appear in the mount path. Read and write directly:
+
+```bash
+# List remote files from peer
+$ ls ./MountAlice/
+report.pdf    config.yaml    notes.txt
+
+# Read a remote file
+$ cat ./MountAlice/config.yaml
+
+# Share a file with peer (copy into mount)
+$ cp ./myfile.pdf ./MountAlice/
+```
+
+### 7. List files (alternative to ls)
+
+```bash
+$ KD_SOCKET=/tmp/kd-alice.sock ./kd list
+```
+```json
+{"ok":true,"data":{"files":[{"name":"kd-test-hello.txt","size":69,"path":"/tmp/kd-test-hello.txt","source":"local"},{"name":"report.pdf","size":204800,"path":"","source":"remote"}]}}
+```
+
+### 8. Disconnect
+
+```bash
+$ KD_SOCKET=/tmp/kd-alice.sock ./kd disconnect
+```
+```json
+{"ok":true,"data":{"new_fingerprint":"5j32NIvH6oRP0QKvvNNm_PwnPRBbllHrIk0fAyoiig3qcSTF4dFXbsbyA4r_6BA2v8HoEAW4f1_LAIjPqOrYlA","status":"disconnected"}}
+```
+
+Keys are rotated. A new fingerprint is generated. You can start a new session with a different peer.
+
+### 9. Stop the daemon
+
+```bash
+$ KD_SOCKET=/tmp/kd-alice.sock ./kd stop
+```
+```json
+{"ok":true,"data":{"status":"stopped"}}
+```

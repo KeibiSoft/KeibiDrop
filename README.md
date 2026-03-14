@@ -22,6 +22,8 @@ The sender and receiver perform a secure key exchange via a short-lived relay se
 
 > In even simpler terms: Share with your peer the "long password" via chat and start sharing files.
 
+KeibiDrop can be used in three ways: a [desktop GUI](#how-it-works) (Rust/Slint), an [interactive CLI](#setup--build) (`keibidrop-cli`), and a non-interactive [agent CLI](#agent--scripting-mode) (`kd`) for AI agents and scripts. All three modes support both FUSE (virtual folder in Finder/Explorer) and no-FUSE (drag & drop / CLI commands) operation.
+
 ### How it works
 
 **Step 1** — Both peers start KeibiDrop. Copy your code and send it to your peer via Signal, Telegram, or any chat.
@@ -203,19 +205,21 @@ make build-kd
 
 `kd` is a non-interactive CLI designed for AI agents (Claude Code, etc.) and scripts. It runs as a daemon and accepts one-shot commands — no interactive prompts, all output is JSON.
 
+FUSE mode is recommended for agents — after connecting, files appear in a synced folder that the agent can read/write directly with normal file I/O.
+
 ```bash
-# Start daemon
-KD_SAVE_PATH=./received KD_NO_FUSE=1 ./kd start
+# Start daemon (FUSE mode — recommended for agents)
+KD_SAVE_PATH=./saved KD_MOUNT_PATH=./mount ./kd start
 
 # Exchange fingerprints and connect
 ./kd show fingerprint                  # send this to peer
 ./kd register <peer-fingerprint>       # register peer
 ./kd create                            # or "./kd join"
 
-# Share and receive files
-./kd add ./myfile.pdf                  # share a file
-./kd list                              # list all files
-./kd pull report.txt ./report.txt      # download from peer
+# Use the synced folder directly
+ls ./mount/                            # peer's files appear here
+cat ./mount/config.yaml                # read remote files
+cp ./myfile.pdf ./mount/               # share files with peer
 
 # Cleanup
 ./kd disconnect                        # rotate keys
