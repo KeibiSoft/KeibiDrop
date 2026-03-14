@@ -36,7 +36,7 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 ## `DD-002`: Per-file DirectIo for mmap/Cache Compatibility
 
 - **Date:** 2026-01-18
-- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-cristian)
 - **Status:** Accepted
 - **Location:** `pkg/filesystem/fuse_directory.go`, `pkg/filesystem/api.go`
 - **Decision:**
@@ -85,7 +85,7 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 ## `DD-003`: Counter-based Deterministic Nonces
 
 - **Date:** 2026-01-18
-- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-cristian)
 - **Status:** Accepted
 - **Location:** `pkg/crypto/symmetric.go`, `pkg/session/secureconn.go`
 - **Decision:**
@@ -142,7 +142,7 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 ## `DD-004`: Atomic RENAME Notification Protocol
 
 - **Date:** 2026-01-18
-- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-cristian)
 - **Status:** Accepted
 - **Location:** `keibidrop.proto`, `pkg/types/events.go`, `pkg/filesystem/fuse_directory.go`, `pkg/logic/service/service.go`
 - **Decision:**
@@ -206,7 +206,7 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 ## `DD-005`: FUSE Release/Fsync Race Condition Workaround
 
 - **Date:** 2026-01-18
-- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-cristian)
 - **Status:** Accepted
 - **Location:** `pkg/filesystem/fuse_directory.go`
 - **Decision:**
@@ -283,7 +283,7 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 ## `DD-006`: macOS fcopyfile Late Write Workaround
 
 - **Date:** 2026-01-18
-- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-cristian)
 - **Status:** Accepted
 - **Location:** `pkg/filesystem/fuse_directory.go`
 - **Decision:**
@@ -321,7 +321,7 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 ## `DD-007`: File Permission Normalization for FUSE
 
 - **Date:** 2026-01-18
-- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-cristian)
 - **Status:** Accepted
 - **Location:** `pkg/filesystem/fuse_directory.go`
 - **Decision:**
@@ -366,7 +366,7 @@ Each decision is assigned a unique ID for reference in commits, issues, and code
 ## `DD-008`: macOS Sandboxed App Compatibility (Preview, Finder)
 
 - **Date:** 2026-02-01
-- **Author:** Claude (AI) + [Marius](https://github.com/marius-gal)
+- **Author:** Claude (AI) + [Marius](https://github.com/marius-cristian)
 - **Status:** Accepted
 - **Location:** `pkg/filesystem/fuse_directory.go`, `pkg/filesystem/api.go`
 - **Decision:**
