@@ -1956,6 +1956,12 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	return nil
 }
 
+// StartPrefetchExported is the exported wrapper for startPrefetch, used by
+// the RENAME_FILE handler in service.go to restart downloads after a rename.
+func (d *Dir) StartPrefetchExported(logger *slog.Logger, f *File, path string) {
+	d.startPrefetch(logger, f, path)
+}
+
 // startPrefetch pre-allocates the local cache file and launches a background
 // goroutine that sequentially downloads all missing chunks from the remote peer.
 func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {

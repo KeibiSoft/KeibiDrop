@@ -279,13 +279,27 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				delete(kd.FS.Root.RemoteFiles, req.OldPath)
 				file.RelativePath = req.Path
 				file.Name = filepath.Base(req.Path)
-				// Update disk path so prefetchFile can detect the rename and move
-				// the downloaded content atomically after the goroutine completes.
 				file.RealPathOfFile = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
 				kd.FS.Root.RemoteFiles[req.Path] = file
+
+				// Cancel old prefetch (it uses the old path which the sender
+				// no longer has) and restart with the new path so the download
+				// completes under the renamed key.
+				if file.PrefetchCancel != nil {
+					file.PrefetchCancel()
+				}
+				if file.Bitmap != nil && !file.Bitmap.IsComplete() {
+					file.Bitmap = filesystem.NewChunkBitmap(file.Bitmap.FileSize())
+					file.Download.Reset(uint64(file.Bitmap.FileSize()))
+				}
 				logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
 			}
 			kd.FS.Root.RemoteFilesLock.Unlock()
+
+			// Start new prefetch outside of lock (opens gRPC stream).
+			if exists && file.Bitmap != nil {
+				kd.FS.Root.StartPrefetchExported(logger, file, req.Path)
+			}
 
 			// Also update AllFileMap.
 			kd.FS.Root.AfmLock.Lock()
