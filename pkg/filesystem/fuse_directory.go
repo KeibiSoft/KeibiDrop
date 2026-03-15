@@ -510,6 +510,12 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 				logger.Warn("Failed to pre-allocate local file", "size", remoteTotalSize, "error", truncErr)
 			} else {
 				logger.Info("Pre-allocated local file", "size", remoteTotalSize)
+				// Restore remote mtime so Getattr doesn't treat the zero-filled
+				// pre-allocated file as "local newer" than the remote version.
+				if fh.stat != nil {
+					remoteMtime := fh.stat.Mtim.Time()
+					_ = os.Chtimes(localPath, remoteMtime, remoteMtime)
+				}
 			}
 		}
 
@@ -1007,6 +1013,12 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 				logger.Warn("Failed to pre-allocate local file", "size", remoteTotalSize, "error", truncErr)
 			} else {
 				logger.Info("Pre-allocated local file", "size", remoteTotalSize)
+				// Restore remote mtime so Getattr doesn't treat the zero-filled
+				// pre-allocated file as "local newer" than the remote version.
+				if fh.stat != nil {
+					remoteMtime := fh.stat.Mtim.Time()
+					_ = os.Chtimes(localPath, remoteMtime, remoteMtime)
+				}
 			}
 		}
 	}
@@ -1990,6 +2002,13 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		lf.Close()
 	}
 
+	// Restore the remote file's mtime so Getattr doesn't treat the
+	// zero-filled pre-allocated file as "local newer" than the remote.
+	if f.stat != nil {
+		remoteMtime := f.stat.Mtim.Time()
+		_ = os.Chtimes(realPath, remoteMtime, remoteMtime)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	f.PrefetchCancel = cancel
 
@@ -2089,6 +2108,16 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 			continue
 		}
 
+		// Verify we received the exact number of bytes requested. A short read
+		// means the remote file is smaller than expected (modified after
+		// notification, or transfer error). Writing partial data then marking
+		// the full chunk would leave trailing zeros in the pre-allocated file.
+		if int64(len(data)) != size {
+			logger.Warn("Prefetch: short read, skipping chunk",
+				"chunk", idx, "expected", size, "got", len(data))
+			continue
+		}
+
 		_, writeErr := lf.WriteAt(data, offset)
 		if writeErr != nil {
 			logger.Warn("Prefetch: write failed", "chunk", idx, "error", writeErr)
@@ -2097,6 +2126,12 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 
 		bitmap.Set(idx)
 		f.Download.UpdateProgress(offset, len(data))
+	}
+
+	// Flush all writes to disk before declaring complete, so concurrent
+	// FUSE reads (via pread on a different fd) see the actual data.
+	if syncErr := lf.Sync(); syncErr != nil {
+		logger.Warn("Prefetch: fsync failed", "error", syncErr)
 	}
 
 	if bitmap.IsComplete() {
