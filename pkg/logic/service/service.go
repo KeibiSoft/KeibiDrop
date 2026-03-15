@@ -288,17 +288,36 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				if file != nil && file.PrefetchCancel != nil {
 					file.PrefetchCancel()
 				}
+
+				oldDiskPath := filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.OldPath))
+				newDiskPath := file.RealPathOfFile
+
 				if file != nil && file.Bitmap != nil && !file.Bitmap.IsComplete() {
+					// Download still in progress — reset bitmap and re-download
+					// under the new path.
 					fileSize := file.Bitmap.FileSize()
 					file.Bitmap = filesystem.NewChunkBitmap(fileSize)
 					file.Download.Reset(uint64(fileSize))
+				} else if file != nil && file.Bitmap != nil && file.Bitmap.IsComplete() {
+					// Download already finished — the data lives at the old disk
+					// path. Move it to the new path so FUSE reads find it.
+					if oldDiskPath != newDiskPath {
+						if err := os.MkdirAll(filepath.Dir(newDiskPath), 0o755); err != nil {
+							logger.Warn("RENAME_FILE: failed to create dirs for new path", "path", newDiskPath, "error", err)
+						} else if err := os.Rename(oldDiskPath, newDiskPath); err != nil {
+							logger.Warn("RENAME_FILE: failed to move completed file", "from", oldDiskPath, "to", newDiskPath, "error", err)
+						} else {
+							logger.Info("RENAME_FILE: moved completed file to new path", "from", oldDiskPath, "to", newDiskPath)
+						}
+					}
 				}
 				logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
 			}
 			kd.FS.Root.RemoteFilesLock.Unlock()
 
 			// Start new prefetch outside of lock (opens gRPC stream).
-			if exists && file.Bitmap != nil {
+			// Only restart if download is incomplete (bitmap was reset above).
+			if exists && file.Bitmap != nil && !file.Bitmap.IsComplete() {
 				kd.FS.Root.StartPrefetchExported(logger, file, req.Path)
 			}
 
