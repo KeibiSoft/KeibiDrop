@@ -510,6 +510,12 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 				logger.Warn("Failed to pre-allocate local file", "size", remoteTotalSize, "error", truncErr)
 			} else {
 				logger.Info("Pre-allocated local file", "size", remoteTotalSize)
+				// Restore remote mtime so Getattr doesn't treat the zero-filled
+				// pre-allocated file as "local newer" than the remote version.
+				if fh.stat != nil {
+					remoteMtime := fh.stat.Mtim.Time()
+					_ = os.Chtimes(localPath, remoteMtime, remoteMtime)
+				}
 			}
 		}
 
@@ -628,9 +634,15 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 			copyFusestatFromGostat(auxStat, &stgo)
 
 			if isModificationTimeNewer(auxStat, remFile.stat) {
-				// Only mark as LocalNewer if local file has actual content.
-				// Empty files (size=0) are just placeholders created for streaming - not real local edits.
-				if auxStat.Size > 0 {
+				// Only mark as LocalNewer if:
+				// 1. Local file has actual content (size > 0), AND
+				// 2. The download is genuinely complete (bitmap nil or fully downloaded).
+				// Pre-allocated files (os.Truncate to remote size) have size > 0 but
+				// contain zeros. Without the bitmap check, Getattr would mark them as
+				// "local newer" after Truncate updates the mtime, causing subsequent
+				// Opens to serve zero-filled placeholders instead of fetching from remote.
+				downloadComplete := remFile.Bitmap == nil || remFile.Bitmap.IsComplete()
+				if auxStat.Size > 0 && downloadComplete {
 					remFile.LocalNewer = true
 					copyFusestatFromFusestat(remFile.stat, auxStat)
 				}
@@ -1781,10 +1793,13 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			return -winfuse.EIO
 		}
 
-		// Mark bitmap for the chunks we just downloaded on-demand.
-		if bitmap != nil {
-			bitmap.SetRange(offset, n)
-		}
+		// NOTE: Do NOT mark the bitmap here. FUSE issues reads smaller than
+		// ChunkSize (typically 64-128 KiB), but SetRange would mark the entire
+		// 512 KiB chunk as downloaded. Subsequent reads within the same chunk
+		// would hit the bitmap fast-path and serve zeros from the pre-allocated
+		// cache file. The prefetch goroutine fetches full chunks and marks the
+		// bitmap correctly. On-demand reads cache what they fetch without
+		// claiming the whole chunk.
 
 		logger.Debug("Read completed", "bytes", n, "progress", f.Download.Progress())
 		return n
@@ -1974,6 +1989,13 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		lf.Close()
 	}
 
+	// Restore the remote file's mtime so Getattr doesn't treat the
+	// zero-filled pre-allocated file as "local newer" than the remote.
+	if f.stat != nil {
+		remoteMtime := f.stat.Mtim.Time()
+		_ = os.Chtimes(realPath, remoteMtime, remoteMtime)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	f.PrefetchCancel = cancel
 
@@ -2073,6 +2095,16 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 			continue
 		}
 
+		// Verify we received the exact number of bytes requested. A short read
+		// means the remote file is smaller than expected (modified after
+		// notification, or transfer error). Writing partial data then marking
+		// the full chunk would leave trailing zeros in the pre-allocated file.
+		if int64(len(data)) != size {
+			logger.Warn("Prefetch: short read, skipping chunk",
+				"chunk", idx, "expected", size, "got", len(data))
+			continue
+		}
+
 		_, writeErr := lf.WriteAt(data, offset)
 		if writeErr != nil {
 			logger.Warn("Prefetch: write failed", "chunk", idx, "error", writeErr)
@@ -2081,6 +2113,12 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 
 		bitmap.Set(idx)
 		f.Download.UpdateProgress(offset, len(data))
+	}
+
+	// Flush all writes to disk before declaring complete, so concurrent
+	// FUSE reads (via pread on a different fd) see the actual data.
+	if syncErr := lf.Sync(); syncErr != nil {
+		logger.Warn("Prefetch: fsync failed", "error", syncErr)
 	}
 
 	if bitmap.IsComplete() {
