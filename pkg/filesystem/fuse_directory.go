@@ -505,7 +505,13 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		// Pre-allocate local file to expected size for out-of-order writes.
 		// Without this, non-sequential reads (e.g., video moov atom at end) can cause corruption.
 		// macOS reads video files non-sequentially (header, then trailer at end, then content).
-		if existingLocalSize == 0 && remoteTotalSize > 0 {
+		//
+		// SKIP pre-allocation for .git/ files: git mmap's pack files immediately.
+		// A full-size zero-filled file causes SIGBUS when git reads the mmap before
+		// prefetch has written real data. For .git/ files, let the file grow as
+		// chunks are downloaded. pwrite extends the file automatically.
+		isGitFile := strings.Contains(path, "/.git/") || strings.HasPrefix(path, ".git/")
+		if existingLocalSize == 0 && remoteTotalSize > 0 && !isGitFile {
 			if truncErr := os.Truncate(localPath, int64(remoteTotalSize)); truncErr != nil {
 				logger.Warn("Failed to pre-allocate local file", "size", remoteTotalSize, "error", truncErr)
 			} else {
@@ -1970,31 +1976,23 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 	}
 
 	realPath := f.RealPathOfFile
-	fileSize := f.Bitmap.FileSize()
 
-	// Pre-allocate local cache file to full size so pwrite at any offset works.
+	// Create the local cache file (empty). We intentionally do NOT
+	// pre-allocate to the full remote size here because:
+	// - Git mmap's .git/ pack files immediately; a zero-filled mmap causes SIGBUS
+	//   when git tries to read pack headers before prefetch writes real data.
+	// - Getattr would see the full-size file and mark it as "local newer".
+	// - pwrite at arbitrary offsets extends the file automatically.
+	// Pre-allocation for random-access (video seeking) is handled in OpenEx only.
 	if err := os.MkdirAll(filepath.Dir(realPath), 0o755); err != nil {
 		logger.Warn("Prefetch: failed to create dirs", "path", realPath, "error", err)
 	}
-	if err := os.Truncate(realPath, fileSize); err != nil {
-		// File may not exist yet — create it.
-		lf, createErr := os.Create(realPath)
-		if createErr != nil {
-			logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
-			return
-		}
-		if truncErr := lf.Truncate(fileSize); truncErr != nil {
-			logger.Warn("Prefetch: failed to truncate cache file", "path", realPath, "error", truncErr)
-		}
-		lf.Close()
+	lf, createErr := os.Create(realPath)
+	if createErr != nil {
+		logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
+		return
 	}
-
-	// Restore the remote file's mtime so Getattr doesn't treat the
-	// zero-filled pre-allocated file as "local newer" than the remote.
-	if f.stat != nil {
-		remoteMtime := f.stat.Mtim.Time()
-		_ = os.Chtimes(realPath, remoteMtime, remoteMtime)
-	}
+	lf.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	f.PrefetchCancel = cancel
