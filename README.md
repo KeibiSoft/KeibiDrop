@@ -255,6 +255,12 @@ go test ./pkg/...
 
 See [`Security.md`](./Security.md) for a complete protocol overview.
 
+### Handshake Protocol
+
+Full-duplex secure handshake: hybrid ML-KEM + X25519 key exchange via the relay, followed by direct P2P connection with mutual fingerprint verification.
+
+![KeibiDrop Full-Duplex Secure Handshake](docs/diagrams/handshake.png)
+
 ---
 
 ## Contributing & Legal
