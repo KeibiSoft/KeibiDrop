@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -232,6 +233,8 @@ func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
 	}
+
+	fp = strings.TrimSpace(fp)
 
 	err := ValidateFingerprint(fp)
 	if err != nil {
