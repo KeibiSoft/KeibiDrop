@@ -285,12 +285,13 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				// Cancel old prefetch (it uses the old path which the sender
 				// no longer has) and restart with the new path so the download
 				// completes under the renamed key.
-				if file.PrefetchCancel != nil {
+				if file != nil && file.PrefetchCancel != nil {
 					file.PrefetchCancel()
 				}
-				if file.Bitmap != nil && !file.Bitmap.IsComplete() {
-					file.Bitmap = filesystem.NewChunkBitmap(file.Bitmap.FileSize())
-					file.Download.Reset(uint64(file.Bitmap.FileSize()))
+				if file != nil && file.Bitmap != nil && !file.Bitmap.IsComplete() {
+					fileSize := file.Bitmap.FileSize()
+					file.Bitmap = filesystem.NewChunkBitmap(fileSize)
+					file.Download.Reset(uint64(fileSize))
 				}
 				logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
 			}
@@ -475,6 +476,12 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			fuseKey := rec.Path
 			if !strings.HasPrefix(fuseKey, "/") {
 				fuseKey = "/" + fuseKey
+			}
+
+			// Re-check Root (may have been torn down between the outer nil check and here).
+			if kd.FS == nil || kd.FS.Root == nil {
+				logger.Error("FS.Root became nil during Read stream")
+				return status.Error(codes.FailedPrecondition, "filesystem not available")
 			}
 
 			// Only hold the lock briefly to look up the file path
