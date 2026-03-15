@@ -628,9 +628,15 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 			copyFusestatFromGostat(auxStat, &stgo)
 
 			if isModificationTimeNewer(auxStat, remFile.stat) {
-				// Only mark as LocalNewer if local file has actual content.
-				// Empty files (size=0) are just placeholders created for streaming - not real local edits.
-				if auxStat.Size > 0 {
+				// Only mark as LocalNewer if:
+				// 1. Local file has actual content (size > 0), AND
+				// 2. The download is genuinely complete (bitmap nil or fully downloaded).
+				// Pre-allocated files (os.Truncate to remote size) have size > 0 but
+				// contain zeros. Without the bitmap check, Getattr would mark them as
+				// "local newer" after any write updates the mtime, causing subsequent
+				// Opens to serve zero-filled placeholders instead of fetching from remote.
+				downloadComplete := remFile.Bitmap == nil || remFile.Bitmap.IsComplete()
+				if auxStat.Size > 0 && downloadComplete {
 					remFile.LocalNewer = true
 					copyFusestatFromFusestat(remFile.stat, auxStat)
 				}
@@ -1781,10 +1787,14 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			return -winfuse.EIO
 		}
 
-		// Mark bitmap for the chunks we just downloaded on-demand.
-		if bitmap != nil {
-			bitmap.SetRange(offset, n)
-		}
+		// NOTE: We intentionally do NOT mark the bitmap here.
+		// FUSE issues reads smaller than ChunkSize (typically 64-128 KiB),
+		// but SetRange would mark the entire 512 KiB chunk as downloaded.
+		// Subsequent reads within the same chunk would then hit the bitmap
+		// ("already cached") and serve zeros from the pre-allocated file.
+		// The prefetch goroutine fetches full chunks and marks the bitmap
+		// correctly. On-demand reads just cache what they fetch without
+		// claiming the whole chunk.
 
 		logger.Debug("Read completed", "bytes", n, "progress", f.Download.Progress())
 		return n
