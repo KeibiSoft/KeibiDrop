@@ -84,6 +84,11 @@ func TestTransferThroughput(t *testing.T) {
 			require.NoError(err)
 			require.Equal(len(data), len(readData), "size mismatch")
 
+			// Verify content integrity for smallest size (comparing 100MB is slow).
+			if s.size <= 1*1024*1024 {
+				require.Equal(data, readData, "content mismatch")
+			}
+
 			mbps := float64(s.size) / elapsed.Seconds() / (1024 * 1024)
 			t.Logf("%-8s | %-12.2f | %s", s.name, mbps, elapsed.Round(time.Millisecond))
 		})
@@ -169,7 +174,7 @@ func TestTransferThroughputNetem(t *testing.T) {
 			waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
 
 			cleanup := applyNetem(t, profile)
-			defer cleanup()
+			t.Cleanup(cleanup)
 
 			desc := fmt.Sprintf("delay=%s jitter=%s", profile.delay, profile.jitter)
 			if profile.rate != "" {
@@ -285,7 +290,9 @@ func TestChunkLatency(t *testing.T) {
 	tp := SetupFUSEPeerPair(t, 120*time.Second)
 	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
 
-	// Inject timed stream provider into Alice's FUSE root
+	// Inject timed stream provider into Alice's FUSE root.
+	// Safe to mutate after mount: no remote files exist yet, so no streams
+	// are open. The factory is called lazily when a remote file is opened.
 	recorder := &chunkRecorder{}
 	originalFactory := tp.Alice.FS.Root.OpenStreamProvider
 	tp.Alice.FS.Root.OpenStreamProvider = func() types.FileStreamProvider {
@@ -382,9 +389,10 @@ func BenchmarkLocalDisk(b *testing.B) {
 
 		b.Run(fmt.Sprintf("Write_%s", s.name), func(b *testing.B) {
 			b.SetBytes(int64(s.size))
+			// Reuse same path to avoid filling disk on large sizes.
+			writePath := filepath.Join(tmpDir, fmt.Sprintf("bench_w_%s.bin", s.name))
 			for i := 0; i < b.N; i++ {
-				path := filepath.Join(tmpDir, fmt.Sprintf("bench_w_%s_%d.bin", s.name, i))
-				if err := os.WriteFile(path, data, 0644); err != nil {
+				if err := os.WriteFile(writePath, data, 0644); err != nil {
 					b.Fatal(err)
 				}
 			}
