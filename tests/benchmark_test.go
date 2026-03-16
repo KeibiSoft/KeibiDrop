@@ -113,6 +113,9 @@ var netemProfiles = []netemProfile{
 func applyNetem(t *testing.T, p netemProfile) func() {
 	t.Helper()
 
+	// Remove any stale qdisc from a previous run before adding ours.
+	exec.Command("tc", "qdisc", "del", "dev", "lo", "root").Run()
+
 	args := []string{"qdisc", "add", "dev", "lo", "root", "handle", "1:", "netem",
 		"delay", p.delay}
 	if p.jitter != "" {
@@ -121,7 +124,7 @@ func applyNetem(t *testing.T, p netemProfile) func() {
 
 	out, err := exec.Command("tc", args...).CombinedOutput()
 	if err != nil {
-		t.Skipf("tc netem failed (need sudo or CAP_NET_ADMIN): %s: %v", string(out), err)
+		t.Skipf("tc netem failed (need sudo): %s: %v", string(out), err)
 	}
 
 	// If bandwidth limit requested, add a child tbf qdisc

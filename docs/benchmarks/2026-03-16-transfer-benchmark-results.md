@@ -85,22 +85,74 @@ issues parallel readahead — multiple chunks in flight simultaneously.
 
 ---
 
+## Simulated Network Transfer (tc netem on loopback)
+
+These numbers represent real-world transfer speeds more accurately than
+localhost benchmarks. Run with `sudo -E KEIBIDROP_BENCH_NETEM=1`.
+
+### LAN 1ms RTT (Gigabit, no bandwidth limit)
+
+| Size | MB/s | Duration |
+|------|------|----------|
+| 10 MB | 65.8 | 152 ms |
+| 100 MB | 66.9 | 1.49 s |
+| 600 MB | 65.9 | 9.10 s |
+
+Throughput plateaus at ~66 MB/s — latency-bound, not bandwidth-bound.
+With 512 KiB chunks and ~1ms RTT, theoretical max with sequential reads
+is 512 KiB / 1ms = 500 MB/s. Getting 66 MB/s suggests ~7.5 round-trips
+worth of latency per chunk (stream mutex serialization + gRPC framing).
+
+### WiFi 5ms RTT (no bandwidth limit)
+
+| Size | MB/s | Duration |
+|------|------|----------|
+| 10 MB | 16.2 | 618 ms |
+| 100 MB | 17.0 | 5.88 s |
+| 600 MB | 17.7 | 34.0 s |
+
+5x slower than LAN — nearly proportional to the 5x RTT increase.
+Confirms latency is the dominant bottleneck, not bandwidth.
+
+### LAN 1ms RTT + 100 Mbps bandwidth limit
+
+| Size | MB/s | Duration |
+|------|------|----------|
+| 10 MB | 5.3 | 1.88 s |
+| 100 MB | 5.6 | 17.8 s |
+| 600 MB | 5.6 | 1m47s |
+
+Bandwidth-limited at ~5.6 MB/s (45 Mbps effective out of 100 Mbps).
+The ~55% utilization overhead comes from gRPC framing + protobuf
+serialization + encryption per chunk.
+
+---
+
 ## Key Findings
 
 1. **Stream mutex fix (#70) was critical** — c1bfca0 cannot complete FUSE
    reads at all due to stream corruption from concurrent readahead.
 
-2. **Encrypted gRPC is 2-3x slower than raw gRPC** (361 vs 810 MB/s at
-   100 MB) — encryption overhead is significant but not dominant.
+2. **Latency is the dominant bottleneck, not bandwidth** — LAN (1ms RTT)
+   gets 66 MB/s, WiFi (5ms RTT) gets 17 MB/s. The 5x RTT increase
+   causes a nearly proportional 4x throughput drop. Bandwidth is not
+   the limiting factor on gigabit links.
 
-3. **E2E is ~15-25x slower than raw disk** — the pipeline overhead is
-   dominated by gRPC round-trips per chunk, not disk I/O.
+3. **Encrypted gRPC is 2-3x slower than raw gRPC** (361 vs 810 MB/s at
+   100 MB on localhost) — encryption overhead is measurable but secondary
+   to latency in real-world scenarios.
 
-4. **Chunk parallelism helps** — sum of chunk times (221 ms) vs wall-clock
-   (98 ms) shows ~2.3x parallelism from FUSE readahead, despite the
-   stream mutex serializing actual gRPC sends.
+4. **Per-chunk round-trip overhead is ~7.5x theoretical minimum** —
+   at 1ms RTT with 512 KiB chunks, theoretical max is ~500 MB/s but we
+   get 66 MB/s. The stream mutex, gRPC framing, protobuf serialization,
+   and encryption each add latency per chunk.
 
-5. **Biggest optimization opportunity**: pipelining prefetch (send multiple
-   ReadRequests before waiting for responses) could eliminate the
-   per-chunk round-trip latency (~2 ms median × 100 chunks = 200 ms
-   serialized vs ~2 ms pipelined).
+5. **Chunk parallelism helps on localhost** — sum of chunk times (221 ms)
+   vs wall-clock (98 ms) shows ~2.3x parallelism from FUSE readahead,
+   but the stream mutex serializes the actual gRPC sends.
+
+6. **Biggest optimization opportunity**: pipelining prefetch — send
+   multiple ReadRequests without waiting for each response. Current
+   sequential pattern means each chunk pays the full RTT. Pipelining
+   could bring LAN throughput from 66 MB/s closer to the 360 MB/s
+   seen in the encrypted-gRPC-without-FUSE benchmark.
