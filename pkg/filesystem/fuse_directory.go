@@ -473,19 +473,29 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		return int(convertOsErrToSyscallErrno("open", err))
 	}
 
-	// Open remote stream for reading (network call - no locks held)
-	var stream types.RemoteFileStream
+	// Open stream pool + cache FD for reading (network call - no locks held)
+	var pool *StreamPool
 	var streamCancel context.CancelFunc
+	var cacheFD *os.File
 	if remoteHasUpdate {
 		fsp := d.OpenStreamProvider()
 		var streamCtx context.Context
 		streamCtx, streamCancel = context.WithCancel(context.Background())
-		stream, err = fsp.OpenRemoteFile(streamCtx, uint64(fd), path)
+		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize)
 		if err != nil {
 			streamCancel()
 			syscall.Close(fd)
-			logger.Error("Failed to open remote stream", "error", err)
+			logger.Error("Failed to open stream pool", "error", err)
 			return -winfuse.EACCES
+		}
+		// Open persistent cache FD for on-demand writes (avoids open/close per chunk).
+		cacheFD, err = os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			streamCancel()
+			pool.Close()
+			syscall.Close(fd)
+			logger.Error("Failed to open cache FD", "error", err)
+			return -winfuse.EIO
 		}
 	}
 
@@ -498,8 +508,9 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 
 	if remoteHasUpdate {
 		fh.NotLocalSynced = true
-		fh.RemoteFileStream = stream
+		fh.StreamPool = pool
 		fh.StreamCancel = streamCancel
+		fh.CacheFD = cacheFD
 		fh.Download.Reset(remoteTotalSize)
 
 		// Pre-allocate local file to expected size for out-of-order writes.
@@ -523,7 +534,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 
 	fi.Fh = uint64(fd)
 	fi.DirectIo = shouldUseDirectIo(path, flags)
-	logger.Info("Opened for remote streaming", "fh", fd, "directIo", fi.DirectIo, "remoteHasUpdate", remoteHasUpdate, "fhNotLocalSynced", fh.NotLocalSynced, "fhStreamNil", fh.RemoteFileStream == nil)
+	logger.Info("Opened for remote streaming", "fh", fd, "directIo", fi.DirectIo, "remoteHasUpdate", remoteHasUpdate, "fhNotLocalSynced", fh.NotLocalSynced, "poolNil", fh.StreamPool == nil)
 	return 0
 }
 
@@ -970,23 +981,33 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 		return int(convertOsErrToSyscallErrno("open", err)), 0
 	}
 
-	// Open remote stream (network call - no locks held)
+	// Open stream pool + cache FD (network call - no locks held)
 	fsp := d.OpenStreamProvider()
 	streamCtx, streamCancel := context.WithCancel(context.Background())
-	stream, err := fsp.OpenRemoteFile(streamCtx, uint64(fd), path)
-	if err != nil {
+	pool, poolErr := NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize)
+	if poolErr != nil {
 		streamCancel()
 		syscall.Close(fd)
-		logger.Error("Failed to open remote stream", "error", err)
+		logger.Error("Failed to open stream pool", "error", poolErr)
 		return -winfuse.EACCES, 0
+	}
+	// Open persistent cache FD for on-demand writes (avoids open/close per chunk).
+	cacheFD, cacheErr := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY, 0644)
+	if cacheErr != nil {
+		streamCancel()
+		pool.Close()
+		syscall.Close(fd)
+		logger.Error("Failed to open cache FD", "error", cacheErr)
+		return -winfuse.EIO, 0
 	}
 
 	d.AfmLock.Lock()
 	d.OpenMapLock.Lock()
 	fh.Inode = uint64(fd)
 	fh.StreamProvider = fsp
-	fh.RemoteFileStream = stream
+	fh.StreamPool = pool
 	fh.StreamCancel = streamCancel
+	fh.CacheFD = cacheFD
 	if remoteHasUpdate {
 		fh.NotLocalSynced = true // Ensure Read uses stream, not stale local cache
 		// Initialize download state for resume capability.
@@ -1009,7 +1030,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	d.OpenMapLock.Unlock()
 	d.AfmLock.Unlock()
 
-	logger.Info("Opened remote file", "fh", fh.Inode, "notLocalSynced", fh.NotLocalSynced, "hasStream", fh.RemoteFileStream != nil, "totalSize", remoteTotalSize)
+	logger.Info("Opened remote file", "fh", fh.Inode, "notLocalSynced", fh.NotLocalSynced, "poolNil", fh.StreamPool == nil, "totalSize", remoteTotalSize)
 	return 0, fh.Inode
 }
 
@@ -1216,20 +1237,27 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			logger.Info("Removed file reference after download completed (peer stopped sharing)", "path", path)
 		}
 
-		// Get stream reference and cancel func, clear under lock, then close OUTSIDE lock
-		// to avoid holding OpenMapLock during network I/O
-		stream := f.RemoteFileStream
+		// Get pool/cacheFD/cancel references, clear under lock, then close OUTSIDE lock
+		// to avoid holding OpenMapLock during network I/O.
+		pool := f.StreamPool
 		streamCancel := f.StreamCancel
-		f.RemoteFileStream = nil
+		cacheFD := f.CacheFD
+		f.StreamPool = nil
 		f.StreamCancel = nil
-		if stream != nil {
+		f.CacheFD = nil
+		if pool != nil || cacheFD != nil {
 			d.OpenMapLock.Unlock()
 			unlocked = true
-			err = stream.Close()
-			if err != nil {
-				logger.Error("Failed to close remote file stream", "error", err)
+			if cacheFD != nil {
+				if closeErr := cacheFD.Close(); closeErr != nil {
+					logger.Error("Failed to close cache FD", "error", closeErr)
+				}
 			}
-			// Cancel the stream context after closing
+			if pool != nil {
+				if closeErr := pool.Close(); closeErr != nil {
+					logger.Error("Failed to close stream pool", "error", closeErr)
+				}
+			}
 			if streamCancel != nil {
 				streamCancel()
 			}
@@ -1664,13 +1692,13 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	// Get file info briefly, release lock before I/O (RWMutex is write-preferring)
 	d.OpenMapLock.RLock()
 	f, ok := d.OpenFileHandlers[fh]
-	var stream types.RemoteFileStream
-	var realPath string
+	var pool *StreamPool
+	var cacheFD *os.File
 	var notLocalSynced bool
 	var bitmap *ChunkBitmap
 	if ok {
-		stream = f.RemoteFileStream
-		realPath = f.RealPathOfFile
+		pool = f.StreamPool
+		cacheFD = f.CacheFD
 		notLocalSynced = f.NotLocalSynced
 		bitmap = f.Bitmap
 	}
@@ -1680,11 +1708,11 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		"path", path,
 		"ok", ok,
 		"notLocalSynced", notLocalSynced,
-		"streamNil", stream == nil,
+		"poolNil", pool == nil,
 		"hasBitmap", bitmap != nil,
 		"fh", fh)
 
-	if ok && notLocalSynced && stream != nil {
+	if ok && notLocalSynced && pool != nil {
 		// HYBRID READ: Check bitmap to decide local vs remote.
 		// If all chunks for this range are already downloaded (by prefetch or prior read),
 		// serve from local cache. Otherwise fetch on-demand from remote.
@@ -1705,9 +1733,9 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		var data []byte
 		var readErr error
 		for attempt := 0; attempt < 3; attempt++ {
-			// Read from remote stream with timeout to prevent system freeze.
+			// Read from stream pool with timeout to prevent system freeze.
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			data, readErr = stream.ReadAt(ctx, offset, int64(len(buff)))
+			data, readErr = pool.ReadAt(ctx, offset, int64(len(buff)))
 			cancel()
 
 			if readErr == nil {
@@ -1722,34 +1750,34 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 				break
 			}
 
-			// Try to re-establish the stream.
+			// Try to re-establish the stream pool.
 			if f.StreamProvider != nil {
-				logger.Info("Attempting to re-establish stream", "path", path, "attempt", attempt+1)
+				logger.Info("Attempting to re-establish stream pool", "path", path, "attempt", attempt+1)
 				streamCtx, streamCancel := context.WithCancel(context.Background())
-				newStream, openErr := f.StreamProvider.OpenRemoteFile(streamCtx, fh, path)
+				newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, StreamPoolSize)
 				if openErr != nil {
 					streamCancel()
-					logger.Error("Failed to re-establish stream", "error", openErr)
+					logger.Error("Failed to re-establish stream pool", "error", openErr)
 					time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Backoff.
 					continue
 				}
 
-				// Close old stream (best effort).
-				if stream != nil {
-					_ = stream.Close()
+				// Close old pool (best effort).
+				if pool != nil {
+					_ = pool.Close()
 				}
 				if f.StreamCancel != nil {
 					f.StreamCancel()
 				}
 
-				// Update file with new stream (need lock).
+				// Update file with new pool (need lock).
 				d.OpenMapLock.Lock()
-				f.RemoteFileStream = newStream
+				f.StreamPool = newPool
 				f.StreamCancel = streamCancel
 				d.OpenMapLock.Unlock()
 
-				stream = newStream
-				logger.Info("Stream re-established successfully", "path", path)
+				pool = newPool
+				logger.Info("Stream pool re-established successfully", "path", path)
 			}
 
 			time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond) // Backoff.
@@ -1767,18 +1795,13 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		f.Download.UpdateProgress(offset, n)
 		f.Download.UpdateChecksum(data[:n])
 
-		// Write data into local file for caching (no lock needed - pwrite is atomic).
-		lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			logger.Error("Failed to open local file for writing", "error", err)
-			return -winfuse.EIO
-		}
-		defer lf.Close()
-
-		_, err = lf.WriteAt(data, offset)
-		if err != nil {
-			logger.Error("Failed to write remote data to local file", "error", err)
-			return -winfuse.EIO
+		// Write data into local cache using persistent FD (pwrite is atomic, no lock needed).
+		if cacheFD != nil {
+			_, err := cacheFD.WriteAt(data, offset)
+			if err != nil {
+				logger.Error("Failed to write remote data to local file", "error", err)
+				return -winfuse.EIO
+			}
 		}
 
 		// Mark bitmap for the chunks we just downloaded on-demand.

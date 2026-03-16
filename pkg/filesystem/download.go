@@ -11,6 +11,10 @@ import "sync"
 // ChunkSize is the granularity for tracking downloaded segments.
 const ChunkSize = 512 * 1024 // 512 KiB
 
+// StreamPoolSize is the number of parallel gRPC streams per file.
+// Matches typical FUSE readahead parallelism on Linux.
+const StreamPoolSize = 4
+
 // ChunkBitmap tracks which chunks of a file have been downloaded.
 // Thread-safe: Has() uses RLock, Set() uses Lock.
 type ChunkBitmap struct {

@@ -73,3 +73,4 @@ func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint
 
 	return NewImplRemoteFileStream(stream, inode, path), nil
 }
+
