@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -85,6 +86,122 @@ func TestTransferThroughput(t *testing.T) {
 
 			mbps := float64(s.size) / elapsed.Seconds() / (1024 * 1024)
 			t.Logf("%-8s | %-12.2f | %s", s.name, mbps, elapsed.Round(time.Millisecond))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark 1b: Transfer Throughput With Simulated Network Latency
+// ---------------------------------------------------------------------------
+
+// netemProfile defines a simulated network condition applied via tc netem.
+type netemProfile struct {
+	name    string
+	delay   string // one-way delay (RTT = 2x)
+	jitter  string // optional jitter
+	rate    string // optional bandwidth limit
+}
+
+var netemProfiles = []netemProfile{
+	{"LAN_1ms", "500us", "100us", ""},             // ~1ms RTT, gigabit LAN
+	{"WiFi_5ms", "2500us", "500us", ""},            // ~5ms RTT, WiFi on same network
+	{"LAN_1ms_100Mbps", "500us", "100us", "100mbit"}, // ~1ms RTT, 100 Mbps link
+}
+
+// applyNetem adds a tc netem qdisc to the loopback interface.
+// Returns a cleanup function that removes it.
+func applyNetem(t *testing.T, p netemProfile) func() {
+	t.Helper()
+
+	args := []string{"qdisc", "add", "dev", "lo", "root", "handle", "1:", "netem",
+		"delay", p.delay}
+	if p.jitter != "" {
+		args = append(args, p.jitter)
+	}
+
+	out, err := exec.Command("tc", args...).CombinedOutput()
+	if err != nil {
+		t.Skipf("tc netem failed (need sudo or CAP_NET_ADMIN): %s: %v", string(out), err)
+	}
+
+	// If bandwidth limit requested, add a child tbf qdisc
+	if p.rate != "" {
+		tbfArgs := []string{"qdisc", "add", "dev", "lo", "parent", "1:", "handle", "2:",
+			"tbf", "rate", p.rate, "burst", "256kb", "latency", "50ms"}
+		out, err := exec.Command("tc", tbfArgs...).CombinedOutput()
+		if err != nil {
+			// Clean up the netem qdisc before skipping
+			exec.Command("tc", "qdisc", "del", "dev", "lo", "root").Run()
+			t.Skipf("tc tbf failed: %s: %v", string(out), err)
+		}
+	}
+
+	return func() {
+		exec.Command("tc", "qdisc", "del", "dev", "lo", "root").Run()
+	}
+}
+
+// TestTransferThroughputNetem measures E2E transfer with simulated network
+// conditions. Requires KEIBIDROP_BENCH_NETEM=1 and sudo/CAP_NET_ADMIN.
+//
+// Run with: sudo -E KEIBIDROP_BENCH_NETEM=1 go test -run=TestTransferThroughputNetem -v -timeout=600s ./tests/...
+func TestTransferThroughputNetem(t *testing.T) {
+	if os.Getenv("KEIBIDROP_BENCH_NETEM") != "1" {
+		t.Skip("set KEIBIDROP_BENCH_NETEM=1 to run (requires sudo or CAP_NET_ADMIN)")
+	}
+	skipIfNoFUSE(t)
+
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"10MB", 10 * 1024 * 1024},
+		{"100MB", 100 * 1024 * 1024},
+		{"600MB", 600 * 1024 * 1024},
+	}
+
+	for _, profile := range netemProfiles {
+		t.Run(profile.name, func(t *testing.T) {
+			tp := SetupFUSEPeerPair(t, 600*time.Second)
+			waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
+
+			cleanup := applyNetem(t, profile)
+			defer cleanup()
+
+			desc := fmt.Sprintf("delay=%s jitter=%s", profile.delay, profile.jitter)
+			if profile.rate != "" {
+				desc += fmt.Sprintf(" rate=%s", profile.rate)
+			}
+			t.Logf("\n=== Transfer with netem: %s (%s) ===", profile.name, desc)
+			t.Logf("%-8s | %-12s | %-10s", "Size", "MB/s", "Duration")
+			t.Logf("---------|--------------|----------")
+
+			for _, s := range sizes {
+				t.Run(s.name, func(t *testing.T) {
+					require := require.New(t)
+
+					data := make([]byte, s.size)
+					_, err := rand.Read(data)
+					require.NoError(err)
+
+					fileName := fmt.Sprintf("bench_netem_%s_%s.bin", profile.name, s.name)
+					bobPath := filepath.Join(tp.BobSaveDir, fileName)
+					require.NoError(os.WriteFile(bobPath, data, 0644))
+					require.NoError(tp.Bob.AddFile(bobPath))
+
+					alicePath := filepath.Join(tp.AliceMountDir, fileName)
+					WaitForFileOnMount(t, alicePath, 60*time.Second)
+
+					start := time.Now()
+					readData, err := os.ReadFile(alicePath)
+					elapsed := time.Since(start)
+					require.NoError(err)
+					require.Equal(len(data), len(readData), "size mismatch")
+
+					mbps := float64(s.size) / elapsed.Seconds() / (1024 * 1024)
+					t.Logf("%-8s | %-12.2f | %s", s.name, mbps, elapsed.Round(time.Millisecond))
+				})
+			}
 		})
 	}
 }
