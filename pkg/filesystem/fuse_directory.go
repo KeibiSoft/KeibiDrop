@@ -1249,6 +1249,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			d.OpenMapLock.Unlock()
 			unlocked = true
 			if cacheFD != nil {
+				f.CacheWg.Wait() // Wait for in-flight async cache writes to finish.
 				if closeErr := cacheFD.Close(); closeErr != nil {
 					logger.Error("Failed to close cache FD", "error", closeErr)
 				}
@@ -1795,18 +1796,25 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		f.Download.UpdateProgress(offset, n)
 		f.Download.UpdateChecksum(data[:n])
 
-		// Write data into local cache using persistent FD (pwrite is atomic, no lock needed).
+		// Write to local cache asynchronously — data is already in the FUSE
+		// buffer so we can return immediately. The cache write and bitmap
+		// update happen in the background. CacheWg is waited on in Release()
+		// before closing the FD.
 		if cacheFD != nil {
-			_, err := cacheFD.WriteAt(data, offset)
-			if err != nil {
-				logger.Error("Failed to write remote data to local file", "error", err)
-				return -winfuse.EIO
-			}
-		}
-
-		// Mark bitmap for the chunks we just downloaded on-demand.
-		if bitmap != nil {
-			bitmap.SetRange(offset, n)
+			cacheData := data[:n]
+			cacheOffset := offset
+			bm := bitmap
+			f.CacheWg.Add(1)
+			go func() {
+				defer f.CacheWg.Done()
+				if _, err := cacheFD.WriteAt(cacheData, cacheOffset); err != nil {
+					logger.Error("Async cache write failed", "error", err)
+					return
+				}
+				if bm != nil {
+					bm.SetRange(cacheOffset, len(cacheData))
+				}
+			}()
 		}
 
 		logger.Debug("Read completed", "bytes", n, "progress", f.Download.Progress())

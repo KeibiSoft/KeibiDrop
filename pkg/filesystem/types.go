@@ -216,6 +216,7 @@ type File struct {
 	StreamPool     *StreamPool            // Pool of parallel gRPC streams for on-demand reads.
 	StreamCancel   context.CancelFunc     // Cancel function for the stream context.
 	CacheFD        *os.File               // Persistent cache file descriptor for on-demand writes.
+	CacheWg        sync.WaitGroup         // Tracks in-flight async cache writes; waited on in Release.
 
 	// Download resumption state.
 	Download DownloadState
