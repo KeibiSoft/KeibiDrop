@@ -340,7 +340,7 @@ func (kd *KeibiDrop) Run() {
 				// from running→not-running when a disconnect happens.
 				kd.running.Store(true)
 
-				if kd.FS != nil {
+				if kd.FS != nil && kd.KDSvc != nil {
 					logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
 					kd.KDSvc.FS = kd.FS
 					kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))

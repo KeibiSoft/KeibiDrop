@@ -190,6 +190,7 @@ func shouldUseDirectIo(path string, flags int) bool {
 // CreateEx implements FileSystemOpenEx interface for per-file direct_io control.
 func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCode int) {
 	defer d.recoverPanic("CreateEx", &errCode)
+	d.logger.Info("FUSE create", "path", path, "mode", mode)
 	logger := d.logger.With("method", "create-ex", "path", path)
 
 	flags := fi.Flags
@@ -251,6 +252,7 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	defer d.recoverPanic("OpenEx", &errCode)
 	flags := fi.Flags
+	d.logger.Info("FUSE open", "path", path, "flags", flags)
 	logger := d.logger.With("method", "open-ex", "path", path, "flags", flags)
 
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -555,7 +557,7 @@ func (d *Dir) Flush(path string, fh uint64) (errCode int) {
 
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	defer d.recoverPanic("Fsync", &errCode)
-	// d.logger.Warn("FUSE Fsync", "path", path, "datasync", datasync, "fh", fh)
+	d.logger.Info("FUSE fsync", "path", path, "fh", fh)
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "fsync", "path", localPath)
 
@@ -602,6 +604,7 @@ func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) (errCode int) {
 
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int) {
 	defer d.recoverPanic("Getattr", &errCode)
+	d.logger.Info("FUSE getattr", "path", path, "fh", fh)
 	logger := d.logger.With("method", "get-attr", "path", path, "fh", fh)
 
 	// CRITICAL: Lock order is RemoteFilesLock → Adm → AfmLock (prevents deadlock with AddRemoteFile)
@@ -793,6 +796,7 @@ func (d *Dir) MkdirFromPeer(path string, mode uint32) (errCode int) {
 }
 
 func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode int) {
+	d.logger.Info("FUSE mkdir", "path", path, "mode", mode, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := syscall.Mkdir(cleanPath, mode)
@@ -837,6 +841,7 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 
 func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	defer d.recoverPanic("Open", &errCode)
+	d.logger.Info("FUSE open(legacy)", "path", path, "flags", flags)
 	logger := d.logger.With("method", "open", "path", path, "flags", flags)
 
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -1043,7 +1048,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 
 func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
 	defer d.recoverPanic("Opendir", &errCode)
-	// d.logger.Info("Opendir", "path", path, "inode", d.Inode)
+	d.logger.Info("FUSE opendir", "path", path)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "opendir", "path", path)
 	f, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
@@ -1091,6 +1096,7 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 		}
 	}
 
+	d.logger.Info("FUSE readdir", "path", path, "local", len(localFiles), "remoteFiles", len(remoteFiles), "remoteDirs", len(remoteDirs))
 	return 0
 }
 
@@ -1103,6 +1109,7 @@ func (d *Dir) Readlink(path string) (errCode int, target string) {
 
 func (d *Dir) Release(path string, fh uint64) (errCode int) {
 	defer d.recoverPanic("Release", &errCode)
+	d.logger.Info("FUSE release", "path", path, "fh", fh)
 	logger := d.logger.With("method", "release", "path", path, "fh", fh)
 
 	d.OpenMapLock.Lock()
@@ -1294,6 +1301,7 @@ func (d *Dir) Releasedir(path string, fh uint64) (errCode int) {
 // When apps try atomic rename-swap, we fall back to basic rename.
 func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	defer d.recoverPanic("Rename", &errCode)
+	d.logger.Info("FUSE rename", "old", oldpath, "new", newpath)
 	// d.logger.Warn("FUSE Rename called",
 	// 	"oldpath", oldpath,
 	// 	"newpath", newpath,
@@ -1376,7 +1384,7 @@ func (d *Dir) RmdirFromPeer(path string) (errCode int) {
 }
 
 func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
-	// d.logger.Info("Rmdir", "path", path, "inode", d.Inode)
+	d.logger.Info("FUSE rmdir", "path", path, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "rmdir", "path", path)
 
 	// Check if this is a remote-only directory (track if we removed it from map).
@@ -1466,7 +1474,7 @@ func (d *Dir) Symlink(target string, newpath string) (errCode int) {
 // thus Open is immediately followed by Truncate.
 func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Truncate", &errCode)
-	// d.logger.Info("Truncate", "path", path, "size", size, "inode", d.Inode, "fh", fh)
+	d.logger.Info("FUSE truncate", "path", path, "size", size)
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "truncate", "path", path, "size", size, "fh", fh)
@@ -1491,7 +1499,7 @@ func (d *Dir) UnlinkFromPeer(path string) (errCode int) {
 }
 
 func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
-	// d.logger.Info("Unlink", "path", path, "inode", d.Inode)
+	d.logger.Info("FUSE unlink", "path", path, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "unlink", "path", path)
 
 	// Check if this is a remote-only file (not downloaded locally).
@@ -1595,6 +1603,7 @@ func (ws *WriteStats) record(lockTime, pwriteTime, remoteTime time.Duration, byt
 // The method returns the number of bytes written.
 func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Write", &errCode)
+	d.logger.Info("FUSE write", "path", path, "offset", offset, "len", len(buff))
 	logger := d.logger.With("method", "write", "path", path, "fh", fh, "offset", offset)
 
 	// startTotal := time.Now()
@@ -1726,7 +1735,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		// serve from local cache. Otherwise fetch on-demand from remote.
 		if bitmap != nil && bitmap.HasRange(offset, len(buff)) {
 			// Fast path: all chunks available locally.
-			// logger.Debug("Bitmap hit — reading from local cache", "offset", offset, "len", len(buff))
+			d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "bitmap")
 			n, preadErr := syscall.Pread(int(fh), buff, offset)
 			if preadErr != nil {
 				logger.Error("Local pread failed after bitmap hit", "error", preadErr)
@@ -1735,7 +1744,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			return n
 		}
 
-		// logger.Debug("Reading from remote (on-demand)", "bufLen", len(buff), "progress", f.Download.Progress())
+		d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "remote")
 
 		// Retry loop for resilience against transient failures.
 		var data []byte
@@ -1829,7 +1838,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	}
 
 	// Fallback: read directly from local file
-	// d.logger.Warn("FUSE Read from LOCAL", "path", path, "offset", offset, "bufLen", len(buff))
+	d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "local")
 	n, err := syscall.Pread(int(fh), buff, offset)
 	if err != nil {
 		// EBADF fallback: fd may have been closed by fcopyfile race or fd reuse.
@@ -1945,6 +1954,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+	d.logger.Info("FUSE remote-add", "path", path, "size", stat.Size)
 
 	d.RemoteFilesLock.Lock()
 
@@ -2115,6 +2125,7 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+	d.logger.Info("FUSE remote-edit", "path", path, "size", stat.Size)
 
 	d.RemoteFilesLock.Lock()
 
