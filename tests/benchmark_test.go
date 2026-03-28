@@ -151,7 +151,8 @@ func applyNetem(t *testing.T, p netemProfile) func() {
 }
 
 // TestTransferThroughputNetem measures E2E transfer with simulated network
-// conditions. Requires KEIBIDROP_BENCH_NETEM=1 and sudo/CAP_NET_ADMIN.
+// conditions. Requires Linux with tc netem.
+// Requires KEIBIDROP_BENCH_NETEM=1 and sudo/CAP_NET_ADMIN.
 //
 // Run with: sudo -E KEIBIDROP_BENCH_NETEM=1 go test -run=TestTransferThroughputNetem -v -timeout=600s ./tests/...
 func TestTransferThroughputNetem(t *testing.T) {
