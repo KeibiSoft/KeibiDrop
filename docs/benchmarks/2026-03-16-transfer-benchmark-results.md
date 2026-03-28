@@ -128,6 +128,134 @@ serialization + encryption per chunk.
 
 ---
 
+## macOS Results (Intel Mac)
+
+**Machine**: Intel i7-9750H @ 2.60GHz, macOS 26.3, 32 GB RAM, localhost only
+**Date**: 2026-03-28
+
+### E2E Transfer Throughput (Bob shares, Alice reads via FUSE)
+
+| Size | MB/s | Duration |
+|------|------|----------|
+| 1 MB | 86 | 12 ms |
+| 10 MB | 156 | 64 ms |
+| 100 MB | 203 | 492 ms |
+| 1 GB | 225 | 4.5 s |
+
+Throughput increases with size, peaking at 225 MB/s for 1 GB. Significantly
+faster than Linux (138 MB/s at 100 MB), likely due to macFUSE readahead
+tuning and faster CPU.
+
+### Encrypted gRPC Throughput (no FUSE)
+
+| Size | MB/s | Duration |
+|------|------|----------|
+| 1 MB | 155 | 6 ms |
+| 10 MB | 330 | 30 ms |
+| 100 MB | 445 | 225 ms |
+| 1 GB | 437 | 2.3 s |
+
+Peaks at ~440 MB/s for large files. FUSE adds ~2x overhead (225 vs 437 MB/s
+at 1 GB) from kernel context switches, VFS layer, and bitmap tracking.
+
+### Raw gRPC Baseline (no encryption, localhost)
+
+| Size | MB/s |
+|------|------|
+| 1 MB | 247 |
+| 10 MB | 842 |
+| 100 MB | 954 |
+| 1 GB | 981 |
+
+Raw gRPC peaks at ~1 GB/s. Encryption (ChaCha20-Poly1305) adds ~2.2x overhead
+(981 vs 437 MB/s at 1 GB).
+
+### Per-Chunk Latency (10 MB)
+
+| Metric | Value |
+|--------|-------|
+| Chunks recorded | 25 |
+| Total wall-clock | 59 ms |
+| Sum of chunk times | 95 ms |
+| Effective MB/s | 169 |
+| Min | 1.02 ms |
+| Median | 2.71 ms |
+| P95 | 8.1 ms |
+| Max | 14.1 ms |
+
+Fewer chunks recorded (25 vs 100 on Linux) because macFUSE uses larger
+readahead buffers. 1.6x parallelism (sum 95 ms vs wall 59 ms).
+
+### Overhead Ratio (E2E vs Raw Disk)
+
+| Size | Raw Disk | E2E Transfer | Overhead | Ratio |
+|------|----------|-------------|----------|-------|
+| 1 MB | 1 ms | 9 ms | 8 ms | 8.7x |
+| 10 MB | 4 ms | 60 ms | 56 ms | 14.2x |
+| 100 MB | 47 ms | 379 ms | 333 ms | 8.1x |
+| 1 GB | 475 ms | 4.16 s | 3.68 s | 8.7x |
+
+Lower overhead ratio than Linux (8.7x vs 14-24x). The ratio stays
+relatively constant at ~8-9x for larger files on macOS.
+
+### Raw Disk I/O Baseline
+
+| Size | Write MB/s | Read MB/s |
+|------|-----------|----------|
+| 1 KB | 6 | 15 |
+| 10 KB | 23 | 202 |
+| 100 KB | 467 | 1,575 |
+| 1 MB | 3,025 | 5,308 |
+| 10 MB | 3,403 | 4,815 |
+| 100 MB | 3,331 | 6,132 |
+| 1 GB | 3,292 | 4,929 |
+
+### FUSE Write Throughput (copy files INTO mount)
+
+**Single file:**
+
+| Size | MB/s | Duration |
+|------|------|----------|
+| 1 MB | 354 | 3 ms |
+| 10 MB | 749 | 13 ms |
+| 100 MB | 1,149 | 87 ms |
+| 1 GB | 1,171 | 875 ms |
+
+**Multi-file (directory copies):**
+
+| Test | Total | MB/s | Duration | Per-file avg |
+|------|-------|------|----------|-------------|
+| 10 x 1 MB | 10 MB | 621 | 16 ms | 2 ms |
+| 10 x 10 MB | 100 MB | 1,000 | 100 ms | 10 ms |
+| 100 x 1 MB | 100 MB | 642 | 156 ms | 2 ms |
+| 100 x 10 MB | 1,000 MB | 989 | 1.01 s | 10 ms |
+
+FUSE writes are fast (1.1 GB/s for large files) because they go straight
+to local disk via syscall.Pwrite. The per-file overhead is ~2 ms (Create +
+Release + peer notification). Multi-file writes scale linearly.
+Write throughput is NOT the bottleneck. Read-from-remote is.
+
+### FUSE Latency (local operations)
+
+| Size | Create+Write | Read | Total |
+|------|-------------|------|-------|
+| 1 KB | 1.5 ms | 1.1 ms | 2.6 ms |
+| 10 KB | 2.0 ms | 1.2 ms | 3.2 ms |
+| 100 KB | 3.1 ms | 1.2 ms | 4.3 ms |
+| 1 MB | 3.2 ms | 1.3 ms | 4.5 ms |
+
+Local disk baseline: 0.2-0.6 ms for same operations. FUSE adds ~2 ms
+per operation from kernel-userspace context switches.
+
+### Open/Close Latency (100 iterations)
+
+| Operation | Average |
+|-----------|---------|
+| Open | 164 µs |
+| Close | 56 µs |
+
+---
+
 ## Key Findings
 
 1. **Stream mutex fix (#70) was critical** — c1bfca0 cannot complete FUSE
@@ -138,21 +266,34 @@ serialization + encryption per chunk.
    causes a nearly proportional 4x throughput drop. Bandwidth is not
    the limiting factor on gigabit links.
 
-3. **Encrypted gRPC is 2-3x slower than raw gRPC** (361 vs 810 MB/s at
-   100 MB on localhost) — encryption overhead is measurable but secondary
-   to latency in real-world scenarios.
+3. **Encrypted gRPC is ~2x slower than raw gRPC** — 437 vs 981 MB/s at
+   1 GB on macOS (similar ratio on Linux). ChaCha20-Poly1305 encryption
+   is measurable but secondary to latency in real-world scenarios.
 
-4. **Per-chunk round-trip overhead is ~7.5x theoretical minimum** —
+4. **FUSE read-from-remote adds ~2x over encrypted gRPC** — 225 vs
+   437 MB/s at 1 GB on macOS. The overhead comes from: kernel-userspace
+   context switches, bitmap tracking, local cache writes, FUSE readahead
+   coordination. This is the read path bottleneck.
+
+5. **FUSE writes are fast (not a bottleneck)** — 1.1 GB/s for large files,
+   ~2 ms per-file overhead. Writes go straight to disk via syscall.Pwrite.
+   The bottleneck is exclusively in the remote read path.
+
+6. **macOS is ~60% faster than Linux** for E2E FUSE reads (225 vs 138 MB/s
+   at 100 MB). Likely from macFUSE readahead tuning and faster CPU
+   (i7-9750H @ 2.6GHz vs i5-8265U @ 1.6GHz).
+
+7. **Chunk parallelism helps on localhost (Linux)** — sum of chunk times
+   (221 ms) vs wall-clock (98 ms) shows ~2.3x parallelism from FUSE
+   readahead, but the stream mutex serializes the actual gRPC sends.
+
+8. **Per-chunk round-trip overhead is ~7.5x theoretical minimum** —
    at 1ms RTT with 512 KiB chunks, theoretical max is ~500 MB/s but we
    get 66 MB/s. The stream mutex, gRPC framing, protobuf serialization,
    and encryption each add latency per chunk.
 
-5. **Chunk parallelism helps on localhost** — sum of chunk times (221 ms)
-   vs wall-clock (98 ms) shows ~2.3x parallelism from FUSE readahead,
-   but the stream mutex serializes the actual gRPC sends.
-
-6. **Biggest optimization opportunity**: pipelining prefetch — send
+9. **Biggest optimization opportunity**: pipelining prefetch — send
    multiple ReadRequests without waiting for each response. Current
-   sequential pattern means each chunk pays the full RTT. Pipelining
-   could bring LAN throughput from 66 MB/s closer to the 360 MB/s
-   seen in the encrypted-gRPC-without-FUSE benchmark.
+   sequential pattern means each chunk pays the full RTT. Stream
+   multiplexing (follow-up PR) should bring LAN throughput from
+   66 MB/s closer to the 437 MB/s encrypted-gRPC baseline.

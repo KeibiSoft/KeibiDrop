@@ -42,7 +42,7 @@ func TestTransferThroughput(t *testing.T) {
 		t.Skip("skipping transfer throughput in short mode")
 	}
 
-	tp := SetupFUSEPeerPair(t, 180*time.Second)
+	tp := SetupFUSEPeerPair(t, 300*time.Second)
 	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
 
 	sizes := []struct {
@@ -52,6 +52,7 @@ func TestTransferThroughput(t *testing.T) {
 		{"1MB", 1 * 1024 * 1024},
 		{"10MB", 10 * 1024 * 1024},
 		{"100MB", 100 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
 	}
 
 	t.Log("\n=== End-to-End Transfer Throughput ===")
@@ -381,6 +382,7 @@ func BenchmarkLocalDisk(b *testing.B) {
 		{"1MB", 1 * 1024 * 1024},
 		{"10MB", 10 * 1024 * 1024},
 		{"100MB", 100 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
 	}
 
 	for _, s := range sizes {
@@ -472,6 +474,7 @@ func BenchmarkGRPCBaseline(b *testing.B) {
 		{"1MB", 1 * 1024 * 1024},
 		{"10MB", 10 * 1024 * 1024},
 		{"100MB", 100 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
 	}
 
 	// Create temp dir with test files
@@ -556,7 +559,7 @@ func TestEncryptedGRPC(t *testing.T) {
 	}
 
 	// No FUSE needed — just the encrypted gRPC channel between peers.
-	tp := SetupPeerPairWithTimeout(t, false, 180*time.Second)
+	tp := SetupPeerPairWithTimeout(t, false, 300*time.Second)
 
 	sizes := []struct {
 		name string
@@ -565,6 +568,7 @@ func TestEncryptedGRPC(t *testing.T) {
 		{"1MB", 1 * 1024 * 1024},
 		{"10MB", 10 * 1024 * 1024},
 		{"100MB", 100 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
 	}
 
 	chunkSize := filesystem.ChunkSize
@@ -628,7 +632,7 @@ func TestBaselineComparison(t *testing.T) {
 		t.Skip("skipping baseline comparison in short mode")
 	}
 
-	tp := SetupFUSEPeerPair(t, 180*time.Second)
+	tp := SetupFUSEPeerPair(t, 300*time.Second)
 	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
 
 	sizes := []struct {
@@ -638,6 +642,7 @@ func TestBaselineComparison(t *testing.T) {
 		{"1MB", 1 * 1024 * 1024},
 		{"10MB", 10 * 1024 * 1024},
 		{"100MB", 100 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
 	}
 
 	type result struct {
@@ -692,6 +697,112 @@ func TestBaselineComparison(t *testing.T) {
 			r.e2e.Round(time.Millisecond),
 			overhead.Round(time.Millisecond),
 			ratio)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark 5: FUSE Write Throughput (copy files INTO the mounted filesystem)
+// ---------------------------------------------------------------------------
+
+// TestFUSEWriteThroughput measures how fast files can be written into the FUSE
+// mount from outside (simulating drag-and-drop or cp). This exercises Create,
+// Write, Flush, Release, and the peer notification path.
+func TestFUSEWriteThroughput(t *testing.T) {
+	skipIfNoFUSE(t)
+	if testing.Short() {
+		t.Skip("skipping FUSE write throughput in short mode")
+	}
+
+	tp := SetupFUSEPeerPair(t, 300*time.Second)
+	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
+
+	// Single file write throughput at various sizes.
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"1MB", 1 * 1024 * 1024},
+		{"10MB", 10 * 1024 * 1024},
+		{"100MB", 100 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
+	}
+
+	t.Log("\n=== FUSE Write Throughput (single file) ===")
+	t.Logf("%-8s | %-12s | %-10s", "Size", "MB/s", "Duration")
+	t.Logf("---------|--------------|----------")
+
+	for _, s := range sizes {
+		t.Run("Single_"+s.name, func(t *testing.T) {
+			require := require.New(t)
+
+			data := make([]byte, s.size)
+			_, err := rand.Read(data)
+			require.NoError(err)
+
+			destPath := filepath.Join(tp.AliceMountDir, fmt.Sprintf("write_bench_%s.bin", s.name))
+
+			start := time.Now()
+			err = os.WriteFile(destPath, data, 0644)
+			elapsed := time.Since(start)
+			require.NoError(err)
+
+			mbps := float64(s.size) / elapsed.Seconds() / (1024 * 1024)
+			t.Logf("%-8s | %-12.2f | %s", s.name, mbps, elapsed.Round(time.Millisecond))
+
+			// Verify
+			readBack, err := os.ReadFile(destPath)
+			require.NoError(err)
+			require.Equal(len(data), len(readBack), "size mismatch")
+		})
+	}
+
+	// Multi-file write: copy N files of a given size into the mount.
+	multiTests := []struct {
+		name      string
+		fileCount int
+		fileSize  int
+	}{
+		{"10x1MB", 10, 1 * 1024 * 1024},
+		{"10x10MB", 10, 10 * 1024 * 1024},
+		{"100x1MB", 100, 1 * 1024 * 1024},
+		{"100x10MB", 100, 10 * 1024 * 1024},
+	}
+
+	t.Log("\n=== FUSE Write Throughput (multi-file) ===")
+	t.Logf("%-12s | %-8s | %-12s | %-10s | %-12s", "Test", "Total", "MB/s", "Duration", "Per-file avg")
+	t.Logf("-------------|----------|--------------|------------|------------")
+
+	for _, mt := range multiTests {
+		t.Run("Multi_"+mt.name, func(t *testing.T) {
+			require := require.New(t)
+
+			totalBytes := mt.fileCount * mt.fileSize
+			data := make([]byte, mt.fileSize)
+			_, err := rand.Read(data)
+			require.NoError(err)
+
+			// Create a subdirectory for this batch.
+			batchDir := filepath.Join(tp.AliceMountDir, "batch_"+mt.name)
+			require.NoError(os.MkdirAll(batchDir, 0755))
+
+			start := time.Now()
+			for i := 0; i < mt.fileCount; i++ {
+				destPath := filepath.Join(batchDir, fmt.Sprintf("file_%04d.bin", i))
+				err := os.WriteFile(destPath, data, 0644)
+				require.NoError(err)
+			}
+			elapsed := time.Since(start)
+
+			totalMB := float64(totalBytes) / (1024 * 1024)
+			mbps := totalMB / elapsed.Seconds()
+			perFile := elapsed / time.Duration(mt.fileCount)
+			t.Logf("%-12s | %-8s | %-12.2f | %-10s | %s",
+				mt.name,
+				fmt.Sprintf("%.0fMB", totalMB),
+				mbps,
+				elapsed.Round(time.Millisecond),
+				perFile.Round(time.Millisecond))
+		})
 	}
 }
 
