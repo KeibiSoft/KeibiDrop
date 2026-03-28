@@ -314,10 +314,18 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				"size", event.Attr.Size)
 		}
 
-		_, err := kd.session.GRPCClient.Notify(context.Background(), req)
-		if err != nil {
-			logger.Error("Failed to notify peer", "error", err)
-		}
+		// Send notification asynchronously to avoid blocking the FUSE Release handler.
+		// Release holds OpenMapLock — a synchronous gRPC call here would block all
+		// file operations while waiting for the peer to respond. With large clones
+		// (600+ files), this causes the clone to hang.
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_, err := kd.session.GRPCClient.Notify(ctx, req)
+			if err != nil {
+				logger.Error("Failed to notify peer", "error", err)
+			}
+		}()
 	}
 
 	fs.OpenStreamProvider = func() types.FileStreamProvider {

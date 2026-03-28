@@ -121,11 +121,16 @@ func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
 
 // getMountOptions returns macOS-specific FUSE mount options.
 // See: https://github.com/macfuse/macfuse/wiki/Mount-Options
+//
+// NOTE: Do NOT add negative_vncache — it caches ENOENT results in the kernel
+// vnode cache. When files arrive from a peer (git clone, file sync), Getattr
+// returns ENOENT before the file exists. With negative_vncache, the kernel
+// keeps returning ENOENT even after the file appears, causing "deleted" files
+// in git status and missing files in ls.
 func getMountOptions() []string {
 	return []string{
 		"-o", "volname=KeibiDrop",
 		"-o", "local",
-		"-o", "negative_vncache",
 		"-o", "slow_statfs",
 		"-o", "allow_other",
 	}
