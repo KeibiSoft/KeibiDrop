@@ -8,9 +8,7 @@ package common
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -126,6 +124,23 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 
 	localPath = filepath.Clean(localPath)
 
+	// Snapshot remote file metadata under a short read lock.
+	// Copy the struct so we don't alias the map entry pointer.
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	remFilePtr, ok := kd.SyncTracker.RemoteFiles[remoteName]
+	var fileCopy synctracker.File
+	if ok {
+		fileCopy = *remFilePtr
+	}
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
+	if !ok {
+		logger.Error("Not found", "error", syscall.ENOENT)
+		return syscall.ENOENT
+	}
+
+	fileSize := fileCopy.Size
+	relPath := fileCopy.RelativePath
+
 	// Ensure parent directories exist (for files in subdirectories).
 	if dir := filepath.Dir(localPath); dir != "." {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -139,73 +154,106 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		logger.Error("Failed to create local file", "error", err)
 		return err
 	}
+	defer f.Close()
+
+	// Pre-allocate the file to enable correct out-of-order pwrite.
+	if fileSize > 0 {
+		if err := f.Truncate(int64(fileSize)); err != nil {
+			logger.Error("Failed to pre-allocate file", "error", err)
+			os.Remove(localPath)
+			return err
+		}
+	}
+
+	totalChunks := int((fileSize + uint64(config.BlockSize) - 1) / uint64(config.BlockSize))
+
+	if totalChunks > 0 {
+		// Parallel download with N gRPC streams (chunk-index sharding).
+		nWorkers := filesystem.StreamPoolSize
+		if totalChunks < nWorkers {
+			nWorkers = totalChunks
+		}
+
+		// Child context so we can cancel remaining workers on first error.
+		dlCtx, dlCancel := context.WithCancel(kd.ctx)
+		defer dlCancel()
+
+		var wg sync.WaitGroup
+		errCh := make(chan error, nWorkers)
+
+		for w := 0; w < nWorkers; w++ {
+			wg.Add(1)
+			go func(workerID int) {
+				defer wg.Done()
+
+				stream, err := kd.session.GRPCClient.Read(dlCtx)
+				if err != nil {
+					errCh <- fmt.Errorf("worker %d: open stream: %w", workerID, err)
+					dlCancel()
+					return
+				}
+				defer stream.CloseSend()
+
+				for i := workerID; i < totalChunks; i += nWorkers {
+					offset := uint64(i) * uint64(config.BlockSize)
+					size := uint64(config.BlockSize)
+					if offset+size > fileSize {
+						size = fileSize - offset
+					}
+
+					if err := stream.Send(&bindings.ReadRequest{
+						Handle: 0,
+						Path:   relPath,
+						Offset: offset,
+						Size:   uint32(size),
+					}); err != nil {
+						errCh <- fmt.Errorf("worker %d: send chunk %d: %w", workerID, i, err)
+						dlCancel()
+						return
+					}
+
+					data, err := stream.Recv()
+					if err != nil {
+						errCh <- fmt.Errorf("worker %d: recv chunk %d: %w", workerID, i, err)
+						dlCancel()
+						return
+					}
+
+					if uint64(len(data.Data)) != size {
+						errCh <- fmt.Errorf("worker %d: chunk %d: got %d bytes, expected %d", workerID, i, len(data.Data), size)
+						dlCancel()
+						return
+					}
+
+					if _, err := f.WriteAt(data.Data, int64(offset)); err != nil {
+						errCh <- fmt.Errorf("worker %d: write chunk %d: %w", workerID, i, err)
+						dlCancel()
+						return
+					}
+				}
+			}(w)
+		}
+
+		wg.Wait()
+		close(errCh)
+		if err := <-errCh; err != nil {
+			logger.Error("Parallel download failed", "error", err)
+			os.Remove(localPath)
+			return err
+		}
+	}
+
+	// Update tracker under short locks.
+	fileCopy.RealPathOfFile = localPath
 
 	kd.SyncTracker.RemoteFilesMu.Lock()
-	remFile, ok := kd.SyncTracker.RemoteFiles[remoteName]
-	defer kd.SyncTracker.RemoteFilesMu.Unlock()
-	if !ok {
-		logger.Error("Not found", "error", syscall.ENOENT)
-		return syscall.ENOENT
+	if rf, ok := kd.SyncTracker.RemoteFiles[remoteName]; ok {
+		rf.RealPathOfFile = localPath
 	}
+	kd.SyncTracker.RemoteFilesMu.Unlock()
 
-	stream, err := kd.session.GRPCClient.Read(kd.ctx)
-	if err != nil {
-		logger.Error("Failed to open stream", "error", err)
-		return err
-	}
-
-	blocks := remFile.Size / config.BlockSize
-	leftoverBlockSize := remFile.Size % config.BlockSize
-
-	i := 0
-	for {
-		offset := i * config.BlockSize
-		size := uint32(config.BlockSize)
-		if i >= int(blocks) {
-			if leftoverBlockSize != 0 {
-				size = uint32(leftoverBlockSize)
-			} else {
-				break
-			}
-		}
-		err := stream.Send(&bindings.ReadRequest{
-			Handle: 0,
-			Path:   remFile.RelativePath,
-			Offset: uint64(offset),
-			Size:   size,
-		})
-		if err != nil {
-			logger.Error("Failed to send stream", "error", err)
-			return err
-		}
-
-		data, err := stream.Recv()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			logger.Error("Failed to receive data", "error", err)
-			return err
-		}
-
-		n, err := f.WriteAt(data.Data, int64(offset))
-		if err != nil {
-			logger.Error("Failed to write data to disk", "error", err)
-
-			return err
-		}
-
-		if n != int(size) {
-			logger.Warn("Wrote less than the requested size")
-			break
-		}
-
-		i++
-	}
-
-	remFile.RealPathOfFile = localPath
 	kd.SyncTracker.LocalFilesMu.Lock()
-	kd.SyncTracker.LocalFiles[localPath] = remFile
+	kd.SyncTracker.LocalFiles[localPath] = &fileCopy
 	kd.SyncTracker.LocalFilesMu.Unlock()
 
 	logger.Info("Success")
