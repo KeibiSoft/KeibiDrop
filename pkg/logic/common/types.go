@@ -86,6 +86,11 @@ type KeibiDrop struct {
 	HealthMonitor    *session.HealthMonitor
 	ReconnectManager *session.ReconnectManager
 	RelayKeepalive   *RelayKeepalive
+
+	// Data channels for parallel TCP connections.
+	DataChannels    []session.ChannelHandle
+	dataClients     atomic.Pointer[[]bindings.KeibiServiceClient] // Lock-free round-robin.
+	dataClientIdx   atomic.Uint64                                  // Atomic counter for round-robin.
 }
 
 type TaskSignal int
@@ -193,6 +198,19 @@ type EncryptedRegistration struct {
 // Map server status errors to semantic errors.
 type ErrorMapperFunc func(statusCode int, err error) error
 
+// NextDataClient returns a data channel gRPC client using round-robin.
+// Falls back to the control channel client if no data channels are available.
+// Lock-free: uses atomic.Pointer for the client slice.
+func (kd *KeibiDrop) NextDataClient() bindings.KeibiServiceClient {
+	ptr := kd.dataClients.Load()
+	if ptr == nil || len(*ptr) == 0 {
+		return kd.KDClient // Fallback to control channel.
+	}
+	clients := *ptr
+	idx := kd.dataClientIdx.Add(1) - 1
+	return clients[idx%uint64(len(clients))]
+}
+
 // IsRunning returns whether the KeibiDrop instance is in a connected session.
 func (kd *KeibiDrop) IsRunning() bool {
 	return kd.running.Load()
@@ -272,6 +290,7 @@ func (kd *KeibiDrop) Run() {
 				kd.grpcClientConn.Close()
 				kd.grpcClientConn = nil
 			}
+			kd.closeDataChannels()
 			kd.KDClient = nil
 			kd.KDSvc = nil
 			kd.session = nil
@@ -340,7 +359,7 @@ func (kd *KeibiDrop) Run() {
 				// from running→not-running when a disconnect happens.
 				kd.running.Store(true)
 
-				if kd.FS != nil {
+				if kd.FS != nil && kd.KDSvc != nil {
 					logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
 					kd.KDSvc.FS = kd.FS
 					kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))

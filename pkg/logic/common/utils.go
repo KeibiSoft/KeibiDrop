@@ -321,8 +321,13 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	}
 
 	fs.OpenStreamProvider = func() types.FileStreamProvider {
-		return NewImplStreamProvider(kd.session.GRPCClient)
+		// Use data channel client if available, otherwise control channel.
+		return NewImplStreamProvider(kd.NextDataClient())
 	}
+
+	// Lazily negotiate data channels in the background.
+	// The gRPC control channel is connected; the listener is free for new accepts.
+	kd.openDataChannels(logger)
 
 	if ready != nil {
 		kd.filesystemReadyOnce.Do(func() {

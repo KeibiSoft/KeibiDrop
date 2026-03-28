@@ -33,6 +33,10 @@ service KeibiService {
 
   // Connection health monitoring for auto-reconnection.
   rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Negotiate an additional data channel (TCP connection) for parallel transfers.
+  // Called over the control channel; keys derived from session + exchanged seeds.
+  rpc NegotiateChannel (NegotiateChannelRequest) returns (NegotiateChannelResponse);
 }
 
 // ========== MESSAGE DEFINITIONS ==========
@@ -173,5 +177,23 @@ message HeartbeatResponse {
   uint64 timestamp = 1;      // responder's unix nano timestamp
   uint64 req_timestamp = 2;  // echo of request timestamp (for RTT)
   uint64 seq = 3;            // echo of sequence number
+}
+
+// ========== CHANNEL NEGOTIATION (PARALLEL TCP CONNECTIONS) ==========
+
+// NegotiateChannelRequest opens an additional data channel.
+// Sent over the control gRPC; peer responds with its seed, then both
+// derive a channel-specific key via HKDF and open a new TCP connection.
+message NegotiateChannelRequest {
+  uint32 channel_id = 1;   // Monotonic channel identifier (1, 2, ...).
+  bytes  key_seed = 2;     // Random 32-byte seed for HKDF key derivation.
+}
+
+// NegotiateChannelResponse confirms channel acceptance and provides
+// the peer's seed for bidirectional key derivation.
+message NegotiateChannelResponse {
+  uint32 channel_id = 1;
+  bytes  key_seed = 2;     // Peer's 32-byte seed.
+  bool   accepted = 3;     // False if peer refuses (resource limits, etc.).
 }
 

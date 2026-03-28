@@ -1291,6 +1291,123 @@ func (x *HeartbeatResponse) GetSeq() uint64 {
 	return 0
 }
 
+// NegotiateChannelRequest opens an additional data channel.
+// Sent over the control gRPC; peer responds with its seed, then both
+// derive a channel-specific key via HKDF and open a new TCP connection.
+type NegotiateChannelRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChannelId     uint32                 `protobuf:"varint,1,opt,name=channel_id,json=channelId,proto3" json:"channel_id,omitempty"` // Monotonic channel identifier (1, 2, ...).
+	KeySeed       []byte                 `protobuf:"bytes,2,opt,name=key_seed,json=keySeed,proto3" json:"key_seed,omitempty"`        // Random 32-byte seed for HKDF key derivation.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NegotiateChannelRequest) Reset() {
+	*x = NegotiateChannelRequest{}
+	mi := &file_keibidrop_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NegotiateChannelRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NegotiateChannelRequest) ProtoMessage() {}
+
+func (x *NegotiateChannelRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NegotiateChannelRequest.ProtoReflect.Descriptor instead.
+func (*NegotiateChannelRequest) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *NegotiateChannelRequest) GetChannelId() uint32 {
+	if x != nil {
+		return x.ChannelId
+	}
+	return 0
+}
+
+func (x *NegotiateChannelRequest) GetKeySeed() []byte {
+	if x != nil {
+		return x.KeySeed
+	}
+	return nil
+}
+
+// NegotiateChannelResponse confirms channel acceptance and provides
+// the peer's seed for bidirectional key derivation.
+type NegotiateChannelResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChannelId     uint32                 `protobuf:"varint,1,opt,name=channel_id,json=channelId,proto3" json:"channel_id,omitempty"`
+	KeySeed       []byte                 `protobuf:"bytes,2,opt,name=key_seed,json=keySeed,proto3" json:"key_seed,omitempty"` // Peer's 32-byte seed.
+	Accepted      bool                   `protobuf:"varint,3,opt,name=accepted,proto3" json:"accepted,omitempty"`             // False if peer refuses (resource limits, etc.).
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NegotiateChannelResponse) Reset() {
+	*x = NegotiateChannelResponse{}
+	mi := &file_keibidrop_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NegotiateChannelResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NegotiateChannelResponse) ProtoMessage() {}
+
+func (x *NegotiateChannelResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NegotiateChannelResponse.ProtoReflect.Descriptor instead.
+func (*NegotiateChannelResponse) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *NegotiateChannelResponse) GetChannelId() uint32 {
+	if x != nil {
+		return x.ChannelId
+	}
+	return 0
+}
+
+func (x *NegotiateChannelResponse) GetKeySeed() []byte {
+	if x != nil {
+		return x.KeySeed
+	}
+	return nil
+}
+
+func (x *NegotiateChannelResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
 var File_keibidrop_proto protoreflect.FileDescriptor
 
 const file_keibidrop_proto_rawDesc = "" +
@@ -1384,7 +1501,16 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x11HeartbeatResponse\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12#\n" +
 	"\rreq_timestamp\x18\x02 \x01(\x04R\freqTimestamp\x12\x10\n" +
-	"\x03seq\x18\x03 \x01(\x04R\x03seq*\xa3\x01\n" +
+	"\x03seq\x18\x03 \x01(\x04R\x03seq\"S\n" +
+	"\x17NegotiateChannelRequest\x12\x1d\n" +
+	"\n" +
+	"channel_id\x18\x01 \x01(\rR\tchannelId\x12\x19\n" +
+	"\bkey_seed\x18\x02 \x01(\fR\akeySeed\"p\n" +
+	"\x18NegotiateChannelResponse\x12\x1d\n" +
+	"\n" +
+	"channel_id\x18\x01 \x01(\rR\tchannelId\x12\x19\n" +
+	"\bkey_seed\x18\x02 \x01(\fR\akeySeed\x12\x1a\n" +
+	"\baccepted\x18\x03 \x01(\bR\baccepted*\xa3\x01\n" +
 	"\n" +
 	"NotifyType\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
@@ -1399,7 +1525,7 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\n" +
 	"RENAME_DIR\x10\b\x12\x0e\n" +
 	"\n" +
-	"DISCONNECT\x10\t2\x86\x05\n" +
+	"DISCONNECT\x10\t2\xe3\x05\n" +
 	"\fKeibiService\x127\n" +
 	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12<\n" +
 	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse(\x01\x12;\n" +
@@ -1411,7 +1537,8 @@ const file_keibidrop_proto_rawDesc = "" +
 	"StreamFile\x12\x1c.keibidrop.StreamFileRequest\x1a\x1d.keibidrop.StreamFileResponse0\x01\x12:\n" +
 	"\x05Debug\x12\x17.keibidrop.DebugRequest\x1a\x18.keibidrop.DebugResponse\x12:\n" +
 	"\x05Rekey\x12\x17.keibidrop.RekeyRequest\x1a\x18.keibidrop.RekeyResponse\x12F\n" +
-	"\tHeartbeat\x12\x1b.keibidrop.HeartbeatRequest\x1a\x1c.keibidrop.HeartbeatResponseB8Z6github.com/KeibiSoft/KeibiDrop/grpc_bindings;keibidropb\x06proto3"
+	"\tHeartbeat\x12\x1b.keibidrop.HeartbeatRequest\x1a\x1c.keibidrop.HeartbeatResponse\x12[\n" +
+	"\x10NegotiateChannel\x12\".keibidrop.NegotiateChannelRequest\x1a#.keibidrop.NegotiateChannelResponseB8Z6github.com/KeibiSoft/KeibiDrop/grpc_bindings;keibidropb\x06proto3"
 
 var (
 	file_keibidrop_proto_rawDescOnce sync.Once
@@ -1426,38 +1553,40 @@ func file_keibidrop_proto_rawDescGZIP() []byte {
 }
 
 var file_keibidrop_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_keibidrop_proto_goTypes = []any{
-	(NotifyType)(0),            // 0: keibidrop.NotifyType
-	(*DebugRequest)(nil),       // 1: keibidrop.DebugRequest
-	(*DebugResponse)(nil),      // 2: keibidrop.DebugResponse
-	(*OpenRequest)(nil),        // 3: keibidrop.OpenRequest
-	(*OpenResponse)(nil),       // 4: keibidrop.OpenResponse
-	(*WriteRequest)(nil),       // 5: keibidrop.WriteRequest
-	(*WriteResponse)(nil),      // 6: keibidrop.WriteResponse
-	(*ReadRequest)(nil),        // 7: keibidrop.ReadRequest
-	(*ReadResponse)(nil),       // 8: keibidrop.ReadResponse
-	(*StreamFileRequest)(nil),  // 9: keibidrop.StreamFileRequest
-	(*StreamFileResponse)(nil), // 10: keibidrop.StreamFileResponse
-	(*FsyncRequest)(nil),       // 11: keibidrop.FsyncRequest
-	(*FsyncResponse)(nil),      // 12: keibidrop.FsyncResponse
-	(*CloseRequest)(nil),       // 13: keibidrop.CloseRequest
-	(*CloseResponse)(nil),      // 14: keibidrop.CloseResponse
-	(*NotifyRequest)(nil),      // 15: keibidrop.NotifyRequest
-	(*NotifyResponse)(nil),     // 16: keibidrop.NotifyResponse
-	(*Attr)(nil),               // 17: keibidrop.Attr
-	(*RekeyRequest)(nil),       // 18: keibidrop.RekeyRequest
-	(*RekeyResponse)(nil),      // 19: keibidrop.RekeyResponse
-	(*HeartbeatRequest)(nil),   // 20: keibidrop.HeartbeatRequest
-	(*HeartbeatResponse)(nil),  // 21: keibidrop.HeartbeatResponse
-	nil,                        // 22: keibidrop.RekeyRequest.EncSeedsEntry
-	nil,                        // 23: keibidrop.RekeyResponse.EncSeedsEntry
+	(NotifyType)(0),                  // 0: keibidrop.NotifyType
+	(*DebugRequest)(nil),             // 1: keibidrop.DebugRequest
+	(*DebugResponse)(nil),            // 2: keibidrop.DebugResponse
+	(*OpenRequest)(nil),              // 3: keibidrop.OpenRequest
+	(*OpenResponse)(nil),             // 4: keibidrop.OpenResponse
+	(*WriteRequest)(nil),             // 5: keibidrop.WriteRequest
+	(*WriteResponse)(nil),            // 6: keibidrop.WriteResponse
+	(*ReadRequest)(nil),              // 7: keibidrop.ReadRequest
+	(*ReadResponse)(nil),             // 8: keibidrop.ReadResponse
+	(*StreamFileRequest)(nil),        // 9: keibidrop.StreamFileRequest
+	(*StreamFileResponse)(nil),       // 10: keibidrop.StreamFileResponse
+	(*FsyncRequest)(nil),             // 11: keibidrop.FsyncRequest
+	(*FsyncResponse)(nil),            // 12: keibidrop.FsyncResponse
+	(*CloseRequest)(nil),             // 13: keibidrop.CloseRequest
+	(*CloseResponse)(nil),            // 14: keibidrop.CloseResponse
+	(*NotifyRequest)(nil),            // 15: keibidrop.NotifyRequest
+	(*NotifyResponse)(nil),           // 16: keibidrop.NotifyResponse
+	(*Attr)(nil),                     // 17: keibidrop.Attr
+	(*RekeyRequest)(nil),             // 18: keibidrop.RekeyRequest
+	(*RekeyResponse)(nil),            // 19: keibidrop.RekeyResponse
+	(*HeartbeatRequest)(nil),         // 20: keibidrop.HeartbeatRequest
+	(*HeartbeatResponse)(nil),        // 21: keibidrop.HeartbeatResponse
+	(*NegotiateChannelRequest)(nil),  // 22: keibidrop.NegotiateChannelRequest
+	(*NegotiateChannelResponse)(nil), // 23: keibidrop.NegotiateChannelResponse
+	nil,                              // 24: keibidrop.RekeyRequest.EncSeedsEntry
+	nil,                              // 25: keibidrop.RekeyResponse.EncSeedsEntry
 }
 var file_keibidrop_proto_depIdxs = []int32{
 	0,  // 0: keibidrop.NotifyRequest.type:type_name -> keibidrop.NotifyType
 	17, // 1: keibidrop.NotifyRequest.attr:type_name -> keibidrop.Attr
-	22, // 2: keibidrop.RekeyRequest.enc_seeds:type_name -> keibidrop.RekeyRequest.EncSeedsEntry
-	23, // 3: keibidrop.RekeyResponse.enc_seeds:type_name -> keibidrop.RekeyResponse.EncSeedsEntry
+	24, // 2: keibidrop.RekeyRequest.enc_seeds:type_name -> keibidrop.RekeyRequest.EncSeedsEntry
+	25, // 3: keibidrop.RekeyResponse.enc_seeds:type_name -> keibidrop.RekeyResponse.EncSeedsEntry
 	3,  // 4: keibidrop.KeibiService.Open:input_type -> keibidrop.OpenRequest
 	5,  // 5: keibidrop.KeibiService.Write:input_type -> keibidrop.WriteRequest
 	7,  // 6: keibidrop.KeibiService.Read:input_type -> keibidrop.ReadRequest
@@ -1468,18 +1597,20 @@ var file_keibidrop_proto_depIdxs = []int32{
 	1,  // 11: keibidrop.KeibiService.Debug:input_type -> keibidrop.DebugRequest
 	18, // 12: keibidrop.KeibiService.Rekey:input_type -> keibidrop.RekeyRequest
 	20, // 13: keibidrop.KeibiService.Heartbeat:input_type -> keibidrop.HeartbeatRequest
-	4,  // 14: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
-	6,  // 15: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
-	8,  // 16: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
-	12, // 17: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
-	14, // 18: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
-	16, // 19: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
-	10, // 20: keibidrop.KeibiService.StreamFile:output_type -> keibidrop.StreamFileResponse
-	2,  // 21: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
-	19, // 22: keibidrop.KeibiService.Rekey:output_type -> keibidrop.RekeyResponse
-	21, // 23: keibidrop.KeibiService.Heartbeat:output_type -> keibidrop.HeartbeatResponse
-	14, // [14:24] is the sub-list for method output_type
-	4,  // [4:14] is the sub-list for method input_type
+	22, // 14: keibidrop.KeibiService.NegotiateChannel:input_type -> keibidrop.NegotiateChannelRequest
+	4,  // 15: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
+	6,  // 16: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
+	8,  // 17: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
+	12, // 18: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
+	14, // 19: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
+	16, // 20: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
+	10, // 21: keibidrop.KeibiService.StreamFile:output_type -> keibidrop.StreamFileResponse
+	2,  // 22: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
+	19, // 23: keibidrop.KeibiService.Rekey:output_type -> keibidrop.RekeyResponse
+	21, // 24: keibidrop.KeibiService.Heartbeat:output_type -> keibidrop.HeartbeatResponse
+	23, // 25: keibidrop.KeibiService.NegotiateChannel:output_type -> keibidrop.NegotiateChannelResponse
+	15, // [15:26] is the sub-list for method output_type
+	4,  // [4:15] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -1496,7 +1627,7 @@ func file_keibidrop_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_keibidrop_proto_rawDesc), len(file_keibidrop_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   23,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -8,12 +8,14 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -42,6 +44,16 @@ type KeibidropServiceImpl struct {
 	SyncTracker  *synctracker.SyncTracker
 	OnEvent      func(string)
 	OnDisconnect func() // Called (in goroutine) when peer sends DISCONNECT; cancels context to trigger cleanup.
+
+	// Channel negotiation state: stores seeds exchanged during NegotiateChannel.
+	// Key: channelID, Value: {peerSeed, ourSeed} for key derivation on the accept side.
+	ChannelSeeds   sync.Map // map[uint32]ChannelSeedPair
+}
+
+// ChannelSeedPair holds seeds exchanged during channel negotiation.
+type ChannelSeedPair struct {
+	PeerSeed []byte // Seed received from the peer (initiator).
+	OurSeed  []byte // Seed we generated and sent back.
 }
 
 func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (*bindings.DebugResponse, error) {
@@ -634,6 +646,38 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 
 	logger.Info("StreamFile complete", "bytesSent", offset-req.StartOffset)
 	return nil
+}
+
+// NegotiateChannel handles a request to open an additional data channel.
+// The peer sends a random seed; we respond with our seed. Both derive a
+// shared channel key via HKDF(sessionKey, ourSeed || peerSeed || channelID).
+func (kd *KeibidropServiceImpl) NegotiateChannel(_ context.Context, req *bindings.NegotiateChannelRequest) (*bindings.NegotiateChannelResponse, error) {
+	logger := kd.Logger.With("method", "negotiate-channel", "channelID", req.ChannelId)
+
+	if kd.Session == nil {
+		logger.Warn("Session not initialized")
+		return &bindings.NegotiateChannelResponse{Accepted: false}, nil
+	}
+
+	// Generate our seed.
+	seed := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, seed); err != nil {
+		logger.Error("Failed to generate seed", "error", err)
+		return nil, status.Error(codes.Internal, "seed generation failed")
+	}
+
+	// Store seeds for the accept side to derive the same key.
+	kd.ChannelSeeds.Store(req.ChannelId, ChannelSeedPair{
+		PeerSeed: req.KeySeed,
+		OurSeed:  seed,
+	})
+
+	logger.Info("Channel negotiation accepted", "channelID", req.ChannelId)
+	return &bindings.NegotiateChannelResponse{
+		ChannelId: req.ChannelId,
+		KeySeed:   seed,
+		Accepted:  true,
+	}, nil
 }
 
 // Rekey handles key rotation requests for forward secrecy.

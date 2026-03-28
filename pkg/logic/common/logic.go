@@ -8,7 +8,9 @@ package common
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,10 +22,13 @@ import (
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
+	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
+	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
+	"google.golang.org/grpc"
 )
 
 const Timeout = 10*60 - 5
@@ -366,8 +371,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 		logger.Warn("Failed to init connection resilience", "error", err)
 	}
 
+
 	if !kd.IsFUSE {
-		// Unblock Run()'s <-filesystemReady so it can process signals.
+		kd.openDataChannels(logger) // Lazy background negotiation.
 		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
 		logger.Info("Success, starting without FUSE")
 		return nil
@@ -450,8 +456,9 @@ func (kd *KeibiDrop) CreateRoom() error {
 		logger.Warn("Failed to init connection resilience", "error", err)
 	}
 
+
 	if !kd.IsFUSE {
-		// Unblock Run()'s <-filesystemReady so it can process signals.
+		kd.openDataChannels(logger) // Lazy background negotiation.
 		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
 		logger.Info("Success, starting without FUSE")
 		return nil
@@ -464,6 +471,159 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 	logger.Info("Success")
 	return nil
+}
+
+// DataChannelCount is the number of parallel data channels to open.
+// Infrastructure is in place (proto, channel.go, handlers, routing).
+// Disabled until tested on real network where TCP HOL blocking matters.
+const DataChannelCount = 0
+
+// openDataChannels attempts to open parallel data channels in the background.
+// Best-effort: if it fails, all data RPCs fall back to the control channel.
+// Non-blocking: runs in a goroutine to avoid delaying the main connection flow.
+// isDataChannelInitiator returns true if this peer should dial data channels.
+// Lower fingerprint initiates (same rule as reconnection).
+func (kd *KeibiDrop) isDataChannelInitiator() bool {
+	return kd.session != nil && kd.session.OwnFingerprint < kd.session.ExpectedPeerFingerprint
+}
+
+func (kd *KeibiDrop) openDataChannels(logger *slog.Logger) {
+	if DataChannelCount == 0 {
+		return
+	}
+	if kd.session == nil || kd.KDClient == nil {
+		return
+	}
+
+	if !kd.isDataChannelInitiator() {
+		// Responder: accept incoming data channel connections on the main listener.
+		logger.Info("Data channels: responder role (accepting)")
+		go kd.acceptDataChannels(logger)
+		return
+	}
+
+	// Initiator: negotiate and dial.
+	logger.Info("Data channels: initiator role (dialing)")
+	sessionKey := kd.session.SEKOutbound
+	if sessionKey == nil {
+		return
+	}
+	peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
+
+	go func() {
+		// Let responder's accept loop start first.
+		time.Sleep(500 * time.Millisecond)
+
+		handles, err := session.OpenDataChannels(kd.KDClient, sessionKey, peerAddr, kd.KDSvc, DataChannelCount, logger)
+		if err != nil {
+			logger.Warn("Data channels failed, using control channel", "error", err)
+			return
+		}
+
+		clients := make([]bindings.KeibiServiceClient, len(handles))
+		for i, h := range handles {
+			clients[i] = h.GRPCClient
+		}
+		kd.DataChannels = handles
+		kd.dataClients.Store(&clients)
+		logger.Info("Data channels ready", "count", len(handles))
+	}()
+}
+
+// acceptDataChannels listens for incoming data channel TCP connections on kd.listener.
+// Runs until the context is cancelled. Each accepted connection is identified by a
+// 5-byte header (magic byte + channelID), then wrapped in SecureConn and served via gRPC.
+func (kd *KeibiDrop) acceptDataChannels(logger *slog.Logger) {
+	if DataChannelCount == 0 {
+		return
+	}
+
+	logger.Info("Data channel accept loop starting")
+
+	for {
+		// Check if context is done before blocking on Accept.
+		select {
+		case <-kd.ctx.Done():
+			logger.Info("Data channel accept loop stopped (context cancelled)")
+			return
+		default:
+		}
+
+		// Set a deadline so we can periodically check ctx.Done.
+		if tcpL, ok := kd.listener.(*net.TCPListener); ok {
+			tcpL.SetDeadline(time.Now().Add(2 * time.Second))
+		}
+
+		conn, err := kd.listener.Accept()
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue // Deadline hit, loop back to check ctx.
+			}
+			// Real error — listener closed or fatal.
+			select {
+			case <-kd.ctx.Done():
+				return // Expected during shutdown.
+			default:
+				logger.Warn("Data channel accept failed", "error", err)
+				return
+			}
+		}
+
+		// Read channel header to identify this connection.
+		channelID, isChannel, err := session.IsChannelConnection(conn)
+		if err != nil || !isChannel {
+			logger.Warn("Unexpected non-channel connection", "error", err)
+			conn.Close()
+			continue
+		}
+
+		// Look up seeds stored by NegotiateChannel handler.
+		seedVal, ok := kd.KDSvc.ChannelSeeds.LoadAndDelete(channelID)
+		if !ok {
+			logger.Error("No seeds for channel", "channelID", channelID)
+			conn.Close()
+			continue
+		}
+		seeds := seedVal.(service.ChannelSeedPair)
+
+		// Derive channel key: HKDF(sessionKey, peerSeed || ourSeed || channelID).
+		channelIDBytes := make([]byte, 4)
+		binary.BigEndian.PutUint32(channelIDBytes, channelID)
+		info := append(append(seeds.PeerSeed, seeds.OurSeed...), channelIDBytes...)
+		channelKey, err := kbc.DeriveChaCha20Key(kd.session.SEKInbound, info)
+		if err != nil {
+			logger.Error("Failed to derive channel key", "channelID", channelID, "error", err)
+			conn.Close()
+			continue
+		}
+
+		secureConn := session.NewSecureConn(conn, channelKey)
+
+		// Start gRPC server on this data channel.
+		srv := grpc.NewServer(
+			grpc.MaxRecvMsgSize(config.GRPCMaxMsgSize),
+			grpc.MaxSendMsgSize(config.GRPCMaxMsgSize),
+		)
+		bindings.RegisterKeibiServiceServer(srv, kd.KDSvc)
+
+		go func(chID uint32) {
+			ln := NewSingleConnListener(secureConn)
+			if srvErr := srv.Serve(ln); srvErr != nil {
+				logger.Error("Data channel gRPC server exited", "channelID", chID, "error", srvErr)
+			}
+		}(channelID)
+
+		logger.Info("Accepted data channel", "channelID", channelID)
+	}
+}
+
+// closeDataChannels tears down all data channels.
+func (kd *KeibiDrop) closeDataChannels() {
+	kd.dataClients.Store(nil) // Stop routing to data channels first.
+	for _, ch := range kd.DataChannels {
+		ch.Close()
+	}
+	kd.DataChannels = nil
 }
 
 // NotifyDisconnect sends a best-effort DISCONNECT notification to the peer
