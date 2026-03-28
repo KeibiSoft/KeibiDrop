@@ -22,6 +22,10 @@ service KeibiService {
 
   rpc Notify (NotifyRequest) returns (NotifyResponse);
 
+  // Push-based file streaming: client sends one request, server pushes
+  // all chunks sequentially. No per-chunk round-trip overhead.
+  rpc StreamFile (StreamFileRequest) returns (stream StreamFileResponse);
+
   rpc Debug (DebugRequest) returns (DebugResponse);
 
   // Re-keying for forward secrecy during long sessions.
@@ -74,6 +78,17 @@ message ReadResponse {
   uint64 offset = 2;           // For delta sync: offset where this chunk applies.
   bool is_delta = 3;           // True if this is a delta chunk (not full file).
   uint64 total_size = 4;       // Total file size (for prefetch completion).
+}
+
+message StreamFileRequest {
+  string path = 1;
+  uint64 start_offset = 2;  // Resume from this byte offset (0 for full file).
+}
+
+message StreamFileResponse {
+  bytes data = 1;
+  uint64 offset = 2;      // Byte offset where this chunk belongs.
+  uint64 total_size = 3;  // Total file size (sent with every chunk for progress).
 }
 
 message FsyncRequest {

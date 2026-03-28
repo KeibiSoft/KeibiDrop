@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -481,7 +482,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fsp := d.OpenStreamProvider()
 		var streamCtx context.Context
 		streamCtx, streamCancel = context.WithCancel(context.Background())
-		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize)
+		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
 		if err != nil {
 			streamCancel()
 			syscall.Close(fd)
@@ -531,6 +532,8 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	}
 	d.OpenMapLock.Unlock()
 	d.AfmLock.Unlock()
+
+
 
 	fi.Fh = uint64(fd)
 	fi.DirectIo = shouldUseDirectIo(path, flags)
@@ -984,7 +987,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	// Open stream pool + cache FD (network call - no locks held)
 	fsp := d.OpenStreamProvider()
 	streamCtx, streamCancel := context.WithCancel(context.Background())
-	pool, poolErr := NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize)
+	pool, poolErr := NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
 	if poolErr != nil {
 		streamCancel()
 		syscall.Close(fd)
@@ -1029,6 +1032,8 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	fh.openFileCounter.Open()
 	d.OpenMapLock.Unlock()
 	d.AfmLock.Unlock()
+
+
 
 	logger.Info("Opened remote file", "fh", fh.Inode, "notLocalSynced", fh.NotLocalSynced, "poolNil", fh.StreamPool == nil, "totalSize", remoteTotalSize)
 	return 0, fh.Inode
@@ -1947,9 +1952,10 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		existing.NotLocalSynced = true
 		// CRITICAL: Reset download state so BytesDownloaded doesn't carry over from previous attempts
 		existing.Download.Reset(uint64(stat.Size))
-		// Cancel old prefetch, create new bitmap, start new prefetch.
+		// Cancel old prefetch if running, create new bitmap.
 		if existing.PrefetchCancel != nil {
 			existing.PrefetchCancel()
+			existing.PrefetchCancel = nil
 		}
 		existing.Bitmap = NewChunkBitmap(stat.Size)
 		d.RemoteFilesLock.Unlock()
@@ -1978,10 +1984,9 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 }
 
 // startPrefetch pre-allocates the local cache file and launches a background
-// goroutine that sequentially downloads all missing chunks from the remote peer.
+// goroutine that downloads the file using push-based StreamFile RPC.
 func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 	if f.Bitmap == nil {
-		// Empty file or size=0 — nothing to prefetch.
 		return
 	}
 
@@ -1993,7 +1998,6 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		logger.Warn("Prefetch: failed to create dirs", "path", realPath, "error", err)
 	}
 	if err := os.Truncate(realPath, fileSize); err != nil {
-		// File may not exist yet — create it.
 		lf, createErr := os.Create(realPath)
 		if createErr != nil {
 			logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
@@ -2011,8 +2015,9 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 	go d.prefetchFile(ctx, logger, f, path, realPath)
 }
 
-// prefetchFile sequentially downloads all missing chunks from the remote peer.
-// It opens its own gRPC stream so it doesn't interfere with on-demand FUSE reads.
+// prefetchFile uses the push-based StreamFile RPC to download the entire file.
+// The server pushes all chunks sequentially without per-chunk round-trips.
+// Bitmap coordination with on-demand FUSE Read is unchanged.
 func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, path string, realPath string) {
 	bitmap := f.Bitmap
 	if bitmap == nil {
@@ -2020,24 +2025,19 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	}
 
 	logger = logger.With("prefetch", path)
-	logger.Info("Background prefetch starting", "chunks", bitmap.Total(), "fileSize", bitmap.FileSize())
+	logger.Info("Push-based prefetch starting", "chunks", bitmap.Total(), "fileSize", bitmap.FileSize())
 
-	// Open a dedicated stream for prefetch (separate from FUSE Read streams).
 	fsp := d.OpenStreamProvider()
 	if fsp == nil {
 		logger.Warn("Prefetch: no stream provider available")
 		return
 	}
 
-	streamCtx, streamCancel := context.WithCancel(ctx)
-	defer streamCancel()
-
-	stream, err := fsp.OpenRemoteFile(streamCtx, 0, path)
+	receiver, err := fsp.StreamFile(ctx, path, 0)
 	if err != nil {
-		logger.Warn("Prefetch: failed to open remote stream", "error", err)
+		logger.Warn("Prefetch: failed to start StreamFile", "error", err)
 		return
 	}
-	defer stream.Close()
 
 	// Open local file for writing.
 	lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0644)
@@ -2045,19 +2045,12 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		logger.Warn("Prefetch: failed to open local file", "error", err)
 		return
 	}
-	// Close the local file and, if the file was renamed while the download was
-	// in flight, atomically move the content to the new disk path (Option C fix
-	// for the prefetch-rename race: git writes HEAD.lock then renames to HEAD).
+	// Close and handle rename-on-complete (git .lock -> final path race fix).
 	defer func() {
 		lf.Close()
-		// Only rename if the download completed fully. Partial content must
-		// never be placed at the final path.
 		if !bitmap.IsComplete() {
 			return
 		}
-		// Read f.RealPathOfFile under RLock — the RENAME_FILE handler writes
-		// this field under RemoteFilesLock.Lock(). Release the lock before
-		// calling os.Rename so we never hold a lock across a blocking syscall.
 		d.RemoteFilesLock.RLock()
 		currentDiskPath := f.RealPathOfFile
 		d.RemoteFilesLock.RUnlock()
@@ -2075,8 +2068,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		}
 	}()
 
-	fileSize := bitmap.FileSize()
-	for idx := 0; idx < bitmap.Total(); idx++ {
+	for {
 		select {
 		case <-ctx.Done():
 			logger.Info("Prefetch cancelled", "progress", bitmap.Progress())
@@ -2084,38 +2076,32 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		default:
 		}
 
-		if bitmap.Has(idx) {
-			continue // Already fetched by on-demand FUSE Read.
+		data, offset, _, recvErr := receiver.Recv()
+		if recvErr != nil {
+			if errors.Is(recvErr, io.EOF) {
+				break // Stream complete.
+			}
+			logger.Warn("Prefetch: recv failed", "error", recvErr)
+			break
 		}
 
-		offset := int64(idx) * ChunkSize
-		size := int64(ChunkSize)
-		if offset+size > fileSize {
-			size = fileSize - offset
+		chunkIdx := int(offset / uint64(ChunkSize))
+		if bitmap.Has(chunkIdx) {
+			continue // On-demand FUSE Read already got this chunk.
 		}
 
-		readCtx, readCancel := context.WithTimeout(ctx, 15*time.Second)
-		data, readErr := stream.ReadAt(readCtx, offset, size)
-		readCancel()
-
-		if readErr != nil {
-			logger.Warn("Prefetch: read failed", "chunk", idx, "error", readErr)
-			// Try to continue with next chunk rather than aborting entirely.
-			continue
-		}
-
-		_, writeErr := lf.WriteAt(data, offset)
+		_, writeErr := lf.WriteAt(data, int64(offset))
 		if writeErr != nil {
-			logger.Warn("Prefetch: write failed", "chunk", idx, "error", writeErr)
+			logger.Warn("Prefetch: write failed", "chunk", chunkIdx, "error", writeErr)
 			continue
 		}
 
-		bitmap.Set(idx)
-		f.Download.UpdateProgress(offset, len(data))
+		bitmap.Set(chunkIdx)
+		f.Download.UpdateProgress(int64(offset), len(data))
 	}
 
 	if bitmap.IsComplete() {
-		logger.Info("Prefetch complete — all chunks downloaded", "fileSize", fileSize)
+		logger.Info("Prefetch complete — all chunks downloaded", "fileSize", bitmap.FileSize())
 		f.NotLocalSynced = false
 	} else {
 		logger.Info("Prefetch finished with gaps", "progress", bitmap.Progress())

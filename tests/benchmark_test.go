@@ -281,6 +281,10 @@ func (tsp *timedStreamProvider) OpenRemoteFile(ctx context.Context, inode uint64
 	return &timedStream{inner: stream, recorder: tsp.recorder}, nil
 }
 
+func (tsp *timedStreamProvider) StreamFile(ctx context.Context, path string, startOffset uint64) (types.StreamFileReceiver, error) {
+	return tsp.inner.StreamFile(ctx, path, startOffset)
+}
+
 // TestChunkLatency measures per-chunk ReadAt latency during a transfer,
 // reporting min/median/p95/max statistics.
 func TestChunkLatency(t *testing.T) {

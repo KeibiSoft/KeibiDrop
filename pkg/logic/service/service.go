@@ -535,6 +535,107 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 	}
 }
 
+// StreamFile pushes an entire file's contents to the client in sequential
+// chunks. The client sends one request; the server streams all data from
+// start_offset to EOF with no per-chunk round-trip overhead.
+func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stream bindings.KeibiService_StreamFileServer) error {
+	logger := kd.Logger.With("method", "stream-file", "path", req.Path)
+
+	// Look up the file — same logic as the Read handler for both modes.
+	var realPath string
+
+	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+		lookupPath := strings.TrimPrefix(req.Path, "/")
+		kd.SyncTracker.LocalFilesMu.RLock()
+		f, ok := kd.SyncTracker.LocalFiles[lookupPath]
+		if !ok {
+			f, ok = kd.SyncTracker.LocalFiles[req.Path]
+		}
+		kd.SyncTracker.LocalFilesMu.RUnlock()
+		if ok {
+			realPath = f.RealPathOfFile
+		}
+	} else if kd.FS != nil && kd.FS.Root != nil {
+		fuseKey := req.Path
+		if !strings.HasPrefix(fuseKey, "/") {
+			fuseKey = "/" + fuseKey
+		}
+		kd.FS.Root.AfmLock.RLock()
+		f, ok := kd.FS.Root.AllFileMap[fuseKey]
+		kd.FS.Root.AfmLock.RUnlock()
+		if ok {
+			realPath = f.RealPathOfFile
+		} else if kd.SyncTracker != nil {
+			lookupPath := strings.TrimPrefix(req.Path, "/")
+			kd.SyncTracker.LocalFilesMu.RLock()
+			lf, lfOk := kd.SyncTracker.LocalFiles[lookupPath]
+			if !lfOk {
+				lf, lfOk = kd.SyncTracker.LocalFiles[req.Path]
+			}
+			kd.SyncTracker.LocalFilesMu.RUnlock()
+			if lfOk {
+				realPath = lf.RealPathOfFile
+			}
+		}
+	}
+
+	if realPath == "" {
+		logger.Warn("File not found", "path", req.Path)
+		return status.Error(codes.NotFound, "file not found")
+	}
+
+	fh, err := os.Open(realPath)
+	if err != nil {
+		logger.Error("Failed to open file", "error", err)
+		return status.Error(codes.Internal, "error accessing file")
+	}
+	defer fh.Close()
+
+	finfo, err := fh.Stat()
+	if err != nil {
+		logger.Error("Failed to stat file", "error", err)
+		return status.Error(codes.Internal, "error stat file")
+	}
+	fileSize := uint64(finfo.Size())
+
+	buf := make([]byte, config.GRPCStreamBuffer)
+	chunkSize := uint64(filesystem.ChunkSize)
+	offset := req.StartOffset
+
+	logger.Info("StreamFile starting", "fileSize", fileSize, "startOffset", offset)
+
+	for offset < fileSize {
+		size := chunkSize
+		if offset+size > fileSize {
+			size = fileSize - offset
+		}
+
+		n, readErr := fh.ReadAt(buf[:size], int64(offset))
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			logger.Error("Failed to read file", "offset", offset, "error", readErr)
+			return status.Error(codes.Internal, "error reading file")
+		}
+		if n == 0 {
+			break
+		}
+
+		if sendErr := stream.Send(&bindings.StreamFileResponse{
+			Data:      buf[:n],
+			Offset:    offset,
+			TotalSize: fileSize,
+		}); sendErr != nil {
+			// Client cancelled or disconnected — normal during file close.
+			logger.Info("StreamFile send ended", "offset", offset, "error", sendErr)
+			return sendErr
+		}
+
+		offset += uint64(n)
+	}
+
+	logger.Info("StreamFile complete", "bytesSent", offset-req.StartOffset)
+	return nil
+}
+
 // Rekey handles key rotation requests for forward secrecy.
 func (kd *KeibidropServiceImpl) Rekey(_ context.Context, req *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
 	logger := kd.Logger.With("method", "rekey", "epoch", req.Epoch)
