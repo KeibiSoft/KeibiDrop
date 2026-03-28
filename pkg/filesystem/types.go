@@ -9,6 +9,7 @@ package filesystem
 import (
 	"context"
 	"log/slog"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -211,9 +212,10 @@ type File struct {
 
 	openFileCounter OpenFileCounter
 
-	StreamProvider   types.FileStreamProvider
-	RemoteFileStream types.RemoteFileStream
-	StreamCancel     context.CancelFunc // Cancel function for the stream context
+	StreamProvider types.FileStreamProvider
+	StreamPool     *StreamPool            // Pool of parallel gRPC streams for on-demand reads.
+	StreamCancel   context.CancelFunc     // Cancel function for the stream context.
+	CacheFD        *os.File               // Persistent cache file descriptor for on-demand writes.
 
 	// Download resumption state.
 	Download DownloadState

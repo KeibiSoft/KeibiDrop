@@ -295,5 +295,65 @@ per operation from kernel-userspace context switches.
 9. **Biggest optimization opportunity**: pipelining prefetch — send
    multiple ReadRequests without waiting for each response. Current
    sequential pattern means each chunk pays the full RTT. Stream
-   multiplexing (follow-up PR) should bring LAN throughput from
+   multiplexing (PR #80) should bring LAN throughput from
    66 MB/s closer to the 437 MB/s encrypted-gRPC baseline.
+
+---
+
+## Encryption Overhead Analysis (437 MB/s vs 981 MB/s raw gRPC)
+
+The 2.2x overhead from ChaCha20-Poly1305 encryption comes from three
+sources, ordered by estimated impact:
+
+### 1. AEAD cipher re-created per message (CPU waste)
+
+`EncryptWithNonce` (`pkg/crypto/symmetric.go:57`) calls
+`chacha20poly1305.New(kek)` on every single message. Same for `Decrypt`
+(`pkg/crypto/symmetric.go:114`). The AEAD instance is stateless after
+creation and can be created once per SecureConn and reused for all
+messages. This is the easiest fix.
+
+### 2. Heap allocation per message (GC pressure)
+
+`SecureWriter.Write` (`pkg/session/secureconn.go:61`) allocates:
+- `make([]byte, NonceSize+len(cipherText))` -- ~512 KiB per chunk
+- `make([]byte, 4)` for the length header
+
+`SecureReader.Read` (`pkg/session/secureconn.go:94`) allocates:
+- `make([]byte, length)` -- ~512 KiB per encrypted message
+
+That is ~1 MB of heap allocation per chunk round-trip, all becoming GC
+pressure. Fix: use `sync.Pool` for encrypt/decrypt buffers.
+
+### 3. Two TCP writes per message (wasted segments)
+
+`SecureWriter.Write` does two separate `Write()` calls: 4 bytes for the
+length header, then ~512 KiB for the payload. With Nagle disabled (gRPC
+default), the 4-byte header becomes its own TCP segment -- 1456 bytes
+wasted in a 1460-byte MSS frame. Fix: combine header+payload into a
+single write (pre-allocate header space in the encryption buffer).
+
+### 4. Large encryption units vs TCP MSS (latency on real networks)
+
+Currently the entire gRPC frame (up to 16 MiB from `GRPCStreamBuffer`)
+is encrypted as ONE authenticated blob. The receiver must buffer ALL TCP
+segments (~360 segments for 512 KiB) before decryption can start.
+
+TLS solves this with 16 KiB records: the reader can start processing
+after receiving just ~11 TCP segments. The auth tag overhead is only
+28 bytes per 16 KiB = 0.17%. This matters more on real networks with
+packet loss/reordering than on localhost.
+
+### Estimated impact of fixes
+
+| Fix | Effort | Expected speedup |
+|-----|--------|-----------------|
+| Cache AEAD cipher | Trivial | ~10-20% |
+| sync.Pool for buffers | Small | ~15-25% |
+| Combine header+payload write | Small | ~5% |
+| 16 KiB sub-frame encryption | Medium | Latency improvement on real networks |
+| **Combined** | | **~1.3-1.5x instead of 2.2x** |
+
+These optimizations should be implemented after PR #80 (stream
+multiplexing) is merged and benchmarked, since multiplexing changes the
+message flow pattern.
