@@ -702,7 +702,156 @@ func TestBaselineComparison(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Benchmark 5: FUSE Write Throughput (copy files INTO the mounted filesystem)
+// Benchmark 5: FUSE Read Overhead Breakdown
+// ---------------------------------------------------------------------------
+
+// TestFUSEReadOverhead measures where time is spent in the E2E FUSE read path
+// by comparing layers: raw gRPC, gRPC+copy, gRPC+copy+cachewrite, full FUSE.
+func TestFUSEReadOverhead(t *testing.T) {
+	skipIfNoFUSE(t)
+	if testing.Short() {
+		t.Skip("skipping FUSE read overhead in short mode")
+	}
+
+	fileSize := 100 * 1024 * 1024 // 100 MB
+	require := require.New(t)
+
+	data := make([]byte, fileSize)
+	_, err := rand.Read(data)
+	require.NoError(err)
+
+	// --- Layer 1: Raw encrypted gRPC (no FUSE, no cache writes) ---
+	tp1 := SetupPeerPairWithTimeout(t, false, 120*time.Second)
+	bobPath1 := filepath.Join(tp1.BobSaveDir, "overhead_enc.bin")
+	require.NoError(os.WriteFile(bobPath1, data, 0644))
+	require.NoError(tp1.Bob.AddFile(bobPath1))
+
+	chunkSize := filesystem.ChunkSize
+	start := time.Now()
+	stream, err := tp1.Alice.KDClient.Read(context.Background())
+	require.NoError(err)
+	totalRead := 0
+	for totalRead < fileSize {
+		reqSize := chunkSize
+		if totalRead+reqSize > fileSize {
+			reqSize = fileSize - totalRead
+		}
+		require.NoError(stream.Send(&bindings.ReadRequest{
+			Path: "overhead_enc.bin", Offset: uint64(totalRead), Size: uint32(reqSize),
+		}))
+		resp, err := stream.Recv()
+		require.NoError(err)
+		totalRead += len(resp.Data)
+	}
+	stream.CloseSend()
+	encGRPC := time.Since(start)
+
+	// --- Layer 2: Encrypted gRPC + copy into user buffer (simulates FUSE copy) ---
+	tp2 := SetupPeerPairWithTimeout(t, false, 120*time.Second)
+	bobPath2 := filepath.Join(tp2.BobSaveDir, "overhead_copy.bin")
+	require.NoError(os.WriteFile(bobPath2, data, 0644))
+	require.NoError(tp2.Bob.AddFile(bobPath2))
+
+	userBuf := make([]byte, chunkSize)
+	start = time.Now()
+	stream2, err := tp2.Alice.KDClient.Read(context.Background())
+	require.NoError(err)
+	totalRead = 0
+	for totalRead < fileSize {
+		reqSize := chunkSize
+		if totalRead+reqSize > fileSize {
+			reqSize = fileSize - totalRead
+		}
+		require.NoError(stream2.Send(&bindings.ReadRequest{
+			Path: "overhead_copy.bin", Offset: uint64(totalRead), Size: uint32(reqSize),
+		}))
+		resp, err := stream2.Recv()
+		require.NoError(err)
+		copy(userBuf, resp.Data)
+		totalRead += len(resp.Data)
+	}
+	stream2.CloseSend()
+	encGRPCCopy := time.Since(start)
+
+	// --- Layer 3: Encrypted gRPC + copy + cache write (pwrite to temp file) ---
+	tp3 := SetupPeerPairWithTimeout(t, false, 120*time.Second)
+	bobPath3 := filepath.Join(tp3.BobSaveDir, "overhead_cache.bin")
+	require.NoError(os.WriteFile(bobPath3, data, 0644))
+	require.NoError(tp3.Bob.AddFile(bobPath3))
+
+	cacheFile, err := os.CreateTemp("", "overhead-cache-*.bin")
+	require.NoError(err)
+	require.NoError(cacheFile.Truncate(int64(fileSize)))
+	defer os.Remove(cacheFile.Name())
+	defer cacheFile.Close()
+
+	start = time.Now()
+	stream3, err := tp3.Alice.KDClient.Read(context.Background())
+	require.NoError(err)
+	totalRead = 0
+	for totalRead < fileSize {
+		reqSize := chunkSize
+		if totalRead+reqSize > fileSize {
+			reqSize = fileSize - totalRead
+		}
+		require.NoError(stream3.Send(&bindings.ReadRequest{
+			Path: "overhead_cache.bin", Offset: uint64(totalRead), Size: uint32(reqSize),
+		}))
+		resp, err := stream3.Recv()
+		require.NoError(err)
+		copy(userBuf, resp.Data)
+		_, err = cacheFile.WriteAt(resp.Data, int64(totalRead))
+		require.NoError(err)
+		totalRead += len(resp.Data)
+	}
+	stream3.CloseSend()
+	encGRPCCopyCache := time.Since(start)
+
+	// --- Layer 4: Full E2E FUSE (includes kernel transitions, bitmap, etc.) ---
+	tp4 := SetupFUSEPeerPair(t, 120*time.Second)
+	waitForFUSEMount(t, tp4.AliceMountDir, 15*time.Second)
+
+	bobPath4 := filepath.Join(tp4.BobSaveDir, "overhead_fuse.bin")
+	require.NoError(os.WriteFile(bobPath4, data, 0644))
+	require.NoError(tp4.Bob.AddFile(bobPath4))
+
+	alicePath := filepath.Join(tp4.AliceMountDir, "overhead_fuse.bin")
+	WaitForFileOnMount(t, alicePath, 30*time.Second)
+
+	start = time.Now()
+	readData, err := os.ReadFile(alicePath)
+	fuseE2E := time.Since(start)
+	require.NoError(err)
+	require.Equal(fileSize, len(readData))
+
+	// --- Results ---
+	mb := float64(fileSize) / (1024 * 1024)
+	t.Log("\n=== FUSE Read Overhead Breakdown (100 MB) ===")
+	t.Logf("%-35s | %-10s | %-10s | %-10s", "Layer", "Duration", "MB/s", "Delta")
+	t.Logf("------------------------------------|------------|------------|----------")
+	t.Logf("%-35s | %-10s | %-10.1f | -",
+		"1. Encrypted gRPC (baseline)", encGRPC.Round(time.Millisecond), mb/encGRPC.Seconds())
+	t.Logf("%-35s | %-10s | %-10.1f | +%s",
+		"2. + copy into user buffer", encGRPCCopy.Round(time.Millisecond), mb/encGRPCCopy.Seconds(),
+		(encGRPCCopy - encGRPC).Round(time.Millisecond))
+	t.Logf("%-35s | %-10s | %-10.1f | +%s",
+		"3. + pwrite to cache file", encGRPCCopyCache.Round(time.Millisecond), mb/encGRPCCopyCache.Seconds(),
+		(encGRPCCopyCache - encGRPCCopy).Round(time.Millisecond))
+	t.Logf("%-35s | %-10s | %-10.1f | +%s",
+		"4. Full FUSE E2E", fuseE2E.Round(time.Millisecond), mb/fuseE2E.Seconds(),
+		(fuseE2E - encGRPCCopyCache).Round(time.Millisecond))
+	t.Log("")
+	t.Log("Delta breakdown:")
+	t.Logf("  Copy overhead:        %s (%.1f%%)", (encGRPCCopy - encGRPC).Round(time.Millisecond),
+		float64(encGRPCCopy-encGRPC)/float64(fuseE2E)*100)
+	t.Logf("  Cache write overhead: %s (%.1f%%)", (encGRPCCopyCache - encGRPCCopy).Round(time.Millisecond),
+		float64(encGRPCCopyCache-encGRPCCopy)/float64(fuseE2E)*100)
+	t.Logf("  FUSE/kernel overhead: %s (%.1f%%)", (fuseE2E - encGRPCCopyCache).Round(time.Millisecond),
+		float64(fuseE2E-encGRPCCopyCache)/float64(fuseE2E)*100)
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark 6: FUSE Write Throughput (copy files INTO the mounted filesystem)
 // ---------------------------------------------------------------------------
 
 // TestFUSEWriteThroughput measures how fast files can be written into the FUSE
