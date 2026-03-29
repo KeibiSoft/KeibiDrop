@@ -113,9 +113,9 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCInvalidArgument
 		}
 
-		logger.Info("<<< RECEIVED ADD_FILE FROM PEER",
-			"path", req.Path,
-			"size", req.Attr.Size)
+		// logger.Info("<<< RECEIVED ADD_FILE FROM PEER",
+		// 	"path", req.Path,
+		// 	"size", req.Attr.Size)
 
 		atim := time.Unix(0, int64(req.Attr.AccessTime))
 		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
@@ -377,6 +377,26 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	logger.Info("Success")
 
 	return &bindings.NotifyResponse{}, nil
+}
+
+// BatchNotify processes multiple notifications in a single RPC call.
+// This eliminates per-notification round-trip overhead during large clones.
+func (kd *KeibidropServiceImpl) BatchNotify(ctx context.Context, req *bindings.BatchNotifyRequest) (*bindings.BatchNotifyResponse, error) {
+	logger := kd.Logger.With("method", "batch-notify", "count", len(req.Notifications), "seq", req.Seq)
+	logger.Info("Processing batch")
+
+	var processed uint32
+	for _, n := range req.Notifications {
+		_, err := kd.Notify(ctx, n)
+		if err != nil {
+			logger.Error("Failed to process notification in batch", "path", n.Path, "type", n.Type, "error", err)
+			continue
+		}
+		processed++
+	}
+
+	logger.Info("Batch complete", "processed", processed)
+	return &bindings.BatchNotifyResponse{Status: "ok", Processed: processed}, nil
 }
 
 func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {

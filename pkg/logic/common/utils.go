@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -284,6 +285,65 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs.PrefetchOnOpen = kd.PrefetchOnOpen
 	fs.PushOnWrite = kd.PushOnWrite
 
+	// Notification worker with batching — collects notifications for up to
+	// 50ms then sends them as a single BatchNotify RPC. During large clones
+	// (600+ files), this sends 1 RPC per batch instead of 612 round-trips.
+	kd.notifyCh = make(chan *bindings.NotifyRequest, 2048)
+	var batchSeq atomic.Uint64
+	go func() {
+		batch := make([]*bindings.NotifyRequest, 0, 64)
+		timer := time.NewTimer(50 * time.Millisecond)
+		timer.Stop()
+
+		flush := func() {
+			if len(batch) == 0 {
+				return
+			}
+			if kd.session == nil || kd.session.GRPCClient == nil {
+				batch = batch[:0]
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_, err := kd.session.GRPCClient.BatchNotify(ctx, &bindings.BatchNotifyRequest{
+				Notifications: batch,
+				Seq:           batchSeq.Add(1),
+				Timestamp:     uint64(time.Now().UnixNano()),
+			})
+			cancel()
+			if err != nil {
+				logger.Error("BatchNotify failed, falling back to individual", "count", len(batch), "error", err)
+				// Fallback: send individually (peer might not support BatchNotify yet).
+				for _, req := range batch {
+					ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+					_, _ = kd.session.GRPCClient.Notify(ctx2, req)
+					cancel2()
+				}
+			}
+			batch = batch[:0]
+		}
+
+		for {
+			select {
+			case req, ok := <-kd.notifyCh:
+				if !ok {
+					flush()
+					return
+				}
+				batch = append(batch, req)
+				// If batch is large enough, flush immediately.
+				if len(batch) >= 64 {
+					flush()
+					timer.Stop()
+				} else if len(batch) == 1 {
+					// First item starts the debounce timer.
+					timer.Reset(50 * time.Millisecond)
+				}
+			case <-timer.C:
+				flush()
+			}
+		}
+	}()
+
 	fs.OnLocalChange = func(event types.FileEvent) {
 		if kd.session == nil || kd.session.GRPCClient == nil {
 			return
@@ -308,24 +368,20 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				BirthTime:        event.Attr.BirthTime,
 				Flags:            event.Attr.Flags,
 			}
-			logger.Info(">>> SENDING NOTIFICATION TO PEER",
-				"path", event.Path,
-				"action", event.Action,
-				"size", event.Attr.Size)
+			// logger.Info(">>> SENDING NOTIFICATION TO PEER",
+			// 	"path", event.Path,
+			// 	"action", event.Action,
+			// 	"size", event.Attr.Size)
 		}
 
-		// Send notification asynchronously to avoid blocking the FUSE Release handler.
-		// Release holds OpenMapLock — a synchronous gRPC call here would block all
-		// file operations while waiting for the peer to respond. With large clones
-		// (600+ files), this causes the clone to hang.
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			_, err := kd.session.GRPCClient.Notify(ctx, req)
-			if err != nil {
-				logger.Error("Failed to notify peer", "error", err)
-			}
-		}()
+		// Non-blocking send to notification channel.
+		// If the channel is full (1024 pending), drop the notification
+		// rather than blocking the FUSE handler.
+		select {
+		case kd.notifyCh <- req:
+		default:
+			logger.Warn("Notification queue full, dropping", "path", event.Path)
+		}
 	}
 
 	fs.OpenStreamProvider = func() types.FileStreamProvider {

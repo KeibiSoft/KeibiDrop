@@ -190,7 +190,7 @@ func shouldUseDirectIo(path string, flags int) bool {
 // CreateEx implements FileSystemOpenEx interface for per-file direct_io control.
 func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCode int) {
 	defer d.recoverPanic("CreateEx", &errCode)
-	d.logger.Info("FUSE create", "path", path, "mode", mode)
+	// d.logger.Info("FUSE create", "path", path, "mode", mode)
 	logger := d.logger.With("method", "create-ex", "path", path)
 
 	flags := fi.Flags
@@ -252,7 +252,7 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	defer d.recoverPanic("OpenEx", &errCode)
 	flags := fi.Flags
-	d.logger.Info("FUSE open", "path", path, "flags", flags)
+	// d.logger.Info("FUSE open", "path", path, "flags", flags)
 	logger := d.logger.With("method", "open-ex", "path", path, "flags", flags)
 
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -557,7 +557,7 @@ func (d *Dir) Flush(path string, fh uint64) (errCode int) {
 
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	defer d.recoverPanic("Fsync", &errCode)
-	d.logger.Info("FUSE fsync", "path", path, "fh", fh)
+	// d.logger.Info("FUSE fsync", "path", path, "fh", fh)
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "fsync", "path", localPath)
 
@@ -604,7 +604,8 @@ func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) (errCode int) {
 
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int) {
 	defer d.recoverPanic("Getattr", &errCode)
-	d.logger.Info("FUSE getattr", "path", path, "fh", fh)
+	// NOTE: Do NOT log getattr — called 200,000+ times during large clones.
+	// Synchronous logging on this hot path causes 30-second hangs.
 	logger := d.logger.With("method", "get-attr", "path", path, "fh", fh)
 
 	// CRITICAL: Lock order is RemoteFilesLock → Adm → AfmLock (prevents deadlock with AddRemoteFile)
@@ -665,7 +666,11 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 
 	err := syscall.Lstat(cleanPath, &stgo)
 	if err != nil {
-		logger.Error("Failed to lstat path", "clean-path", cleanPath, "error-code", int(convertOsErrToSyscallErrno("lstat", err)), "error", err)
+		// ENOENT is normal — macOS probes hundreds of paths (Spotlight, fsevents,
+		// .DS_Store, etc.). Only log unexpected errors.
+		if !os.IsNotExist(err) {
+			logger.Error("Failed to lstat path", "clean-path", cleanPath, "error", err)
+		}
 		cerr := convertOsErrToSyscallErrno("lstat", err)
 		return int(cerr)
 	}
@@ -708,7 +713,9 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 	// In an ideal world: do not stat again :<.
 	finfo, err := os.Stat(cleanPath)
 	if err != nil {
-		logger.Error("Failed to determine if dir or file", "error", "error")
+		if !os.IsNotExist(err) {
+			logger.Error("Failed to determine if dir or file", "error", err)
+		}
 		return int(convertOsErrToSyscallErrno("stat", err))
 	}
 
@@ -841,7 +848,7 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 
 func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	defer d.recoverPanic("Open", &errCode)
-	d.logger.Info("FUSE open(legacy)", "path", path, "flags", flags)
+	// d.logger.Info("FUSE open(legacy)", "path", path, "flags", flags)
 	logger := d.logger.With("method", "open", "path", path, "flags", flags)
 
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -1048,7 +1055,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 
 func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
 	defer d.recoverPanic("Opendir", &errCode)
-	d.logger.Info("FUSE opendir", "path", path)
+	// d.logger.Info("FUSE opendir", "path", path)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "opendir", "path", path)
 	f, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
@@ -1096,7 +1103,7 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 		}
 	}
 
-	d.logger.Info("FUSE readdir", "path", path, "local", len(localFiles), "remoteFiles", len(remoteFiles), "remoteDirs", len(remoteDirs))
+	// d.logger.Info("FUSE readdir", "path", path, "local", len(localFiles), "remoteFiles", len(remoteFiles), "remoteDirs", len(remoteDirs))
 	return 0
 }
 
@@ -1109,7 +1116,7 @@ func (d *Dir) Readlink(path string) (errCode int, target string) {
 
 func (d *Dir) Release(path string, fh uint64) (errCode int) {
 	defer d.recoverPanic("Release", &errCode)
-	d.logger.Info("FUSE release", "path", path, "fh", fh)
+	// d.logger.Info("FUSE release", "path", path, "fh", fh)
 	logger := d.logger.With("method", "release", "path", path, "fh", fh)
 
 	d.OpenMapLock.Lock()
@@ -1474,7 +1481,7 @@ func (d *Dir) Symlink(target string, newpath string) (errCode int) {
 // thus Open is immediately followed by Truncate.
 func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Truncate", &errCode)
-	d.logger.Info("FUSE truncate", "path", path, "size", size)
+	// d.logger.Info("FUSE truncate", "path", path, "size", size)
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "truncate", "path", path, "size", size, "fh", fh)
@@ -1603,7 +1610,7 @@ func (ws *WriteStats) record(lockTime, pwriteTime, remoteTime time.Duration, byt
 // The method returns the number of bytes written.
 func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Write", &errCode)
-	d.logger.Info("FUSE write", "path", path, "offset", offset, "len", len(buff))
+	// d.logger.Info("FUSE write", "path", path, "offset", offset, "len", len(buff))
 	logger := d.logger.With("method", "write", "path", path, "fh", fh, "offset", offset)
 
 	// startTotal := time.Now()
@@ -1735,7 +1742,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		// serve from local cache. Otherwise fetch on-demand from remote.
 		if bitmap != nil && bitmap.HasRange(offset, len(buff)) {
 			// Fast path: all chunks available locally.
-			d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "bitmap")
+			// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "bitmap")
 			n, preadErr := syscall.Pread(int(fh), buff, offset)
 			if preadErr != nil {
 				logger.Error("Local pread failed after bitmap hit", "error", preadErr)
@@ -1744,7 +1751,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			return n
 		}
 
-		d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "remote")
+		// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "remote")
 
 		// Retry loop for resilience against transient failures.
 		var data []byte
@@ -1838,7 +1845,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	}
 
 	// Fallback: read directly from local file
-	d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "local")
+	// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "local")
 	n, err := syscall.Pread(int(fh), buff, offset)
 	if err != nil {
 		// EBADF fallback: fd may have been closed by fcopyfile race or fd reuse.
@@ -2034,6 +2041,18 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	bitmap := f.Bitmap
 	if bitmap == nil {
 		return
+	}
+
+	// Acquire prefetch semaphore — limits concurrent downloads to prevent
+	// overwhelming the gRPC connection during large clones (600+ files).
+	sem := d.Root.PrefetchSem
+	if sem != nil {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		case <-ctx.Done():
+			return
+		}
 	}
 
 	logger = logger.With("prefetch", path)

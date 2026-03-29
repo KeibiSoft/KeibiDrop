@@ -170,6 +170,11 @@ type Dir struct {
 
 	RemoteFilesLock sync.RWMutex
 	RemoteFiles     map[string]*File
+
+	// PrefetchSem limits concurrent prefetch goroutines.
+	// Without this, a large clone (600+ files) spawns 600+ simultaneous
+	// StreamFile gRPC streams which overwhelm the connection.
+	PrefetchSem chan struct{}
 }
 
 type File struct {

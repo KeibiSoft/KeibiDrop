@@ -133,5 +133,6 @@ func getMountOptions() []string {
 		"-o", "local",
 		"-o", "slow_statfs",
 		"-o", "allow_other",
+		"-o", "defer_permissions", // Let macOS use standard Unix permission checks (enables exec on FUSE).
 	}
 }
