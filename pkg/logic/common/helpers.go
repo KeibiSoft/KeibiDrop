@@ -59,7 +59,8 @@ func GetGlobalIPv6() (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("no global IPv6 address found")
+	// Fallback to any local IPv6 (loopback, link-local, ULA) for local testing.
+	return GetLocalIPv6()
 }
 
 func ValidateFingerprint(fp string) error {
