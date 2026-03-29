@@ -21,6 +21,7 @@ service KeibiService {
   rpc Close (CloseRequest) returns (CloseResponse);
 
   rpc Notify (NotifyRequest) returns (NotifyResponse);
+  rpc BatchNotify (BatchNotifyRequest) returns (BatchNotifyResponse);
 
   // Push-based file streaming: client sends one request, server pushes
   // all chunks sequentially. No per-chunk round-trip overhead.
@@ -117,6 +118,17 @@ message NotifyRequest {
 
 message NotifyResponse {
   string status = 1;
+}
+
+message BatchNotifyRequest {
+  repeated NotifyRequest notifications = 1;  // Ordered: receiver processes sequentially.
+  uint64 seq = 2;                            // Monotonic batch sequence for ordering.
+  uint64 timestamp = 3;                      // Sender's unix nano timestamp.
+}
+
+message BatchNotifyResponse {
+  string status = 1;
+  uint32 processed = 2;  // Number of notifications successfully processed.
 }
 
 enum NotifyType {

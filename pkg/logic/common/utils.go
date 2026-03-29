@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -284,6 +285,115 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs.PrefetchOnOpen = kd.PrefetchOnOpen
 	fs.PushOnWrite = kd.PushOnWrite
 
+	// Notification worker with per-path debounce and batching.
+	//
+	// Problem: LFS downloads a 420MB file over several seconds. Each intermediate
+	// write triggers ADD_FILE. Without debounce, the peer restarts prefetch 10+
+	// times and never gets the correct content.
+	//
+	// Solution: Per-path debounce. For ADD_FILE/EDIT_FILE, we track the last
+	// notification per path. Each update resets a 1-second timer for that path.
+	// Only when the path is stable for 1 second do we include it in the batch.
+	// RENAME/REMOVE/ADD_DIR are sent immediately (no debounce).
+	kd.notifyCh = make(chan *bindings.NotifyRequest, 2048)
+	var batchSeq atomic.Uint64
+	go func() {
+		// Per-path debounce state.
+		type pendingNotify struct {
+			req      *bindings.NotifyRequest
+			deadline time.Time // send after this time
+		}
+		pending := make(map[string]*pendingNotify) // path → latest ADD_FILE
+		immediate := make([]*bindings.NotifyRequest, 0, 64) // RENAME/REMOVE/ADD_DIR
+		ticker := time.NewTicker(100 * time.Millisecond) // check deadlines
+		defer ticker.Stop()
+
+		flush := func(batch []*bindings.NotifyRequest) {
+			if len(batch) == 0 {
+				return
+			}
+			if kd.session == nil || kd.session.GRPCClient == nil {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_, err := kd.session.GRPCClient.BatchNotify(ctx, &bindings.BatchNotifyRequest{
+				Notifications: batch,
+				Seq:           batchSeq.Add(1),
+				Timestamp:     uint64(time.Now().UnixNano()),
+			})
+			cancel()
+			if err != nil {
+				logger.Error("BatchNotify failed, falling back to individual", "count", len(batch), "error", err)
+				for _, req := range batch {
+					ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+					_, _ = kd.session.GRPCClient.Notify(ctx2, req)
+					cancel2()
+				}
+			}
+		}
+
+		for {
+			select {
+			case req, ok := <-kd.notifyCh:
+				if !ok {
+					// Channel closed — flush all pending.
+					remaining := make([]*bindings.NotifyRequest, 0, len(pending))
+					for _, p := range pending {
+						remaining = append(remaining, p.req)
+					}
+					flush(remaining)
+					return
+				}
+
+				switch req.Type {
+				case bindings.NotifyType_ADD_FILE, bindings.NotifyType_EDIT_FILE:
+					// Per-path debounce: update pending and reset deadline.
+					// Only send when the path is stable for 1 second.
+					pending[req.Path] = &pendingNotify{
+						req:      req,
+						deadline: time.Now().Add(200 * time.Millisecond),
+					}
+				case bindings.NotifyType_RENAME_FILE, bindings.NotifyType_RENAME_DIR:
+					// RENAME: send immediately. If there's a pending ADD_FILE for
+					// the old path, re-target it to the new path so the peer still
+					// downloads the content (at the correct path after rename).
+					if old, exists := pending[req.OldPath]; exists {
+						delete(pending, req.OldPath)
+						old.req.Path = req.Path // retarget to new path
+						pending[req.Path] = old
+					}
+					immediate = append(immediate, req)
+				default:
+					// REMOVE, ADD_DIR, REMOVE_DIR, DISCONNECT — send immediately.
+					immediate = append(immediate, req)
+				}
+
+				// Flush immediate notifications if enough accumulated.
+				if len(immediate) >= 32 {
+					flush(immediate)
+					immediate = immediate[:0]
+				}
+
+			case <-ticker.C:
+				// Check for expired debounce deadlines.
+				now := time.Now()
+				ready := make([]*bindings.NotifyRequest, 0, 16)
+				for path, p := range pending {
+					if now.After(p.deadline) {
+						ready = append(ready, p.req)
+						delete(pending, path)
+					}
+				}
+				// Also flush any accumulated immediate notifications.
+				if len(immediate) > 0 {
+					ready = append(ready, immediate...)
+					immediate = immediate[:0]
+				}
+				flush(ready)
+			}
+		}
+	}()
+
 	fs.OnLocalChange = func(event types.FileEvent) {
 		if kd.session == nil || kd.session.GRPCClient == nil {
 			return
@@ -308,15 +418,19 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				BirthTime:        event.Attr.BirthTime,
 				Flags:            event.Attr.Flags,
 			}
-			logger.Info(">>> SENDING NOTIFICATION TO PEER",
-				"path", event.Path,
-				"action", event.Action,
-				"size", event.Attr.Size)
+			// logger.Info(">>> SENDING NOTIFICATION TO PEER",
+			// 	"path", event.Path,
+			// 	"action", event.Action,
+			// 	"size", event.Attr.Size)
 		}
 
-		_, err := kd.session.GRPCClient.Notify(context.Background(), req)
-		if err != nil {
-			logger.Error("Failed to notify peer", "error", err)
+		// Non-blocking send to notification channel.
+		// If the channel is full (1024 pending), drop the notification
+		// rather than blocking the FUSE handler.
+		select {
+		case kd.notifyCh <- req:
+		default:
+			logger.Warn("Notification queue full, dropping", "path", event.Path)
 		}
 	}
 
