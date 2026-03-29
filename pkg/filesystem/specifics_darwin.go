@@ -133,6 +133,8 @@ func getMountOptions() []string {
 		"-o", "local",
 		"-o", "slow_statfs",
 		"-o", "allow_other",
-		"-o", "defer_permissions", // Let macOS use standard Unix permission checks (enables exec on FUSE).
+		"-o", "defer_permissions", // Defer permission checks to the FS (enables exec for git hooks).
+		"-o", "noappledouble",    // Block ._ and .DS_Store probes — eliminates 100K+ getattr calls.
+		"-o", "iosize=524288",    // 512KB — matches ChunkSize, best throughput in benchmarks.
 	}
 }
