@@ -86,6 +86,10 @@ type KeibiDrop struct {
 	HealthMonitor    *session.HealthMonitor
 	ReconnectManager *session.ReconnectManager
 	RelayKeepalive   *RelayKeepalive
+
+	// Notification queue — bounded channel to avoid spawning 600+ goroutines
+	// during large clones. A single worker drains and sends sequentially.
+	notifyCh chan *bindings.NotifyRequest
 }
 
 type TaskSignal int
@@ -340,7 +344,7 @@ func (kd *KeibiDrop) Run() {
 				// from running→not-running when a disconnect happens.
 				kd.running.Store(true)
 
-				if kd.FS != nil {
+				if kd.FS != nil && kd.KDSvc != nil {
 					logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
 					kd.KDSvc.FS = kd.FS
 					kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))

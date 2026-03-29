@@ -21,6 +21,11 @@ service KeibiService {
   rpc Close (CloseRequest) returns (CloseResponse);
 
   rpc Notify (NotifyRequest) returns (NotifyResponse);
+  rpc BatchNotify (BatchNotifyRequest) returns (BatchNotifyResponse);
+
+  // Push-based file streaming: client sends one request, server pushes
+  // all chunks sequentially. No per-chunk round-trip overhead.
+  rpc StreamFile (StreamFileRequest) returns (stream StreamFileResponse);
 
   rpc Debug (DebugRequest) returns (DebugResponse);
 
@@ -76,6 +81,17 @@ message ReadResponse {
   uint64 total_size = 4;       // Total file size (for prefetch completion).
 }
 
+message StreamFileRequest {
+  string path = 1;
+  uint64 start_offset = 2;  // Resume from this byte offset (0 for full file).
+}
+
+message StreamFileResponse {
+  bytes data = 1;
+  uint64 offset = 2;      // Byte offset where this chunk belongs.
+  uint64 total_size = 3;  // Total file size (sent with every chunk for progress).
+}
+
 message FsyncRequest {
   uint64 handle = 1;
   string path = 2;
@@ -102,6 +118,17 @@ message NotifyRequest {
 
 message NotifyResponse {
   string status = 1;
+}
+
+message BatchNotifyRequest {
+  repeated NotifyRequest notifications = 1;  // Ordered: receiver processes sequentially.
+  uint64 seq = 2;                            // Monotonic batch sequence for ordering.
+  uint64 timestamp = 3;                      // Sender's unix nano timestamp.
+}
+
+message BatchNotifyResponse {
+  string status = 1;
+  uint32 processed = 2;  // Number of notifications successfully processed.
 }
 
 enum NotifyType {

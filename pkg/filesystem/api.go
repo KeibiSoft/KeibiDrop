@@ -82,6 +82,8 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 
 		RemoteFilesLock: sync.RWMutex{},
 		RemoteFiles:     make(map[string]*File),
+
+		PrefetchSem: make(chan struct{}, 8), // max 8 concurrent prefetches
 	}
 
 	root.Root = root
