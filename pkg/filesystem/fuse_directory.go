@@ -1966,12 +1966,12 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	d.RemoteFilesLock.Lock()
 
 	if existing, ok := d.RemoteFiles[path]; ok {
-		// logger.Info("Remote file exists, updating", "path", path, "size", stat.Size, "mtime", stat.Mtim.Time())
 		existing.stat = stat
 		existing.NotLocalSynced = true
-		// CRITICAL: Reset download state so BytesDownloaded doesn't carry over from previous attempts
 		existing.Download.Reset(uint64(stat.Size))
 		// Cancel old prefetch if running, create new bitmap.
+		// os.Truncate in startPrefetch extends (doesn't overwrite existing data),
+		// so re-downloading after a size increase is safe — just re-fetches the delta.
 		if existing.PrefetchCancel != nil {
 			existing.PrefetchCancel()
 			existing.PrefetchCancel = nil
