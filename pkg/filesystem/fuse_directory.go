@@ -1808,8 +1808,11 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		}
 
 		if readErr != nil {
-			logger.Error("Failed to read data from remote after retries", "error", readErr)
-			return -winfuse.EBADF
+			logger.Warn("Remote read failed, returning EOF", "error", readErr, "path", path)
+			// The file may have been deleted on the remote peer (e.g. git's
+			// temporary .keep files). Return 0 (EOF) so callers see an
+			// empty file instead of aborting.
+			return 0
 		}
 
 		// Copy remote data into buffer for FUSE.
