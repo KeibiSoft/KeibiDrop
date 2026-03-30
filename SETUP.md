@@ -52,7 +52,7 @@ go env CGO_ENABLED    # must print 1
 
 Only needed for FUSE mode. Download from [macfuse.github.io](https://macfuse.github.io/).
 
-After installing, allow the kernel extension in System Settings > Privacy & Security, then restart. On macOS 15.4+, the FSKit backend runs in user space — no kernel extension needed.
+After installing, allow the kernel extension in System Settings > Privacy & Security, then restart. On macOS 15.4+, the FSKit backend runs in user space, no kernel extension needed.
 
 ```bash
 sudo sh -c 'echo "user_allow_other" > /etc/fuse.conf'
@@ -68,7 +68,7 @@ sudo sh -c 'echo "user_allow_other" > /etc/fuse.conf'
 
 ### Rust UI (recommended)
 
-Protobuf code is already committed — no need to install `protoc`.
+Protobuf code is already committed, no need to install `protoc`.
 
 ```bash
 make build-static-rust-bridge          # Go → static library (libkeibidrop.a)
@@ -172,7 +172,7 @@ xcode-select --install
 ```
 
 ### `protoc-gen-go: program not found`
-You don't need protoc — generated code is committed. Build without it:
+You don't need protoc, generated code is committed. Build without it:
 ```bash
 make build-static-rust-bridge && cd rust && cargo build --release
 ```

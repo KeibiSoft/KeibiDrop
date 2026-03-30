@@ -4,7 +4,7 @@
 
 ### "Connection failed" or peers can't find each other
 
-1. Both peers need IPv6. Test at [test-ipv6.com](https://test-ipv6.com/) — you need at least 9/10.
+1. Both peers need IPv6. Test at [test-ipv6.com](https://test-ipv6.com/), you need at least 9/10.
 2. Check your firewall allows inbound TCP on the configured port (default: 26431).
 3. Check your router doesn't block IPv6 inbound connections.
 4. Both peers must use the same relay server.
@@ -19,13 +19,20 @@ The public relay limits requests per IP. Wait a few minutes and try again. For h
 
 ### "FUSE not detected"
 
-**macOS:** Install [macFUSE](https://macfuse.github.io/). Restart after installation.
-
-**Linux:**
+macOS:
 ```bash
-sudo apt install fuse3         # Debian/Ubuntu
-sudo dnf install fuse3         # Fedora
-sudo pacman -S fuse3           # Arch
+# Install macFUSE from https://macfuse.github.io/
+# Restart your Mac after installation
+```
+
+Linux (Debian/Ubuntu):
+```bash
+sudo apt install fuse3
+```
+
+Linux (Fedora):
+```bash
+sudo dnf install fuse3
 ```
 
 ### "Permission denied" when opening files from FUSE mount (macOS)
@@ -40,20 +47,20 @@ Then remount (disconnect and reconnect, or restart **KEIBI**DROP).
 
 ### macFUSE kernel extension blocked (macOS)
 
-macOS may block the macFUSE kernel extension. Go to System Settings > Privacy & Security and allow it.
+Go to System Settings > Privacy & Security and allow the macFUSE extension.
 
-On macOS 15.4+, macFUSE supports the **FSKit backend** which runs entirely in user space — no kernel extension needed. Enable it in System Settings > macFUSE > Use FSKit.
+On macOS 15.4+, macFUSE supports the FSKit backend which runs in user space, no kernel extension needed. Enable it in System Settings > macFUSE > Use FSKit.
 
 ### FUSE mount not cleaning up
 
 If **KEIBI**DROP crashes and the mount point is stale:
 
-**macOS:**
+macOS:
 ```bash
 sudo /sbin/umount -f /path/to/mount
 ```
 
-**Linux:**
+Linux:
 ```bash
 fusermount -u /path/to/mount
 ```
@@ -64,22 +71,27 @@ fusermount -u /path/to/mount
 
 ### `pthread.h` or `stdlib.h` not found (macOS)
 
-Install Xcode Command Line Tools:
 ```bash
 xcode-select --install
 ```
 
-### `gcc not found` or CGO errors
+### CGO errors (macOS)
 
 ```bash
 export CGO_ENABLED=1
-xcode-select --install          # macOS
-sudo apt install build-essential  # Linux
+xcode-select --install
 ```
 
-On macOS, Go must use `clang` (not `gcc`). Check with `go env CC`. If it shows `gcc`:
+Go must use `clang` on macOS. Check with `go env CC`. If it shows `gcc`:
 ```bash
 export CC=clang
+```
+
+### CGO errors (Linux)
+
+```bash
+export CGO_ENABLED=1
+sudo apt install build-essential
 ```
 
 ### Rust build fails with missing `libkeibidrop.a`
@@ -92,15 +104,24 @@ cd rust && cargo build --release
 
 ### `protoc-gen-go: program not found`
 
-You don't need protoc — the generated code is committed. Build without it:
+The generated code is committed, so you can build without protoc:
 ```bash
 make build-static-rust-bridge
 cd rust && cargo build --release
 ```
 
-If you do want to regenerate:
+If you want to regenerate protobuf stubs:
+
+macOS:
 ```bash
-brew install protobuf     # macOS
+brew install protobuf
+make install-proto
+make protoc
+```
+
+Linux:
+```bash
+sudo apt install protobuf-compiler
 make install-proto
 make protoc
 ```
@@ -111,12 +132,13 @@ make protoc
 
 ### Where is the config file?
 
-`~/.config/keibidrop/config.toml` — created on first run with default values.
+`~/.config/keibidrop/config.toml`, created on first run with default values.
 
 ### Where are log files?
 
-**macOS:** `~/Library/Logs/KeibiDrop/keibidrop.log`
-**Linux:** `~/.local/share/keibidrop/keibidrop.log`
+macOS: `~/Library/Logs/KeibiDrop/keibidrop.log`
+
+Linux: `~/.local/share/keibidrop/keibidrop.log`
 
 Override with the `LOG_FILE` environment variable or `log_file` in config.toml.
 
@@ -132,7 +154,7 @@ Override with `TO_SAVE_PATH` environment variable or `save_path` in config.toml.
 
 ### macOS
 
-- Requires macFUSE for FUSE mode. Works fine without it in no-FUSE mode.
+- Requires macFUSE for FUSE mode. Works without it in no-FUSE mode.
 - Apple Silicon and Intel both supported.
 - macOS 15.4+ can use the FSKit backend (no kernel extension).
 
@@ -140,8 +162,8 @@ Override with `TO_SAVE_PATH` environment variable or `save_path` in config.toml.
 
 - Requires `fuse3` and `libfuse3-dev` (for building from source).
 - Tested on Ubuntu 22.04+ (x86_64).
-- ARM64 Linux support is available for CLI binaries.
+- ARM64 Linux support available for CLI binaries.
 
 ### Windows
 
-Not yet supported. Planned for a future release with [WinFsp](https://winfsp.dev/).
+Works in no-FUSE mode (not yet tested). FUSE mode requires [WinFsp](https://winfsp.dev/) and has not been tested yet.

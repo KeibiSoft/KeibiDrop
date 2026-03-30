@@ -1,14 +1,14 @@
-# Privacy Policy - KeibiDrop Client
+# Privacy Policy - **KEIBI**DROP Client
 
 Last updated: 11.08.2025
 
-KeibiDrop is an open-source peer-to-peer file sharing client developed by **KeibiSoft SRL**. This document outlines the privacy expectations for users of the KeibiDrop client and its default relay infrastructure.
+**KEIBI**DROP is an open-source peer-to-peer file sharing client developed by **KeibiSoft SRL**. This document outlines the privacy expectations for users of the **KEIBI**DROP client and its default relay infrastructure.
 
 ---
 
 ## 1. No Telemetry, No Analytics (Client)
 
-The KeibiDrop client does **not collect**, **transmit**, or **store** any usage data, telemetry, or analytics. It runs locally on your device and communicates directly with peers or a relay server if configured.
+The **KEIBI**DROP client does **not collect**, **transmit**, or **store** any usage data, telemetry, or analytics. It runs locally on your device and communicates directly with peers or a relay server if configured.
 
 We do not receive or track what you do in the client. You're on your own out there.
 
@@ -24,7 +24,7 @@ We cannot and do not decrypt or inspect transferred data.
 
 ## 3. When Using the Default KeibiSoft Relay Server
 
-By default, KeibiDrop uses a public relay server operated by **KeibiSoft SRL** to facilitate key exchange (not file transfer).
+By default, **KEIBI**DROP uses a public relay server operated by **KeibiSoft SRL** to facilitate key exchange (not file transfer).
 
 **The relay cannot read your metadata.** Registration data (fingerprints, public keys, connection hints) is encrypted client-side before being sent to the relay. The relay stores only opaque encrypted blobs indexed by a derived lookup key. It cannot:
 - See your fingerprint or public keys
@@ -53,13 +53,13 @@ The client itself does not send logging nor file data to KeibiSoft. We don’t w
 
 ## 5. Third-Party Libraries
 
-KeibiDrop may include open source dependencies. Each may have its own license or policy.
+**KEIBI**DROP may include open source dependencies. Each may have its own license or policy.
 
 ---
 
 ## 6. Community Contributions
 
-If you submit code to the KeibiDrop project, your contributions will be public and attributed to your GitHub account (or whichever identity you use). See `CONTRIBUTING.md` for more info.
+If you submit code to the **KEIBI**DROP project, your contributions will be public and attributed to your GitHub account (or whichever identity you use). See `CONTRIBUTING.md` for more info.
 
 ---
 

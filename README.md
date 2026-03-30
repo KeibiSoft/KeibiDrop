@@ -9,7 +9,7 @@
 
 End-to-end encrypted, peer-to-peer file sharing between desktops.
 
-Files transfer directly between your machines — no cloud, no accounts, no upload limits. Traffic is encrypted with post-quantum cryptography (ML-KEM-1024 + X25519) and AES-256-GCM / ChaCha20-Poly1305.
+Files transfer directly between your machines. No cloud, no accounts, no upload limits. Traffic is encrypted with post-quantum cryptography (ML-KEM-1024 + X25519) and AES-256-GCM / ChaCha20-Poly1305.
 
 | Connect | Share files |
 |---|---|
@@ -82,17 +82,17 @@ sudo apt install fuse3    # Debian/Ubuntu
 
 ## Three ways to run
 
-**Desktop UI** (Rust/Slint) — the main app. Point-and-click file sharing.
+**Desktop UI** (Rust/Slint) - the main app. Point-and-click file sharing.
 ```bash
 ./keibidrop-rust
 ```
 
-**Interactive CLI** — terminal REPL with autocomplete.
+**Interactive CLI** - terminal REPL with autocomplete.
 ```bash
 ./keibidrop-cli
 ```
 
-**Agent CLI** (`kd`) — for AI agents and scripts. Daemon + JSON protocol over Unix socket.
+**Agent CLI** (`kd`) - for AI agents and scripts. Daemon + JSON protocol over Unix socket.
 ```bash
 KD_SAVE_PATH=./received ./kd start    # Terminal 1
 ./kd show fingerprint                  # Terminal 2
@@ -141,7 +141,7 @@ Post-quantum hybrid key exchange, authenticated encryption, forward secrecy via 
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). All commits must be signed.
+See [CONTRIBUTING.md](./CONTRIBUTING.md). All commits must be signed (`git commit -S`) and signed-off (`git commit --sign-off`) per the [DCO](./DCO.txt).
 
 ## License
 
