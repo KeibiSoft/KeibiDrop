@@ -256,8 +256,21 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 			// Remove from RemoteFiles (stops new remote streaming, but existing streams continue).
 			kd.FS.Root.RemoteFilesLock.Lock()
-			delete(kd.FS.Root.RemoteFiles, req.Path)
+			if rf, rfOk := kd.FS.Root.RemoteFiles[req.Path]; rfOk {
+				if rf.PrefetchCancel != nil {
+					rf.PrefetchCancel()
+					rf.PrefetchCancel = nil
+				}
+				delete(kd.FS.Root.RemoteFiles, req.Path)
+			}
 			kd.FS.Root.RemoteFilesLock.Unlock()
+
+			// Remove stale cache file so it doesn't confuse future Opens
+			// (e.g. git's .keep files are created then removed quickly).
+			cachePath := filepath.Clean(filepath.Join(kd.FS.Root.LocalDownloadFolder, req.Path))
+			if rmErr := os.Remove(cachePath); rmErr != nil && !os.IsNotExist(rmErr) {
+				logger.Warn("Failed to remove cache file", "path", cachePath, "error", rmErr)
+			}
 		}
 
 		// Also handle non-FUSE mode.
@@ -291,10 +304,16 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				logger.Info("Renamed file on disk", "from", oldDiskPath, "to", newDiskPath)
 			}
 
-			// Remove old path from maps and add with new path.
+			// Cancel any in-flight prefetch for the old path before
+			// updating maps — prevents it from racing with disk rename
+			// or subsequent Open on the new path.
 			kd.FS.Root.RemoteFilesLock.Lock()
 			file, exists := kd.FS.Root.RemoteFiles[req.OldPath]
 			if exists {
+				if file.PrefetchCancel != nil {
+					file.PrefetchCancel()
+					file.PrefetchCancel = nil
+				}
 				delete(kd.FS.Root.RemoteFiles, req.OldPath)
 				file.RelativePath = req.Path
 				file.Name = filepath.Base(req.Path)
@@ -315,19 +334,68 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			}
 			kd.FS.Root.AfmLock.Unlock()
 
-			// Check if the renamed file has a different size than what we have locally.
-			// Git writes checksum bytes between close and rename (e.g., index-pack appends
-			// 20-byte SHA-1 to pack files). The RENAME Attr carries the correct size.
-			if req.Attr != nil {
+			// Check if the renamed file needs re-downloading.
+			// Cases: (a) file doesn't exist locally (prefetch was still
+			// in progress on the old path and got cancelled above),
+			// (b) file exists but has wrong size (git index-pack appends
+			// 20-byte SHA-1 checksum between the initial write and rename).
+			// Check if the renamed file needs re-downloading.
+			// Cases: (a) file doesn't exist locally (prefetch was still
+			// in progress on the old path and got cancelled above),
+			// (b) file exists but has wrong size (git index-pack appends
+			// 20-byte SHA-1 checksum between the initial write and rename).
+			if exists && req.Attr != nil && req.Attr.Size > 0 {
+				needsRedownload := false
 				localInfo, statErr := os.Stat(newDiskPath)
-				if statErr == nil && localInfo.Size() != req.Attr.Size {
-					logger.Info("Size mismatch after rename, re-downloading",
+				if statErr != nil {
+					needsRedownload = true
+					logger.Info("File missing after rename, scheduling re-download",
+						"remoteSize", req.Attr.Size, "path", req.Path)
+				} else if localInfo.Size() != req.Attr.Size {
+					needsRedownload = true
+					logger.Info("Size mismatch after rename, scheduling re-download",
 						"localSize", localInfo.Size(), "remoteSize", req.Attr.Size, "path", req.Path)
+				}
+
+				if needsRedownload {
 					atim := time.Unix(0, int64(req.Attr.AccessTime))
 					mtim := time.Unix(0, int64(req.Attr.ModificationTime))
 					ctim := time.Unix(0, int64(req.Attr.ChangeTime))
 					btim := time.Unix(0, int64(req.Attr.BirthTime))
-					_ = kd.FS.Root.EditRemoteFile(logger, req.Path, filepath.Base(req.Path), &fuse.Stat_t{
+					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), &fuse.Stat_t{
+						Dev:      req.Attr.Dev,
+						Ino:      req.Attr.Ino,
+						Mode:     req.Attr.Mode,
+						Nlink:    1,
+						Uid:      uint32(os.Getuid()),
+						Gid:      uint32(os.Getgid()),
+						Size:     req.Attr.Size,
+						Atim:     fuse.NewTimespec(atim),
+						Mtim:     fuse.NewTimespec(mtim),
+						Ctim:     fuse.NewTimespec(ctim),
+						Birthtim: fuse.NewTimespec(btim),
+						Flags:    req.Attr.Flags,
+					})
+				}
+			}
+
+			// Handle lock-file → final-file renames (git's .lock pattern).
+			// The ADD_FILE for .lock was debounced and arrives later, but the
+			// RENAME arrives immediately. If the target already exists in
+			// RemoteFiles (e.g., .git/HEAD), trigger re-download now so the
+			// peer doesn't read stale content during the debounce window.
+			if !exists && req.Attr != nil && req.Attr.Size > 0 {
+				kd.FS.Root.RemoteFilesLock.RLock()
+				_, targetTracked := kd.FS.Root.RemoteFiles[req.Path]
+				kd.FS.Root.RemoteFilesLock.RUnlock()
+				if targetTracked {
+					logger.Info("Lock-file rename: re-downloading target",
+						"path", req.Path, "size", req.Attr.Size)
+					atim := time.Unix(0, int64(req.Attr.AccessTime))
+					mtim := time.Unix(0, int64(req.Attr.ModificationTime))
+					ctim := time.Unix(0, int64(req.Attr.ChangeTime))
+					btim := time.Unix(0, int64(req.Attr.BirthTime))
+					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), &fuse.Stat_t{
 						Dev:      req.Attr.Dev,
 						Ino:      req.Attr.Ino,
 						Mode:     req.Attr.Mode,

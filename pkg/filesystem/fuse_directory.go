@@ -647,10 +647,13 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 			copyFusestatFromGostat(auxStat, &stgo)
 
 			if isModificationTimeNewer(auxStat, remFile.stat) {
-				// Only mark as LocalNewer if local file has actual content.
-				// Empty files (size=0) are just placeholders created for streaming - not real local edits.
 				if auxStat.Size > 0 {
-					remFile.LocalNewer = true
+					// Update stored stat to reflect local reality (size, mtime).
+					// NOTE: Do NOT set LocalNewer here. Prefetch writes always make
+					// local mtime newer than remote stat, falsely marking files as
+					// "locally edited". LocalNewer is managed exclusively by:
+					//   - Write handler (sets true on genuine local edits)
+					//   - AddRemoteFile/EditRemoteFile (sets false on remote updates)
 					copyFusestatFromFusestat(remFile.stat, auxStat)
 				}
 				copyFusestatFromFusestat(stat, remFile.stat)
@@ -658,8 +661,6 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 			}
 
 			copyFusestatFromFusestat(stat, remFile.stat)
-			remFile.LocalNewer = false
-
 			return 0
 		}
 	}
@@ -1808,8 +1809,11 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		}
 
 		if readErr != nil {
-			logger.Error("Failed to read data from remote after retries", "error", readErr)
-			return -winfuse.EBADF
+			logger.Warn("Remote read failed, returning EOF", "error", readErr, "path", path)
+			// The file may have been deleted on the remote peer (e.g. git's
+			// temporary .keep files). Return 0 (EOF) so callers see an
+			// empty file instead of aborting.
+			return 0
 		}
 
 		// Copy remote data into buffer for FUSE.
@@ -1968,6 +1972,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	if existing, ok := d.RemoteFiles[path]; ok {
 		existing.stat = stat
 		existing.NotLocalSynced = true
+		existing.LocalNewer = false // Remote has newer content.
 		existing.Download.Reset(uint64(stat.Size))
 		// Cancel old prefetch if running, create new bitmap.
 		// os.Truncate in startPrefetch extends (doesn't overwrite existing data),
@@ -1978,6 +1983,10 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		}
 		existing.Bitmap = NewChunkBitmap(stat.Size)
 		d.RemoteFilesLock.Unlock()
+		// Ensure AllFileMap points to the same object so OpenEx sees correct state.
+		d.AfmLock.Lock()
+		d.AllFileMap[path] = existing
+		d.AfmLock.Unlock()
 		d.startPrefetch(logger, existing, path)
 		return nil
 	}
@@ -2167,6 +2176,10 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 		}
 		d.RemoteFiles[path] = newFile
 		d.RemoteFilesLock.Unlock()
+		// Ensure AllFileMap points to the same object so OpenEx sees correct state.
+		d.AfmLock.Lock()
+		d.AllFileMap[path] = newFile
+		d.AfmLock.Unlock()
 		d.startPrefetch(logger, newFile, path)
 		return nil
 	}
@@ -2180,6 +2193,7 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	// logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
 	f.stat = stat
 	f.NotLocalSynced = true
+	f.LocalNewer = false // Remote has newer content.
 	// CRITICAL: Reset download state for re-download
 	f.Download.Reset(uint64(stat.Size))
 	// Cancel old prefetch, reset bitmap, start new prefetch.
@@ -2188,6 +2202,10 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	}
 	f.Bitmap = NewChunkBitmap(stat.Size)
 	d.RemoteFilesLock.Unlock()
+	// Ensure AllFileMap points to the same object so OpenEx sees correct state.
+	d.AfmLock.Lock()
+	d.AllFileMap[path] = f
+	d.AfmLock.Unlock()
 	d.startPrefetch(logger, f, path)
 	return nil
 }
