@@ -553,6 +553,118 @@ func (x *ReadResponse) GetTotalSize() uint64 {
 	return 0
 }
 
+type StreamFileRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	StartOffset   uint64                 `protobuf:"varint,2,opt,name=start_offset,json=startOffset,proto3" json:"start_offset,omitempty"` // Resume from this byte offset (0 for full file).
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StreamFileRequest) Reset() {
+	*x = StreamFileRequest{}
+	mi := &file_keibidrop_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StreamFileRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StreamFileRequest) ProtoMessage() {}
+
+func (x *StreamFileRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StreamFileRequest.ProtoReflect.Descriptor instead.
+func (*StreamFileRequest) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *StreamFileRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *StreamFileRequest) GetStartOffset() uint64 {
+	if x != nil {
+		return x.StartOffset
+	}
+	return 0
+}
+
+type StreamFileResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	Offset        uint64                 `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`                        // Byte offset where this chunk belongs.
+	TotalSize     uint64                 `protobuf:"varint,3,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"` // Total file size (sent with every chunk for progress).
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StreamFileResponse) Reset() {
+	*x = StreamFileResponse{}
+	mi := &file_keibidrop_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StreamFileResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StreamFileResponse) ProtoMessage() {}
+
+func (x *StreamFileResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StreamFileResponse.ProtoReflect.Descriptor instead.
+func (*StreamFileResponse) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *StreamFileResponse) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *StreamFileResponse) GetOffset() uint64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *StreamFileResponse) GetTotalSize() uint64 {
+	if x != nil {
+		return x.TotalSize
+	}
+	return 0
+}
+
 type FsyncRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Handle        uint64                 `protobuf:"varint,1,opt,name=handle,proto3" json:"handle,omitempty"`
@@ -563,7 +675,7 @@ type FsyncRequest struct {
 
 func (x *FsyncRequest) Reset() {
 	*x = FsyncRequest{}
-	mi := &file_keibidrop_proto_msgTypes[8]
+	mi := &file_keibidrop_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -575,7 +687,7 @@ func (x *FsyncRequest) String() string {
 func (*FsyncRequest) ProtoMessage() {}
 
 func (x *FsyncRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[8]
+	mi := &file_keibidrop_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -588,7 +700,7 @@ func (x *FsyncRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FsyncRequest.ProtoReflect.Descriptor instead.
 func (*FsyncRequest) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{8}
+	return file_keibidrop_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *FsyncRequest) GetHandle() uint64 {
@@ -613,7 +725,7 @@ type FsyncResponse struct {
 
 func (x *FsyncResponse) Reset() {
 	*x = FsyncResponse{}
-	mi := &file_keibidrop_proto_msgTypes[9]
+	mi := &file_keibidrop_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -625,7 +737,7 @@ func (x *FsyncResponse) String() string {
 func (*FsyncResponse) ProtoMessage() {}
 
 func (x *FsyncResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[9]
+	mi := &file_keibidrop_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -638,7 +750,7 @@ func (x *FsyncResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FsyncResponse.ProtoReflect.Descriptor instead.
 func (*FsyncResponse) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{9}
+	return file_keibidrop_proto_rawDescGZIP(), []int{11}
 }
 
 type CloseRequest struct {
@@ -651,7 +763,7 @@ type CloseRequest struct {
 
 func (x *CloseRequest) Reset() {
 	*x = CloseRequest{}
-	mi := &file_keibidrop_proto_msgTypes[10]
+	mi := &file_keibidrop_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -663,7 +775,7 @@ func (x *CloseRequest) String() string {
 func (*CloseRequest) ProtoMessage() {}
 
 func (x *CloseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[10]
+	mi := &file_keibidrop_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +788,7 @@ func (x *CloseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseRequest.ProtoReflect.Descriptor instead.
 func (*CloseRequest) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{10}
+	return file_keibidrop_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CloseRequest) GetHandle() uint64 {
@@ -701,7 +813,7 @@ type CloseResponse struct {
 
 func (x *CloseResponse) Reset() {
 	*x = CloseResponse{}
-	mi := &file_keibidrop_proto_msgTypes[11]
+	mi := &file_keibidrop_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -713,7 +825,7 @@ func (x *CloseResponse) String() string {
 func (*CloseResponse) ProtoMessage() {}
 
 func (x *CloseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[11]
+	mi := &file_keibidrop_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -726,7 +838,7 @@ func (x *CloseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseResponse.ProtoReflect.Descriptor instead.
 func (*CloseResponse) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{11}
+	return file_keibidrop_proto_rawDescGZIP(), []int{13}
 }
 
 type NotifyRequest struct {
@@ -742,7 +854,7 @@ type NotifyRequest struct {
 
 func (x *NotifyRequest) Reset() {
 	*x = NotifyRequest{}
-	mi := &file_keibidrop_proto_msgTypes[12]
+	mi := &file_keibidrop_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -754,7 +866,7 @@ func (x *NotifyRequest) String() string {
 func (*NotifyRequest) ProtoMessage() {}
 
 func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[12]
+	mi := &file_keibidrop_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -767,7 +879,7 @@ func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyRequest.ProtoReflect.Descriptor instead.
 func (*NotifyRequest) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{12}
+	return file_keibidrop_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *NotifyRequest) GetType() NotifyType {
@@ -814,7 +926,7 @@ type NotifyResponse struct {
 
 func (x *NotifyResponse) Reset() {
 	*x = NotifyResponse{}
-	mi := &file_keibidrop_proto_msgTypes[13]
+	mi := &file_keibidrop_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -826,7 +938,7 @@ func (x *NotifyResponse) String() string {
 func (*NotifyResponse) ProtoMessage() {}
 
 func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[13]
+	mi := &file_keibidrop_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -839,7 +951,7 @@ func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyResponse.ProtoReflect.Descriptor instead.
 func (*NotifyResponse) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{13}
+	return file_keibidrop_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *NotifyResponse) GetStatus() string {
@@ -847,6 +959,118 @@ func (x *NotifyResponse) GetStatus() string {
 		return x.Status
 	}
 	return ""
+}
+
+type BatchNotifyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Notifications []*NotifyRequest       `protobuf:"bytes,1,rep,name=notifications,proto3" json:"notifications,omitempty"` // Ordered: receiver processes sequentially.
+	Seq           uint64                 `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`                    // Monotonic batch sequence for ordering.
+	Timestamp     uint64                 `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`        // Sender's unix nano timestamp.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchNotifyRequest) Reset() {
+	*x = BatchNotifyRequest{}
+	mi := &file_keibidrop_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchNotifyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchNotifyRequest) ProtoMessage() {}
+
+func (x *BatchNotifyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchNotifyRequest.ProtoReflect.Descriptor instead.
+func (*BatchNotifyRequest) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *BatchNotifyRequest) GetNotifications() []*NotifyRequest {
+	if x != nil {
+		return x.Notifications
+	}
+	return nil
+}
+
+func (x *BatchNotifyRequest) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *BatchNotifyRequest) GetTimestamp() uint64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+type BatchNotifyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        string                 `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	Processed     uint32                 `protobuf:"varint,2,opt,name=processed,proto3" json:"processed,omitempty"` // Number of notifications successfully processed.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BatchNotifyResponse) Reset() {
+	*x = BatchNotifyResponse{}
+	mi := &file_keibidrop_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BatchNotifyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BatchNotifyResponse) ProtoMessage() {}
+
+func (x *BatchNotifyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_keibidrop_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BatchNotifyResponse.ProtoReflect.Descriptor instead.
+func (*BatchNotifyResponse) Descriptor() ([]byte, []int) {
+	return file_keibidrop_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *BatchNotifyResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *BatchNotifyResponse) GetProcessed() uint32 {
+	if x != nil {
+		return x.Processed
+	}
+	return 0
 }
 
 type Attr struct {
@@ -866,7 +1090,7 @@ type Attr struct {
 
 func (x *Attr) Reset() {
 	*x = Attr{}
-	mi := &file_keibidrop_proto_msgTypes[14]
+	mi := &file_keibidrop_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -878,7 +1102,7 @@ func (x *Attr) String() string {
 func (*Attr) ProtoMessage() {}
 
 func (x *Attr) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[14]
+	mi := &file_keibidrop_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -891,7 +1115,7 @@ func (x *Attr) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Attr.ProtoReflect.Descriptor instead.
 func (*Attr) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{14}
+	return file_keibidrop_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Attr) GetDev() uint64 {
@@ -969,7 +1193,7 @@ type RekeyRequest struct {
 
 func (x *RekeyRequest) Reset() {
 	*x = RekeyRequest{}
-	mi := &file_keibidrop_proto_msgTypes[15]
+	mi := &file_keibidrop_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -981,7 +1205,7 @@ func (x *RekeyRequest) String() string {
 func (*RekeyRequest) ProtoMessage() {}
 
 func (x *RekeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[15]
+	mi := &file_keibidrop_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -994,7 +1218,7 @@ func (x *RekeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RekeyRequest.ProtoReflect.Descriptor instead.
 func (*RekeyRequest) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{15}
+	return file_keibidrop_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *RekeyRequest) GetEncSeeds() map[string][]byte {
@@ -1022,7 +1246,7 @@ type RekeyResponse struct {
 
 func (x *RekeyResponse) Reset() {
 	*x = RekeyResponse{}
-	mi := &file_keibidrop_proto_msgTypes[16]
+	mi := &file_keibidrop_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1034,7 +1258,7 @@ func (x *RekeyResponse) String() string {
 func (*RekeyResponse) ProtoMessage() {}
 
 func (x *RekeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[16]
+	mi := &file_keibidrop_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1047,7 +1271,7 @@ func (x *RekeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RekeyResponse.ProtoReflect.Descriptor instead.
 func (*RekeyResponse) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{16}
+	return file_keibidrop_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RekeyResponse) GetEncSeeds() map[string][]byte {
@@ -1076,7 +1300,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_keibidrop_proto_msgTypes[17]
+	mi := &file_keibidrop_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1088,7 +1312,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[17]
+	mi := &file_keibidrop_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1101,7 +1325,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{17}
+	return file_keibidrop_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *HeartbeatRequest) GetTimestamp() uint64 {
@@ -1130,7 +1354,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_keibidrop_proto_msgTypes[18]
+	mi := &file_keibidrop_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1142,7 +1366,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_keibidrop_proto_msgTypes[18]
+	mi := &file_keibidrop_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1155,7 +1379,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_keibidrop_proto_rawDescGZIP(), []int{18}
+	return file_keibidrop_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *HeartbeatResponse) GetTimestamp() uint64 {
@@ -1215,7 +1439,15 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x06offset\x18\x02 \x01(\x04R\x06offset\x12\x19\n" +
 	"\bis_delta\x18\x03 \x01(\bR\aisDelta\x12\x1d\n" +
 	"\n" +
-	"total_size\x18\x04 \x01(\x04R\ttotalSize\":\n" +
+	"total_size\x18\x04 \x01(\x04R\ttotalSize\"J\n" +
+	"\x11StreamFileRequest\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12!\n" +
+	"\fstart_offset\x18\x02 \x01(\x04R\vstartOffset\"_\n" +
+	"\x12StreamFileResponse\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x04R\x06offset\x12\x1d\n" +
+	"\n" +
+	"total_size\x18\x03 \x01(\x04R\ttotalSize\":\n" +
 	"\fFsyncRequest\x12\x16\n" +
 	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\"\x0f\n" +
@@ -1231,7 +1463,14 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x04attr\x18\x04 \x01(\v2\x0f.keibidrop.AttrR\x04attr\x12\x19\n" +
 	"\bold_path\x18\x05 \x01(\tR\aoldPath\"(\n" +
 	"\x0eNotifyResponse\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\tR\x06status\"\xf2\x01\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\"\x84\x01\n" +
+	"\x12BatchNotifyRequest\x12>\n" +
+	"\rnotifications\x18\x01 \x03(\v2\x18.keibidrop.NotifyRequestR\rnotifications\x12\x10\n" +
+	"\x03seq\x18\x02 \x01(\x04R\x03seq\x12\x1c\n" +
+	"\ttimestamp\x18\x03 \x01(\x04R\ttimestamp\"K\n" +
+	"\x13BatchNotifyResponse\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12\x1c\n" +
+	"\tprocessed\x18\x02 \x01(\rR\tprocessed\"\xf2\x01\n" +
 	"\x04Attr\x12\x10\n" +
 	"\x03dev\x18\x01 \x01(\x04R\x03dev\x12\x10\n" +
 	"\x03ino\x18\x02 \x01(\x04R\x03ino\x12\x12\n" +
@@ -1279,14 +1518,17 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\n" +
 	"RENAME_DIR\x10\b\x12\x0e\n" +
 	"\n" +
-	"DISCONNECT\x10\t2\xb9\x04\n" +
+	"DISCONNECT\x10\t2\xd4\x05\n" +
 	"\fKeibiService\x127\n" +
 	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12<\n" +
 	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse(\x01\x12;\n" +
 	"\x04Read\x12\x16.keibidrop.ReadRequest\x1a\x17.keibidrop.ReadResponse(\x010\x01\x12:\n" +
 	"\x05Fsync\x12\x17.keibidrop.FsyncRequest\x1a\x18.keibidrop.FsyncResponse\x12:\n" +
 	"\x05Close\x12\x17.keibidrop.CloseRequest\x1a\x18.keibidrop.CloseResponse\x12=\n" +
-	"\x06Notify\x12\x18.keibidrop.NotifyRequest\x1a\x19.keibidrop.NotifyResponse\x12:\n" +
+	"\x06Notify\x12\x18.keibidrop.NotifyRequest\x1a\x19.keibidrop.NotifyResponse\x12L\n" +
+	"\vBatchNotify\x12\x1d.keibidrop.BatchNotifyRequest\x1a\x1e.keibidrop.BatchNotifyResponse\x12K\n" +
+	"\n" +
+	"StreamFile\x12\x1c.keibidrop.StreamFileRequest\x1a\x1d.keibidrop.StreamFileResponse0\x01\x12:\n" +
 	"\x05Debug\x12\x17.keibidrop.DebugRequest\x1a\x18.keibidrop.DebugResponse\x12:\n" +
 	"\x05Rekey\x12\x17.keibidrop.RekeyRequest\x1a\x18.keibidrop.RekeyResponse\x12F\n" +
 	"\tHeartbeat\x12\x1b.keibidrop.HeartbeatRequest\x1a\x1c.keibidrop.HeartbeatResponseB8Z6github.com/KeibiSoft/KeibiDrop/grpc_bindings;keibidropb\x06proto3"
@@ -1304,59 +1546,68 @@ func file_keibidrop_proto_rawDescGZIP() []byte {
 }
 
 var file_keibidrop_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_keibidrop_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_keibidrop_proto_goTypes = []any{
-	(NotifyType)(0),           // 0: keibidrop.NotifyType
-	(*DebugRequest)(nil),      // 1: keibidrop.DebugRequest
-	(*DebugResponse)(nil),     // 2: keibidrop.DebugResponse
-	(*OpenRequest)(nil),       // 3: keibidrop.OpenRequest
-	(*OpenResponse)(nil),      // 4: keibidrop.OpenResponse
-	(*WriteRequest)(nil),      // 5: keibidrop.WriteRequest
-	(*WriteResponse)(nil),     // 6: keibidrop.WriteResponse
-	(*ReadRequest)(nil),       // 7: keibidrop.ReadRequest
-	(*ReadResponse)(nil),      // 8: keibidrop.ReadResponse
-	(*FsyncRequest)(nil),      // 9: keibidrop.FsyncRequest
-	(*FsyncResponse)(nil),     // 10: keibidrop.FsyncResponse
-	(*CloseRequest)(nil),      // 11: keibidrop.CloseRequest
-	(*CloseResponse)(nil),     // 12: keibidrop.CloseResponse
-	(*NotifyRequest)(nil),     // 13: keibidrop.NotifyRequest
-	(*NotifyResponse)(nil),    // 14: keibidrop.NotifyResponse
-	(*Attr)(nil),              // 15: keibidrop.Attr
-	(*RekeyRequest)(nil),      // 16: keibidrop.RekeyRequest
-	(*RekeyResponse)(nil),     // 17: keibidrop.RekeyResponse
-	(*HeartbeatRequest)(nil),  // 18: keibidrop.HeartbeatRequest
-	(*HeartbeatResponse)(nil), // 19: keibidrop.HeartbeatResponse
-	nil,                       // 20: keibidrop.RekeyRequest.EncSeedsEntry
-	nil,                       // 21: keibidrop.RekeyResponse.EncSeedsEntry
+	(NotifyType)(0),             // 0: keibidrop.NotifyType
+	(*DebugRequest)(nil),        // 1: keibidrop.DebugRequest
+	(*DebugResponse)(nil),       // 2: keibidrop.DebugResponse
+	(*OpenRequest)(nil),         // 3: keibidrop.OpenRequest
+	(*OpenResponse)(nil),        // 4: keibidrop.OpenResponse
+	(*WriteRequest)(nil),        // 5: keibidrop.WriteRequest
+	(*WriteResponse)(nil),       // 6: keibidrop.WriteResponse
+	(*ReadRequest)(nil),         // 7: keibidrop.ReadRequest
+	(*ReadResponse)(nil),        // 8: keibidrop.ReadResponse
+	(*StreamFileRequest)(nil),   // 9: keibidrop.StreamFileRequest
+	(*StreamFileResponse)(nil),  // 10: keibidrop.StreamFileResponse
+	(*FsyncRequest)(nil),        // 11: keibidrop.FsyncRequest
+	(*FsyncResponse)(nil),       // 12: keibidrop.FsyncResponse
+	(*CloseRequest)(nil),        // 13: keibidrop.CloseRequest
+	(*CloseResponse)(nil),       // 14: keibidrop.CloseResponse
+	(*NotifyRequest)(nil),       // 15: keibidrop.NotifyRequest
+	(*NotifyResponse)(nil),      // 16: keibidrop.NotifyResponse
+	(*BatchNotifyRequest)(nil),  // 17: keibidrop.BatchNotifyRequest
+	(*BatchNotifyResponse)(nil), // 18: keibidrop.BatchNotifyResponse
+	(*Attr)(nil),                // 19: keibidrop.Attr
+	(*RekeyRequest)(nil),        // 20: keibidrop.RekeyRequest
+	(*RekeyResponse)(nil),       // 21: keibidrop.RekeyResponse
+	(*HeartbeatRequest)(nil),    // 22: keibidrop.HeartbeatRequest
+	(*HeartbeatResponse)(nil),   // 23: keibidrop.HeartbeatResponse
+	nil,                         // 24: keibidrop.RekeyRequest.EncSeedsEntry
+	nil,                         // 25: keibidrop.RekeyResponse.EncSeedsEntry
 }
 var file_keibidrop_proto_depIdxs = []int32{
 	0,  // 0: keibidrop.NotifyRequest.type:type_name -> keibidrop.NotifyType
-	15, // 1: keibidrop.NotifyRequest.attr:type_name -> keibidrop.Attr
-	20, // 2: keibidrop.RekeyRequest.enc_seeds:type_name -> keibidrop.RekeyRequest.EncSeedsEntry
-	21, // 3: keibidrop.RekeyResponse.enc_seeds:type_name -> keibidrop.RekeyResponse.EncSeedsEntry
-	3,  // 4: keibidrop.KeibiService.Open:input_type -> keibidrop.OpenRequest
-	5,  // 5: keibidrop.KeibiService.Write:input_type -> keibidrop.WriteRequest
-	7,  // 6: keibidrop.KeibiService.Read:input_type -> keibidrop.ReadRequest
-	9,  // 7: keibidrop.KeibiService.Fsync:input_type -> keibidrop.FsyncRequest
-	11, // 8: keibidrop.KeibiService.Close:input_type -> keibidrop.CloseRequest
-	13, // 9: keibidrop.KeibiService.Notify:input_type -> keibidrop.NotifyRequest
-	1,  // 10: keibidrop.KeibiService.Debug:input_type -> keibidrop.DebugRequest
-	16, // 11: keibidrop.KeibiService.Rekey:input_type -> keibidrop.RekeyRequest
-	18, // 12: keibidrop.KeibiService.Heartbeat:input_type -> keibidrop.HeartbeatRequest
-	4,  // 13: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
-	6,  // 14: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
-	8,  // 15: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
-	10, // 16: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
-	12, // 17: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
-	14, // 18: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
-	2,  // 19: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
-	17, // 20: keibidrop.KeibiService.Rekey:output_type -> keibidrop.RekeyResponse
-	19, // 21: keibidrop.KeibiService.Heartbeat:output_type -> keibidrop.HeartbeatResponse
-	13, // [13:22] is the sub-list for method output_type
-	4,  // [4:13] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	19, // 1: keibidrop.NotifyRequest.attr:type_name -> keibidrop.Attr
+	15, // 2: keibidrop.BatchNotifyRequest.notifications:type_name -> keibidrop.NotifyRequest
+	24, // 3: keibidrop.RekeyRequest.enc_seeds:type_name -> keibidrop.RekeyRequest.EncSeedsEntry
+	25, // 4: keibidrop.RekeyResponse.enc_seeds:type_name -> keibidrop.RekeyResponse.EncSeedsEntry
+	3,  // 5: keibidrop.KeibiService.Open:input_type -> keibidrop.OpenRequest
+	5,  // 6: keibidrop.KeibiService.Write:input_type -> keibidrop.WriteRequest
+	7,  // 7: keibidrop.KeibiService.Read:input_type -> keibidrop.ReadRequest
+	11, // 8: keibidrop.KeibiService.Fsync:input_type -> keibidrop.FsyncRequest
+	13, // 9: keibidrop.KeibiService.Close:input_type -> keibidrop.CloseRequest
+	15, // 10: keibidrop.KeibiService.Notify:input_type -> keibidrop.NotifyRequest
+	17, // 11: keibidrop.KeibiService.BatchNotify:input_type -> keibidrop.BatchNotifyRequest
+	9,  // 12: keibidrop.KeibiService.StreamFile:input_type -> keibidrop.StreamFileRequest
+	1,  // 13: keibidrop.KeibiService.Debug:input_type -> keibidrop.DebugRequest
+	20, // 14: keibidrop.KeibiService.Rekey:input_type -> keibidrop.RekeyRequest
+	22, // 15: keibidrop.KeibiService.Heartbeat:input_type -> keibidrop.HeartbeatRequest
+	4,  // 16: keibidrop.KeibiService.Open:output_type -> keibidrop.OpenResponse
+	6,  // 17: keibidrop.KeibiService.Write:output_type -> keibidrop.WriteResponse
+	8,  // 18: keibidrop.KeibiService.Read:output_type -> keibidrop.ReadResponse
+	12, // 19: keibidrop.KeibiService.Fsync:output_type -> keibidrop.FsyncResponse
+	14, // 20: keibidrop.KeibiService.Close:output_type -> keibidrop.CloseResponse
+	16, // 21: keibidrop.KeibiService.Notify:output_type -> keibidrop.NotifyResponse
+	18, // 22: keibidrop.KeibiService.BatchNotify:output_type -> keibidrop.BatchNotifyResponse
+	10, // 23: keibidrop.KeibiService.StreamFile:output_type -> keibidrop.StreamFileResponse
+	2,  // 24: keibidrop.KeibiService.Debug:output_type -> keibidrop.DebugResponse
+	21, // 25: keibidrop.KeibiService.Rekey:output_type -> keibidrop.RekeyResponse
+	23, // 26: keibidrop.KeibiService.Heartbeat:output_type -> keibidrop.HeartbeatResponse
+	16, // [16:27] is the sub-list for method output_type
+	5,  // [5:16] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_keibidrop_proto_init() }
@@ -1370,7 +1621,7 @@ func file_keibidrop_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_keibidrop_proto_rawDesc), len(file_keibidrop_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   21,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

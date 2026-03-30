@@ -170,6 +170,11 @@ type Dir struct {
 
 	RemoteFilesLock sync.RWMutex
 	RemoteFiles     map[string]*File
+
+	// PrefetchSem limits concurrent prefetch goroutines.
+	// Without this, a large clone (600+ files) spawns 600+ simultaneous
+	// StreamFile gRPC streams which overwhelm the connection.
+	PrefetchSem chan struct{}
 }
 
 type File struct {
@@ -216,6 +221,7 @@ type File struct {
 	StreamPool     *StreamPool            // Pool of parallel gRPC streams for on-demand reads.
 	StreamCancel   context.CancelFunc     // Cancel function for the stream context.
 	CacheFD        *os.File               // Persistent cache file descriptor for on-demand writes.
+	CacheWg        sync.WaitGroup         // Tracks in-flight async cache writes; waited on in Release.
 
 	// Download resumption state.
 	Download DownloadState

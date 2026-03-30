@@ -25,15 +25,17 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	KeibiService_Open_FullMethodName      = "/keibidrop.KeibiService/Open"
-	KeibiService_Write_FullMethodName     = "/keibidrop.KeibiService/Write"
-	KeibiService_Read_FullMethodName      = "/keibidrop.KeibiService/Read"
-	KeibiService_Fsync_FullMethodName     = "/keibidrop.KeibiService/Fsync"
-	KeibiService_Close_FullMethodName     = "/keibidrop.KeibiService/Close"
-	KeibiService_Notify_FullMethodName    = "/keibidrop.KeibiService/Notify"
-	KeibiService_Debug_FullMethodName     = "/keibidrop.KeibiService/Debug"
-	KeibiService_Rekey_FullMethodName     = "/keibidrop.KeibiService/Rekey"
-	KeibiService_Heartbeat_FullMethodName = "/keibidrop.KeibiService/Heartbeat"
+	KeibiService_Open_FullMethodName        = "/keibidrop.KeibiService/Open"
+	KeibiService_Write_FullMethodName       = "/keibidrop.KeibiService/Write"
+	KeibiService_Read_FullMethodName        = "/keibidrop.KeibiService/Read"
+	KeibiService_Fsync_FullMethodName       = "/keibidrop.KeibiService/Fsync"
+	KeibiService_Close_FullMethodName       = "/keibidrop.KeibiService/Close"
+	KeibiService_Notify_FullMethodName      = "/keibidrop.KeibiService/Notify"
+	KeibiService_BatchNotify_FullMethodName = "/keibidrop.KeibiService/BatchNotify"
+	KeibiService_StreamFile_FullMethodName  = "/keibidrop.KeibiService/StreamFile"
+	KeibiService_Debug_FullMethodName       = "/keibidrop.KeibiService/Debug"
+	KeibiService_Rekey_FullMethodName       = "/keibidrop.KeibiService/Rekey"
+	KeibiService_Heartbeat_FullMethodName   = "/keibidrop.KeibiService/Heartbeat"
 )
 
 // KeibiServiceClient is the client API for KeibiService service.
@@ -46,6 +48,10 @@ type KeibiServiceClient interface {
 	Fsync(ctx context.Context, in *FsyncRequest, opts ...grpc.CallOption) (*FsyncResponse, error)
 	Close(ctx context.Context, in *CloseRequest, opts ...grpc.CallOption) (*CloseResponse, error)
 	Notify(ctx context.Context, in *NotifyRequest, opts ...grpc.CallOption) (*NotifyResponse, error)
+	BatchNotify(ctx context.Context, in *BatchNotifyRequest, opts ...grpc.CallOption) (*BatchNotifyResponse, error)
+	// Push-based file streaming: client sends one request, server pushes
+	// all chunks sequentially. No per-chunk round-trip overhead.
+	StreamFile(ctx context.Context, in *StreamFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamFileResponse], error)
 	Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error)
 	// Re-keying for forward secrecy during long sessions.
 	Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error)
@@ -127,6 +133,35 @@ func (c *keibiServiceClient) Notify(ctx context.Context, in *NotifyRequest, opts
 	return out, nil
 }
 
+func (c *keibiServiceClient) BatchNotify(ctx context.Context, in *BatchNotifyRequest, opts ...grpc.CallOption) (*BatchNotifyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BatchNotifyResponse)
+	err := c.cc.Invoke(ctx, KeibiService_BatchNotify_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keibiServiceClient) StreamFile(ctx context.Context, in *StreamFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamFileResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &KeibiService_ServiceDesc.Streams[2], KeibiService_StreamFile_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamFileRequest, StreamFileResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeibiService_StreamFileClient = grpc.ServerStreamingClient[StreamFileResponse]
+
 func (c *keibiServiceClient) Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DebugResponse)
@@ -167,6 +202,10 @@ type KeibiServiceServer interface {
 	Fsync(context.Context, *FsyncRequest) (*FsyncResponse, error)
 	Close(context.Context, *CloseRequest) (*CloseResponse, error)
 	Notify(context.Context, *NotifyRequest) (*NotifyResponse, error)
+	BatchNotify(context.Context, *BatchNotifyRequest) (*BatchNotifyResponse, error)
+	// Push-based file streaming: client sends one request, server pushes
+	// all chunks sequentially. No per-chunk round-trip overhead.
+	StreamFile(*StreamFileRequest, grpc.ServerStreamingServer[StreamFileResponse]) error
 	Debug(context.Context, *DebugRequest) (*DebugResponse, error)
 	// Re-keying for forward secrecy during long sessions.
 	Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error)
@@ -199,6 +238,12 @@ func (UnimplementedKeibiServiceServer) Close(context.Context, *CloseRequest) (*C
 }
 func (UnimplementedKeibiServiceServer) Notify(context.Context, *NotifyRequest) (*NotifyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Notify not implemented")
+}
+func (UnimplementedKeibiServiceServer) BatchNotify(context.Context, *BatchNotifyRequest) (*BatchNotifyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BatchNotify not implemented")
+}
+func (UnimplementedKeibiServiceServer) StreamFile(*StreamFileRequest, grpc.ServerStreamingServer[StreamFileResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamFile not implemented")
 }
 func (UnimplementedKeibiServiceServer) Debug(context.Context, *DebugRequest) (*DebugResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Debug not implemented")
@@ -316,6 +361,35 @@ func _KeibiService_Notify_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeibiService_BatchNotify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BatchNotifyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeibiServiceServer).BatchNotify(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeibiService_BatchNotify_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeibiServiceServer).BatchNotify(ctx, req.(*BatchNotifyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeibiService_StreamFile_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(StreamFileRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(KeibiServiceServer).StreamFile(m, &grpc.GenericServerStream[StreamFileRequest, StreamFileResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeibiService_StreamFileServer = grpc.ServerStreamingServer[StreamFileResponse]
+
 func _KeibiService_Debug_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DebugRequest)
 	if err := dec(in); err != nil {
@@ -394,6 +468,10 @@ var KeibiService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _KeibiService_Notify_Handler,
 		},
 		{
+			MethodName: "BatchNotify",
+			Handler:    _KeibiService_BatchNotify_Handler,
+		},
+		{
 			MethodName: "Debug",
 			Handler:    _KeibiService_Debug_Handler,
 		},
@@ -417,6 +495,11 @@ var KeibiService_ServiceDesc = grpc.ServiceDesc{
 			Handler:       _KeibiService_Read_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "StreamFile",
+			Handler:       _KeibiService_StreamFile_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "keibidrop.proto",

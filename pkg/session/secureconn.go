@@ -8,6 +8,7 @@ package session
 
 import (
 	"bytes"
+	"crypto/cipher"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
 const lengthHeaderSize = 4 // uint32 prefix
@@ -34,76 +36,93 @@ const (
 )
 
 // SecureWriter encrypts messages and writes them to an underlying writer.
-// Uses deterministic counter-based nonces for performance (~500ns -> ~1ns per nonce).
+// Uses a cached AEAD cipher and single combined write for performance.
 type SecureWriter struct {
 	w     io.Writer
-	kek   []byte
+	aead  cipher.AEAD
 	nonce *kbc.NonceGenerator
 }
 
 func NewSecureWriter(w io.Writer, kek []byte) *SecureWriter {
+	aead, err := chacha20poly1305.New(kek)
+	if err != nil {
+		panic("secureconn: invalid key size: " + err.Error())
+	}
 	return &SecureWriter{
 		w:     w,
-		kek:   kek,
+		aead:  aead,
 		nonce: kbc.NewNonceGenerator(NoncePrefixOutbound),
 	}
 }
 
 // NewSecureWriterWithPrefix creates a writer with a custom nonce prefix.
 func NewSecureWriterWithPrefix(w io.Writer, kek []byte, prefix uint32) *SecureWriter {
+	aead, err := chacha20poly1305.New(kek)
+	if err != nil {
+		panic("secureconn: invalid key size: " + err.Error())
+	}
 	return &SecureWriter{
 		w:     w,
-		kek:   kek,
+		aead:  aead,
 		nonce: kbc.NewNonceGenerator(prefix),
 	}
 }
 
 func (s *SecureWriter) Write(p []byte) (int, error) {
 	nonce := s.nonce.Next()
-	encrypted, err := kbc.EncryptWithNonce(s.kek, p, nonce)
-	if err != nil {
-		return 0, fmt.Errorf("encryption failed: %w", err)
-	}
+
+	// Layout: [4-byte length header][nonce][ciphertext+tag]
+	// Single allocation, single write to avoid wasting a TCP segment on the header.
+	encSize := kbc.NonceSize + len(p) + s.aead.Overhead()
+	buf := make([]byte, lengthHeaderSize+encSize)
 
 	//#nosec:G115 // safe cast, no TCP stream frame will be 5GB.
-	length := uint32(len(encrypted))
-	head := make([]byte, lengthHeaderSize)
-	binary.BigEndian.PutUint32(head, length)
+	binary.BigEndian.PutUint32(buf[:lengthHeaderSize], uint32(encSize))
+	copy(buf[lengthHeaderSize:], nonce[:])
+	s.aead.Seal(buf[lengthHeaderSize+kbc.NonceSize:lengthHeaderSize+kbc.NonceSize], nonce[:], p, nil)
 
-	// Write [length][encrypted]
-	if _, err := s.w.Write(head); err != nil {
-		return 0, fmt.Errorf("write length failed: %w", err)
-	}
-	if _, err := s.w.Write(encrypted); err != nil {
-		return 0, fmt.Errorf("write data failed: %w", err)
+	if _, err := s.w.Write(buf); err != nil {
+		return 0, fmt.Errorf("write failed: %w", err)
 	}
 
 	return len(p), nil // number of plaintext bytes consumed
 }
 
 // SecureReader reads encrypted messages and decrypts them.
+// Caches the AEAD cipher and reuses a header buffer.
 type SecureReader struct {
-	r   io.Reader
-	kek []byte
+	r    io.Reader
+	aead cipher.AEAD
+	head [lengthHeaderSize]byte
 }
 
 func NewSecureReader(r io.Reader, kek []byte) *SecureReader {
-	return &SecureReader{r: r, kek: kek}
+	aead, err := chacha20poly1305.New(kek)
+	if err != nil {
+		panic("secureconn: invalid key size: " + err.Error())
+	}
+	return &SecureReader{r: r, aead: aead}
 }
 
 func (s *SecureReader) Read() ([]byte, error) {
-	head := make([]byte, lengthHeaderSize)
-	if _, err := io.ReadFull(s.r, head); err != nil {
+	if _, err := io.ReadFull(s.r, s.head[:]); err != nil {
 		return nil, fmt.Errorf("read length failed: %w", err)
 	}
-	length := binary.BigEndian.Uint32(head)
+	length := binary.BigEndian.Uint32(s.head[:])
+
+	if length < uint32(kbc.NonceSize)+uint32(s.aead.Overhead()) {
+		return nil, fmt.Errorf("encrypted message too short: %d bytes", length)
+	}
 
 	encrypted := make([]byte, length)
 	if _, err := io.ReadFull(s.r, encrypted); err != nil {
 		return nil, fmt.Errorf("read encrypted block failed: %w", err)
 	}
 
-	plaintext, err := kbc.Decrypt(s.kek, encrypted)
+	nonce := encrypted[:kbc.NonceSize]
+	ciphertext := encrypted[kbc.NonceSize:]
+
+	plaintext, err := s.aead.Open(ciphertext[:0], nonce, ciphertext, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decryption failed: %w", err)
 	}

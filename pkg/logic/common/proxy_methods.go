@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"io"
 	"sync"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -72,5 +73,32 @@ func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint
 	}
 
 	return NewImplRemoteFileStream(stream, inode, path), nil
+}
+
+// StreamFile starts a push-based download using the server-streaming StreamFile RPC.
+func (sp *ImplFileStreamProvider) StreamFile(ctx context.Context, path string, startOffset uint64) (types.StreamFileReceiver, error) {
+	stream, err := sp.cli.StreamFile(ctx, &bindings.StreamFileRequest{
+		Path:        path,
+		StartOffset: startOffset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &implStreamFileReceiver{stream: stream}, nil
+}
+
+type implStreamFileReceiver struct {
+	stream bindings.KeibiService_StreamFileClient
+}
+
+func (r *implStreamFileReceiver) Recv() (data []byte, offset uint64, totalSize uint64, err error) {
+	resp, err := r.stream.Recv()
+	if err != nil {
+		if err == io.EOF {
+			return nil, 0, 0, io.EOF
+		}
+		return nil, 0, 0, err
+	}
+	return resp.Data, resp.Offset, resp.TotalSize, nil
 }
 

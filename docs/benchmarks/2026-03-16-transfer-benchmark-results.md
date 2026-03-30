@@ -128,35 +128,30 @@ serialization + encryption per chunk.
 
 ---
 
-## macOS Results (Intel Mac)
+## macOS Results (Intel Mac, after all optimizations)
 
 **Machine**: Intel i7-9750H @ 2.60GHz, macOS 26.3, 32 GB RAM, localhost only
 **Date**: 2026-03-28
+**Includes**: stream pool (#80), parallel PullFile (#81), encryption
+optimizations, async cache writes
 
 ### E2E Transfer Throughput (Bob shares, Alice reads via FUSE)
 
 | Size | MB/s | Duration |
 |------|------|----------|
-| 1 MB | 86 | 12 ms |
-| 10 MB | 156 | 64 ms |
-| 100 MB | 203 | 492 ms |
-| 1 GB | 225 | 4.5 s |
-
-Throughput increases with size, peaking at 225 MB/s for 1 GB. Significantly
-faster than Linux (138 MB/s at 100 MB), likely due to macFUSE readahead
-tuning and faster CPU.
+| 1 MB | 93 | 11 ms |
+| 10 MB | 166 | 60 ms |
+| 100 MB | 217 | 461 ms |
+| 1 GB | 240 | 4.3 s |
 
 ### Encrypted gRPC Throughput (no FUSE)
 
 | Size | MB/s | Duration |
 |------|------|----------|
-| 1 MB | 155 | 6 ms |
-| 10 MB | 330 | 30 ms |
-| 100 MB | 445 | 225 ms |
-| 1 GB | 437 | 2.3 s |
-
-Peaks at ~440 MB/s for large files. FUSE adds ~2x overhead (225 vs 437 MB/s
-at 1 GB) from kernel context switches, VFS layer, and bitmap tracking.
+| 1 MB | 172 | 6 ms |
+| 10 MB | 337 | 30 ms |
+| 100 MB | 446 | 224 ms |
+| 1 GB | 452 | 2.3 s |
 
 ### Raw gRPC Baseline (no encryption, localhost)
 
@@ -167,36 +162,27 @@ at 1 GB) from kernel context switches, VFS layer, and bitmap tracking.
 | 100 MB | 954 |
 | 1 GB | 981 |
 
-Raw gRPC peaks at ~1 GB/s. Encryption (ChaCha20-Poly1305) adds ~2.2x overhead
-(981 vs 437 MB/s at 1 GB).
-
 ### Per-Chunk Latency (10 MB)
 
 | Metric | Value |
 |--------|-------|
 | Chunks recorded | 25 |
-| Total wall-clock | 59 ms |
-| Sum of chunk times | 95 ms |
-| Effective MB/s | 169 |
-| Min | 1.02 ms |
-| Median | 2.71 ms |
-| P95 | 8.1 ms |
-| Max | 14.1 ms |
-
-Fewer chunks recorded (25 vs 100 on Linux) because macFUSE uses larger
-readahead buffers. 1.6x parallelism (sum 95 ms vs wall 59 ms).
+| Total wall-clock | 63 ms |
+| Sum of chunk times | 98 ms |
+| Effective MB/s | 160 |
+| Min | 1.15 ms |
+| Median | 3.32 ms |
+| P95 | 12.0 ms |
+| Max | 12.6 ms |
 
 ### Overhead Ratio (E2E vs Raw Disk)
 
 | Size | Raw Disk | E2E Transfer | Overhead | Ratio |
 |------|----------|-------------|----------|-------|
-| 1 MB | 1 ms | 9 ms | 8 ms | 8.7x |
-| 10 MB | 4 ms | 60 ms | 56 ms | 14.2x |
-| 100 MB | 47 ms | 379 ms | 333 ms | 8.1x |
-| 1 GB | 475 ms | 4.16 s | 3.68 s | 8.7x |
-
-Lower overhead ratio than Linux (8.7x vs 14-24x). The ratio stays
-relatively constant at ~8-9x for larger files on macOS.
+| 1 MB | 1 ms | 13 ms | 12 ms | 12.1x |
+| 10 MB | 5 ms | 70 ms | 65 ms | 14.2x |
+| 100 MB | 46 ms | 536 ms | 490 ms | 11.5x |
+| 1 GB | 472 ms | 4.09 s | 3.61 s | 8.7x |
 
 ### Raw Disk I/O Baseline
 
@@ -230,10 +216,19 @@ relatively constant at ~8-9x for larger files on macOS.
 | 100 x 1 MB | 100 MB | 642 | 156 ms | 2 ms |
 | 100 x 10 MB | 1,000 MB | 989 | 1.01 s | 10 ms |
 
-FUSE writes are fast (1.1 GB/s for large files) because they go straight
-to local disk via syscall.Pwrite. The per-file overhead is ~2 ms (Create +
-Release + peer notification). Multi-file writes scale linearly.
-Write throughput is NOT the bottleneck. Read-from-remote is.
+### FUSE Read Overhead Breakdown (100 MB, per-layer)
+
+| Layer | Duration | MB/s | Overhead |
+|-------|----------|------|----------|
+| Encrypted gRPC (baseline) | 242 ms | 414 | - |
+| + copy into user buffer | 216 ms | 462 | ~0 (noise) |
+| + pwrite to cache file | 225 ms | 445 | +8 ms (1.8%) |
+| Full FUSE E2E | 461 ms | 217 | +237 ms (51%) |
+
+The FUSE/kernel overhead (51%) is kernel-userspace context switches and
+is irreducible from userspace. The cache write overhead was reduced from
+16% to 1.8% by making writes async. The no-FUSE path (encrypted gRPC)
+reaches 452 MB/s, which is the ceiling for FUSE mode.
 
 ### FUSE Latency (local operations)
 
@@ -244,116 +239,90 @@ Write throughput is NOT the bottleneck. Read-from-remote is.
 | 100 KB | 3.1 ms | 1.2 ms | 4.3 ms |
 | 1 MB | 3.2 ms | 1.3 ms | 4.5 ms |
 
-Local disk baseline: 0.2-0.6 ms for same operations. FUSE adds ~2 ms
-per operation from kernel-userspace context switches.
-
 ### Open/Close Latency (100 iterations)
 
 | Operation | Average |
 |-----------|---------|
-| Open | 164 µs |
-| Close | 56 µs |
+| Open | 164 us |
+| Close | 56 us |
 
 ---
 
 ## Key Findings
 
-1. **Stream mutex fix (#70) was critical** — c1bfca0 cannot complete FUSE
+1. **Stream mutex fix (#70) was critical** -- c1bfca0 cannot complete FUSE
    reads at all due to stream corruption from concurrent readahead.
 
-2. **Latency is the dominant bottleneck, not bandwidth** — LAN (1ms RTT)
+2. **Latency is the dominant bottleneck, not bandwidth** -- LAN (1ms RTT)
    gets 66 MB/s, WiFi (5ms RTT) gets 17 MB/s. The 5x RTT increase
    causes a nearly proportional 4x throughput drop. Bandwidth is not
    the limiting factor on gigabit links.
 
-3. **Encrypted gRPC is ~2x slower than raw gRPC** — 437 vs 981 MB/s at
+3. **Encrypted gRPC is ~2x slower than raw gRPC** -- 452 vs 981 MB/s at
    1 GB on macOS (similar ratio on Linux). ChaCha20-Poly1305 encryption
    is measurable but secondary to latency in real-world scenarios.
 
-4. **FUSE read-from-remote adds ~2x over encrypted gRPC** — 225 vs
-   437 MB/s at 1 GB on macOS. The overhead comes from: kernel-userspace
-   context switches, bitmap tracking, local cache writes, FUSE readahead
-   coordination. This is the read path bottleneck.
+4. **FUSE kernel overhead is the hard wall (51%)** -- measured by the
+   per-layer breakdown: encrypted gRPC reaches 452 MB/s, but FUSE E2E
+   only reaches 240 MB/s. The 51% gap is kernel-userspace context
+   switches (irreducible from userspace). No-FUSE mode bypasses this.
 
-5. **FUSE writes are fast (not a bottleneck)** — 1.1 GB/s for large files,
+5. **FUSE writes are fast (not a bottleneck)** -- 1.1 GB/s for large files,
    ~2 ms per-file overhead. Writes go straight to disk via syscall.Pwrite.
    The bottleneck is exclusively in the remote read path.
 
-6. **macOS is ~60% faster than Linux** for E2E FUSE reads (225 vs 138 MB/s
+6. **macOS is ~60% faster than Linux** for E2E FUSE reads (240 vs 138 MB/s
    at 100 MB). Likely from macFUSE readahead tuning and faster CPU
    (i7-9750H @ 2.6GHz vs i5-8265U @ 1.6GHz).
 
-7. **Chunk parallelism helps on localhost (Linux)** — sum of chunk times
+7. **Chunk parallelism helps on localhost (Linux)** -- sum of chunk times
    (221 ms) vs wall-clock (98 ms) shows ~2.3x parallelism from FUSE
    readahead, but the stream mutex serializes the actual gRPC sends.
 
-8. **Per-chunk round-trip overhead is ~7.5x theoretical minimum** —
+8. **Per-chunk round-trip overhead is ~7.5x theoretical minimum** --
    at 1ms RTT with 512 KiB chunks, theoretical max is ~500 MB/s but we
    get 66 MB/s. The stream mutex, gRPC framing, protobuf serialization,
    and encryption each add latency per chunk.
 
-9. **Biggest optimization opportunity**: pipelining prefetch — send
-   multiple ReadRequests without waiting for each response. Current
-   sequential pattern means each chunk pays the full RTT. Stream
-   multiplexing (PR #80) should bring LAN throughput from
-   66 MB/s closer to the 437 MB/s encrypted-gRPC baseline.
+9. **Stream pool (#80) helps under real network latency** -- 4 parallel
+   gRPC streams per file eliminate mutex contention between FUSE
+   readahead requests. On Linux with tc netem at 1ms RTT, throughput
+   improved from 66 to 171 MB/s (2.6x). On localhost the gain is
+   negligible (latency is near-zero).
 
 ---
 
-## Encryption Overhead Analysis (437 MB/s vs 981 MB/s raw gRPC)
+## Optimizations Applied
 
-The 2.2x overhead from ChaCha20-Poly1305 encryption comes from three
-sources, ordered by estimated impact:
+### Encryption layer (`pkg/session/secureconn.go`)
 
-### 1. AEAD cipher re-created per message (CPU waste)
+| Optimization | What changed |
+|-------------|-------------|
+| Cache AEAD cipher | `chacha20poly1305.New(kek)` called once per SecureConn instead of per message |
+| Single combined write | Header + nonce + ciphertext in one `Write()` call instead of two |
+| In-place decryption | `aead.Open(ciphertext[:0], ...)` reuses the read buffer instead of allocating |
+| Reuse header buffer | `SecureReader.head` is a fixed `[4]byte` field instead of per-read allocation |
 
-`EncryptWithNonce` (`pkg/crypto/symmetric.go:57`) calls
-`chacha20poly1305.New(kek)` on every single message. Same for `Decrypt`
-(`pkg/crypto/symmetric.go:114`). The AEAD instance is stateless after
-creation and can be created once per SecureConn and reused for all
-messages. This is the easiest fix.
+**Impact**: encrypted gRPC went from 437 to 452 MB/s (+3%). Modest on
+localhost (CPU is fast), but reduces per-message overhead for real
+networks where every microsecond per chunk multiplied by RTT matters.
 
-### 2. Heap allocation per message (GC pressure)
+### FUSE read path (`pkg/filesystem/fuse_directory.go`)
 
-`SecureWriter.Write` (`pkg/session/secureconn.go:61`) allocates:
-- `make([]byte, NonceSize+len(cipherText))` -- ~512 KiB per chunk
-- `make([]byte, 4)` for the length header
+| Optimization | What changed |
+|-------------|-------------|
+| Async cache writes | `cacheFD.WriteAt` runs in a goroutine; FUSE Read returns immediately |
+| CacheWg coordination | `sync.WaitGroup` ensures in-flight writes complete before Release closes FD |
 
-`SecureReader.Read` (`pkg/session/secureconn.go:94`) allocates:
-- `make([]byte, length)` -- ~512 KiB per encrypted message
+**Impact**: cache write overhead dropped from 16% to 1.8% of E2E time.
+Total E2E throughput: 225 to 240 MB/s (+7%).
 
-That is ~1 MB of heap allocation per chunk round-trip, all becoming GC
-pressure. Fix: use `sync.Pool` for encrypt/decrypt buffers.
+### Remaining bottleneck
 
-### 3. Two TCP writes per message (wasted segments)
+The FUSE kernel overhead (51% of E2E time) is the hard wall. Each FUSE
+Read call requires: kernel trap, cgofuse dispatch, Go function call,
+return to kernel. For a 100 MB file with ~128 KB readahead buffers,
+that is ~780 kernel round-trips at ~300us each = ~235 ms irreducible.
 
-`SecureWriter.Write` does two separate `Write()` calls: 4 bytes for the
-length header, then ~512 KiB for the payload. With Nagle disabled (gRPC
-default), the 4-byte header becomes its own TCP segment -- 1456 bytes
-wasted in a 1460-byte MSS frame. Fix: combine header+payload into a
-single write (pre-allocate header space in the encryption buffer).
-
-### 4. Large encryption units vs TCP MSS (latency on real networks)
-
-Currently the entire gRPC frame (up to 16 MiB from `GRPCStreamBuffer`)
-is encrypted as ONE authenticated blob. The receiver must buffer ALL TCP
-segments (~360 segments for 512 KiB) before decryption can start.
-
-TLS solves this with 16 KiB records: the reader can start processing
-after receiving just ~11 TCP segments. The auth tag overhead is only
-28 bytes per 16 KiB = 0.17%. This matters more on real networks with
-packet loss/reordering than on localhost.
-
-### Estimated impact of fixes
-
-| Fix | Effort | Expected speedup |
-|-----|--------|-----------------|
-| Cache AEAD cipher | Trivial | ~10-20% |
-| sync.Pool for buffers | Small | ~15-25% |
-| Combine header+payload write | Small | ~5% |
-| 16 KiB sub-frame encryption | Medium | Latency improvement on real networks |
-| **Combined** | | **~1.3-1.5x instead of 2.2x** |
-
-These optimizations should be implemented after PR #80 (stream
-multiplexing) is merged and benchmarked, since multiplexing changes the
-message flow pattern.
+The only way past this is the no-FUSE path (452 MB/s) or a non-FUSE
+virtual filesystem (e.g., NFS loopback, 9P).

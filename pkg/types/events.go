@@ -86,13 +86,22 @@ func NanoToTimespec(ns uint64) fuse.Timespec {
 	return fuse.NewTimespec(time.Unix(0, int64(ns)))
 }
 
-// FileStreamProvider is a factory for RemoteFileStream
+// FileStreamProvider is a factory for RemoteFileStream and StreamFile.
 type FileStreamProvider interface {
 	OpenRemoteFile(ctx context.Context, inode uint64, path string) (RemoteFileStream, error)
+	// StreamFile starts a push-based download: server sends all chunks
+	// from startOffset to EOF without per-chunk round-trips.
+	StreamFile(ctx context.Context, path string, startOffset uint64) (StreamFileReceiver, error)
 }
 
 type RemoteFileStream interface {
 	// ReadAt sends offset & size, receives exactly those bytes.
 	ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error)
 	Close() error
+}
+
+// StreamFileReceiver receives pushed chunks from the server.
+type StreamFileReceiver interface {
+	// Recv returns the next chunk. Returns io.EOF when the stream ends.
+	Recv() (data []byte, offset uint64, totalSize uint64, err error)
 }

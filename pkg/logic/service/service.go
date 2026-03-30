@@ -113,9 +113,9 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCInvalidArgument
 		}
 
-		logger.Info("<<< RECEIVED ADD_FILE FROM PEER",
-			"path", req.Path,
-			"size", req.Attr.Size)
+		// logger.Info("<<< RECEIVED ADD_FILE FROM PEER",
+		// 	"path", req.Path,
+		// 	"size", req.Attr.Size)
 
 		atim := time.Unix(0, int64(req.Attr.AccessTime))
 		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
@@ -256,8 +256,21 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 			// Remove from RemoteFiles (stops new remote streaming, but existing streams continue).
 			kd.FS.Root.RemoteFilesLock.Lock()
-			delete(kd.FS.Root.RemoteFiles, req.Path)
+			if rf, rfOk := kd.FS.Root.RemoteFiles[req.Path]; rfOk {
+				if rf.PrefetchCancel != nil {
+					rf.PrefetchCancel()
+					rf.PrefetchCancel = nil
+				}
+				delete(kd.FS.Root.RemoteFiles, req.Path)
+			}
 			kd.FS.Root.RemoteFilesLock.Unlock()
+
+			// Remove stale cache file so it doesn't confuse future Opens
+			// (e.g. git's .keep files are created then removed quickly).
+			cachePath := filepath.Clean(filepath.Join(kd.FS.Root.LocalDownloadFolder, req.Path))
+			if rmErr := os.Remove(cachePath); rmErr != nil && !os.IsNotExist(rmErr) {
+				logger.Warn("Failed to remove cache file", "path", cachePath, "error", rmErr)
+			}
 		}
 
 		// Also handle non-FUSE mode.
@@ -272,16 +285,39 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Rename file", "oldPath", req.OldPath, "newPath", req.Path)
 
 		if kd.FS != nil && kd.FS.Root != nil {
-			// Remove old path from maps and add with new path.
+			// Rename the file on disk FIRST, before updating maps.
+			// The prefetch deferred cleanup also tries to rename, but it races with
+			// this handler — if prefetch finishes before RENAME arrives, the deferred
+			// cleanup sees no path change and skips the disk rename.
+			oldDiskPath := filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.OldPath))
+			newDiskPath := filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+			if err := os.MkdirAll(filepath.Dir(newDiskPath), 0o755); err != nil {
+				logger.Warn("Failed to create dirs for rename", "error", err)
+			}
+			if err := os.Rename(oldDiskPath, newDiskPath); err != nil {
+				// Not fatal — file may not exist yet (prefetch still in progress),
+				// or prefetch deferred cleanup already moved it.
+				if !os.IsNotExist(err) {
+					logger.Warn("Disk rename failed", "from", oldDiskPath, "to", newDiskPath, "error", err)
+				}
+			} else {
+				logger.Info("Renamed file on disk", "from", oldDiskPath, "to", newDiskPath)
+			}
+
+			// Cancel any in-flight prefetch for the old path before
+			// updating maps — prevents it from racing with disk rename
+			// or subsequent Open on the new path.
 			kd.FS.Root.RemoteFilesLock.Lock()
 			file, exists := kd.FS.Root.RemoteFiles[req.OldPath]
 			if exists {
+				if file.PrefetchCancel != nil {
+					file.PrefetchCancel()
+					file.PrefetchCancel = nil
+				}
 				delete(kd.FS.Root.RemoteFiles, req.OldPath)
 				file.RelativePath = req.Path
 				file.Name = filepath.Base(req.Path)
-				// Update disk path so prefetchFile can detect the rename and move
-				// the downloaded content atomically after the goroutine completes.
-				file.RealPathOfFile = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+				file.RealPathOfFile = newDiskPath
 				kd.FS.Root.RemoteFiles[req.Path] = file
 				logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
 			}
@@ -293,10 +329,88 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				delete(kd.FS.Root.AllFileMap, req.OldPath)
 				f.RelativePath = req.Path
 				f.Name = filepath.Base(req.Path)
-				f.RealPathOfFile = filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+				f.RealPathOfFile = newDiskPath
 				kd.FS.Root.AllFileMap[req.Path] = f
 			}
 			kd.FS.Root.AfmLock.Unlock()
+
+			// Check if the renamed file needs re-downloading.
+			// Cases: (a) file doesn't exist locally (prefetch was still
+			// in progress on the old path and got cancelled above),
+			// (b) file exists but has wrong size (git index-pack appends
+			// 20-byte SHA-1 checksum between the initial write and rename).
+			// Check if the renamed file needs re-downloading.
+			// Cases: (a) file doesn't exist locally (prefetch was still
+			// in progress on the old path and got cancelled above),
+			// (b) file exists but has wrong size (git index-pack appends
+			// 20-byte SHA-1 checksum between the initial write and rename).
+			if exists && req.Attr != nil && req.Attr.Size > 0 {
+				needsRedownload := false
+				localInfo, statErr := os.Stat(newDiskPath)
+				if statErr != nil {
+					needsRedownload = true
+					logger.Info("File missing after rename, scheduling re-download",
+						"remoteSize", req.Attr.Size, "path", req.Path)
+				} else if localInfo.Size() != req.Attr.Size {
+					needsRedownload = true
+					logger.Info("Size mismatch after rename, scheduling re-download",
+						"localSize", localInfo.Size(), "remoteSize", req.Attr.Size, "path", req.Path)
+				}
+
+				if needsRedownload {
+					atim := time.Unix(0, int64(req.Attr.AccessTime))
+					mtim := time.Unix(0, int64(req.Attr.ModificationTime))
+					ctim := time.Unix(0, int64(req.Attr.ChangeTime))
+					btim := time.Unix(0, int64(req.Attr.BirthTime))
+					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), &fuse.Stat_t{
+						Dev:      req.Attr.Dev,
+						Ino:      req.Attr.Ino,
+						Mode:     req.Attr.Mode,
+						Nlink:    1,
+						Uid:      uint32(os.Getuid()),
+						Gid:      uint32(os.Getgid()),
+						Size:     req.Attr.Size,
+						Atim:     fuse.NewTimespec(atim),
+						Mtim:     fuse.NewTimespec(mtim),
+						Ctim:     fuse.NewTimespec(ctim),
+						Birthtim: fuse.NewTimespec(btim),
+						Flags:    req.Attr.Flags,
+					})
+				}
+			}
+
+			// Handle lock-file → final-file renames (git's .lock pattern).
+			// The ADD_FILE for .lock was debounced and arrives later, but the
+			// RENAME arrives immediately. If the target already exists in
+			// RemoteFiles (e.g., .git/HEAD), trigger re-download now so the
+			// peer doesn't read stale content during the debounce window.
+			if !exists && req.Attr != nil && req.Attr.Size > 0 {
+				kd.FS.Root.RemoteFilesLock.RLock()
+				_, targetTracked := kd.FS.Root.RemoteFiles[req.Path]
+				kd.FS.Root.RemoteFilesLock.RUnlock()
+				if targetTracked {
+					logger.Info("Lock-file rename: re-downloading target",
+						"path", req.Path, "size", req.Attr.Size)
+					atim := time.Unix(0, int64(req.Attr.AccessTime))
+					mtim := time.Unix(0, int64(req.Attr.ModificationTime))
+					ctim := time.Unix(0, int64(req.Attr.ChangeTime))
+					btim := time.Unix(0, int64(req.Attr.BirthTime))
+					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), &fuse.Stat_t{
+						Dev:      req.Attr.Dev,
+						Ino:      req.Attr.Ino,
+						Mode:     req.Attr.Mode,
+						Nlink:    1,
+						Uid:      uint32(os.Getuid()),
+						Gid:      uint32(os.Getgid()),
+						Size:     req.Attr.Size,
+						Atim:     fuse.NewTimespec(atim),
+						Mtim:     fuse.NewTimespec(mtim),
+						Ctim:     fuse.NewTimespec(ctim),
+						Birthtim: fuse.NewTimespec(btim),
+						Flags:    req.Attr.Flags,
+					})
+				}
+			}
 		}
 
 		// Handle non-FUSE mode.
@@ -331,6 +445,26 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	logger.Info("Success")
 
 	return &bindings.NotifyResponse{}, nil
+}
+
+// BatchNotify processes multiple notifications in a single RPC call.
+// This eliminates per-notification round-trip overhead during large clones.
+func (kd *KeibidropServiceImpl) BatchNotify(ctx context.Context, req *bindings.BatchNotifyRequest) (*bindings.BatchNotifyResponse, error) {
+	logger := kd.Logger.With("method", "batch-notify", "count", len(req.Notifications), "seq", req.Seq)
+	logger.Info("Processing batch")
+
+	var processed uint32
+	for _, n := range req.Notifications {
+		_, err := kd.Notify(ctx, n)
+		if err != nil {
+			logger.Error("Failed to process notification in batch", "path", n.Path, "type", n.Type, "error", err)
+			continue
+		}
+		processed++
+	}
+
+	logger.Info("Batch complete", "processed", processed)
+	return &bindings.BatchNotifyResponse{Status: "ok", Processed: processed}, nil
 }
 
 func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
@@ -533,6 +667,107 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			return status.Error(codes.Internal, "failed to send data")
 		}
 	}
+}
+
+// StreamFile pushes an entire file's contents to the client in sequential
+// chunks. The client sends one request; the server streams all data from
+// start_offset to EOF with no per-chunk round-trip overhead.
+func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stream bindings.KeibiService_StreamFileServer) error {
+	logger := kd.Logger.With("method", "stream-file", "path", req.Path)
+
+	// Look up the file — same logic as the Read handler for both modes.
+	var realPath string
+
+	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+		lookupPath := strings.TrimPrefix(req.Path, "/")
+		kd.SyncTracker.LocalFilesMu.RLock()
+		f, ok := kd.SyncTracker.LocalFiles[lookupPath]
+		if !ok {
+			f, ok = kd.SyncTracker.LocalFiles[req.Path]
+		}
+		kd.SyncTracker.LocalFilesMu.RUnlock()
+		if ok {
+			realPath = f.RealPathOfFile
+		}
+	} else if kd.FS != nil && kd.FS.Root != nil {
+		fuseKey := req.Path
+		if !strings.HasPrefix(fuseKey, "/") {
+			fuseKey = "/" + fuseKey
+		}
+		kd.FS.Root.AfmLock.RLock()
+		f, ok := kd.FS.Root.AllFileMap[fuseKey]
+		kd.FS.Root.AfmLock.RUnlock()
+		if ok {
+			realPath = f.RealPathOfFile
+		} else if kd.SyncTracker != nil {
+			lookupPath := strings.TrimPrefix(req.Path, "/")
+			kd.SyncTracker.LocalFilesMu.RLock()
+			lf, lfOk := kd.SyncTracker.LocalFiles[lookupPath]
+			if !lfOk {
+				lf, lfOk = kd.SyncTracker.LocalFiles[req.Path]
+			}
+			kd.SyncTracker.LocalFilesMu.RUnlock()
+			if lfOk {
+				realPath = lf.RealPathOfFile
+			}
+		}
+	}
+
+	if realPath == "" {
+		logger.Warn("File not found", "path", req.Path)
+		return status.Error(codes.NotFound, "file not found")
+	}
+
+	fh, err := os.Open(realPath)
+	if err != nil {
+		logger.Error("Failed to open file", "error", err)
+		return status.Error(codes.Internal, "error accessing file")
+	}
+	defer fh.Close()
+
+	finfo, err := fh.Stat()
+	if err != nil {
+		logger.Error("Failed to stat file", "error", err)
+		return status.Error(codes.Internal, "error stat file")
+	}
+	fileSize := uint64(finfo.Size())
+
+	buf := make([]byte, config.GRPCStreamBuffer)
+	chunkSize := uint64(filesystem.ChunkSize)
+	offset := req.StartOffset
+
+	logger.Info("StreamFile starting", "fileSize", fileSize, "startOffset", offset)
+
+	for offset < fileSize {
+		size := chunkSize
+		if offset+size > fileSize {
+			size = fileSize - offset
+		}
+
+		n, readErr := fh.ReadAt(buf[:size], int64(offset))
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			logger.Error("Failed to read file", "offset", offset, "error", readErr)
+			return status.Error(codes.Internal, "error reading file")
+		}
+		if n == 0 {
+			break
+		}
+
+		if sendErr := stream.Send(&bindings.StreamFileResponse{
+			Data:      buf[:n],
+			Offset:    offset,
+			TotalSize: fileSize,
+		}); sendErr != nil {
+			// Client cancelled or disconnected — normal during file close.
+			logger.Info("StreamFile send ended", "offset", offset, "error", sendErr)
+			return sendErr
+		}
+
+		offset += uint64(n)
+	}
+
+	logger.Info("StreamFile complete", "bytesSent", offset-req.StartOffset)
+	return nil
 }
 
 // Rekey handles key rotation requests for forward secrecy.
