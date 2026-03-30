@@ -77,7 +77,7 @@ func TestRekeyRequest_KeyDerivation(t *testing.T) {
 		aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs(t)
 
 		// Alice creates a rekey request.
-		req, aliceNewKey, err := session.CreateRekeyRequest(aliceOwn, alicePeer, 1)
+		req, aliceNewKey, err := session.CreateRekeyRequest(aliceOwn, alicePeer, 1, crypto.CipherChaCha20)
 		if err != nil {
 			t.Errorf("CreateRekeyRequest failed: %v", err)
 			done <- false
@@ -91,7 +91,7 @@ func TestRekeyRequest_KeyDerivation(t *testing.T) {
 		}
 
 		// Bob processes the request.
-		resp, bobNewKey, err := session.ProcessRekeyRequest(req, bobOwn, bobPeer)
+		resp, bobNewKey, err := session.ProcessRekeyRequest(req, bobOwn, bobPeer, crypto.CipherChaCha20)
 		if err != nil {
 			t.Errorf("ProcessRekeyRequest failed: %v", err)
 			done <- false
@@ -134,7 +134,7 @@ func TestRekeyResponse_KeyDerivation(t *testing.T) {
 		aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs(t)
 
 		// Alice initiates rekey.
-		req, _, err := session.CreateRekeyRequest(aliceOwn, alicePeer, 1)
+		req, _, err := session.CreateRekeyRequest(aliceOwn, alicePeer, 1, crypto.CipherChaCha20)
 		if err != nil {
 			t.Errorf("CreateRekeyRequest failed: %v", err)
 			done <- false
@@ -142,7 +142,7 @@ func TestRekeyResponse_KeyDerivation(t *testing.T) {
 		}
 
 		// Bob processes request and creates response.
-		resp, _, err := session.ProcessRekeyRequest(req, bobOwn, bobPeer)
+		resp, _, err := session.ProcessRekeyRequest(req, bobOwn, bobPeer, crypto.CipherChaCha20)
 		if err != nil {
 			t.Errorf("ProcessRekeyRequest failed: %v", err)
 			done <- false
@@ -150,7 +150,7 @@ func TestRekeyResponse_KeyDerivation(t *testing.T) {
 		}
 
 		// Alice processes Bob's response.
-		newKey, err := session.ProcessRekeyResponse(resp, aliceOwn, alicePeer)
+		newKey, err := session.ProcessRekeyResponse(resp, aliceOwn, alicePeer, crypto.CipherChaCha20)
 		if err != nil {
 			t.Errorf("ProcessRekeyResponse failed: %v", err)
 			done <- false
@@ -194,7 +194,7 @@ func TestRekeyRequest_MissingSeeds(t *testing.T) {
 			Epoch: 1,
 		}
 
-		_, _, err := session.ProcessRekeyRequest(badReq, bobOwn, bobPeer)
+		_, _, err := session.ProcessRekeyRequest(badReq, bobOwn, bobPeer, crypto.CipherChaCha20)
 		if err == nil {
 			t.Error("Expected error for missing x25519 seed")
 			done <- false
@@ -226,7 +226,7 @@ func TestRekeyEpochIncreases(t *testing.T) {
 		var prevEpoch uint64
 		for i := 1; i <= 5; i++ {
 			epoch := uint64(i)
-			req, _, err := session.CreateRekeyRequest(aliceOwn, alicePeer, epoch)
+			req, _, err := session.CreateRekeyRequest(aliceOwn, alicePeer, epoch, crypto.CipherChaCha20)
 			if err != nil {
 				t.Errorf("CreateRekeyRequest failed at epoch %d: %v", epoch, err)
 				done <- false
@@ -269,7 +269,7 @@ func TestMultipleRekeys(t *testing.T) {
 			epoch := uint64(i)
 
 			// Alice initiates.
-			req, aliceKey, err := session.CreateRekeyRequest(aliceOwn, alicePeer, epoch)
+			req, aliceKey, err := session.CreateRekeyRequest(aliceOwn, alicePeer, epoch, crypto.CipherChaCha20)
 			if err != nil {
 				t.Errorf("Rekey %d CreateRekeyRequest failed: %v", i, err)
 				done <- false
@@ -277,7 +277,7 @@ func TestMultipleRekeys(t *testing.T) {
 			}
 
 			// Bob processes.
-			resp, bobKey, err := session.ProcessRekeyRequest(req, bobOwn, bobPeer)
+			resp, bobKey, err := session.ProcessRekeyRequest(req, bobOwn, bobPeer, crypto.CipherChaCha20)
 			if err != nil {
 				t.Errorf("Rekey %d ProcessRekeyRequest failed: %v", i, err)
 				done <- false
@@ -333,12 +333,12 @@ func TestCompromisedKeyLimitedExposure(t *testing.T) {
 		aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs(t)
 
 		// Generate key for epoch 1.
-		req1, key1, _ := session.CreateRekeyRequest(aliceOwn, alicePeer, 1)
-		_, bobKey1, _ := session.ProcessRekeyRequest(req1, bobOwn, bobPeer)
+		req1, key1, _ := session.CreateRekeyRequest(aliceOwn, alicePeer, 1, crypto.CipherChaCha20)
+		_, bobKey1, _ := session.ProcessRekeyRequest(req1, bobOwn, bobPeer, crypto.CipherChaCha20)
 
 		// Generate key for epoch 2.
-		req2, key2, _ := session.CreateRekeyRequest(aliceOwn, alicePeer, 2)
-		_, bobKey2, _ := session.ProcessRekeyRequest(req2, bobOwn, bobPeer)
+		req2, key2, _ := session.CreateRekeyRequest(aliceOwn, alicePeer, 2, crypto.CipherChaCha20)
+		_, bobKey2, _ := session.ProcessRekeyRequest(req2, bobOwn, bobPeer, crypto.CipherChaCha20)
 
 		// Verify keys match within each epoch.
 		if !bytes.Equal(key1, bobKey1) {
@@ -397,7 +397,7 @@ func TestRekeyRequest_NilKeys(t *testing.T) {
 
 	go func() {
 		// Test with nil OwnKeys.
-		_, _, err := session.CreateRekeyRequest(nil, &crypto.PeerKeys{}, 1)
+		_, _, err := session.CreateRekeyRequest(nil, &crypto.PeerKeys{}, 1, crypto.CipherChaCha20)
 		if err == nil {
 			t.Error("Expected error for nil OwnKeys")
 			done <- false
@@ -406,7 +406,7 @@ func TestRekeyRequest_NilKeys(t *testing.T) {
 
 		// Test with nil PeerKeys.
 		aliceOwn, _, _, _ := generateTestKeyPairs(t)
-		_, _, err = session.CreateRekeyRequest(aliceOwn, nil, 1)
+		_, _, err = session.CreateRekeyRequest(aliceOwn, nil, 1, crypto.CipherChaCha20)
 		if err == nil {
 			t.Error("Expected error for nil PeerKeys")
 			done <- false
