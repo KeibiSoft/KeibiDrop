@@ -77,6 +77,11 @@ xcode-select --install          # macOS
 sudo apt install build-essential  # Linux
 ```
 
+On macOS, Go must use `clang` (not `gcc`). Check with `go env CC`. If it shows `gcc`:
+```bash
+export CC=clang
+```
+
 ### Rust build fails with missing `libkeibidrop.a`
 
 Build the Go static library first:

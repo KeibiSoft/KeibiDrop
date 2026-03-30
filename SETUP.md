@@ -28,6 +28,16 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 xcode-select --install
 ```
 
+On macOS, Go must use Apple's `clang` as the C compiler (not `gcc`). Verify:
+```bash
+go env CC    # should print "clang" or "/usr/bin/clang"
+```
+
+If it shows `gcc`, fix it:
+```bash
+export CC=clang
+```
+
 **Linux (Debian/Ubuntu):**
 ```bash
 sudo apt install build-essential libfuse3-dev

@@ -39,7 +39,7 @@ Grab the latest release for your platform from [GitHub Releases](https://github.
 
 ### Build from source
 
-Requires Go 1.24+ and Rust. See [SETUP.md](./SETUP.md) for full instructions.
+Requires Go 1.24+, Rust, and CGO enabled. On macOS, `go env CC` must show `clang`. See [SETUP.md](./SETUP.md) for full instructions.
 
 ```bash
 make build-static-rust-bridge
