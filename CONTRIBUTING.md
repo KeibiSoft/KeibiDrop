@@ -11,27 +11,10 @@ All commits must be:
 By submitting a signed-off commit, you confirm:
 - You have the right to submit the code
 - You agree to license your contribution under MPL 2.0
-- You allow KeibiSoft SRL to dual-license your contribution if it modifies KeibiSoft-authored code
+- If your contribution modifies KeibiSoft-authored files or code, you allow KeibiSoft SRL to dual-license that contribution (including under a commercial license)
+- If your contribution is a separate self-contained module, you keep full copyright and can license it however you want (as long as it's MPL 2.0 compatible). We will not dual-license it without your explicit permission
 
----
-
-## Modular contributions (preferred)
-
-Self-contained additions (new modules, plugins, helper packages) that don't modify core files.
-
-- You keep full control and copyright.
-- We will not dual-license your code without your permission.
-- License your module however you want, as long as it works with MPL 2.0.
-
----
-
-## Fixing or modifying core code
-
-Bug fixes, patches, performance improvements, or changes to code originally written by KeibiSoft.
-
-By submitting, you allow KeibiSoft SRL to re-license that contribution under a dual-license (including commercial), in addition to MPL 2.0.
-
-If you don't want that, write your own extension or module instead.
+If you don't want to grant dual-licensing rights, write a self-contained module instead of modifying core files.
 
 ---
 

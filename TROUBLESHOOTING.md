@@ -35,12 +35,19 @@ Linux (Fedora):
 sudo dnf install fuse3
 ```
 
-### "Permission denied" when opening files from FUSE mount (macOS)
+### "Permission denied" when opening files from FUSE mount
 
-Finder and Preview need `allow_other` to access FUSE mounts:
+Other apps (Finder, Preview, file managers) can't access FUSE mounts unless `allow_other` is enabled.
 
+macOS:
 ```bash
 sudo sh -c 'echo "user_allow_other" > /etc/fuse.conf'
+```
+
+Linux:
+```bash
+# Uncomment or add "user_allow_other" in /etc/fuse.conf
+sudo sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf
 ```
 
 Then remount (disconnect and reconnect, or restart **KEIBI**DROP).
@@ -62,7 +69,8 @@ sudo /sbin/umount -f /path/to/mount
 
 Linux:
 ```bash
-fusermount -u /path/to/mount
+fusermount3 -u /path/to/mount    # normal unmount
+fusermount3 -z /path/to/mount    # force (lazy) unmount
 ```
 
 ---

@@ -138,10 +138,7 @@ Both AES-256-GCM and ChaCha20-Poly1305 require a **unique nonce** for every mess
 * Forgery potential
 * Complete loss of confidentiality for the stream
 
-In the new stream model, **nonces are managed at the stream connection level**, not per file or chunk. The encryption layer uses either:
-
-* A deterministic nonce sequence (e.g., counter-based)
-* Or a randomized nonce generation scheme with collision safeguards
+Nonces are managed at the stream connection level, not per file or chunk. The encryption layer uses a deterministic counter-based nonce sequence.
 
 Each stream uses a **separate symmetric key**, and nonces are not shared between the inbound and outbound connections. Specifically:
 
@@ -152,17 +149,9 @@ This ensures that even bidirectional traffic during a session does **not risk no
 
 ---
 
-### Implication
+### Nonce safety and re-key thresholds
 
-Because nonces are now associated with the transport stream (not file content), the primary limitation is:
-
-> **The lifetime of the stream key must not exceed the safe number of AEAD invocations.**
-
-For both ciphers with counter-based nonces, this is approximately:
-
-> **2³² encryptions per key**, regardless of total bytes transferred.
-
-While that is sufficient for most practical sessions, key rotation is strongly advised for long-lived or high-throughput connections.
+The nonce space is 2³² (~4.3 billion). We re-key after 1 GB of data transferred or ~1 million encrypted messages, whichever comes first. This gives a ~4000x safety margin before nonce exhaustion. The re-key thresholds are conservative forward secrecy limits that bound the exposure window if a key is ever compromised, not hard cryptographic boundaries.
 
 ---
 
