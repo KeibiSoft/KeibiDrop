@@ -356,6 +356,21 @@ fn main() {
         app.set_my_code(slint::SharedString::from(my_fp.clone()));
         app.set_mount_path(slint::SharedString::from(to_mount.clone()));
 
+        // Version display
+        let version_ptr = bindings::KD_GetVersion();
+        if !version_ptr.is_null() {
+            let version_str = CStr::from_ptr(version_ptr).to_string_lossy().to_string();
+            app.set_version_text(slint::SharedString::from(version_str));
+        }
+
+        // FUSE mode toggle
+        app.set_fuse_available(fuse_present);
+        app.set_fuse_mode(use_fuse);
+        app.on_fuse_mode_toggled(move |enabled| {
+            println!("FUSE mode toggled: {}", enabled);
+            bindings::KD_SetFUSEMode(if enabled { 1 } else { 0 });
+        });
+
         // Handle Add: register peer fingerprint
         let weak = app.as_weak();
         app.on_add_peer_code(move || {
@@ -391,7 +406,6 @@ fn main() {
         });
 
         // Create/Join Room setup
-        let target_screen = if use_fuse { 2 } else { 1 };
         let watcher_running = Arc::new(AtomicBool::new(false));
         let disconnecting = Arc::new(AtomicBool::new(false));
         let watcher_running_disconnect = watcher_running.clone();
@@ -403,12 +417,16 @@ fn main() {
         let downloads_create = downloads.clone();
         let save_path_create = to_save.clone();
         app.on_create_room_pressed(move || {
+            // Read current FUSE mode at press time (user may have toggled)
+            let screen = if let Some(app) = weak_create.upgrade() {
+                if app.get_fuse_mode() { 2 } else { 1 }
+            } else { 1 };
             connect_room(
                 weak_create.clone(),
                 watcher_running_create.clone(),
                 downloads_create.clone(),
                 save_path_create.clone(),
-                target_screen,
+                screen,
                 true,
             );
         });
@@ -419,12 +437,15 @@ fn main() {
         let downloads_join = downloads.clone();
         let save_path_join = to_save.clone();
         app.on_join_room_pressed(move || {
+            let screen = if let Some(app) = weak_join.upgrade() {
+                if app.get_fuse_mode() { 2 } else { 1 }
+            } else { 1 };
             connect_room(
                 weak_join.clone(),
                 watcher_running_join.clone(),
                 downloads_join.clone(),
                 save_path_join.clone(),
-                target_screen,
+                screen,
                 false,
             );
         });
@@ -442,9 +463,23 @@ fn main() {
             }
         });
 
-        // Handle Disconnect — non-blocking: update UI immediately, FFI in background
+        // Handle Disconnect — warn if download in progress, then disconnect
         let weak_disconnect = app.as_weak();
+        let disconnect_confirmed = Arc::new(AtomicBool::new(false));
+        let disconnect_confirmed_inner = disconnect_confirmed.clone();
         app.on_disconnect_pressed(move || {
+            // If downloads in progress and not yet confirmed, show warning instead
+            if let Some(app) = weak_disconnect.upgrade() {
+                if app.get_any_downloading() && !disconnect_confirmed_inner.swap(false, Ordering::Relaxed) {
+                    app.set_status_message(slint::SharedString::from(
+                        "Download in progress. Press Disconnect again to confirm."
+                    ));
+                    disconnect_confirmed_inner.store(true, Ordering::Relaxed);
+                    return;
+                }
+            }
+            disconnect_confirmed_inner.store(false, Ordering::Relaxed);
+
             println!("Disconnecting...");
             // Prevent double-disconnect (event timer + button click race)
             if disconnecting_disconnect.swap(true, Ordering::Relaxed) {

@@ -602,6 +602,12 @@ export component MainWindow inherits Window {
     // Peer code feedback: set by Rust after KD_AddPeerFingerprint
     in-out property<bool> peer_code_added: false;
     in-out property<bool> peer_code_error: false;
+    // Version string from Go (set by Rust at init)
+    in property<string> version_text: "";
+    // FUSE mode toggle (can be changed before connecting)
+    in-out property<bool> fuse_mode: false;
+    in property<bool> fuse_available: false;
+    callback fuse_mode_toggled(bool);
 
     // Callbacks
     callback add_peer_code();
@@ -751,10 +757,57 @@ export component MainWindow inherits Window {
             animate border-color { duration: 150ms; }
         }
 
+        // FUSE mode toggle
+        Rectangle {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 88px;
+            width: 300px;
+            height: 24px;
+
+            Rectangle {
+                x: 0;
+                y: 2px;
+                width: 36px;
+                height: 20px;
+                border-radius: 10px;
+                background: root.fuse_mode ? #3b82f6 : #444;
+                animate background { duration: 150ms; }
+
+                // Toggle knob
+                Rectangle {
+                    x: root.fuse_mode ? parent.width - self.width - 2px : 2px;
+                    y: 2px;
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 8px;
+                    background: white;
+                    animate x { duration: 150ms; easing: ease-out; }
+                }
+
+                fuse-toggle-touch := TouchArea {
+                    enabled: root.fuse_available && root.room_action == 0;
+                    clicked => {
+                        root.fuse_mode = !root.fuse_mode;
+                        root.fuse-mode-toggled(root.fuse_mode);
+                    }
+                }
+            }
+
+            Text {
+                x: 44px;
+                text: root.fuse_available
+                    ? (root.fuse_mode ? "FUSE mode (virtual folder)" : "No-FUSE mode (faster transfers)")
+                    : "FUSE not available";
+                color: root.fuse_available ? #ccc : #666;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+
         // Cancel button - visible while creating or joining
         if root.room_action != 0: OutlineButton {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 88px;
+            y: snd.y + snd.height - 34px + 130px;
             text: "Cancel";
             clicked => { root.cancel_connect_pressed() }
         }
@@ -787,6 +840,16 @@ export component MainWindow inherits Window {
                 vertical-alignment: center;
                 overflow: elide;
             }
+        }
+
+        // Version text bottom-right
+        Text {
+            x: parent.width - self.width - 16px;
+            y: parent.height - self.height - 12px;
+            text: root.version_text;
+            color: #666666;
+            font-size: 11px;
+            font-family: "Inter";
         }
     }
 

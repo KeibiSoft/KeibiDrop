@@ -503,6 +503,21 @@ func pushEvent(evt string) {
 	}
 }
 
+//export KD_SetFUSEMode
+func KD_SetFUSEMode(useFUSE C.int) {
+	if kd != nil {
+		kd.IsFUSE = useFUSE != 0
+	}
+}
+
+//export KD_GetFUSEMode
+func KD_GetFUSEMode() C.int {
+	if kd != nil && kd.IsFUSE {
+		return 1
+	}
+	return 0
+}
+
 //export KD_GetVersion
 func KD_GetVersion() *C.char {
 	return C.CString(common.Version + " (" + common.CommitHash + ")")
