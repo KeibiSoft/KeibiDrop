@@ -5,7 +5,7 @@
 ### "Connection failed" or peers can't find each other
 
 1. Both peers need IPv6. Test at [test-ipv6.com](https://test-ipv6.com/), you need at least 9/10.
-2. Check your firewall allows inbound TCP on the configured port (default: 26431).
+2. The connection is full-duplex: each peer listens on an inbound port and connects to the other's inbound port. Check your firewall allows inbound TCP on both configured ports (defaults: 26431 inbound, 26432 outbound).
 3. Check your router doesn't block IPv6 inbound connections.
 4. Both peers must use the same relay server.
 
