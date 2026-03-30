@@ -130,6 +130,12 @@ func DeriveChaCha20Key(sharedSecrets ...[]byte) ([]byte, error) {
 	return deriveKeyInternal(sha512.New, "KeibiDrop-ChaCha20-Poly1305-SEK", KeySize, sharedSecrets...)
 }
 
+// DeriveAES256Key derives a 32-byte symmetric key for AES-256-GCM.
+// Uses a different HKDF label for domain separation from ChaCha20 keys.
+func DeriveAES256Key(sharedSecrets ...[]byte) ([]byte, error) {
+	return deriveKeyInternal(sha512.New, "KeibiDrop-AES-256-GCM-SEK", KeySize, sharedSecrets...)
+}
+
 func Fingerprint(pub []byte) string {
 	sum := sha512.Sum512(pub)
 	return base64.RawURLEncoding.EncodeToString(sum[:])

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
 const lengthHeaderSize = 4 // uint32 prefix
@@ -43,10 +42,10 @@ type SecureWriter struct {
 	nonce *kbc.NonceGenerator
 }
 
-func NewSecureWriter(w io.Writer, kek []byte) *SecureWriter {
-	aead, err := chacha20poly1305.New(kek)
+func NewSecureWriter(w io.Writer, kek []byte, suite kbc.CipherSuite) *SecureWriter {
+	aead, err := kbc.NewAEAD(suite, kek)
 	if err != nil {
-		panic("secureconn: invalid key size: " + err.Error())
+		panic("secureconn: invalid key: " + err.Error())
 	}
 	return &SecureWriter{
 		w:     w,
@@ -56,10 +55,10 @@ func NewSecureWriter(w io.Writer, kek []byte) *SecureWriter {
 }
 
 // NewSecureWriterWithPrefix creates a writer with a custom nonce prefix.
-func NewSecureWriterWithPrefix(w io.Writer, kek []byte, prefix uint32) *SecureWriter {
-	aead, err := chacha20poly1305.New(kek)
+func NewSecureWriterWithPrefix(w io.Writer, kek []byte, suite kbc.CipherSuite, prefix uint32) *SecureWriter {
+	aead, err := kbc.NewAEAD(suite, kek)
 	if err != nil {
-		panic("secureconn: invalid key size: " + err.Error())
+		panic("secureconn: invalid key: " + err.Error())
 	}
 	return &SecureWriter{
 		w:     w,
@@ -96,10 +95,10 @@ type SecureReader struct {
 	head [lengthHeaderSize]byte
 }
 
-func NewSecureReader(r io.Reader, kek []byte) *SecureReader {
-	aead, err := chacha20poly1305.New(kek)
+func NewSecureReader(r io.Reader, kek []byte, suite kbc.CipherSuite) *SecureReader {
+	aead, err := kbc.NewAEAD(suite, kek)
 	if err != nil {
-		panic("secureconn: invalid key size: " + err.Error())
+		panic("secureconn: invalid key: " + err.Error())
 	}
 	return &SecureReader{r: r, aead: aead}
 }
@@ -132,9 +131,10 @@ func (s *SecureReader) Read() ([]byte, error) {
 
 // SecureConn wraps a net.Conn with separate inbound/outbound encryption.
 type SecureConn struct {
-	conn net.Conn
-	r    *SecureReader
-	w    *SecureWriter
+	conn  net.Conn
+	suite kbc.CipherSuite
+	r     *SecureReader
+	w     *SecureWriter
 
 	readBuf *bytes.Buffer
 	done    bool
@@ -149,11 +149,12 @@ type SecureConn struct {
 	keyMu        sync.RWMutex // protects key updates
 }
 
-func NewSecureConn(conn net.Conn, kek []byte) *SecureConn {
+func NewSecureConn(conn net.Conn, kek []byte, suite kbc.CipherSuite) *SecureConn {
 	return &SecureConn{
 		conn:    conn,
-		r:       NewSecureReader(conn, kek),
-		w:       NewSecureWriter(conn, kek),
+		suite:   suite,
+		r:       NewSecureReader(conn, kek, suite),
+		w:       NewSecureWriter(conn, kek, suite),
 		readBuf: bytes.NewBuffer(nil),
 		closed:  make(chan struct{}),
 	}
@@ -264,13 +265,13 @@ func (s *SecureConn) ShouldRekey() bool {
 		s.msgsSent.Load() >= RekeyMsgsThreshold
 }
 
-// UpdateKey atomically updates the encryption key.
+// UpdateKey atomically updates the encryption key (reuses negotiated cipher suite).
 func (s *SecureConn) UpdateKey(newKek []byte) {
 	s.keyMu.Lock()
 	defer s.keyMu.Unlock()
 
-	s.r = NewSecureReader(s.conn, newKek)
-	s.w = NewSecureWriter(s.conn, newKek)
+	s.r = NewSecureReader(s.conn, newKek, s.suite)
+	s.w = NewSecureWriter(s.conn, newKek, s.suite)
 	s.ResetStats()
 	s.currentEpoch.Add(1)
 }

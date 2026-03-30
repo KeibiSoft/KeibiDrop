@@ -43,6 +43,9 @@ type Session struct {
 	SEKInbound  []byte
 	SEKOutbound []byte
 
+	// Negotiated cipher suite for this session.
+	CipherSuite kbc.CipherSuite
+
 	// Peer-to-peer TCP connections.
 	Session  *SessionSockets
 	PeerPort int
@@ -119,10 +122,10 @@ type SessionSockets struct {
 	Outbound *SecureConn // Alice -> Bob
 }
 
-func NewSessionSockets(connIn, connOut net.Conn, sekIn, sekOut []byte) *SessionSockets {
+func NewSessionSockets(connIn, connOut net.Conn, sekIn, sekOut []byte, suite kbc.CipherSuite) *SessionSockets {
 	return &SessionSockets{
-		Inbound:  NewSecureConn(connIn, sekIn),
-		Outbound: NewSecureConn(connOut, sekOut),
+		Inbound:  NewSecureConn(connIn, sekIn, suite),
+		Outbound: NewSecureConn(connOut, sekOut, suite),
 	}
 }
 
@@ -199,7 +202,7 @@ func (s *Session) HandleRekeyRequest(req *bindings.RekeyRequest) (*bindings.Reke
 		return nil, fmt.Errorf("session keys not initialized")
 	}
 
-	resp, newInboundKey, err := ProcessRekeyRequest(req, s.OwnKeys, s.PeerPubKeys)
+	resp, newInboundKey, err := ProcessRekeyRequest(req, s.OwnKeys, s.PeerPubKeys, s.CipherSuite)
 	if err != nil {
 		return nil, fmt.Errorf("process rekey request: %w", err)
 	}
@@ -232,7 +235,7 @@ func (s *Session) HandleRekeyResponse(resp *bindings.RekeyResponse) error {
 	}
 
 	// Process peer's seeds for our inbound direction.
-	newInboundKey, err := ProcessRekeyResponse(resp, s.OwnKeys, s.PeerPubKeys)
+	newInboundKey, err := ProcessRekeyResponse(resp, s.OwnKeys, s.PeerPubKeys, s.CipherSuite)
 	if err != nil {
 		return fmt.Errorf("process rekey response: %w", err)
 	}

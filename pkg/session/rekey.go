@@ -15,7 +15,7 @@ import (
 
 // CreateRekeyRequest generates a RekeyRequest with new encapsulated seeds.
 // Returns the request, the derived new key (for outbound), and any error.
-func CreateRekeyRequest(ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, epoch uint64) (*bindings.RekeyRequest, []byte, error) {
+func CreateRekeyRequest(ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, epoch uint64, suite kbc.CipherSuite) (*bindings.RekeyRequest, []byte, error) {
 	if ownKeys == nil {
 		return nil, nil, fmt.Errorf("own keys is nil")
 	}
@@ -39,8 +39,8 @@ func CreateRekeyRequest(ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, epoch uint
 	// Encapsulate with ML-KEM.
 	seed2, encSeed2 := peerKeys.MlKemPublic.Encapsulate()
 
-	// Derive the new key from both seeds.
-	newKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
+	// Derive the new key from both seeds using the negotiated cipher suite.
+	newKey, err := kbc.DeriveKey(suite, seed1, seed2)
 	if err != nil {
 		return nil, nil, fmt.Errorf("key derivation failed: %w", err)
 	}
@@ -58,7 +58,7 @@ func CreateRekeyRequest(ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, epoch uint
 
 // ProcessRekeyRequest handles an incoming RekeyRequest.
 // Returns a RekeyResponse, the derived new inbound key, and any error.
-func ProcessRekeyRequest(req *bindings.RekeyRequest, ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys) (*bindings.RekeyResponse, []byte, error) {
+func ProcessRekeyRequest(req *bindings.RekeyRequest, ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, suite kbc.CipherSuite) (*bindings.RekeyResponse, []byte, error) {
 	if ownKeys == nil {
 		return nil, nil, fmt.Errorf("own keys is nil")
 	}
@@ -94,13 +94,13 @@ func ProcessRekeyRequest(req *bindings.RekeyRequest, ownKeys *kbc.OwnKeys, peerK
 	}
 
 	// Derive the new inbound key.
-	newInboundKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
+	newInboundKey, err := kbc.DeriveKey(suite, seed1, seed2)
 	if err != nil {
 		return nil, nil, fmt.Errorf("inbound key derivation failed: %w", err)
 	}
 
 	// Create our response with new seeds for the peer's inbound direction.
-	respReq, _, err := CreateRekeyRequest(ownKeys, peerKeys, req.Epoch)
+	respReq, _, err := CreateRekeyRequest(ownKeys, peerKeys, req.Epoch, suite)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create response seeds: %w", err)
 	}
@@ -115,7 +115,7 @@ func ProcessRekeyRequest(req *bindings.RekeyRequest, ownKeys *kbc.OwnKeys, peerK
 
 // ProcessRekeyResponse handles an incoming RekeyResponse.
 // Returns the derived new outbound key (peer's response seeds).
-func ProcessRekeyResponse(resp *bindings.RekeyResponse, ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys) ([]byte, error) {
+func ProcessRekeyResponse(resp *bindings.RekeyResponse, ownKeys *kbc.OwnKeys, peerKeys *kbc.PeerKeys, suite kbc.CipherSuite) ([]byte, error) {
 	if ownKeys == nil {
 		return nil, fmt.Errorf("own keys is nil")
 	}
@@ -151,7 +151,7 @@ func ProcessRekeyResponse(resp *bindings.RekeyResponse, ownKeys *kbc.OwnKeys, pe
 	}
 
 	// Derive the new key for receiving from peer.
-	newKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
+	newKey, err := kbc.DeriveKey(suite, seed1, seed2)
 	if err != nil {
 		return nil, fmt.Errorf("key derivation failed: %w", err)
 	}

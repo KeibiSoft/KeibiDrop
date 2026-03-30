@@ -20,10 +20,11 @@ import (
 
 // PeerHandshakeMessage defines the JSON payload sent during handshake.
 type PeerHandshakeMessage struct {
-	Fingerprint  string            `json:"fingerprint"`
-	PublicKeys   map[string]string `json:"public_keys"` // base64 encoded
-	EncSeeds     map[string]string `json:"enc_seeds"`   // optional for key encapsulation
-	OutboundPort int               `json:"port"`
+	Fingerprint      string            `json:"fingerprint"`
+	PublicKeys       map[string]string `json:"public_keys"`        // base64 encoded
+	EncSeeds         map[string]string `json:"enc_seeds"`          // optional for key encapsulation
+	OutboundPort     int               `json:"port"`
+	SupportedCiphers []string          `json:"supported_ciphers"` // cipher negotiation
 }
 
 // PerformInboundHandshake handles the first plaintext connection from Bob to Alice.
@@ -110,7 +111,22 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		return err
 	}
 
-	inboundKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
+	// Negotiate cipher suite: pick best cipher both peers support.
+	peerCiphers := make([]kbc.CipherSuite, len(msg.SupportedCiphers))
+	for i, c := range msg.SupportedCiphers {
+		peerCiphers[i] = kbc.CipherSuite(c)
+	}
+	if len(peerCiphers) == 0 {
+		peerCiphers = []kbc.CipherSuite{kbc.CipherChaCha20}
+	}
+	suite := kbc.NegotiateCipher(kbc.SupportedCiphers(), peerCiphers)
+	// Only update if not already set (outbound may have run first with local preference).
+	if session.CipherSuite == "" {
+		session.CipherSuite = suite
+	}
+	logger.Info("Cipher negotiated", "suite", suite, "peer-offered", msg.SupportedCiphers, "hardware-aes", kbc.HasHardwareAES())
+
+	inboundKey, err := kbc.DeriveKey(suite, seed1, seed2)
 	if err != nil {
 		logger.Error("Failed to derive inbound key", "error", err)
 		return err
@@ -131,7 +147,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	*/
 
 	// Upgrade to SecureConn
-	secure := NewSecureConn(conn, session.SEKInbound)
+	secure := NewSecureConn(conn, session.SEKInbound, suite)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
@@ -157,7 +173,15 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 
 	seed2, encSeed2MLKEM := session.PeerPubKeys.MlKemPublic.Encapsulate()
 
-	outboundKey, err := kbc.DeriveChaCha20Key(seed1, seed2)
+	// Determine cipher suite. If inbound already negotiated, use that.
+	// Otherwise use local preference (outbound runs before inbound in create-room flow).
+	suite := session.CipherSuite
+	if suite == "" {
+		suite = kbc.SupportedCiphers()[0] // local preference
+		session.CipherSuite = suite
+	}
+
+	outboundKey, err := kbc.DeriveKey(suite, seed1, seed2)
 	if err != nil {
 		logger.Error("Failed to derive outbound key", "error", err)
 		return err
@@ -181,11 +205,19 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 		"x25519": encodeBase64(encSeed1X25519),
 	}
 
+	// Advertise our supported ciphers to the peer.
+	supported := kbc.SupportedCiphers()
+	supportedStr := make([]string, len(supported))
+	for i, c := range supported {
+		supportedStr[i] = string(c)
+	}
+
 	msg := PeerHandshakeMessage{
-		Fingerprint:  session.ExpectedPeerFingerprint,
-		PublicKeys:   pubKeys,
-		EncSeeds:     encSeeds,
-		OutboundPort: session.DefaultInboundPort,
+		Fingerprint:      session.ExpectedPeerFingerprint,
+		PublicKeys:       pubKeys,
+		EncSeeds:         encSeeds,
+		OutboundPort:     session.DefaultInboundPort,
+		SupportedCiphers: supportedStr,
 	}
 
 	if err := json.NewEncoder(conn).Encode(msg); err != nil {
@@ -209,7 +241,7 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 	logger.Info("Peer confirmed handshake upgrading to encrypted connection")
 
 	// Upgrade to SecureConn
-	secure := NewSecureConn(conn, session.SEKOutbound)
+	secure := NewSecureConn(conn, session.SEKOutbound, suite)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
@@ -266,7 +298,11 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	}
 
 	// === Step 3: Derive KEK ===
-	sek, err := kbc.DeriveChaCha20Key(seed1, sharedKEM)
+	suite := session.CipherSuite
+	if suite == "" {
+		suite = kbc.CipherChaCha20
+	}
+	sek, err := kbc.DeriveKey(suite, seed1, sharedKEM)
 	if err != nil {
 		logger.Error("Failed to derive SEK", "error", err)
 		return fmt.Errorf("SEK derivation failed: %w", err)
@@ -274,7 +310,7 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	session.SEKInbound = sek
 
 	// === Step 4: Upgrade connection to SecureConn ===
-	secure := NewSecureConn(conn, sek)
+	secure := NewSecureConn(conn, sek, suite)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
