@@ -6,6 +6,7 @@ package filesystem
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -33,6 +34,10 @@ type slowStreamProvider struct {
 
 func (p *slowStreamProvider) OpenRemoteFile(_ context.Context, _ uint64, _ string) (types.RemoteFileStream, error) {
 	return &slowStream{content: p.content, delay: p.delay}, nil
+}
+
+func (p *slowStreamProvider) StreamFile(_ context.Context, _ string, _ uint64) (types.StreamFileReceiver, error) {
+	return nil, fmt.Errorf("not implemented in test")
 }
 
 type slowStream struct {

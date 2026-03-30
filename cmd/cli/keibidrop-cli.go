@@ -10,12 +10,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
@@ -25,36 +23,8 @@ import (
 	"github.com/fatih/color"
 )
 
-const KEIBIDROP_RELAY_ENV = "KEIBIDROP_RELAY"
-const INBOUND_PORT_ENV = "INBOUND_PORT"
-const OUTBOUND_PORT_ENV = "OUTBOUND_PORT"
-const TO_MOUNT_PATH_ENV = "TO_MOUNT_PATH"
-const TO_SAVE_PATH_ENV = "TO_SAVE_PATH"
-const LOG_FILE_ENV = "LOG_FILE"
-const NO_FUSE_ENV = "NO_FUSE"
-const PREFETCH_ON_OPEN_ENV = "KEIBIDROP_PREFETCH_ON_OPEN"
-const PUSH_ON_WRITE_ENV = "KEIBIDROP_PUSH_ON_WRITE"
-
 type cliContext struct {
 	kd *common.KeibiDrop
-}
-
-func getenv(key, fallback string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return fallback
-}
-
-func initRelay() *url.URL {
-	relayURL := getenv(KEIBIDROP_RELAY_ENV, "https://keibidroprelay.keibisoft.com")
-	parsedURL, err := url.Parse(relayURL)
-	if err != nil {
-		log.Fatalf("invalid KEIBIDROP_RELAY URL: %v", err)
-	}
-
-	fmt.Println("Connecting to relay:", parsedURL.String())
-	return parsedURL
 }
 
 func (c *cliContext) executor(in string) {
@@ -339,72 +309,53 @@ func deleteFile(kd *common.KeibiDrop, path string) {
 }
 
 func main() {
-	relayURL := initRelay()
-	var wr *os.File = os.Stderr
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
+		os.Exit(1)
+	}
 
-	logFileStr := os.Getenv(LOG_FILE_ENV)
-	if logFileStr != "" {
-		f, err := os.OpenFile(filepath.Clean(logFileStr),
+	// Write default config on first run.
+	_ = config.WriteDefault()
+
+	// Ensure save/mount/log directories exist.
+	if err := config.EnsureDirectories(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create directories: %v\n", err)
+		os.Exit(1)
+	}
+
+	relayURL, err := url.Parse(cfg.Relay)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid relay URL %q: %v\n", cfg.Relay, err)
+		os.Exit(1)
+	}
+	fmt.Println("Connecting to relay:", relayURL.String())
+
+	// Setup logger.
+	var wr *os.File = os.Stderr
+	if cfg.LogFile != "" {
+		f, err := os.OpenFile(filepath.Clean(cfg.LogFile),
 			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			slog.Warn("Failed to open log file, defaulting to stderr",
-				"path", logFileStr,
-				"env", LOG_FILE_ENV,
-				"error", err)
+				"path", cfg.LogFile, "error", err)
 		} else {
 			wr = f
 		}
 	}
-
-	// text output, level=DEBUG
-	handler := slog.NewTextHandler(wr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	})
-
+	handler := slog.NewTextHandler(wr, &slog.HandlerOptions{Level: slog.LevelDebug})
 	logger := slog.New(handler).With("component", "cli")
 
-	inboundStr := os.Getenv(INBOUND_PORT_ENV)
-	outboundStr := os.Getenv(OUTBOUND_PORT_ENV)
-	inbound := config.InboundPort
-	if inboundStr != "" {
-		inPort, err := strconv.Atoi(inboundStr)
-		if err != nil {
-			logger.Error("Invalid inbound port", "provided", inboundStr)
-			os.Exit(1)
-		}
-		inbound = inPort
-	}
-	outbound := config.OutboundPort
-	if outboundStr != "" {
-		outPort, err := strconv.Atoi(outboundStr)
-		if err != nil {
-			logger.Error("Invalid outbound port", "provided", outboundStr)
-			os.Exit(1)
-		}
-		outbound = outPort
-	}
-
-	toMount := os.Getenv(TO_MOUNT_PATH_ENV)
-	toSave := os.Getenv(TO_SAVE_PATH_ENV)
-
-	// Explicitly pass NO FUSE
-	_, noFUSE := os.LookupEnv(NO_FUSE_ENV)
-
-	isFuse := checkfuse.IsFUSEPresent()
-	logger.Info("Is FUSE present", "val", isFuse)
-
-	logger.Info("Do not use FUSE", "val", noFUSE)
-
-	finalVal := isFuse && !noFUSE
-
-	// Collab sync options (off by default).
-	_, prefetchOnOpen := os.LookupEnv(PREFETCH_ON_OPEN_ENV)
-	_, pushOnWrite := os.LookupEnv(PUSH_ON_WRITE_ENV)
-	logger.Info("Collab sync options", "prefetchOnOpen", prefetchOnOpen, "pushOnWrite", pushOnWrite)
+	useFUSE := checkfuse.IsFUSEPresent() && !cfg.NoFUSE
+	logger.Info("FUSE", "present", checkfuse.IsFUSEPresent(), "disabled", cfg.NoFUSE, "using", useFUSE)
+	logger.Info("Config", "relay", cfg.Relay, "save", cfg.SavePath, "mount", cfg.MountPath,
+		"inbound", cfg.InboundPort, "outbound", cfg.OutboundPort, "log", cfg.LogFile)
 
 	kdctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	kd, err := common.NewKeibiDrop(kdctx, logger, finalVal, relayURL, inbound, outbound, toMount, toSave, prefetchOnOpen, pushOnWrite)
+	kd, err := common.NewKeibiDrop(kdctx, logger, useFUSE, relayURL,
+		cfg.InboundPort, cfg.OutboundPort, cfg.MountPath, cfg.SavePath,
+		cfg.PrefetchOnOpen, cfg.PushOnWrite)
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		color.Red("Fatal: %v", err)
@@ -416,6 +367,12 @@ func main() {
 	ctx := &cliContext{kd: kd}
 
 	common.PrintBanner()
+	fmt.Printf("Config: %s\n", config.ConfigPath())
+	fmt.Printf("Log:    %s\n", cfg.LogFile)
+	fmt.Printf("Save:   %s\n", cfg.SavePath)
+	if useFUSE {
+		fmt.Printf("Mount:  %s\n", cfg.MountPath)
+	}
 	handleShow(kd, "fingerprint")
 
 	p := prompt.New(

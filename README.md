@@ -1,294 +1,150 @@
-```text
-██╗  ██╗███████╗██╗██████╗ ██╗██████╗ ██████╗  ██████╗ ██████╗ 
+```
+██╗  ██╗███████╗██╗██████╗ ██╗██████╗ ██████╗  ██████╗ ██████╗
 ██║ ██╔╝██╔════╝██║██╔══██╗██║██╔══██╗██╔══██╗██╔═══██╗██╔══██╗
 █████╔╝ █████╗  ██║██████╔╝██║██║  ██║██████╔╝██║   ██║██████╔╝
-██╔═██╗ ██╔══╝  ██║██╔══██╗██║██║  ██║██╔══██╗██║   ██║██╔═══╝ 
-██║  ██╗███████╗██║██████╔╝██║██████╔╝██║  ██║╚██████╔╝██║     
-╚═╝  ╚═╝╚══════╝╚═╝╚═════╝ ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝     
+██╔═██╗ ██╔══╝  ██║██╔══██╗██║██║  ██║██╔══██╗██║   ██║██╔═══╝
+██║  ██╗███████╗██║██████╔╝██║██████╔╝██║  ██║╚██████╔╝██║
+╚═╝  ╚═╝╚══════╝╚═╝╚═════╝ ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝
 ```
 
-# KeibiDrop - Share files between desktops
+End-to-end encrypted, peer-to-peer file sharing between desktops.
 
-KeibiDrop is a synchronous file transfer tool for direct peer-to-peer exchange over untrusted networks.
-Although traffic is fully end-to-end encrypted, your IP is visible to the peer and the relay. If they’re hostile, they know where to send packets. Or drones. Or worse: ~lawyers~ marketing ads.
+Files transfer directly between your machines — no cloud, no accounts, no upload limits. Traffic is encrypted with post-quantum cryptography (ML-KEM-1024 + X25519) and AES-256-GCM / ChaCha20-Poly1305.
 
-> In simple terms: "Dropbox" your files in real time between your desktop devices without uploading to a server.
-
-It uses modern post-quantum cryptography (ML-KEM + X25519) and symmetric encryption (ChaCha20-Poly1305) to ensure that only the intended recipient can decrypt the file.
-
-The sender and receiver perform a secure key exchange via a short-lived relay server, after which all communication is encrypted end-to-end.
-
-> In simple terms (again): The recipients generate some public keys; they upload it to my relay; they share with each-other the long and hideous hash of their public keys, via any chat app (or written medium). The hash is used to retrieve the keys and establish the connection. (Ok, maybe I lied, the terms are not so simple :< )
-
-> In even simpler terms: Share with your peer the "long password" via chat and start sharing files.
-
-KeibiDrop can be used in three ways: a [desktop GUI](#how-it-works) (Rust/Slint), an [interactive CLI](#setup--build) (`keibidrop-cli`), and a non-interactive [agent CLI](#agent--scripting-mode) (`kd`) for AI agents and scripts. All three modes support both FUSE (virtual folder in Finder/Explorer) and no-FUSE (drag & drop / CLI commands) operation.
-
-### How it works
-
-**Step 1** — Both peers start KeibiDrop. Copy your code and send it to your peer via Signal, Telegram, or any chat.
-
-| Peer A (fresh) | Peer B (code exchanged) |
+| Connect | Share files |
 |---|---|
-| ![Home screen](demo-photos/HomeScreen1-Client1.png) | ![Code added](demo-photos/HomeScreen2-Client2.png) |
-
-**Step 2** — Paste each other's codes, then Create Room / Join Room. Connection establishes automatically.
-
-| Creating room... |
-|---|
-| ![Creating room](demo-photos/HomeScreen3-Client2.png) |
-
-**Step 3** — Connected! Share files in real time.
-
-| FUSE mode (virtual folder in Finder) | No-FUSE mode (drag & drop UI) |
-|---|---|
-| ![FUSE connected](demo-photos/ConnectedScreenFUSE-Client1.png) | ![No-FUSE connected](demo-photos/ConnectedScreen-NO-FUSE-CLient2.png) |
-
-**Step 4** — Peer drags a file in. It appears instantly on the other side.
-
-| Image arrives in FUSE folder (Finder) | Image received in no-FUSE UI |
-|---|---|
-| ![FUSE file received](demo-photos/ConnectedScreenFUSE3-Client1.png) | ![No-FUSE file received](demo-photos/ConnectedScreen-NO-FUSE3-Client2.png) |
-
-**Step 5** — Share more files, including video. Open directly from the UI or FUSE mount.
-
-| Image + video in FUSE folder | Image + video in no-FUSE UI |
-|---|---|
-| ![FUSE multiple files](demo-photos/ConnectedScreen-FUSE4-Client1.png) | ![No-FUSE multiple files](demo-photos/ConnectedScreen-NO-FUSE6-Client2.png) |
-
-### Interactive CLI
-
-The interactive CLI (`keibidrop-cli`) provides the same functionality through a terminal REPL. Type commands, see results.
-
-| Interactive CLI session |
-|---|
-| ![Interactive CLI](demo-photos/KeibiDrop-Interactive-CLI.png) |
+| ![Connect screen](demo-photos/HomeScreen2-Client2.png) | ![Connected](demo-photos/ConnectedScreen-NO-FUSE3-Client2.png) |
 
 ---
 
-## Disclaimer
+## Install
 
-We used **GPT-4o (in Monday mode)** for dopamine kicks, memes, and to generate some code and docs. Since November 2025, we also use **Claude Code** for development.
+### macOS (Homebrew)
 
-We gained the knowledge in this space without relying on ~AI~ sycophancy.
-
-Current status:
-- File transfers resume automatically on reconnection.
-- Private keys and session keys live in memory only — they are destroyed on application exit (no TPM/secure enclave integration yet).
-
-Treat it as a functional demo. We plan to maintain it and improve it as resources permit.
-
-> Re-reading all this word soup in the README, makes me think about writing novels inside a code project, where the foot notes live inside the git commit message, the comments provide the narrators voice, and the code the action flow.
-
-### Important
-
-Anonymity breeds unaccountability, thus it is easy to do bad things and hurt people, only use this tool with recipients you know, as otherwise any files that you transfer might harm you and those around you.
-
-The idea of this tool is to allow you to be anonymous to third parties. In theory there is no need for the relay server for the key-exchange and establishing the session, but I did not implement it "that way" in order to reduce the payload shared out-of-band, and because I am curious how many people are using the service through the relay. I might add it in the future if there is interest.
-
----
-
-## Inspiration
-
-This project was loosely inspired by:
-
-- [croc](https://github.com/schollz/croc) - for its clean approach to secure, peer-to-peer transfers
-- [rclone](https://rclone.org/) - for the general concept of mapping cloud storage to local workflows
-
-I haven’t used these tools directly, but I liked the ideas they explored and wanted to build something in that direction, using my own design and implementation.
-
----
-
-## Features
-
-- Post-quantum hybrid key exchange using ML-KEM-1024 and X25519
-- ChaCha20-Poly1305 symmetric encryption
-- Deterministic fingerprint verification
-- No persistent metadata or tracking
-- Designed for use over untrusted relays
-- Relay privacy - the relay sees only encrypted blobs of your IPv6 address, port, and public keys
-- Session re-keying for forward secrecy during long transfers
-- Mountable filesystem with data transfer on access
-
----
-
-## Known Limitations
-
-### File Sharing Behavior
-
-- **Deletions don't propagate**: When a peer deletes a file they're sharing, your local copy (if downloaded) is preserved. The file simply disappears from the shared view.
-
-- **Partial downloads on unshare**: If you're reading a file with offset (e.g., tailing a remote log) and the peer stops sharing, only the bytes you've already read are saved locally. The file may be incomplete/sparse.
-
-- **Selective mmap support**: Per-file `direct_io` is used for write operations (for real-time sync) but disabled for `.git/` directories (to allow mmap for git pack files). See [DD-002](docs/DesignDecisions.md#dd-002-per-file-directio-for-mmapcache-compatibility).
-
-- **Symlinks not implemented**: Symlink operations return ENOSYS.
-
-### POSIX Compliance
-
-After running pjdfstest, specific unsupported operations will be documented here.
-
----
-
-## Requirements
-
-- **All platforms**: [go 1.24](tip.golang.org/doc/go1.24)
-- **All platforms**: Requires `cgo` (due to `cgofuse` from WinFsp)
-
-- **macOS**: [macFUSE](https://macfuse.github.io/)
-- **Windows**: [WinFsp](https://winfsp.dev/)
-- **Linux**: fuse3 (usually preinstalled)
-
-### macOS: Enable `allow_other` for Finder/Preview access
-
-On macOS, sandboxed apps like Finder and Preview cannot access FUSE mounts unless `allow_other` is enabled. Without this, you'll get "you don't have permission to view it" errors when opening files directly from the mount.
-
-**One-time setup:**
 ```bash
-sudo sh -c 'echo "user_allow_other" > /etc/fuse.conf'
+brew tap keibisoft/keibidrop
+brew install keibidrop
 ```
 
-This creates `/etc/fuse.conf` with the `user_allow_other` option, which allows non-root users to use the `allow_other` mount flag. No reboot required - just remount the filesystem.
+### Linux (Debian/Ubuntu)
 
-
----
-
-## Networking Requirements
-
-KeibiDrop uses **direct P2P communication over IPv6**. (Mainly because I did not want to bother with STUN/TURN servers.)
-
-### In order for a session to connect successfully:
-
-- Both peers must have **globally routable IPv6 addresses**.
-- Both peers must be able to **accept inbound TCP connections** on the advertised port.
-- **Firewalls must allow these inbound connections**. (Check your router and OS firewall.)
-- **NAT traversal is not supported** - KeibiDrop does **not** use STUN, TURN, or UPnP.
-
-> If your system is not reachable via IPv6, KeibiDrop will not work.  
-> You can test your IPv6 connectivity at: [https://test-ipv6.com](https://test-ipv6.com)
-
-This approach avoids leaking IP metadata to third-party STUN servers, aligning with KeibiDrop’s privacy-first design. However, this also limits compatibility in restrictive or NATed IPv4-only networks.
-
----
-
-## Repository Structure
-
-```
-cmd/kd/             # Non-interactive CLI for AI agents (daemon + Unix socket)
-cmd/cli/            # Interactive CLI (prompt-based)
-cmd/                # Go entry points (GUI)
-pkg/crypto/         # Cryptographic primitives (ML-KEM, X25519, ChaCha20)
-pkg/logic/          # Core logic, gRPC service, connection handling
-pkg/filesystem/     # FUSE virtual filesystem
-rust/               # Slint UI (Rust), FFI bindings to Go
-rustbridge/         # Go-to-Rust FFI bridge (c-archive)
-Makefile            # Build targets (build-rust, build-kd, etc.)
-Security.md         # Protocol-level cryptographic design
+```bash
+wget https://github.com/KeibiSoft/KeibiDrop/releases/latest/download/keibidrop_amd64.deb
+sudo dpkg -i keibidrop_amd64.deb
 ```
 
----
+### Download binary
 
-## Setup & Build
+Grab the latest release for your platform from [GitHub Releases](https://github.com/KeibiSoft/KeibiDrop/releases).
 
-Requires **Go 1.24.3+**, **Rust toolchain**, and **CGO enabled**. On macOS, Apple's `clang` must be the C compiler (`go env CC` should show `clang`, not `gcc`).
+### Build from source
 
-For the full setup guide (prerequisites, troubleshooting, environment variables), see **[SETUP.md](./SETUP.md)**.
-
-Quick build (Rust UI):
+Requires Go 1.24+ and Rust. See [SETUP.md](./SETUP.md) for full instructions.
 
 ```bash
 make build-static-rust-bridge
 cd rust && cargo build --release
 ```
 
-Quick build (Agent CLI):
+---
 
+## Quick start
+
+1. Both peers launch **KEIBI**DROP.
+2. Copy your fingerprint code and send it to your peer (Signal, Telegram, email, anything).
+3. Paste each other's codes.
+4. One peer creates a room, the other joins.
+5. Share files.
+
+In FUSE mode, the peer's files appear as a virtual folder you can browse in Finder or your file manager. In no-FUSE mode, use the UI or CLI to add/pull files.
+
+**Which mode to use?**
+- Transferring a few large files → no-FUSE (faster, simpler)
+- Working on shared files in real-time (edit, save, see changes) → FUSE
+
+---
+
+## FUSE setup (optional)
+
+FUSE gives you a virtual folder where the peer's files appear as regular files. Without it, you use add/pull commands instead.
+
+**macOS:** Install [macFUSE](https://macfuse.github.io/). On macOS 15.4+, the FSKit backend works without kernel extensions.
 ```bash
-make build-kd
+sudo sh -c 'echo "user_allow_other" > /etc/fuse.conf'
+```
+
+**Linux:**
+```bash
+sudo apt install fuse3    # Debian/Ubuntu
 ```
 
 ---
 
-## Agent / Scripting Mode
+## Three ways to run
 
-`kd` is a non-interactive CLI designed for AI agents (Claude Code, etc.) and scripts. It runs as a daemon and accepts one-shot commands — no interactive prompts, all output is JSON.
-
-FUSE mode is recommended for agents — after connecting, files appear in a synced folder that the agent can read/write directly with normal file I/O.
-
+**Desktop UI** (Rust/Slint) — the main app. Point-and-click file sharing.
 ```bash
-# Start daemon (FUSE mode — recommended for agents)
-KD_SAVE_PATH=./saved KD_MOUNT_PATH=./mount ./kd start
-
-# Exchange fingerprints and connect
-./kd show fingerprint                  # send this to peer
-./kd register <peer-fingerprint>       # register peer
-./kd create                            # or "./kd join"
-
-# Use the synced folder directly
-ls ./mount/                            # peer's files appear here
-cat ./mount/config.yaml                # read remote files
-cp ./myfile.pdf ./mount/               # share files with peer
-
-# Cleanup
-./kd disconnect                        # rotate keys
-./kd stop                              # shutdown
+./keibidrop-rust
 ```
 
-See **[docs/kd-agent-guide.md](./docs/kd-agent-guide.md)** for the full agent integration guide.
-
----
-
-## Test
-
+**Interactive CLI** — terminal REPL with autocomplete.
 ```bash
-go test ./pkg/...
+./keibidrop-cli
 ```
 
----
+**Agent CLI** (`kd`) — for AI agents and scripts. Daemon + JSON protocol over Unix socket.
+```bash
+KD_SAVE_PATH=./received ./kd start    # Terminal 1
+./kd show fingerprint                  # Terminal 2
+./kd register <peer-fingerprint>
+./kd create
+```
 
-## Cryptographic Summary
-
-- **Asymmetric Key Exchange**: ML-KEM-1024 (Kyber) + X25519
-- **Symmetric Encryption**: ChaCha20-Poly1305
-- **Key Derivation**: HKDF over shared secrets
-- **Streaming Mode**: Encrypted chunked transfer with per-chunk AEAD
-
-See [`Security.md`](./Security.md) for a complete protocol overview.
-
-### Handshake Protocol
-
-Full-duplex secure handshake: hybrid ML-KEM + X25519 key exchange via the relay, followed by direct P2P connection with mutual fingerprint verification.
-
-![KeibiDrop Full-Duplex Secure Handshake](docs/diagrams/handshake.png)
+See [docs/kd-agent-guide.md](./docs/kd-agent-guide.md) for the full agent integration guide.
 
 ---
 
-## Contributing & Legal
+## Configuration
 
-Want to contribute? Great, but please read the [CONTRIBUTING.md](./CONTRIBUTING.md) first. All commits must be signed (`git commit -S`); you also need to `git commit --sign-off` in order to agree to the terms outlined in our [Developer Certificate of Origin](./DCO.txt).
+**KEIBI**DROP reads `~/.config/keibidrop/config.toml` on startup. A default config is created on first run. Environment variables override the config file.
 
-For information about how we (don’t) use your data, see the [Privacy Policy](./privacy.md).
-
----
-
-## LICENSE
-
-This project is licensed under the Mozilla Public License 2.0.
-
-See the [LICENSE](./LICENSE) file for details.
-
-This release is the community edition.
+| Setting | Config key | Env var | Default |
+|---|---|---|---|
+| Relay server | `relay` | `KEIBIDROP_RELAY` | `https://keibidroprelay.keibisoft.com/` |
+| Save folder | `save_path` | `TO_SAVE_PATH` | `~/KeibiDrop/Received/` |
+| FUSE mount | `mount_path` | `TO_MOUNT_PATH` | `~/KeibiDrop/Mount/` |
+| Log file | `log_file` | `LOG_FILE` | platform-specific |
+| Inbound port | `inbound_port` | `INBOUND_PORT` | 26431 |
+| Outbound port | `outbound_port` | `OUTBOUND_PORT` | 26432 |
+| Disable FUSE | `no_fuse` | `NO_FUSE` | false |
 
 ---
 
-### Enterprise Edition Available
+## Networking
 
-This project is developed and maintained as Free and Open Source Software (FOSS) under the MPL 2.0 license.
+**KEIBI**DROP connects peers directly over IPv6. Both machines need:
+- Globally routable IPv6 addresses
+- Inbound TCP allowed on the configured port
+- No NAT traversal (no STUN/TURN)
 
-I plan for an Enterprise Edition that will include:
+Test your IPv6 at [test-ipv6.com](https://test-ipv6.com/).
 
-- Additional features not found in the open-source version
-- Commercial support and onboarding assistance
-- Customization services to fit specific business needs
+---
 
-Commercial licensing and support will be available at [keibisoft.com](https://keibisoft.com/tools/keibidrop.html)
+## Troubleshooting
+
+See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for common issues (connection failures, FUSE problems, build errors).
+
+## Security
+
+Post-quantum hybrid key exchange, authenticated encryption, forward secrecy via re-keying. Full protocol description in [Security.md](./Security.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). All commits must be signed.
+
+## License
+
+[Mozilla Public License 2.0](./LICENSE)
+
+Developed by [KeibiSoft SRL](https://keibisoft.com).

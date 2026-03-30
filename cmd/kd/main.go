@@ -77,29 +77,30 @@ func runDaemon() {
 		os.Remove(sock)
 	}
 
-	// Parse config from env
-	relayStr := os.Getenv("KD_RELAY")
-	if relayStr == "" {
-		relayStr = "https://keibidroprelay.keibisoft.com"
-	}
-	relayURL, err := url.Parse(relayStr)
+	// Load config (defaults → config file → env vars).
+	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"invalid KD_RELAY: %s"}`+"\n", err)
+		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"config: %s"}`+"\n", err)
+		os.Exit(1)
+	}
+	_ = config.WriteDefault()
+	if err := config.EnsureDirectories(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"directories: %s"}`+"\n", err)
 		os.Exit(1)
 	}
 
-	inbound := envInt("KD_INBOUND_PORT", config.InboundPort)
-	outbound := envInt("KD_OUTBOUND_PORT", config.OutboundPort)
-	savePath := os.Getenv("KD_SAVE_PATH")
-	mountPath := os.Getenv("KD_MOUNT_PATH")
-	_, noFuse := os.LookupEnv("KD_NO_FUSE")
-	isFuse := checkfuse.IsFUSEPresent() && !noFuse
-	logFile := os.Getenv("KD_LOG_FILE")
+	relayURL, err := url.Parse(cfg.Relay)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"invalid relay: %s"}`+"\n", err)
+		os.Exit(1)
+	}
+
+	isFuse := checkfuse.IsFUSEPresent() && !cfg.NoFUSE
 
 	// Setup logger
 	var logWriter *os.File = os.Stderr
-	if logFile != "" {
-		f, err := os.OpenFile(filepath.Clean(logFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if cfg.LogFile != "" {
+		f, err := os.OpenFile(filepath.Clean(cfg.LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err == nil {
 			logWriter = f
 			defer f.Close()
@@ -111,7 +112,9 @@ func runDaemon() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	kd, err := common.NewKeibiDrop(ctx, logger, isFuse, relayURL, inbound, outbound, mountPath, savePath, false, false)
+	kd, err := common.NewKeibiDrop(ctx, logger, isFuse, relayURL,
+		cfg.InboundPort, cfg.OutboundPort, cfg.MountPath, cfg.SavePath,
+		cfg.PrefetchOnOpen, cfg.PushOnWrite)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"init failed: %s"}`+"\n", err)
 		os.Exit(1)
@@ -135,11 +138,13 @@ func runDaemon() {
 	startData := map[string]any{
 		"socket":      sock,
 		"fingerprint": fp,
-		"relay":       relayStr,
+		"relay":       cfg.Relay,
 		"ip":          kd.LocalIPv6IP,
 		"fuse":        isFuse,
-		"save_path":   savePath,
-		"mount_path":  mountPath,
+		"save_path":   cfg.SavePath,
+		"mount_path":  cfg.MountPath,
+		"log_file":    cfg.LogFile,
+		"config_path": config.ConfigPath(),
 	}
 	b, _ := json.Marshal(Response{OK: true, Data: mustMarshal(startData)})
 	fmt.Println(string(b))

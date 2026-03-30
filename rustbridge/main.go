@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
@@ -68,6 +69,9 @@ var eventChan = make(chan string, 64)
 
 //export KD_Initialize
 func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C.char, useFUSE C.int, prefetchOnOpen C.int, pushOnWrite C.int) C.int {
+	// Load config defaults, then override with explicit parameters from Rust UI.
+	cfg, _ := config.Load()
+
 	r := C.GoString(relayURL)
 	m := C.GoString(toMount)
 	s := C.GoString(toSave)
@@ -75,13 +79,41 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	prefetch := prefetchOnOpen != 0
 	push := pushOnWrite != 0
 
+	// Fill in defaults for empty values.
+	if r == "" {
+		r = cfg.Relay
+	}
+	if m == "" {
+		m = cfg.MountPath
+	}
+	if s == "" {
+		s = cfg.SavePath
+	}
+	if int(inbound) == 0 {
+		inbound = C.int(cfg.InboundPort)
+	}
+	if int(outbound) == 0 {
+		outbound = C.int(cfg.OutboundPort)
+	}
+
 	parsed, err := url.Parse(r)
 	if err != nil {
+		setLastError(err)
 		return -1
 	}
 
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	// Setup log file from config if available.
+	var logWriter = os.Stdout
+	if cfg.LogFile != "" {
+		if f, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+			logWriter = f
+		}
+	}
+	handler := slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelDebug})
 	logger := slog.New(handler).With("component", "rustbridge")
+
+	// Ensure directories exist.
+	_ = config.EnsureDirectories(cfg)
 
 	ctx, c := context.WithCancel(context.Background())
 
@@ -469,6 +501,22 @@ func pushEvent(evt string) {
 		}
 		eventChan <- evt
 	}
+}
+
+//export KD_GetVersion
+func KD_GetVersion() *C.char {
+	return C.CString(common.Version + " (" + common.CommitHash + ")")
+}
+
+//export KD_GetLogPath
+func KD_GetLogPath() *C.char {
+	cfg, _ := config.Load()
+	return C.CString(cfg.LogFile)
+}
+
+//export KD_GetConfigPath
+func KD_GetConfigPath() *C.char {
+	return C.CString(config.ConfigPath())
 }
 
 func main() {}
