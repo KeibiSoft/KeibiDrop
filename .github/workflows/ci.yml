@@ -45,10 +45,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             name: macOS arm64
-          - os: macos-13
-            name: macOS x86_64
           - os: ubuntu-22.04
             name: Linux x86_64
 

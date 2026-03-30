@@ -13,13 +13,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             goos: darwin
             goarch: arm64
-            package: dmg
-          - os: macos-13
-            goos: darwin
-            goarch: amd64
             package: dmg
           - os: ubuntu-22.04
             goos: linux
