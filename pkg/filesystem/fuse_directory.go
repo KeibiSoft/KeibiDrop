@@ -60,8 +60,7 @@ func (d *Dir) Access(path string, _mask uint32) (errCode int) {
 
 	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
-	stat := &syscall.Stat_t{}
-	err := syscall.Stat(realPath, stat)
+	_, err := platStat(realPath)
 	if err != nil {
 		// logger.Warn("Access FAILED", "error", err, "realPath", realPath)
 		return int(convertOsErrToSyscallErrno("stat", err))
@@ -128,7 +127,7 @@ func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint6
 		createMode = 0o644 // Default if mode was 0
 	}
 
-	fd, err := syscall.Open(path, flags, createMode)
+	fd, err := platOpen(path, flags, createMode)
 	if err != nil {
 		logger.Error("Failed to create file", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
@@ -216,7 +215,7 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 		createMode = 0o644 // Default if mode was 0
 	}
 
-	fd, err := syscall.Open(localPath, flags, createMode)
+	fd, err := platOpen(localPath, flags, createMode)
 	if err != nil {
 		logger.Error("Failed to create file", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err))
@@ -376,7 +375,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 				sysFlags |= syscall.O_APPEND
 			}
 
-			fd, err := syscall.Open(localPath, sysFlags, 0)
+			fd, err := platOpen(localPath, sysFlags, 0)
 			if err != nil {
 				logger.Error("Failed to open local file", "error", err, "sysFlags", sysFlags)
 				return int(convertOsErrToSyscallErrno("open", err))
@@ -424,7 +423,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 			sysFlags |= syscall.O_TRUNC
 		}
 
-		fd, err := syscall.Open(localPath, sysFlags, 0644)
+		fd, err := platOpen(localPath, sysFlags, 0644)
 		if err != nil {
 			logger.Error("Failed to create file via OpenEx", "error", err)
 			return int(convertOsErrToSyscallErrno("open", err))
@@ -470,7 +469,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		return -winfuse.EIO
 	}
 
-	fd, err := syscall.Open(localPath, syscall.O_RDWR|syscall.O_CREAT, 0644)
+	fd, err := platOpen(localPath, syscall.O_RDWR|syscall.O_CREAT, 0644)
 	if err != nil {
 		logger.Error("Failed to create cache file", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err))
@@ -487,7 +486,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
 		if err != nil {
 			streamCancel()
-			syscall.Close(fd)
+			platClose(fd)
 			logger.Error("Failed to open stream pool", "error", err)
 			return -winfuse.EACCES
 		}
@@ -496,7 +495,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		if err != nil {
 			streamCancel()
 			pool.Close()
-			syscall.Close(fd)
+			platClose(fd)
 			logger.Error("Failed to open cache FD", "error", err)
 			return -winfuse.EIO
 		}
@@ -561,7 +560,7 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "fsync", "path", localPath)
 
-	err := syscall.Fsync(int(fh))
+	err := platFsync(int(fh))
 	if err == nil {
 		// d.logger.Warn("FUSE Fsync SUCCESS", "path", localPath, "fh", fh)
 		return 0
@@ -572,15 +571,15 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	if err == syscall.EBADF {
 		// d.logger.Warn("FUSE Fsync EBADF - attempting fallback open/fsync/close", "path", localPath, "fh", fh)
 
-		fd, openErr := syscall.Open(localPath, syscall.O_RDONLY, 0)
+		fd, openErr := platOpen(localPath, syscall.O_RDONLY, 0)
 		if openErr != nil {
 			// File might have been renamed/deleted - that's OK, data was already written
 			// d.logger.Warn("FUSE Fsync fallback open failed (file may have been renamed)", "path", localPath, "error", openErr)
 			return 0 // Return success - the data was committed before close
 		}
 
-		fsyncErr := syscall.Fsync(fd)
-		syscall.Close(fd)
+		fsyncErr := platFsync(fd)
+		platClose(fd)
 
 		if fsyncErr != nil {
 			// d.logger.Warn("FUSE Fsync fallback fsync failed", "path", localPath, "error", fsyncErr)
@@ -623,7 +622,6 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 	d.AfmLock.Lock()
 	defer d.AfmLock.Unlock()
 
-	stgo := syscall.Stat_t{}
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
 	// Check if the file is on remote, and add it to local tree.
@@ -631,8 +629,8 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 		remFile, okRemote := d.RemoteFiles[path]
 		if okRemote {
 			// File is on remote, let's see if it is also locally.
-			err := syscall.Lstat(cleanPath, &stgo)
-			if err != nil {
+			stgo, lstatErr := platLstat(cleanPath)
+			if lstatErr != nil {
 				// Ok file not locally. Just add it, and download it on Open.
 				copyFusestatFromFusestat(stat, remFile.stat)
 				d.AllFileMap[path] = remFile
@@ -643,8 +641,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 			// Ok, file is also locally present, but we already got the pointer to it.
 			// Let's see if the stats are ok.
 
-			auxStat := &winfuse.Stat_t{}
-			copyFusestatFromGostat(auxStat, &stgo)
+			auxStat := &stgo
 
 			if isModificationTimeNewer(auxStat, remFile.stat) {
 				if auxStat.Size > 0 {
@@ -665,20 +662,20 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 		}
 	}
 
-	err := syscall.Lstat(cleanPath, &stgo)
-	if err != nil {
+	stgo, lstatErr := platLstat(cleanPath)
+	if lstatErr != nil {
 		// ENOENT is normal — macOS probes hundreds of paths (Spotlight, fsevents,
 		// .DS_Store, etc.). Only log unexpected errors.
-		if !os.IsNotExist(err) {
-			logger.Error("Failed to lstat path", "clean-path", cleanPath, "error", err)
+		if !os.IsNotExist(lstatErr) {
+			logger.Error("Failed to lstat path", "clean-path", cleanPath, "error", lstatErr)
 		}
-		cerr := convertOsErrToSyscallErrno("lstat", err)
+		cerr := convertOsErrToSyscallErrno("lstat", lstatErr)
 		return int(cerr)
 	}
 
 	// Note: We do not use Lampert timestamps, last edit wins.
 
-	copyFusestatFromGostat(stat, &stgo)
+	*stat = stgo
 	gtAtim := func(fst, snd winfuse.Timespec) bool {
 		return fst.Time().After(snd.Time())
 	}
@@ -807,7 +804,7 @@ func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode 
 	d.logger.Info("FUSE mkdir", "path", path, "mode", mode, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	err := syscall.Mkdir(cleanPath, mode)
+	err := platMkdir(cleanPath, mode)
 	if err != nil {
 		logger.Error("Failed to mkdir", "path", cleanPath, "error", err)
 		return int(convertOsErrToSyscallErrno("mkdir", err))
@@ -815,10 +812,8 @@ func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode 
 
 	// Notify peer about the new directory (only for local changes).
 	if notifyPeer && d.OnLocalChange != nil {
-		stgo := syscall.Stat_t{}
-		if statErr := syscall.Lstat(cleanPath, &stgo); statErr == nil {
-			aux := &winfuse.Stat_t{}
-			copyFusestatFromGostat(aux, &stgo)
+		if stgo, statErr := platLstat(cleanPath); statErr == nil {
+			aux := &stgo
 			d.OnLocalChange(types.FileEvent{
 				Path:   path,
 				Action: types.AddDir,
@@ -839,7 +834,7 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "mknod", "path", path, "mode", mode, "dev", dev)
-	err := syscall.Mknod(path, mode, int(dev))
+	err := platMknod(path, mode, int(dev))
 	if err != nil {
 		logger.Error("Failed to mknor", "errro", err)
 		return int(convertOsErrToSyscallErrno("mknod", err))
@@ -946,7 +941,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	if isLocalPresent && localNewer {
 		// accessMode := flags & winfuse.O_ACCMODE
 		// logger.Info("Opening local file", "flags", flags, "accessMode", accessMode, "isReadOnly", accessMode == winfuse.O_RDONLY)
-		fd, err := syscall.Open(localPath, flags, 0)
+		fd, err := platOpen(localPath, flags, 0)
 		if err != nil {
 			logger.Error("Failed to open local file", "error", err)
 			return int(convertOsErrToSyscallErrno("open", err)), 0
@@ -992,7 +987,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 
 	// accessMode := flags & winfuse.O_ACCMODE
 	// logger.Info("Opening remote cache file", "flags", flags, "accessMode", accessMode, "isReadOnly", accessMode == winfuse.O_RDONLY)
-	fd, err := syscall.Open(localPath, flags, 0)
+	fd, err := platOpen(localPath, flags, 0)
 	if err != nil {
 		logger.Error("Failed to open path", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
@@ -1004,7 +999,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	pool, poolErr := NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
 	if poolErr != nil {
 		streamCancel()
-		syscall.Close(fd)
+		platClose(fd)
 		logger.Error("Failed to open stream pool", "error", poolErr)
 		return -winfuse.EACCES, 0
 	}
@@ -1013,7 +1008,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	if cacheErr != nil {
 		streamCancel()
 		pool.Close()
-		syscall.Close(fd)
+		platClose(fd)
 		logger.Error("Failed to open cache FD", "error", cacheErr)
 		return -winfuse.EIO, 0
 	}
@@ -1059,7 +1054,7 @@ func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
 	// d.logger.Info("FUSE opendir", "path", path)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "opendir", "path", path)
-	f, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+	f, err := platOpen(path, syscall.O_RDONLY|platO_DIRECTORY, 0)
 	if err != nil {
 		logger.Error("Failed to open dir", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
@@ -1148,7 +1143,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 	// 	"LocalNewer", f.LocalNewer)
 
 	if v == 0 {
-		err := syscall.Close(int(fh))
+		err := platClose(int(fh))
 		if err != nil {
 			logger.Error("Failed to close fd", "error", err)
 			return int(convertOsErrToSyscallErrno("release", err))
@@ -1160,12 +1155,11 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		needsNotify := (f.NotRemoteSynced || f.HadEdits) && d.OnLocalChange != nil
 
 		if needsNotify {
-			stgo := syscall.Stat_t{}
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-			err := syscall.Lstat(cleanPath, &stgo)
-			if err != nil {
-				logger.Error("lstat failed", "cleanPath", cleanPath, "error", err)
-				return int(convertOsErrToSyscallErrno("lstat", err))
+			stgo, lstatErr := platLstat(cleanPath)
+			if lstatErr != nil {
+				logger.Error("lstat failed", "cleanPath", cleanPath, "error", lstatErr)
+				return int(convertOsErrToSyscallErrno("lstat", lstatErr))
 			}
 
 			// logger.Info("Release lstat result", "path", path, "size", stgo.Size)
@@ -1183,42 +1177,31 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				// logger.Info("Deferring size=0 notification (fcopyfile or empty)", "path", path)
 				go func() {
 					time.Sleep(300 * time.Millisecond)
-					// If file was reopened for writing, that Release will handle it
 					if f.openFileCounter.CountOpenDescriptors() > 0 {
-						// logger.Info("File reopened, cancelling deferred notify", "path", path)
 						return
 					}
-					// Re-lstat: fcopyfile may have written data by now
-					var recheckStat syscall.Stat_t
-					if err := syscall.Lstat(cleanPath, &recheckStat); err != nil {
-						logger.Error("Deferred lstat failed", "path", path, "error", err)
+					recheckStat, recheckErr := platLstat(cleanPath)
+					if recheckErr != nil {
+						logger.Error("Deferred lstat failed", "path", path, "error", recheckErr)
 						return
 					}
-					// Notify with whatever size we find (0 for empty, >0 for fcopyfile)
-					aux := &winfuse.Stat_t{}
-					copyFusestatFromGostat(aux, &recheckStat)
 					d.OnLocalChange(types.FileEvent{
 						Path:   path,
 						Action: types.AddFile,
-						Attr:   types.StatToAttr(aux),
+						Attr:   types.StatToAttr(&recheckStat),
 					})
 					f.NotRemoteSynced = false
 					f.HadEdits = false
-					// logger.Info(">>> DEFERRED NOTIFIED PEER", "path", path, "size", recheckStat.Size)
 				}()
 			} else {
-				aux := &winfuse.Stat_t{}
-				copyFusestatFromGostat(aux, &stgo)
-
 				d.OnLocalChange(types.FileEvent{
 					Path:   path,
-					Action: types.AddFile, // Always AddFile - peer handles updates
-					Attr:   types.StatToAttr(aux),
+					Action: types.AddFile,
+					Attr:   types.StatToAttr(&stgo),
 				})
 
 				f.NotRemoteSynced = false
 				f.HadEdits = false
-				// logger.Info(">>> NOTIFIED PEER", "path", path, "size", stgo.Size)
 			}
 		}
 
@@ -1295,7 +1278,7 @@ func (d *Dir) Releasedir(path string, fh uint64) (errCode int) {
 	defer d.recoverPanic("Releasedir", &errCode)
 	// d.logger.Info("Releasedir", "path", path, "inode", d.Inode, "fh", fh)
 	logger := d.logger.With("method", "release-dir", "path", path, "fh", fh)
-	err := syscall.Close(int(fh))
+	err := platClose(int(fh))
 	if err != nil {
 		logger.Error("Failed to release", "error", err)
 		return int(convertOsErrToSyscallErrno("release", err))
@@ -1360,12 +1343,9 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	// Notify peer about the rename (only for local files, not remote-only).
 	if d.OnLocalChange != nil && !isRemote {
 		// Get stat of the renamed file.
-		stgo := syscall.Stat_t{}
 		var attr *keibidrop.Attr
-		if statErr := syscall.Lstat(cleanNewPath, &stgo); statErr == nil {
-			fuseStat := &winfuse.Stat_t{}
-			copyFusestatFromGostat(fuseStat, &stgo)
-			attr = types.StatToAttr(fuseStat)
+		if stgo, statErr := platLstat(cleanNewPath); statErr == nil {
+			attr = types.StatToAttr(&stgo)
 		}
 
 		d.OnLocalChange(types.FileEvent{
@@ -1458,13 +1438,12 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) (errCode int) {
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "statfs", "path", path, "rea-path", cleanPath)
 
-	stgo := syscall.Statfs_t{}
-	err := syscall_Statfs(cleanPath, &stgo)
-	if err != nil {
-		logger.Error("Failed to stat underlying folder", "error", err)
-		return int(convertOsErrToSyscallErrno("statfs", err))
+	stfs, sfsErr := platStatfs(cleanPath)
+	if sfsErr != nil {
+		logger.Error("Failed to stat underlying folder", "error", sfsErr)
+		return int(convertOsErrToSyscallErrno("statfs", sfsErr))
 	}
-	copyFusestatfsFromGostatfs(stat, &stgo)
+	*stat = stfs
 
 	// logger.Info("Statfs", "stat", stat, "inode", d.Inode)
 
@@ -1486,7 +1465,7 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "truncate", "path", path, "size", size, "fh", fh)
-	err := syscall.Truncate(path, size)
+	err := platTruncate(path, size)
 	if err != nil {
 		logger.Error("Faile to truncate", "error", err)
 		return int(convertOsErrToSyscallErrno("truncate", err))
@@ -1526,7 +1505,7 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 
 	// Try to unlink local file (may not exist if remote-only).
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	err := syscall.Unlink(cleanPath)
+	err := platUnlink(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// File doesn't exist locally.
@@ -1628,15 +1607,15 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		// slog.Warn("FCOPYFILE WORKAROUND", "path", path, "fh", fh, "offset", offset, "len", len(buff))
 		cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 		startOpen := time.Now()
-		fd, err := syscall.Open(cleanPath, syscall.O_RDWR, 0)
+		fd, err := platOpen(cleanPath, syscall.O_RDWR, 0)
 		openTime := time.Since(startOpen)
 		if err != nil {
 			slog.Error("FCOPYFILE OPEN FAILED", "error", err, "cleanPath", cleanPath)
 			return int(convertOsErrToSyscallErrno("open", err))
 		}
-		defer syscall.Close(fd)
+		defer platClose(fd)
 		startPw := time.Now()
-		n, err := syscall.Pwrite(fd, buff, offset)
+		n, err := platPwrite(fd, buff, offset)
 		pwTime := time.Since(startPw)
 		if err != nil {
 			slog.Error("FCOPYFILE PWRITE FAILED", "error", err, "fd", fd, "offset", offset, "len", len(buff))
@@ -1652,7 +1631,7 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	f.LocalNewer = true
 
 	startPwrite := time.Now()
-	n, err := syscall.Pwrite(int(fh), buff, offset)
+	n, err := platPwrite(int(fh), buff, offset)
 	pwriteTime := time.Since(startPwrite)
 
 	d.OpenMapLock.RUnlock() // Release AFTER Pwrite to prevent race with Release
@@ -1664,13 +1643,13 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		if errors.Is(err, syscall.EBADF) {
 			// slog.Warn("EBADF on mapped fd, falling back to fcopyfile workaround", "path", path, "fh", fh)
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-			fd, err2 := syscall.Open(cleanPath, syscall.O_RDWR, 0)
+			fd, err2 := platOpen(cleanPath, syscall.O_RDWR, 0)
 			if err2 != nil {
 				slog.Error("Fallback open failed", "error", err2, "cleanPath", cleanPath)
 				return int(convertOsErrToSyscallErrno("open", err2))
 			}
-			defer syscall.Close(fd)
-			n2, err2 := syscall.Pwrite(fd, buff, offset)
+			defer platClose(fd)
+			n2, err2 := platPwrite(fd, buff, offset)
 			if err2 != nil {
 				slog.Error("Fallback pwrite failed", "error", err2)
 				return int(convertOsErrToSyscallErrno("pwrite", err2))
@@ -1744,7 +1723,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		if bitmap != nil && bitmap.HasRange(offset, len(buff)) {
 			// Fast path: all chunks available locally.
 			// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "bitmap")
-			n, preadErr := syscall.Pread(int(fh), buff, offset)
+			n, preadErr := platPread(int(fh), buff, offset)
 			if preadErr != nil {
 				logger.Error("Local pread failed after bitmap hit", "error", preadErr)
 				return int(convertOsErrToSyscallErrno("pread", preadErr))
@@ -1850,20 +1829,20 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 	// Fallback: read directly from local file
 	// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "local")
-	n, err := syscall.Pread(int(fh), buff, offset)
+	n, err := platPread(int(fh), buff, offset)
 	if err != nil {
 		// EBADF fallback: fd may have been closed by fcopyfile race or fd reuse.
 		// Reopen the file and read from it.
 		if errors.Is(err, syscall.EBADF) {
 			// d.logger.Warn("EBADF on pread, falling back to reopen", "path", path, "fh", fh)
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-			fd, err2 := syscall.Open(cleanPath, syscall.O_RDONLY, 0)
+			fd, err2 := platOpen(cleanPath, syscall.O_RDONLY, 0)
 			if err2 != nil {
 				logger.Error("Fallback open failed", "error", err2, "cleanPath", cleanPath)
 				return int(convertOsErrToSyscallErrno("open", err2))
 			}
-			defer syscall.Close(fd)
-			n2, err2 := syscall.Pread(fd, buff, offset)
+			defer platClose(fd)
+			n2, err2 := platPread(fd, buff, offset)
 			if err2 != nil {
 				logger.Error("Fallback pread failed", "error", err2)
 				return int(convertOsErrToSyscallErrno("pread", err2))
@@ -1924,7 +1903,7 @@ func (d *Dir) Getxattr(path string, name string) (errCode int, data []byte) {
 	// macOS think the file isn't quarantined.
 	if name == "com.apple.quarantine" {
 		// logger.Debug("Getxattr blocked quarantine xattr")
-		return -int(syscall.ENODATA), nil
+		return -int(platENODATA), nil
 	}
 
 	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
