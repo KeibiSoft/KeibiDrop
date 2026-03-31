@@ -47,8 +47,17 @@ jobs:
         include:
           - os: macos-15
             name: macOS arm64
+            goarch: arm64
+          - os: macos-15
+            name: macOS x86_64 (cross-compile)
+            goarch: amd64
+            cross: true
           - os: ubuntu-22.04
             name: Linux x86_64
+            goarch: amd64
+          - os: windows-2022
+            name: Windows x86_64
+            goarch: amd64
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.name }})
@@ -75,27 +84,55 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get install -y libfuse3-dev protobuf-compiler
 
-      - name: Install protoc (macOS)
+      - name: Install macFUSE and protoc (macOS)
         if: runner.os == 'macOS'
-        run: brew install protobuf
+        run: |
+          curl -L -o /tmp/macfuse.dmg "https://github.com/macfuse/macfuse/releases/download/macfuse-5.1.3/macfuse-5.1.3.dmg"
+          hdiutil attach /tmp/macfuse.dmg -nobrowse -quiet
+          sudo installer -pkg "/Volumes/macFUSE/Install macFUSE.pkg" -target /
+          hdiutil detach "/Volumes/macFUSE" -quiet
+          brew install protobuf
+
+      - name: Install WinFsp and protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install winfsp protoc -y
+          $winfspDir = "C:\Program Files (x86)\WinFsp"
+          echo "CPATH=$winfspDir\inc\fuse" >> $env:GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$winfspDir\lib" >> $env:GITHUB_ENV
 
       - name: Install protoc Go plugins
+        shell: bash
         run: make install-proto
 
       - name: Build Rust UI (includes protoc + Go static lib)
+        if: runner.os != 'Windows' && matrix.cross != true
         run: make build-rust
 
       - name: Build CLI
-        run: make build-cli
+        shell: bash
+        run: GOARCH=${{ matrix.goarch }} make build-cli
 
       - name: Build kd
-        run: make build-kd
+        shell: bash
+        run: GOARCH=${{ matrix.goarch }} make build-kd
 
-      - name: Upload artifacts
+      - name: Upload artifacts (Unix)
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: keibidrop-${{ runner.os }}-${{ runner.arch }}
+          name: keibidrop-${{ runner.os }}-${{ matrix.goarch }}
           path: |
             rust/target/release/keibidrop-rust
             keibidrop-cli
             kd
+
+      - name: Upload artifacts (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: keibidrop-${{ runner.os }}-${{ matrix.goarch }}
+          path: |
+            keibidrop-cli.exe
+            kd.exe

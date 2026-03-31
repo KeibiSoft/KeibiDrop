@@ -17,10 +17,19 @@ jobs:
             goos: darwin
             goarch: arm64
             package: dmg
+          - os: macos-15
+            goos: darwin
+            goarch: amd64
+            package: tar
+            cross: true
           - os: ubuntu-22.04
             goos: linux
             goarch: amd64
             package: deb
+          - os: windows-2022
+            goos: windows
+            goarch: amd64
+            package: zip
 
     runs-on: ${{ matrix.os }}
     name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
@@ -49,26 +58,56 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get install -y libfuse3-dev protobuf-compiler
 
-      - name: Install protoc (macOS)
+      - name: Install macFUSE and protoc (macOS)
         if: runner.os == 'macOS'
-        run: brew install protobuf
+        run: |
+          curl -L -o /tmp/macfuse.dmg "https://github.com/macfuse/macfuse/releases/download/macfuse-5.1.3/macfuse-5.1.3.dmg"
+          hdiutil attach /tmp/macfuse.dmg -nobrowse -quiet
+          sudo installer -pkg "/Volumes/macFUSE/Install macFUSE.pkg" -target /
+          hdiutil detach "/Volumes/macFUSE" -quiet
+          brew install protobuf
+
+      - name: Install WinFsp and protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install winfsp protoc -y
+          $winfspDir = "C:\Program Files (x86)\WinFsp"
+          echo "CPATH=$winfspDir\inc\fuse" >> $env:GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$winfspDir\lib" >> $env:GITHUB_ENV
 
       - name: Install protoc Go plugins
+        shell: bash
         run: make install-proto
 
       - name: Install nfpm (Linux)
         if: runner.os == 'Linux'
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 
-      - name: Build all binaries
-        run: make build-all
+      - name: Build Rust UI (native only)
+        if: runner.os != 'Windows' && matrix.cross != true
+        run: make build-rust
 
-      - name: Package .dmg (macOS)
+      - name: Build CLI and kd
+        shell: bash
+        run: GOARCH=${{ matrix.goarch }} make build-cli build-kd
+
+      - name: Package .dmg (macOS arm64)
         if: matrix.package == 'dmg'
         run: make package-macos
 
       - name: Package .tar.gz
+        if: matrix.package != 'zip'
+        shell: bash
         run: make package-tar
+
+      - name: Package .zip (Windows)
+        if: matrix.package == 'zip'
+        shell: bash
+        run: |
+          mkdir -p dist
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
+          zip -j "dist/keibidrop-${VERSION}-windows-amd64.zip" keibidrop-cli.exe kd.exe
 
       - name: Package .deb (Linux)
         if: matrix.package == 'deb'
@@ -99,9 +138,8 @@ jobs:
       - name: Collect release files
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "SHA256SUMS" \) -exec cp {} release/ \;
-          cd release && cat SHA256SUMS > combined-SHA256SUMS || true
-          cd release && shasum -a 256 *.dmg *.deb *.tar.gz > SHA256SUMS 2>/dev/null || true
+          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "SHA256SUMS" \) -exec cp {} release/ \;
+          cd release && shasum -a 256 *.dmg *.deb *.tar.gz *.zip > SHA256SUMS 2>/dev/null || true
           ls -la release/
 
       - name: Create GitHub Release

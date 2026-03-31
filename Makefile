@@ -58,7 +58,7 @@ $(DIST):
 	mkdir -p $(DIST)
 
 # macOS .dmg — contains all three binaries + README
-package-macos: build-all $(DIST)
+package-macos: $(DIST)
 	@echo "Packaging macOS .dmg for $(GOARCH)..."
 	mkdir -p $(DIST)/dmg-staging
 	cp rust/target/release/keibidrop-rust $(DIST)/dmg-staging/keibidrop
@@ -74,7 +74,7 @@ package-macos: build-all $(DIST)
 	@echo "Created $(DIST)/keibidrop-$(VERSION)-darwin-$(GOARCH).dmg"
 
 # Linux .tar.gz — universal fallback
-package-tar: build-all $(DIST)
+package-tar: $(DIST)
 	@echo "Packaging .tar.gz for $(GOOS)-$(GOARCH)..."
 	mkdir -p $(DIST)/tar-staging/keibidrop-$(VERSION)
 	cp rust/target/release/keibidrop-rust $(DIST)/tar-staging/keibidrop-$(VERSION)/keibidrop
@@ -86,7 +86,7 @@ package-tar: build-all $(DIST)
 	@echo "Created $(DIST)/keibidrop-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz"
 
 # Linux .deb — requires nfpm (go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest)
-package-deb: build-all $(DIST)
+package-deb: $(DIST)
 	@echo "Packaging .deb for $(GOARCH)..."
 	VERSION=$(VERSION) GOARCH=$(GOARCH) nfpm package -p deb -f nfpm.yaml -t $(DIST)/
 	@echo "Created .deb in $(DIST)/"
