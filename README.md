@@ -56,11 +56,14 @@ cd rust && cargo build --release
 4. One peer creates a room, the other joins.
 5. Share files.
 
-In FUSE mode, the peer's files appear as a virtual folder you can browse in Finder or your file manager. In no-FUSE mode, use the UI or CLI to add/pull files.
+**KEIBI**DROP has two modes. See [docs/MODES.md](./docs/MODES.md) for the full comparison.
 
-**Which mode to use?**
-- Transferring a few large files → no-FUSE (faster, simpler)
-- Working on shared files in real-time (edit, save, see changes) → FUSE
+| | Direct Transfer | Virtual Folder (FUSE) |
+|--|---|---|
+| Speed (1 GB) | ~550 MB/s | ~250 MB/s |
+| Setup | Nothing extra | Install FUSE |
+| Sync | Manual (add/pull) | Automatic |
+| Best for | Sending files | Working on shared files |
 
 ---
 

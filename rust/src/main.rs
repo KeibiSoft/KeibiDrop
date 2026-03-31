@@ -18,7 +18,12 @@ slint::include_modules!(); // this loads ui.slint as MainWindow
 
 /// Returns true if a filename should be hidden from the UI.
 fn is_hidden_file(name: &str) -> bool {
-    name.starts_with('.') || name == ".fsuuid" || name == ".DS_Store" || name == "Thumbs.db"
+    name.starts_with('.')
+        || name == ".fsuuid"
+        || name == ".DS_Store"
+        || name == "Thumbs.db"
+        || name.contains(".fuse_hidden")
+        || name.contains("/.fseventsd")
 }
 
 /// Per-file download state tracked on the Rust side.

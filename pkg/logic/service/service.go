@@ -68,6 +68,11 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		return &bindings.NotifyResponse{Status: "ok"}, nil
 	}
 
+	// Drop macFUSE internal files — ephemeral, never meant to be synced.
+	if strings.Contains(req.Path, ".fuse_hidden") || strings.Contains(req.Path, "/.fseventsd") {
+		return &bindings.NotifyResponse{}, nil
+	}
+
 	if kd.FS == nil && kd.SyncTracker == nil {
 		logger.Warn("Filesystem not mounted")
 		return nil, ErrGRPCNotMounted
