@@ -102,6 +102,69 @@ clean-dist:
 clean: clean-dist
 	rm -f keibidrop-cli kd libkeibidrop.a libkeibidrop.h
 
+# ── Run (dev) ─────────────────────────────────────────────
+# Alice: ports 26001/26002    Bob: ports 26003/26004
+# Relay: http://localhost:54321 (start your own relay first)
+
+RELAY   ?= http://localhost:54321
+SCRIPTS := scripts/dev
+
+# Rust UI
+run-alice:          ; NO_FUSE=1  KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_rust_ui_nofuse.sh
+run-alice-fuse:     ; NO_FUSE=   KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_rust_ui_nofuse.sh
+run-bob:            ; NO_FUSE=1  KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_rust_ui.sh
+run-bob-fuse:       ; NO_FUSE=   KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_rust_ui.sh
+
+# Go CLI
+run-cli-alice:      ; NO_FUSE=1  KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_cli.sh
+run-cli-alice-fuse: ; NO_FUSE=   KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_cli.sh
+run-cli-bob:        ; NO_FUSE=1  KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_peer_cli.sh
+run-cli-bob-fuse:   ; NO_FUSE=   KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_peer_cli.sh
+
+# kd daemon (agent)
+run-kd-alice:       ; KD_NO_FUSE=1 KD_RELAY=$(RELAY) KD_INBOUND_PORT=26001 KD_OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_kd_alice.sh
+run-kd-bob:         ; KD_NO_FUSE=1 KD_RELAY=$(RELAY) KD_INBOUND_PORT=26003 KD_OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_kd_bob.sh
+
+# ── Help ──────────────────────────────────────────────────
+
+help:
+	@echo "Build:"
+	@echo "  make build-cli              Build interactive CLI"
+	@echo "  make build-kd               Build agent daemon"
+	@echo "  make build-rust             Build Rust/Slint UI (includes protoc + Go static lib)"
+	@echo "  make build-all              Build everything"
+	@echo ""
+	@echo "Run (dev):                    Alice=26001/26002  Bob=26003/26004"
+	@echo "  make run-alice              Rust UI, Alice, no-FUSE"
+	@echo "  make run-alice-fuse         Rust UI, Alice, FUSE"
+	@echo "  make run-bob                Rust UI, Bob, no-FUSE"
+	@echo "  make run-bob-fuse           Rust UI, Bob, FUSE"
+	@echo "  make run-cli-alice          Go CLI, Alice, no-FUSE"
+	@echo "  make run-cli-alice-fuse     Go CLI, Alice, FUSE"
+	@echo "  make run-cli-bob            Go CLI, Bob, no-FUSE"
+	@echo "  make run-cli-bob-fuse       Go CLI, Bob, FUSE"
+	@echo "  make run-kd-alice           kd daemon, Alice"
+	@echo "  make run-kd-bob             kd daemon, Bob"
+	@echo ""
+	@echo "Test & Lint:"
+	@echo "  make test                   Run all integration tests"
+	@echo "  make lint                   Run golangci-lint"
+	@echo "  make sec                    Run gosec security scanner"
+	@echo ""
+	@echo "Packaging:"
+	@echo "  make package-macos          .dmg for macOS"
+	@echo "  make package-tar            .tar.gz archive"
+	@echo "  make package-deb            .deb package (needs nfpm)"
+	@echo "  make checksums              SHA256SUMS for dist/"
+	@echo ""
+	@echo "Other:"
+	@echo "  make protoc                 Regenerate gRPC stubs"
+	@echo "  make rust-bindings          Regenerate Rust FFI bindings"
+	@echo "  make clean                  Remove build artifacts"
+
 .PHONY: build-cli build-kd build-static-rust-bridge build-rust build-all \
         test lint sec install-proto protoc rust-bindings slint-preview \
-        package-macos package-tar package-deb checksums clean-dist clean
+        package-macos package-tar package-deb checksums clean-dist clean \
+        run-alice run-alice-fuse run-bob run-bob-fuse \
+        run-cli-alice run-cli-alice-fuse run-cli-bob run-cli-bob-fuse \
+        run-kd-alice run-kd-bob help

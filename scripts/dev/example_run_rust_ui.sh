@@ -3,7 +3,7 @@
 # ABOUTME: Uses project-relative paths so it works on any machine.
 # KEIBIDROP_RELAY="https://keibidroprelay.keibisoft.com/" \
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 mkdir -p "$ROOT/SaveBob" "$ROOT/MountBob"
 LOG_FILE="Log_Bob.txt" \
   TO_SAVE_PATH="$ROOT/SaveBob" \
