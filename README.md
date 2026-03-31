@@ -60,10 +60,10 @@ cd rust && cargo build --release
 
 | | Direct Transfer | Virtual Folder (FUSE) |
 |--|---|---|
-| Speed (1 GB) | ~550 MB/s | ~250 MB/s |
+| Throughput | ~550 MB/s | ~250 MB/s |
 | Setup | Nothing extra | Install FUSE |
 | Sync | Manual (add/pull) | Automatic |
-| Best for | Sending files | Working on shared files |
+| Use case | Sending files | Working on shared files |
 
 ---
 
