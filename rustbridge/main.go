@@ -246,6 +246,33 @@ func KD_Stop() {
 	}
 }
 
+//export KD_CancelDownload
+func KD_CancelDownload(remoteName *C.char) C.int {
+	if kd == nil {
+		setLastError(fmt.Errorf("not initialized"))
+		return -1
+	}
+	name := C.GoString(remoteName)
+	if err := kd.CancelDownload(name); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+//export KD_GetDownloadProgress
+func KD_GetDownloadProgress(remoteName *C.char) C.int {
+	if kd == nil {
+		return -1
+	}
+	name := C.GoString(remoteName)
+	p := kd.GetDownloadProgress(name)
+	if p < 0 {
+		return -1
+	}
+	return C.int(p * 100) // 0-100 percentage
+}
+
 //export KD_PrintBanner
 func KD_PrintBanner() {
 	common.PrintBanner()

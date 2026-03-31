@@ -8,6 +8,7 @@ export struct FileInfo {
     uploading: bool,      // peer is downloading this file from me
     progress: float,      // 0.0 to 1.0
     saved: bool,
+    paused: bool,         // download was paused (can resume)
     file-type: string,    // "pdf", "image", "video", "audio", "code", "archive", "text", "other"
     is-local: bool,       // true = my file (shared by me), false = remote file (from peer)
 }
@@ -439,9 +440,11 @@ component FileCard inherits Rectangle {
     in property <float> progress: 0.0;
     in property <bool> saved: false;
     in property <bool> is-local: false;
+    in property <bool> paused: false;
 
     callback save-clicked;
     callback open-clicked;
+    callback pause-clicked;
 
     width: 250px;
     height: 180px;
@@ -547,17 +550,27 @@ component FileCard inherits Rectangle {
         }
 
         OutlineButton {
+            width: 60px;
+            height: 28px;
+            text: root.paused ? "Resume" : "Pause";
+            visible: root.downloading || root.paused;
+            clicked => { root.pause-clicked(); }
+        }
+
+        OutlineButton {
             width: 80px;
             height: 28px;
             // "Open" is blue accent, "Save" is white/grey
             accent: root.is-local || root.saved;
             text: root.downloading ? Math.round(root.progress * 100) + "%"
+                : root.paused ? Math.round(root.progress * 100) + "%"
                 : root.is-local ? "Open"
                 : root.saved ? "Open"
                 : "Save";
-            enabled: !root.downloading;
+            enabled: !root.downloading || root.paused;
             clicked => {
-                if (root.is-local || root.saved) { root.open-clicked(); }
+                if (root.paused) { root.save-clicked(); }
+                else if (root.is-local || root.saved) { root.open-clicked(); }
                 else { root.save-clicked(); }
             }
         }
@@ -620,6 +633,7 @@ export component MainWindow inherits Window {
     callback add_file_pressed();
     callback save_file(string);
     callback open_file(string);
+    callback pause_file(string);
     callback save_all_pressed();
     callback exit_pressed();
 
@@ -935,8 +949,10 @@ export component MainWindow inherits Window {
                 progress: file.progress;
                 saved: file.saved;
                 is-local: file.is-local;
+                paused: file.paused;
                 save-clicked => { root.save_file(file.name) }
                 open-clicked => { root.open_file(file.name) }
+                pause-clicked => { root.pause_file(file.name) }
             }
         }
     }

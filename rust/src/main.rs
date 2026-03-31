@@ -27,6 +27,7 @@ struct DownloadInfo {
     expected_size: i64,
     downloading: bool,
     saved: bool,
+    paused: bool,
 }
 
 /// Determine file type category from filename extension.
@@ -86,7 +87,7 @@ fn start_file_watcher(
                     let ftype = file_type_from_name(&name);
 
                     // Check download state
-                    let (downloading, progress, saved) = if let Some(info) = dl.get(&name) {
+                    let (downloading, progress, saved, paused) = if let Some(info) = dl.get(&name) {
                         if info.downloading {
                             // Poll local file size for progress
                             let local_size = std::fs::metadata(&info.local_path)
@@ -98,15 +99,21 @@ fn start_file_watcher(
                                 1.0
                             };
                             let prog = (local_size / expected).min(1.0);
-                            (true, prog as f32, false)
+                            (true, prog as f32, false, false)
+                        } else if info.paused {
+                            // Paused: show progress from bitmap via FFI
+                            let c_name = CString::new(name.clone()).unwrap();
+                            let prog = bindings::KD_GetDownloadProgress(c_name.into_raw());
+                            let p = if prog >= 0 { prog as f32 / 100.0 } else { 0.0 };
+                            (false, p, false, true)
                         } else {
-                            (false, if info.saved { 1.0 } else { 0.0 }, info.saved)
+                            (false, if info.saved { 1.0 } else { 0.0 }, info.saved, false)
                         }
                     } else {
                         // Check if file already exists in save path
                         let local = format!("{}/{}", save_path, name);
                         let already_saved = Path::new(&local).exists();
-                        (false, if already_saved { 1.0 } else { 0.0 }, already_saved)
+                        (false, if already_saved { 1.0 } else { 0.0 }, already_saved, false)
                     };
 
                     files.push(FileInfo {
@@ -116,6 +123,7 @@ fn start_file_watcher(
                         uploading: false, // TODO: wire from Go events
                         progress,
                         saved,
+                        paused,
                         file_type: slint::SharedString::from(ftype),
                         is_local: false,
                     });
@@ -150,6 +158,7 @@ fn start_file_watcher(
                         uploading: false,
                         progress: 1.0,
                         saved: true, // local file = already on disk
+                        paused: false,
                         file_type: slint::SharedString::from(ftype),
                         is_local: true,
                     });
@@ -594,6 +603,7 @@ fn main() {
                         expected_size: size,
                         downloading: true,
                         saved: false,
+                        paused: false,
                     },
                 );
             }
@@ -619,6 +629,52 @@ fn main() {
                     }
                 }
             });
+        });
+
+        // Handle Pause/Resume: cancel active download or re-trigger save
+        let downloads_pause = downloads.clone();
+        let save_path_pause = to_save.clone();
+        app.on_pause_file(move |filename| {
+            let name = filename.to_string();
+            let mut dl = downloads_pause.lock().unwrap();
+            if let Some(info) = dl.get_mut(&name) {
+                if info.downloading {
+                    // Pause: cancel the active download
+                    info.downloading = false;
+                    info.paused = true;
+                    let c_name = CString::new(name.clone()).unwrap();
+                    bindings::KD_CancelDownload(c_name.into_raw());
+                    println!("Paused download: {}", name);
+                } else if info.paused {
+                    // Resume: re-trigger download (PullFile resumes from bitmap)
+                    info.downloading = true;
+                    info.paused = false;
+                    let local_path = format!("{}/{}", save_path_pause, name);
+                    let dl_clone = downloads_pause.clone();
+                    let name_clone = name.clone();
+                    std::thread::spawn(move || {
+                        let c_name = CString::new(name_clone.clone()).unwrap();
+                        let c_path = CString::new(local_path).unwrap();
+                        let res = bindings::KD_SaveFileByName(
+                            c_name.into_raw(),
+                            c_path.into_raw(),
+                        );
+                        let mut dl = dl_clone.lock().unwrap();
+                        if let Some(info) = dl.get_mut(&name_clone) {
+                            info.downloading = false;
+                            info.paused = false;
+                            if res == 0 {
+                                info.saved = true;
+                                println!("Download complete (resumed): {}", name_clone);
+                            } else {
+                                let err = get_last_error();
+                                eprintln!("Download failed for {}: {}", name_clone, err);
+                            }
+                        }
+                    });
+                    println!("Resumed download: {}", name);
+                }
+            }
         });
 
         // Handle Open File: open saved file with system handler

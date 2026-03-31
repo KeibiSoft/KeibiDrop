@@ -2021,20 +2021,38 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 	realPath := f.RealPathOfFile
 	fileSize := f.Bitmap.FileSize()
 
+	// Try resuming from a persisted bitmap.
+	bmPath := BitmapPath(realPath)
+	if info, err := os.Stat(realPath); err == nil && info.Size() == fileSize {
+		if bm, loadErr := LoadChunkBitmap(bmPath, fileSize); loadErr == nil {
+			f.Bitmap = bm
+			logger.Info("Prefetch: resuming from bitmap", "progress", bm.Progress(), "have", bm.Have(), "total", bm.Total())
+		}
+	}
+
+	if f.Bitmap.IsComplete() {
+		os.Remove(bmPath)
+		f.NotLocalSynced = false
+		return
+	}
+
 	// Pre-allocate local cache file to full size so pwrite at any offset works.
 	if err := os.MkdirAll(filepath.Dir(realPath), 0o755); err != nil {
 		logger.Warn("Prefetch: failed to create dirs", "path", realPath, "error", err)
 	}
-	if err := os.Truncate(realPath, fileSize); err != nil {
-		lf, createErr := os.Create(realPath)
-		if createErr != nil {
-			logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
-			return
+	if _, statErr := os.Stat(realPath); os.IsNotExist(statErr) {
+		// Only create/truncate if file doesn't exist (resume keeps existing data).
+		if err := os.Truncate(realPath, fileSize); err != nil {
+			lf, createErr := os.Create(realPath)
+			if createErr != nil {
+				logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
+				return
+			}
+			if truncErr := lf.Truncate(fileSize); truncErr != nil {
+				logger.Warn("Prefetch: failed to truncate cache file", "path", realPath, "error", truncErr)
+			}
+			lf.Close()
 		}
-		if truncErr := lf.Truncate(fileSize); truncErr != nil {
-			logger.Warn("Prefetch: failed to truncate cache file", "path", realPath, "error", truncErr)
-		}
-		lf.Close()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2073,9 +2091,17 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		return
 	}
 
-	receiver, err := fsp.StreamFile(ctx, path, 0)
+	// Resume from the first missing chunk instead of offset 0.
+	startChunk := bitmap.NextMissing(0)
+	if startChunk < 0 {
+		return
+	}
+	startOffset := uint64(startChunk) * uint64(bitmap.ChunkSizeBytes())
+
+	receiver, err := fsp.StreamFile(ctx, path, startOffset)
 	if err != nil {
 		logger.Warn("Prefetch: failed to start StreamFile", "error", err)
+		_ = bitmap.Save(BitmapPath(realPath))
 		return
 	}
 
@@ -2112,6 +2138,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		select {
 		case <-ctx.Done():
 			logger.Info("Prefetch cancelled", "progress", bitmap.Progress())
+			_ = bitmap.Save(BitmapPath(realPath))
 			return
 		default:
 		}
@@ -2122,10 +2149,11 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 				break // Stream complete.
 			}
 			logger.Warn("Prefetch: recv failed", "error", recvErr)
+			_ = bitmap.Save(BitmapPath(realPath))
 			break
 		}
 
-		chunkIdx := int(offset / uint64(ChunkSize))
+		chunkIdx := int(offset / uint64(bitmap.ChunkSizeBytes()))
 		if bitmap.Has(chunkIdx) {
 			continue // On-demand FUSE Read already got this chunk.
 		}
@@ -2143,8 +2171,10 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	if bitmap.IsComplete() {
 		logger.Info("Prefetch complete — all chunks downloaded", "fileSize", bitmap.FileSize())
 		f.NotLocalSynced = false
+		os.Remove(BitmapPath(realPath))
 	} else {
 		logger.Info("Prefetch finished with gaps", "progress", bitmap.Progress())
+		_ = bitmap.Save(BitmapPath(realPath))
 	}
 }
 

@@ -90,6 +90,10 @@ type KeibiDrop struct {
 	// Notification queue — bounded channel to avoid spawning 600+ goroutines
 	// during large clones. A single worker drains and sends sequentially.
 	notifyCh chan *bindings.NotifyRequest
+
+	// Active downloads registry for pause/cancel support.
+	activeDownloads   map[string]context.CancelFunc
+	activeDownloadsMu sync.Mutex
 }
 
 type TaskSignal int
@@ -166,6 +170,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		filesystemReady: make(chan struct{}),
 		serverReadyMu:   sync.Mutex{},
 		SyncTracker:     synctracker.NewSyncTracker(),
+		activeDownloads: make(map[string]context.CancelFunc),
 	}
 
 	return kd, nil
