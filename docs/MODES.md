@@ -113,7 +113,7 @@ Two directories are created if they don't exist: the save folder and the mount f
 
 A log file is written to `~/Library/Logs/KeibiDrop/keibidrop.log` on macOS or `~/.local/share/keibidrop/keibidrop.log` on Linux.
 
-One TCP port (default 26431) is opened for inbound peer connections over IPv6. No other ports. No background processes after you close the app.
+Two TCP ports are used over IPv6: one inbound (default 26431) for receiving connections from your peer, one outbound (default 26432) for connecting to them. The connection is full-duplex. No background processes after you close the app.
 
 For FUSE mode only: macOS may need `user_allow_other` added to `/etc/fuse.conf` (one-time). macFUSE or fuse3 must be installed separately. Linux may need the same line uncommented in `/etc/fuse.conf`.
 
