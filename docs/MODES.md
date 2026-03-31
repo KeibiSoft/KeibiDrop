@@ -87,17 +87,20 @@ To clean up, delete the save folder contents when you no longer need them. `.kdb
 
 ## File ownership and safety
 
-**KEIBI**DROP reads your original files but never modifies them. When your peer downloads a file, they get their own independent copy. Both peers always have separate copies. If Alice edits a file and Bob edits the same file, both edits exist on their own machines. Sync notifications use last-write-wins, but no local file is overwritten without the user doing something.
+When you add a file (drag into the mount, or select via the UI), it gets copied into your save folder. The original stays where it was, untouched. Your peer sees the copy from your save folder and downloads their own copy into theirs.
 
-In FUSE mode, the mount point is sandboxed. You cannot navigate above it (`cd ..` stops at the mount root). The mount shows the peer's files. The save folder holds your local copies. The original file on the sender's machine is read-only from the tool's perspective.
+Both peers always have separate copies. If Alice edits a file and Bob edits the same file, both edits exist on their own machines. Sync notifications use last-write-wins, but no local file is overwritten without the user doing something.
+
+In FUSE mode, the mount point is sandboxed. You cannot navigate above it (`cd ..` stops at the mount root).
 
 ```
-Alice's machine:
-  /home/alice/project/report.pdf    <- original, read by KeibiDrop, never modified
+Alice drops report.pdf into the mount:
+  /home/alice/project/report.pdf       <- original, untouched
+  ~/KeibiDrop/Received/report.pdf      <- copy in Alice's save folder, served to peer
 
-Bob's machine:
-  ~/KeibiDrop/Mount/report.pdf      <- virtual, reads from Alice on demand
-  ~/KeibiDrop/Received/report.pdf   <- local cache, persists after disconnect
+Bob downloads it:
+  ~/KeibiDrop/Mount/report.pdf         <- virtual, reads from Alice on demand
+  ~/KeibiDrop/Received/report.pdf      <- Bob's own copy, persists after disconnect
 ```
 
 ---
