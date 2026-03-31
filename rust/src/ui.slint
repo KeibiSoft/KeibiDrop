@@ -583,9 +583,9 @@ export component MainWindow inherits Window {
     title: "KEIBIDROP";
     default-font-family: "Inter";
     preferred-width: 1144px;
-    preferred-height: 729px;
+    preferred-height: 760px;
     min-width: 1144px;
-    min-height: 729px;
+    min-height: 760px;
     background: #1f1f1f;
 
     // Data bindings from Rust
@@ -620,6 +620,7 @@ export component MainWindow inherits Window {
     // FUSE mode toggle (can be changed before connecting)
     in-out property<bool> fuse_mode: false;
     in property<bool> fuse_available: false;
+    in property<string> fuse_install_hint: "Install macFUSE: macfuse.github.io";
     callback fuse_mode_toggled(bool);
 
     // Callbacks
@@ -775,8 +776,8 @@ export component MainWindow inherits Window {
         Rectangle {
             x: snd.x + snd.width + 38px;
             y: snd.y + snd.height - 34px + 88px;
-            width: 300px;
-            height: 24px;
+            width: 350px;
+            height: root.fuse_available ? 24px : 40px;
 
             Rectangle {
                 x: 0;
@@ -809,34 +810,37 @@ export component MainWindow inherits Window {
 
             Text {
                 x: 44px;
+                y: 0;
+                height: 24px;
                 text: root.fuse_available
-                    ? (root.fuse_mode ? "FUSE mode (virtual folder)" : "No-FUSE mode (faster transfers)")
-                    : "FUSE not available";
-                color: root.fuse_available ? #ccc : #666;
+                    ? (root.fuse_mode ? "Virtual folder (files sync automatically)" : "Direct transfer (select files to send)")
+                    : "Virtual folder not available";
+                color: root.fuse_available ? #ccc : #888;
                 font-size: 12px;
                 vertical-alignment: center;
             }
+
+            // Install hint when FUSE not detected
+            if !root.fuse_available: Text {
+                x: 44px;
+                y: 18px;
+                text: root.fuse_install_hint;
+                color: #555;
+                font-size: 11px;
+            }
         }
 
-        // Cancel button - visible while creating or joining
-        if root.room_action != 0: OutlineButton {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 130px;
-            text: "Cancel";
-            clicked => { root.cancel_connect_pressed() }
-        }
-
-        // Status / error message below buttons
+        // Status / error message below FUSE toggle
         if root.status_message != "" && root.error_message == "": Text {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 132px;
+            y: snd.y + snd.height - 34px + 118px;
             text: root.status_message;
             color: #94a3b8;
-            font-size: 13px;
+            font-size: 12px;
         }
         if root.error_message != "": Rectangle {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 132px;
+            y: snd.y + snd.height - 34px + 118px;
             width: 161px;
             height: 40px;
             border-radius: 8px;
@@ -854,6 +858,14 @@ export component MainWindow inherits Window {
                 vertical-alignment: center;
                 overflow: elide;
             }
+        }
+
+        // Cancel button - visible while creating or joining, below status
+        if root.room_action != 0: OutlineButton {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 136px;
+            text: "Cancel";
+            clicked => { root.cancel_connect_pressed() }
         }
 
         // Version text bottom-right

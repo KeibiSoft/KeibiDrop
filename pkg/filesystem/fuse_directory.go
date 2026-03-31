@@ -1164,31 +1164,47 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 
 			// logger.Info("Release lstat result", "path", path, "size", stgo.Size)
 
-			if stgo.Size == 0 && !f.HadEdits {
-				// Size=0 with no writes: could be either:
-				// 1. macOS Finder drag: uses fcopyfile which bypasses FUSE Write.
-				//    Data lands on disk but we never see it. No second Release comes.
-				// 2. Genuinely empty file: touch, .gitkeep, etc.
-				//
-				// Defer notification by 300ms. After the delay:
-				// - If file was reopened (open→write→release cycle), skip (that Release handles it)
-				// - If file grew on disk (fcopyfile completed), notify with real size
-				// - If still size=0 (genuine empty file), notify with size=0
-				// logger.Info("Deferring size=0 notification (fcopyfile or empty)", "path", path)
+			if !f.HadEdits {
+				// No FUSE Write calls seen. Data arrived via fcopyfile (Finder
+				// drag-and-drop) which bypasses FUSE Write entirely. The lstat
+				// size may be partial because fcopyfile is still flushing.
+				// Defer notification with exponential back-off until the file
+				// size stabilizes (two consecutive lstats return the same size).
 				go func() {
-					time.Sleep(300 * time.Millisecond)
-					if f.openFileCounter.CountOpenDescriptors() > 0 {
-						return
+					prevSize := stgo.Size
+					for attempt := 0; attempt < 10; attempt++ {
+						delay := time.Duration(200+attempt*100) * time.Millisecond
+						time.Sleep(delay)
+						if f.openFileCounter.CountOpenDescriptors() > 0 {
+							return // File reopened, that Release will handle it.
+						}
+						recheckStat, recheckErr := platLstat(cleanPath)
+						if recheckErr != nil {
+							logger.Error("Deferred lstat failed", "path", path, "error", recheckErr)
+							return
+						}
+						if recheckStat.Size == prevSize {
+							// Size stabilized. Send notification.
+							d.OnLocalChange(types.FileEvent{
+								Path:   path,
+								Action: types.AddFile,
+								Attr:   types.StatToAttr(&recheckStat),
+							})
+							f.NotRemoteSynced = false
+							f.HadEdits = false
+							return
+						}
+						prevSize = recheckStat.Size
 					}
-					recheckStat, recheckErr := platLstat(cleanPath)
-					if recheckErr != nil {
-						logger.Error("Deferred lstat failed", "path", path, "error", recheckErr)
+					// Timed out waiting for stable size. Send what we have.
+					finalStat, finalErr := platLstat(cleanPath)
+					if finalErr != nil {
 						return
 					}
 					d.OnLocalChange(types.FileEvent{
 						Path:   path,
 						Action: types.AddFile,
-						Attr:   types.StatToAttr(&recheckStat),
+						Attr:   types.StatToAttr(&finalStat),
 					})
 					f.NotRemoteSynced = false
 					f.HadEdits = false

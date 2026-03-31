@@ -308,7 +308,7 @@ fn main() {
         .unwrap_or(26002);
 
     // Determine if FUSE should be used (mirrors Go CLI logic)
-    let no_fuse_env = env::var("NO_FUSE").is_ok();
+    let no_fuse_env = env::var("NO_FUSE").map(|v| !v.is_empty()).unwrap_or(false);
     let fuse_present = is_fuse_present();
     let use_fuse = fuse_present && !no_fuse_env;
     println!(
@@ -316,9 +316,13 @@ fn main() {
         fuse_present, no_fuse_env, use_fuse
     );
 
-    // Collab sync options (off by default)
-    let prefetch_on_open = env::var("KEIBIDROP_PREFETCH_ON_OPEN").is_ok();
-    let push_on_write = env::var("KEIBIDROP_PUSH_ON_WRITE").is_ok();
+    // Collab sync: auto-enabled with FUSE, can be overridden via env vars.
+    let prefetch_on_open = env::var("KEIBIDROP_PREFETCH_ON_OPEN")
+        .map(|v| !v.is_empty())
+        .unwrap_or(use_fuse);
+    let push_on_write = env::var("KEIBIDROP_PUSH_ON_WRITE")
+        .map(|v| !v.is_empty())
+        .unwrap_or(use_fuse);
     println!(
         "Collab sync: prefetch_on_open={}, push_on_write={}",
         prefetch_on_open, push_on_write
@@ -375,6 +379,16 @@ fn main() {
         // FUSE mode toggle
         app.set_fuse_available(fuse_present);
         app.set_fuse_mode(use_fuse);
+        if !fuse_present {
+            let hint = if cfg!(target_os = "macos") {
+                "Install macFUSE: macfuse.github.io"
+            } else if cfg!(target_os = "windows") {
+                "Install WinFsp: winfsp.dev"
+            } else {
+                "Install fuse3: sudo apt install fuse3"
+            };
+            app.set_fuse_install_hint(hint.into());
+        }
         app.on_fuse_mode_toggled(move |enabled| {
             println!("FUSE mode toggled: {}", enabled);
             bindings::KD_SetFUSEMode(if enabled { 1 } else { 0 });
@@ -747,6 +761,7 @@ fn main() {
                             expected_size: size,
                             downloading: true,
                             saved: false,
+                            paused: false,
                         },
                     );
                 }

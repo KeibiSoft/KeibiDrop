@@ -140,6 +140,7 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 
 	fileSize := fileCopy.Size
 	relPath := fileCopy.RelativePath
+	logger.Info("PullFile starting", "remoteName", remoteName, "localPath", localPath, "fileSize", fileSize, "relPath", relPath)
 
 	// Ensure parent directories exist.
 	if dir := filepath.Dir(localPath); dir != "." {
@@ -299,6 +300,9 @@ updateTracker:
 	kd.SyncTracker.LocalFiles[localPath] = &fileCopy
 	kd.SyncTracker.LocalFilesMu.Unlock()
 
+	if fi, statErr := os.Stat(localPath); statErr == nil {
+		logger.Info("PullFile complete", "expectedSize", fileSize, "actualSize", fi.Size(), "match", uint64(fi.Size()) == fileSize)
+	}
 	logger.Info("Success")
 	return nil
 }

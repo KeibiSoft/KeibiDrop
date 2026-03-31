@@ -109,21 +109,23 @@ clean: clean-dist
 RELAY   ?= http://localhost:54321
 SCRIPTS := scripts/dev
 
-# Rust UI
-run-alice:          ; NO_FUSE=1  KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_rust_ui_nofuse.sh
-run-alice-fuse:     ; NO_FUSE=   KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_rust_ui_nofuse.sh
-run-bob:            ; NO_FUSE=1  KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_rust_ui.sh
-run-bob-fuse:       ; NO_FUSE=   KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_rust_ui.sh
+# Rust UI (FUSE toggle is in the UI, no need for NO_FUSE env)
+run-alice:
+	KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_rust_ui_nofuse.sh
+run-bob:
+	KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_rust_ui.sh
 
 # Go CLI
-run-cli-alice:      ; NO_FUSE=1  KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_cli.sh
-run-cli-alice-fuse: ; NO_FUSE=   KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_cli.sh
-run-cli-bob:        ; NO_FUSE=1  KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_peer_cli.sh
-run-cli-bob-fuse:   ; NO_FUSE=   KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_peer_cli.sh
+run-cli-alice:
+	KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_cli.sh
+run-cli-bob:
+	KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_peer_cli.sh
 
-# kd daemon (agent)
-run-kd-alice:       ; KD_NO_FUSE=1 KD_RELAY=$(RELAY) KD_INBOUND_PORT=26001 KD_OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_kd_alice.sh
-run-kd-bob:         ; KD_NO_FUSE=1 KD_RELAY=$(RELAY) KD_INBOUND_PORT=26003 KD_OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_kd_bob.sh
+# kd daemon (agent, always no-FUSE)
+run-kd-alice:
+	KD_NO_FUSE=1 KD_RELAY=$(RELAY) KD_INBOUND_PORT=26001 KD_OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_kd_alice.sh
+run-kd-bob:
+	KD_NO_FUSE=1 KD_RELAY=$(RELAY) KD_INBOUND_PORT=26003 KD_OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_kd_bob.sh
 
 # ── Help ──────────────────────────────────────────────────
 
@@ -135,14 +137,10 @@ help:
 	@echo "  make build-all              Build everything"
 	@echo ""
 	@echo "Run (dev):                    Alice=26001/26002  Bob=26003/26004"
-	@echo "  make run-alice              Rust UI, Alice, no-FUSE"
-	@echo "  make run-alice-fuse         Rust UI, Alice, FUSE"
-	@echo "  make run-bob                Rust UI, Bob, no-FUSE"
-	@echo "  make run-bob-fuse           Rust UI, Bob, FUSE"
-	@echo "  make run-cli-alice          Go CLI, Alice, no-FUSE"
-	@echo "  make run-cli-alice-fuse     Go CLI, Alice, FUSE"
-	@echo "  make run-cli-bob            Go CLI, Bob, no-FUSE"
-	@echo "  make run-cli-bob-fuse       Go CLI, Bob, FUSE"
+	@echo "  make run-alice              Rust UI, Alice (FUSE toggle in UI)"
+	@echo "  make run-bob                Rust UI, Bob   (FUSE toggle in UI)"
+	@echo "  make run-cli-alice          Go CLI, Alice"
+	@echo "  make run-cli-bob            Go CLI, Bob"
 	@echo "  make run-kd-alice           kd daemon, Alice"
 	@echo "  make run-kd-bob             kd daemon, Bob"
 	@echo ""
@@ -165,6 +163,6 @@ help:
 .PHONY: build-cli build-kd build-static-rust-bridge build-rust build-all \
         test lint sec install-proto protoc rust-bindings slint-preview \
         package-macos package-tar package-deb checksums clean-dist clean \
-        run-alice run-alice-fuse run-bob run-bob-fuse \
-        run-cli-alice run-cli-alice-fuse run-cli-bob run-cli-bob-fuse \
+        run-alice run-bob \
+        run-cli-alice run-cli-bob \
         run-kd-alice run-kd-bob help
