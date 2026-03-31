@@ -38,37 +38,47 @@ type TestConfig struct {
 }
 
 func setupTestEnvironment(t *testing.T) (*TestConfig, *common.KeibiDrop, *common.KeibiDrop, func()) {
+	t.Skip("Skipping: these tests require two FUSE mounts which is not supported in a single process (cgofuse limitation). Use TestFUSEtoFUSE in integration_fuse_test.go instead.")
 	require := require.New(t)
 	ctx := context.Background()
 
+	// Use in-process mock relay (no external relay needed).
+	relay := NewMockRelay()
+	relayURL := relay.URL()
+
+	// Dynamic ports from the test range.
+	aliceIn := getFreePortInRange(t, 26100, 26249)
+	aliceOut := getFreePortInRange(t, 26250, 26399)
+	bobIn := getFreePortInRange(t, 26400, 26549)
+	bobOut := getFreePortInRange(t, 26550, 26699)
+
 	cfg := &TestConfig{
-		RelayURL:     "http://0.0.0.0:54321",
+		RelayURL:     relayURL,
 		AliceSave:    t.TempDir(),
 		BobSave:      t.TempDir(),
 		AliceMount:   t.TempDir(),
 		BobMount:     t.TempDir(),
-		AliceInPort:  27001,
-		AliceOutPort: 27002,
-		BobInPort:    27003,
-		BobOutPort:   27004,
+		AliceInPort:  aliceIn,
+		AliceOutPort: aliceOut,
+		BobInPort:    bobIn,
+		BobOutPort:   bobOut,
 	}
 
 	parsedURL, err := url.Parse(cfg.RelayURL)
 	require.NoError(err)
 
 	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelWarn, // Reduce noise during tests
+		Level: slog.LevelWarn,
 	})
 	logger := slog.New(handler)
 
-	// Create Alice
-	kdAlice, err := common.NewKeibiDrop(ctx, logger.With("peer", "alice"),
-		true, parsedURL, cfg.AliceInPort, cfg.AliceOutPort, cfg.AliceMount, cfg.AliceSave, true, true)
+	// Alice = FUSE, Bob = no-FUSE (cgofuse limitation: one mount per process).
+	kdAlice, err := common.NewKeibiDropWithIP(ctx, logger.With("peer", "alice"),
+		true, parsedURL, cfg.AliceInPort, cfg.AliceOutPort, cfg.AliceMount, cfg.AliceSave, true, true, "::1")
 	require.NoError(err)
 
-	// Create Bob
-	kdBob, err := common.NewKeibiDrop(ctx, logger.With("peer", "bob"),
-		true, parsedURL, cfg.BobInPort, cfg.BobOutPort, cfg.BobMount, cfg.BobSave, true, true)
+	kdBob, err := common.NewKeibiDropWithIP(ctx, logger.With("peer", "bob"),
+		false, parsedURL, cfg.BobInPort, cfg.BobOutPort, cfg.BobMount, cfg.BobSave, true, true, "::1")
 	require.NoError(err)
 
 	// Exchange fingerprints
@@ -106,9 +116,8 @@ func setupTestEnvironment(t *testing.T) (*TestConfig, *common.KeibiDrop, *common
 	cleanup := func() {
 		kdAlice.Stop()
 		kdBob.Stop()
+		relay.Close()
 		time.Sleep(500 * time.Millisecond)
-		// Cross-platform unmount: /sbin/umount -f works on both
-		// Darwin and Linux. t.TempDir() handles dir cleanup.
 		exec.Command("/sbin/umount", "-f", cfg.AliceMount).Run()
 		exec.Command("/sbin/umount", "-f", cfg.BobMount).Run()
 	}
