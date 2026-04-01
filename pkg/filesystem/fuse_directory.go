@@ -1744,10 +1744,32 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 				logger.Error("Local pread failed after bitmap hit", "error", preadErr)
 				return int(convertOsErrToSyscallErrno("pread", preadErr))
 			}
+			// Clamp to remote file size — pre-allocated files may contain
+			// garbage bytes past the actual content boundary.
+			if f.stat != nil {
+				if fileSize := f.stat.Size; fileSize > 0 && offset+int64(n) > fileSize {
+					n = int(fileSize - offset)
+					if n < 0 {
+						n = 0
+					}
+				}
+			}
 			return n
 		}
 
 		// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "remote")
+
+		// Clamp the request size to the file's actual size to prevent
+		// reading garbage past EOF on pre-allocated cache files.
+		readSize := int64(len(buff))
+		if f.stat != nil {
+			if fileSize := f.stat.Size; fileSize > 0 && offset+readSize > fileSize {
+				readSize = fileSize - offset
+				if readSize <= 0 {
+					return 0
+				}
+			}
+		}
 
 		// Retry loop for resilience against transient failures.
 		var data []byte
@@ -1755,7 +1777,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		for attempt := 0; attempt < 3; attempt++ {
 			// Read from stream pool with timeout to prevent system freeze.
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			data, readErr = pool.ReadAt(ctx, offset, int64(len(buff)))
+			data, readErr = pool.ReadAt(ctx, offset, readSize)
 			cancel()
 
 			if readErr == nil {
@@ -1813,6 +1835,17 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 		// Copy remote data into buffer for FUSE.
 		n := copy(buff, data)
+
+		// Clamp to remote file size — the server may return more bytes
+		// than the actual file content on pre-allocated cache files.
+		if f.stat != nil {
+			if fileSize := f.stat.Size; fileSize > 0 && offset+int64(n) > fileSize {
+				n = int(fileSize - offset)
+				if n < 0 {
+					n = 0
+				}
+			}
+		}
 
 		// Track download progress and update checksum.
 		f.Download.UpdateProgress(offset, n)
@@ -1978,6 +2011,12 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		}
 		existing.Bitmap = NewChunkBitmap(stat.Size)
 		d.RemoteFilesLock.Unlock()
+		// Truncate the local cache file to the new size — if the file shrank
+		// (e.g. git's HEAD.lock → HEAD rename), stale bytes past EOF remain
+		// without this truncate.
+		if existing.RealPathOfFile != "" {
+			_ = os.Truncate(existing.RealPathOfFile, stat.Size)
+		}
 		// Ensure AllFileMap points to the same object so OpenEx sees correct state.
 		d.AfmLock.Lock()
 		d.AllFileMap[path] = existing

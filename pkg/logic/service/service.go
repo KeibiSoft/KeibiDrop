@@ -344,11 +344,6 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			// in progress on the old path and got cancelled above),
 			// (b) file exists but has wrong size (git index-pack appends
 			// 20-byte SHA-1 checksum between the initial write and rename).
-			// Check if the renamed file needs re-downloading.
-			// Cases: (a) file doesn't exist locally (prefetch was still
-			// in progress on the old path and got cancelled above),
-			// (b) file exists but has wrong size (git index-pack appends
-			// 20-byte SHA-1 checksum between the initial write and rename).
 			if exists && req.Attr != nil && req.Attr.Size > 0 {
 				needsRedownload := false
 				localInfo, statErr := os.Stat(newDiskPath)
