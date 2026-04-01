@@ -1507,7 +1507,7 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 
 	// Check if this is a remote-only file (not downloaded locally).
 	d.RemoteFilesLock.Lock()
-	remoteFile, isRemote := d.RemoteFiles[path]
+	_, isRemote := d.RemoteFiles[path]
 	if isRemote {
 		delete(d.RemoteFiles, path)
 		// logger.Info("Removed remote file from map", "path", path)
@@ -1542,15 +1542,16 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 		// logger.Info("Local file unlinked", "path", path)
 	}
 
-	// Notify peer about the removed file (only for local changes).
-	// Only notify if this was OUR file (not a remote file we're just hiding locally).
-	if notifyPeer && d.OnLocalChange != nil && !isRemote && remoteFile == nil {
+	// Notify peer about the removed file.
+	// Notify if: (a) it was our local file, OR (b) it was a remote file that we
+	// successfully deleted from disk (meaning we had a local copy and something
+	// like git checkout removed it from the working tree).
+	if notifyPeer && d.OnLocalChange != nil && (!isRemote || err == nil) {
 		d.OnLocalChange(types.FileEvent{
 			Path:   path,
 			Action: types.RemoveFile,
-			Attr:   nil, // No attributes needed for removal
+			Attr:   nil,
 		})
-		// logger.Info("Notified peer about removed file", "path", path)
 	}
 
 	return 0
