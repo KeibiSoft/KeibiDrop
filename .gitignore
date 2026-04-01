@@ -1,5 +1,34 @@
-rust/target/*
+# Build artifacts
+rust/target/
 rust/src/bindings.rs
 libkeibidrop.a
 libkeibidrop.h
+keibidrop-cli
+keibidrop
+kd
+cli
+dist/
+*.test
 
+# macOS
+.DS_Store
+
+# Logs
+Log_*.txt
+Ubuntu_Log_*.txt
+
+# Test/dev data
+SaveAlice/
+SaveBob/
+MountAlice/
+MountBob/
+test_mov.mov
+tests.test
+
+# Mobile (closed source, not in this repo)
+KeibiDrop.xcframework/
+
+# IDE
+.idea/
+.vscode/
+*.swp

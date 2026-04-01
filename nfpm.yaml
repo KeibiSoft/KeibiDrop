@@ -1,0 +1,28 @@
+name: keibidrop
+arch: "${GOARCH}"
+version: "${VERSION}"
+maintainer: "KeibiSoft SRL <contact@keibisoft.com>"
+description: "End-to-end encrypted peer-to-peer file sharing"
+homepage: "https://github.com/KeibiSoft/KeibiDrop"
+license: MPL-2.0
+section: net
+priority: optional
+
+suggests:
+  - fuse3
+
+contents:
+  - src: rust/target/release/keibidrop-rust
+    dst: /usr/local/bin/keibidrop
+    file_info:
+      mode: 0755
+
+  - src: keibidrop-cli
+    dst: /usr/local/bin/keibidrop-cli
+    file_info:
+      mode: 0755
+
+  - src: kd
+    dst: /usr/local/bin/kd
+    file_info:
+      mode: 0755

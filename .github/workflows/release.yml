@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-15
+            goos: darwin
+            goarch: arm64
+            package: dmg
+          - os: macos-15
+            goos: darwin
+            goarch: amd64
+            package: tar
+            cross: true
+          - os: ubuntu-22.04
+            goos: linux
+            goarch: amd64
+            package: deb
+          - os: windows-2022
+            goos: windows
+            goarch: amd64
+            package: zip
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            rust/target
+            ~/.cargo/registry
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Install protoc and FUSE dev headers (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y libfuse3-dev protobuf-compiler
+
+      - name: Install macFUSE and protoc (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          curl -L -o /tmp/macfuse.dmg "https://github.com/macfuse/macfuse/releases/download/macfuse-5.1.3/macfuse-5.1.3.dmg"
+          hdiutil attach /tmp/macfuse.dmg -nobrowse -quiet
+          sudo installer -pkg "/Volumes/macFUSE/Install macFUSE.pkg" -target /
+          hdiutil detach "/Volumes/macFUSE" -quiet
+          brew install protobuf
+
+      - name: Install WinFsp and protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install winfsp protoc -y
+          $winfspDir = "C:\Program Files (x86)\WinFsp"
+          echo "CPATH=$winfspDir\inc\fuse" >> $env:GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$winfspDir\lib" >> $env:GITHUB_ENV
+
+      - name: Install protoc Go plugins
+        shell: bash
+        run: make install-proto
+
+      - name: Install nfpm (Linux)
+        if: runner.os == 'Linux'
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Build Rust UI (native only)
+        if: runner.os != 'Windows' && matrix.cross != true
+        run: make build-rust
+
+      - name: Build CLI and kd
+        shell: bash
+        run: GOARCH=${{ matrix.goarch }} make build-cli build-kd
+
+      - name: Package .dmg (macOS arm64)
+        if: matrix.package == 'dmg'
+        run: make package-macos
+
+      - name: Package .tar.gz
+        if: matrix.package != 'zip'
+        shell: bash
+        run: make package-tar
+
+      - name: Package .zip (Windows)
+        if: matrix.package == 'zip'
+        shell: bash
+        run: |
+          mkdir -p dist
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
+          zip -j "dist/keibidrop-${VERSION}-windows-amd64.zip" keibidrop-cli.exe kd.exe
+
+      - name: Package .deb (Linux)
+        if: matrix.package == 'deb'
+        run: make package-deb
+
+      - name: Generate checksums
+        run: make checksums
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Collect release files
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "SHA256SUMS" \) -exec cp {} release/ \;
+          cd release && shasum -a 256 *.dmg *.deb *.tar.gz *.zip > SHA256SUMS 2>/dev/null || true
+          ls -la release/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          PRERELEASE=""
+          if [[ "$TAG" == v0.* ]]; then
+            PRERELEASE="--prerelease"
+          fi
+          gh release create "$TAG" \
+            --title "KeibiDrop $TAG" \
+            --generate-notes \
+            $PRERELEASE \
+            release/*

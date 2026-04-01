@@ -68,6 +68,11 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		return &bindings.NotifyResponse{Status: "ok"}, nil
 	}
 
+	// Drop macFUSE internal files — ephemeral, never meant to be synced.
+	if strings.Contains(req.Path, ".fuse_hidden") || strings.Contains(req.Path, "/.fseventsd") {
+		return &bindings.NotifyResponse{}, nil
+	}
+
 	if kd.FS == nil && kd.SyncTracker == nil {
 		logger.Warn("Filesystem not mounted")
 		return nil, ErrGRPCNotMounted
@@ -237,6 +242,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Remove file reference", "path", req.Path)
 
 		if kd.FS != nil && kd.FS.Root != nil {
+			hasOpenHandles := false
 			kd.FS.Root.AfmLock.Lock()
 			file, exists := kd.FS.Root.AllFileMap[req.Path]
 			if exists && file != nil {
@@ -245,6 +251,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				if openCount > 0 {
 					// Download in progress - let it complete, then remove.
 					file.PeerStoppedSharing = true
+					hasOpenHandles = true
 					logger.Info("File has open handles, marking for removal after download", "path", req.Path, "openHandles", openCount)
 				} else {
 					// No active downloads - remove immediately.
@@ -265,11 +272,14 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			}
 			kd.FS.Root.RemoteFilesLock.Unlock()
 
-			// Remove stale cache file so it doesn't confuse future Opens
-			// (e.g. git's .keep files are created then removed quickly).
-			cachePath := filepath.Clean(filepath.Join(kd.FS.Root.LocalDownloadFolder, req.Path))
-			if rmErr := os.Remove(cachePath); rmErr != nil && !os.IsNotExist(rmErr) {
-				logger.Warn("Failed to remove cache file", "path", cachePath, "error", rmErr)
+			// Remove stale cache file only if no open handles — on Linux,
+			// unlink with open fds keeps the fd valid but breaks path-based
+			// fallback reopens in the Read handler.
+			if !hasOpenHandles {
+				cachePath := filepath.Clean(filepath.Join(kd.FS.Root.LocalDownloadFolder, req.Path))
+				if rmErr := os.Remove(cachePath); rmErr != nil && !os.IsNotExist(rmErr) {
+					logger.Warn("Failed to remove cache file", "path", cachePath, "error", rmErr)
+				}
 			}
 		}
 
@@ -334,11 +344,6 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			}
 			kd.FS.Root.AfmLock.Unlock()
 
-			// Check if the renamed file needs re-downloading.
-			// Cases: (a) file doesn't exist locally (prefetch was still
-			// in progress on the old path and got cancelled above),
-			// (b) file exists but has wrong size (git index-pack appends
-			// 20-byte SHA-1 checksum between the initial write and rename).
 			// Check if the renamed file needs re-downloading.
 			// Cases: (a) file doesn't exist locally (prefetch was still
 			// in progress on the old path and got cancelled above),

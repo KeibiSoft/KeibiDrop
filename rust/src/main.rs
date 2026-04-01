@@ -18,7 +18,12 @@ slint::include_modules!(); // this loads ui.slint as MainWindow
 
 /// Returns true if a filename should be hidden from the UI.
 fn is_hidden_file(name: &str) -> bool {
-    name.starts_with('.') || name == ".fsuuid" || name == ".DS_Store" || name == "Thumbs.db"
+    name.starts_with('.')
+        || name == ".fsuuid"
+        || name == ".DS_Store"
+        || name == "Thumbs.db"
+        || name.contains(".fuse_hidden")
+        || name.contains("/.fseventsd")
 }
 
 /// Per-file download state tracked on the Rust side.
@@ -27,6 +32,7 @@ struct DownloadInfo {
     expected_size: i64,
     downloading: bool,
     saved: bool,
+    paused: bool,
 }
 
 /// Determine file type category from filename extension.
@@ -86,7 +92,7 @@ fn start_file_watcher(
                     let ftype = file_type_from_name(&name);
 
                     // Check download state
-                    let (downloading, progress, saved) = if let Some(info) = dl.get(&name) {
+                    let (downloading, progress, saved, paused) = if let Some(info) = dl.get(&name) {
                         if info.downloading {
                             // Poll local file size for progress
                             let local_size = std::fs::metadata(&info.local_path)
@@ -98,15 +104,21 @@ fn start_file_watcher(
                                 1.0
                             };
                             let prog = (local_size / expected).min(1.0);
-                            (true, prog as f32, false)
+                            (true, prog as f32, false, false)
+                        } else if info.paused {
+                            // Paused: show progress from bitmap via FFI
+                            let c_name = CString::new(name.clone()).unwrap();
+                            let prog = bindings::KD_GetDownloadProgress(c_name.into_raw());
+                            let p = if prog >= 0 { prog as f32 / 100.0 } else { 0.0 };
+                            (false, p, false, true)
                         } else {
-                            (false, if info.saved { 1.0 } else { 0.0 }, info.saved)
+                            (false, if info.saved { 1.0 } else { 0.0 }, info.saved, false)
                         }
                     } else {
                         // Check if file already exists in save path
                         let local = format!("{}/{}", save_path, name);
                         let already_saved = Path::new(&local).exists();
-                        (false, if already_saved { 1.0 } else { 0.0 }, already_saved)
+                        (false, if already_saved { 1.0 } else { 0.0 }, already_saved, false)
                     };
 
                     files.push(FileInfo {
@@ -116,6 +128,7 @@ fn start_file_watcher(
                         uploading: false, // TODO: wire from Go events
                         progress,
                         saved,
+                        paused,
                         file_type: slint::SharedString::from(ftype),
                         is_local: false,
                     });
@@ -150,6 +163,7 @@ fn start_file_watcher(
                         uploading: false,
                         progress: 1.0,
                         saved: true, // local file = already on disk
+                        paused: false,
                         file_type: slint::SharedString::from(ftype),
                         is_local: true,
                     });
@@ -299,7 +313,7 @@ fn main() {
         .unwrap_or(26002);
 
     // Determine if FUSE should be used (mirrors Go CLI logic)
-    let no_fuse_env = env::var("NO_FUSE").is_ok();
+    let no_fuse_env = env::var("NO_FUSE").map(|v| !v.is_empty()).unwrap_or(false);
     let fuse_present = is_fuse_present();
     let use_fuse = fuse_present && !no_fuse_env;
     println!(
@@ -307,9 +321,13 @@ fn main() {
         fuse_present, no_fuse_env, use_fuse
     );
 
-    // Collab sync options (off by default)
-    let prefetch_on_open = env::var("KEIBIDROP_PREFETCH_ON_OPEN").is_ok();
-    let push_on_write = env::var("KEIBIDROP_PUSH_ON_WRITE").is_ok();
+    // Collab sync: auto-enabled with FUSE, can be overridden via env vars.
+    let prefetch_on_open = env::var("KEIBIDROP_PREFETCH_ON_OPEN")
+        .map(|v| !v.is_empty())
+        .unwrap_or(use_fuse);
+    let push_on_write = env::var("KEIBIDROP_PUSH_ON_WRITE")
+        .map(|v| !v.is_empty())
+        .unwrap_or(use_fuse);
     println!(
         "Collab sync: prefetch_on_open={}, push_on_write={}",
         prefetch_on_open, push_on_write
@@ -356,6 +374,31 @@ fn main() {
         app.set_my_code(slint::SharedString::from(my_fp.clone()));
         app.set_mount_path(slint::SharedString::from(to_mount.clone()));
 
+        // Version display
+        let version_ptr = bindings::KD_GetVersion();
+        if !version_ptr.is_null() {
+            let version_str = CStr::from_ptr(version_ptr).to_string_lossy().to_string();
+            app.set_version_text(slint::SharedString::from(version_str));
+        }
+
+        // FUSE mode toggle
+        app.set_fuse_available(fuse_present);
+        app.set_fuse_mode(use_fuse);
+        if !fuse_present {
+            let hint = if cfg!(target_os = "macos") {
+                "Install macFUSE: macfuse.github.io"
+            } else if cfg!(target_os = "windows") {
+                "Install WinFsp: winfsp.dev"
+            } else {
+                "Install fuse3: sudo apt install fuse3"
+            };
+            app.set_fuse_install_hint(hint.into());
+        }
+        app.on_fuse_mode_toggled(move |enabled| {
+            println!("FUSE mode toggled: {}", enabled);
+            bindings::KD_SetFUSEMode(if enabled { 1 } else { 0 });
+        });
+
         // Handle Add: register peer fingerprint
         let weak = app.as_weak();
         app.on_add_peer_code(move || {
@@ -391,7 +434,6 @@ fn main() {
         });
 
         // Create/Join Room setup
-        let target_screen = if use_fuse { 2 } else { 1 };
         let watcher_running = Arc::new(AtomicBool::new(false));
         let disconnecting = Arc::new(AtomicBool::new(false));
         let watcher_running_disconnect = watcher_running.clone();
@@ -403,12 +445,16 @@ fn main() {
         let downloads_create = downloads.clone();
         let save_path_create = to_save.clone();
         app.on_create_room_pressed(move || {
+            // Read current FUSE mode at press time (user may have toggled)
+            let screen = if let Some(app) = weak_create.upgrade() {
+                if app.get_fuse_mode() { 2 } else { 1 }
+            } else { 1 };
             connect_room(
                 weak_create.clone(),
                 watcher_running_create.clone(),
                 downloads_create.clone(),
                 save_path_create.clone(),
-                target_screen,
+                screen,
                 true,
             );
         });
@@ -419,12 +465,15 @@ fn main() {
         let downloads_join = downloads.clone();
         let save_path_join = to_save.clone();
         app.on_join_room_pressed(move || {
+            let screen = if let Some(app) = weak_join.upgrade() {
+                if app.get_fuse_mode() { 2 } else { 1 }
+            } else { 1 };
             connect_room(
                 weak_join.clone(),
                 watcher_running_join.clone(),
                 downloads_join.clone(),
                 save_path_join.clone(),
-                target_screen,
+                screen,
                 false,
             );
         });
@@ -442,9 +491,23 @@ fn main() {
             }
         });
 
-        // Handle Disconnect — non-blocking: update UI immediately, FFI in background
+        // Handle Disconnect — warn if download in progress, then disconnect
         let weak_disconnect = app.as_weak();
+        let disconnect_confirmed = Arc::new(AtomicBool::new(false));
+        let disconnect_confirmed_inner = disconnect_confirmed.clone();
         app.on_disconnect_pressed(move || {
+            // If downloads in progress and not yet confirmed, show warning instead
+            if let Some(app) = weak_disconnect.upgrade() {
+                if app.get_any_downloading() && !disconnect_confirmed_inner.swap(false, Ordering::Relaxed) {
+                    app.set_status_message(slint::SharedString::from(
+                        "Download in progress. Press Disconnect again to confirm."
+                    ));
+                    disconnect_confirmed_inner.store(true, Ordering::Relaxed);
+                    return;
+                }
+            }
+            disconnect_confirmed_inner.store(false, Ordering::Relaxed);
+
             println!("Disconnecting...");
             // Prevent double-disconnect (event timer + button click race)
             if disconnecting_disconnect.swap(true, Ordering::Relaxed) {
@@ -559,6 +622,7 @@ fn main() {
                         expected_size: size,
                         downloading: true,
                         saved: false,
+                        paused: false,
                     },
                 );
             }
@@ -584,6 +648,52 @@ fn main() {
                     }
                 }
             });
+        });
+
+        // Handle Pause/Resume: cancel active download or re-trigger save
+        let downloads_pause = downloads.clone();
+        let save_path_pause = to_save.clone();
+        app.on_pause_file(move |filename| {
+            let name = filename.to_string();
+            let mut dl = downloads_pause.lock().unwrap();
+            if let Some(info) = dl.get_mut(&name) {
+                if info.downloading {
+                    // Pause: cancel the active download
+                    info.downloading = false;
+                    info.paused = true;
+                    let c_name = CString::new(name.clone()).unwrap();
+                    bindings::KD_CancelDownload(c_name.into_raw());
+                    println!("Paused download: {}", name);
+                } else if info.paused {
+                    // Resume: re-trigger download (PullFile resumes from bitmap)
+                    info.downloading = true;
+                    info.paused = false;
+                    let local_path = format!("{}/{}", save_path_pause, name);
+                    let dl_clone = downloads_pause.clone();
+                    let name_clone = name.clone();
+                    std::thread::spawn(move || {
+                        let c_name = CString::new(name_clone.clone()).unwrap();
+                        let c_path = CString::new(local_path).unwrap();
+                        let res = bindings::KD_SaveFileByName(
+                            c_name.into_raw(),
+                            c_path.into_raw(),
+                        );
+                        let mut dl = dl_clone.lock().unwrap();
+                        if let Some(info) = dl.get_mut(&name_clone) {
+                            info.downloading = false;
+                            info.paused = false;
+                            if res == 0 {
+                                info.saved = true;
+                                println!("Download complete (resumed): {}", name_clone);
+                            } else {
+                                let err = get_last_error();
+                                eprintln!("Download failed for {}: {}", name_clone, err);
+                            }
+                        }
+                    });
+                    println!("Resumed download: {}", name);
+                }
+            }
         });
 
         // Handle Open File: open saved file with system handler
@@ -656,6 +766,7 @@ fn main() {
                             expected_size: size,
                             downloading: true,
                             saved: false,
+                            paused: false,
                         },
                     );
                 }

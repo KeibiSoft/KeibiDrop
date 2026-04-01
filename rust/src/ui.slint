@@ -8,6 +8,7 @@ export struct FileInfo {
     uploading: bool,      // peer is downloading this file from me
     progress: float,      // 0.0 to 1.0
     saved: bool,
+    paused: bool,         // download was paused (can resume)
     file-type: string,    // "pdf", "image", "video", "audio", "code", "archive", "text", "other"
     is-local: bool,       // true = my file (shared by me), false = remote file (from peer)
 }
@@ -439,9 +440,11 @@ component FileCard inherits Rectangle {
     in property <float> progress: 0.0;
     in property <bool> saved: false;
     in property <bool> is-local: false;
+    in property <bool> paused: false;
 
     callback save-clicked;
     callback open-clicked;
+    callback pause-clicked;
 
     width: 250px;
     height: 180px;
@@ -547,17 +550,27 @@ component FileCard inherits Rectangle {
         }
 
         OutlineButton {
+            width: 60px;
+            height: 28px;
+            text: root.paused ? "Resume" : "Pause";
+            visible: root.downloading || root.paused;
+            clicked => { root.pause-clicked(); }
+        }
+
+        OutlineButton {
             width: 80px;
             height: 28px;
             // "Open" is blue accent, "Save" is white/grey
             accent: root.is-local || root.saved;
             text: root.downloading ? Math.round(root.progress * 100) + "%"
+                : root.paused ? Math.round(root.progress * 100) + "%"
                 : root.is-local ? "Open"
                 : root.saved ? "Open"
                 : "Save";
-            enabled: !root.downloading;
+            enabled: !root.downloading || root.paused;
             clicked => {
-                if (root.is-local || root.saved) { root.open-clicked(); }
+                if (root.paused) { root.save-clicked(); }
+                else if (root.is-local || root.saved) { root.open-clicked(); }
                 else { root.save-clicked(); }
             }
         }
@@ -570,9 +583,9 @@ export component MainWindow inherits Window {
     title: "KEIBIDROP";
     default-font-family: "Inter";
     preferred-width: 1144px;
-    preferred-height: 729px;
+    preferred-height: 760px;
     min-width: 1144px;
-    min-height: 729px;
+    min-height: 760px;
     background: #1f1f1f;
 
     // Data bindings from Rust
@@ -602,6 +615,13 @@ export component MainWindow inherits Window {
     // Peer code feedback: set by Rust after KD_AddPeerFingerprint
     in-out property<bool> peer_code_added: false;
     in-out property<bool> peer_code_error: false;
+    // Version string from Go (set by Rust at init)
+    in property<string> version_text: "";
+    // FUSE mode toggle (can be changed before connecting)
+    in-out property<bool> fuse_mode: false;
+    in property<bool> fuse_available: false;
+    in property<string> fuse_install_hint: "Install macFUSE: macfuse.github.io";
+    callback fuse_mode_toggled(bool);
 
     // Callbacks
     callback add_peer_code();
@@ -614,6 +634,7 @@ export component MainWindow inherits Window {
     callback add_file_pressed();
     callback save_file(string);
     callback open_file(string);
+    callback pause_file(string);
     callback save_all_pressed();
     callback exit_pressed();
 
@@ -751,25 +772,75 @@ export component MainWindow inherits Window {
             animate border-color { duration: 150ms; }
         }
 
-        // Cancel button - visible while creating or joining
-        if root.room_action != 0: OutlineButton {
+        // FUSE mode toggle
+        Rectangle {
             x: snd.x + snd.width + 38px;
             y: snd.y + snd.height - 34px + 88px;
-            text: "Cancel";
-            clicked => { root.cancel_connect_pressed() }
+            width: 350px;
+            height: root.fuse_available ? 24px : 40px;
+
+            Rectangle {
+                x: 0;
+                y: 2px;
+                width: 36px;
+                height: 20px;
+                border-radius: 10px;
+                background: root.fuse_mode ? #3b82f6 : #444;
+                animate background { duration: 150ms; }
+
+                // Toggle knob
+                Rectangle {
+                    x: root.fuse_mode ? parent.width - self.width - 2px : 2px;
+                    y: 2px;
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 8px;
+                    background: white;
+                    animate x { duration: 150ms; easing: ease-out; }
+                }
+
+                fuse-toggle-touch := TouchArea {
+                    enabled: root.fuse_available && root.room_action == 0;
+                    clicked => {
+                        root.fuse_mode = !root.fuse_mode;
+                        root.fuse-mode-toggled(root.fuse_mode);
+                    }
+                }
+            }
+
+            Text {
+                x: 44px;
+                y: 0;
+                height: 24px;
+                text: root.fuse_available
+                    ? (root.fuse_mode ? "Virtual folder (files sync automatically)" : "Direct transfer (select files to send)")
+                    : "Virtual folder not available";
+                color: root.fuse_available ? #ccc : #888;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+
+            // Install hint when FUSE not detected
+            if !root.fuse_available: Text {
+                x: 44px;
+                y: 18px;
+                text: root.fuse_install_hint;
+                color: #555;
+                font-size: 11px;
+            }
         }
 
-        // Status / error message below buttons
+        // Status / error message below FUSE toggle
         if root.status_message != "" && root.error_message == "": Text {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 132px;
+            y: snd.y + snd.height - 34px + 118px;
             text: root.status_message;
             color: #94a3b8;
-            font-size: 13px;
+            font-size: 12px;
         }
         if root.error_message != "": Rectangle {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 132px;
+            y: snd.y + snd.height - 34px + 118px;
             width: 161px;
             height: 40px;
             border-radius: 8px;
@@ -787,6 +858,24 @@ export component MainWindow inherits Window {
                 vertical-alignment: center;
                 overflow: elide;
             }
+        }
+
+        // Cancel button - visible while creating or joining, below status
+        if root.room_action != 0: OutlineButton {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 136px;
+            text: "Cancel";
+            clicked => { root.cancel_connect_pressed() }
+        }
+
+        // Version text bottom-right
+        Text {
+            x: parent.width - self.width - 16px;
+            y: parent.height - self.height - 12px;
+            text: root.version_text;
+            color: #666666;
+            font-size: 11px;
+            font-family: "Inter";
         }
     }
 
@@ -872,8 +961,10 @@ export component MainWindow inherits Window {
                 progress: file.progress;
                 saved: file.saved;
                 is-local: file.is-local;
+                paused: file.paused;
                 save-clicked => { root.save_file(file.name) }
                 open-clicked => { root.open_file(file.name) }
+                pause-clicked => { root.pause_file(file.name) }
             }
         }
     }

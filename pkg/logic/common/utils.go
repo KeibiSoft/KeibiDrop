@@ -292,8 +292,8 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	// times and never gets the correct content.
 	//
 	// Solution: Per-path debounce. For ADD_FILE/EDIT_FILE, we track the last
-	// notification per path. Each update resets a 1-second timer for that path.
-	// Only when the path is stable for 1 second do we include it in the batch.
+	// notification per path. Each update resets a 200ms timer for that path.
+	// Only when the path is stable for 200ms do we include it in the batch.
 	// RENAME/REMOVE/ADD_DIR are sent immediately (no debounce).
 	kd.notifyCh = make(chan *bindings.NotifyRequest, 2048)
 	var batchSeq atomic.Uint64
@@ -348,7 +348,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				switch req.Type {
 				case bindings.NotifyType_ADD_FILE, bindings.NotifyType_EDIT_FILE:
 					// Per-path debounce: update pending and reset deadline.
-					// Only send when the path is stable for 1 second.
+					// Only send when the path is stable for 200ms.
 					pending[req.Path] = &pendingNotify{
 						req:      req,
 						deadline: time.Now().Add(200 * time.Millisecond),

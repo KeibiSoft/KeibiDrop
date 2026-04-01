@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -125,7 +126,6 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	localPath = filepath.Clean(localPath)
 
 	// Snapshot remote file metadata under a short read lock.
-	// Copy the struct so we don't alias the map entry pointer.
 	kd.SyncTracker.RemoteFilesMu.RLock()
 	remFilePtr, ok := kd.SyncTracker.RemoteFiles[remoteName]
 	var fileCopy synctracker.File
@@ -140,8 +140,9 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 
 	fileSize := fileCopy.Size
 	relPath := fileCopy.RelativePath
+	logger.Info("PullFile starting", "remoteName", remoteName, "localPath", localPath, "fileSize", fileSize, "relPath", relPath)
 
-	// Ensure parent directories exist (for files in subdirectories).
+	// Ensure parent directories exist.
 	if dir := filepath.Dir(localPath); dir != "." {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			logger.Error("Failed to create parent directories", "error", err)
@@ -149,37 +150,66 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		}
 	}
 
-	f, err := os.Create(localPath)
-	if err != nil {
-		logger.Error("Failed to create local file", "error", err)
-		return err
-	}
-	defer f.Close()
+	// Check for resumable partial download.
+	bitmapPath := filesystem.BitmapPath(localPath)
+	var bitmap *filesystem.ChunkBitmap
+	var f *os.File
+	var err error
 
-	// Pre-allocate the file to enable correct out-of-order pwrite.
-	if fileSize > 0 {
-		if err := f.Truncate(int64(fileSize)); err != nil {
-			logger.Error("Failed to pre-allocate file", "error", err)
-			os.Remove(localPath)
-			return err
+	if info, statErr := os.Stat(localPath); statErr == nil && info.Size() == int64(fileSize) {
+		// Partial file exists at expected size. Try loading bitmap.
+		if bm, loadErr := filesystem.LoadChunkBitmap(bitmapPath, int64(fileSize)); loadErr == nil {
+			bitmap = bm
+			f, err = os.OpenFile(localPath, os.O_WRONLY, 0644)
+			if err != nil {
+				logger.Error("Failed to open partial file for resume", "error", err)
+				return err
+			}
+			logger.Info("Resuming download", "progress", bitmap.Progress(), "have", bitmap.Have(), "total", bitmap.Total())
 		}
 	}
 
-	totalChunks := int((fileSize + uint64(config.BlockSize) - 1) / uint64(config.BlockSize))
+	if bitmap == nil {
+		// Fresh download.
+		f, err = os.Create(localPath)
+		if err != nil {
+			logger.Error("Failed to create local file", "error", err)
+			return err
+		}
+		if fileSize > 0 {
+			if err := f.Truncate(int64(fileSize)); err != nil {
+				logger.Error("Failed to pre-allocate file", "error", err)
+				f.Close()
+				return err
+			}
+		}
+		bitmap = filesystem.NewChunkBitmapWithSize(int64(fileSize), config.BlockSize)
+	}
+	defer f.Close()
 
-	if totalChunks > 0 {
+	if bitmap != nil && bitmap.IsComplete() {
+		os.Remove(bitmapPath)
+		logger.Info("File already fully downloaded")
+		goto updateTracker
+	}
+
+	if bitmap != nil && bitmap.Total() > 0 {
 		// Parallel download with N gRPC streams (chunk-index sharding).
+		totalChunks := bitmap.Total()
 		nWorkers := filesystem.StreamPoolSize
 		if totalChunks < nWorkers {
 			nWorkers = totalChunks
 		}
 
-		// Child context so we can cancel remaining workers on first error.
+		// Register active download for pause/cancel support.
 		dlCtx, dlCancel := context.WithCancel(kd.ctx)
 		defer dlCancel()
+		kd.registerDownload(remoteName, dlCancel)
+		defer kd.unregisterDownload(remoteName)
 
 		var wg sync.WaitGroup
 		errCh := make(chan error, nWorkers)
+		var chunksWritten atomic.Int32
 
 		for w := 0; w < nWorkers; w++ {
 			wg.Add(1)
@@ -195,6 +225,10 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 				defer stream.CloseSend()
 
 				for i := workerID; i < totalChunks; i += nWorkers {
+					if bitmap.Has(i) {
+						continue // Already downloaded (resume).
+					}
+
 					offset := uint64(i) * uint64(config.BlockSize)
 					size := uint64(config.BlockSize)
 					if offset+size > fileSize {
@@ -230,6 +264,13 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 						dlCancel()
 						return
 					}
+
+					bitmap.Set(i)
+
+					// Save bitmap periodically (every 100 chunks).
+					if chunksWritten.Add(1)%100 == 0 {
+						_ = bitmap.Save(bitmapPath)
+					}
 				}
 			}(w)
 		}
@@ -237,13 +278,16 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		wg.Wait()
 		close(errCh)
 		if err := <-errCh; err != nil {
-			logger.Error("Parallel download failed", "error", err)
-			os.Remove(localPath)
+			logger.Error("Download failed (partial state preserved)", "error", err, "progress", bitmap.Progress())
+			_ = bitmap.Save(bitmapPath)
 			return err
 		}
 	}
 
-	// Update tracker under short locks.
+	// Download complete. Clean up bitmap file.
+	os.Remove(bitmapPath)
+
+updateTracker:
 	fileCopy.RealPathOfFile = localPath
 
 	kd.SyncTracker.RemoteFilesMu.Lock()
@@ -256,9 +300,57 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	kd.SyncTracker.LocalFiles[localPath] = &fileCopy
 	kd.SyncTracker.LocalFilesMu.Unlock()
 
+	if fi, statErr := os.Stat(localPath); statErr == nil {
+		logger.Info("PullFile complete", "expectedSize", fileSize, "actualSize", fi.Size(), "match", uint64(fi.Size()) == fileSize)
+	}
 	logger.Info("Success")
-
 	return nil
+}
+
+func (kd *KeibiDrop) registerDownload(name string, cancel context.CancelFunc) {
+	kd.activeDownloadsMu.Lock()
+	kd.activeDownloads[name] = cancel
+	kd.activeDownloadsMu.Unlock()
+}
+
+func (kd *KeibiDrop) unregisterDownload(name string) {
+	kd.activeDownloadsMu.Lock()
+	delete(kd.activeDownloads, name)
+	kd.activeDownloadsMu.Unlock()
+}
+
+// CancelDownload cancels an active download. The partial file and bitmap
+// are preserved on disk so the next PullFile call resumes automatically.
+func (kd *KeibiDrop) CancelDownload(remoteName string) error {
+	kd.activeDownloadsMu.Lock()
+	cancel, ok := kd.activeDownloads[remoteName]
+	kd.activeDownloadsMu.Unlock()
+	if !ok {
+		return fmt.Errorf("no active download for %q", remoteName)
+	}
+	cancel()
+	return nil
+}
+
+// GetDownloadProgress returns the download progress for a file as a fraction
+// [0.0, 1.0]. Returns -1 if the file has no active or resumable download.
+func (kd *KeibiDrop) GetDownloadProgress(remoteName string) float64 {
+	// Check if there's a partial bitmap on disk.
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	rf, ok := kd.SyncTracker.RemoteFiles[remoteName]
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
+	if !ok {
+		return -1
+	}
+
+	// Try loading bitmap from the save path.
+	localPath := filepath.Join(kd.ToSave, rf.RelativePath)
+	bitmapPath := filesystem.BitmapPath(localPath)
+	bm, err := filesystem.LoadChunkBitmap(bitmapPath, int64(rf.Size))
+	if err != nil {
+		return -1
+	}
+	return bm.Progress()
 }
 
 func (kd *KeibiDrop) ExportFingerprint() (string, error) {

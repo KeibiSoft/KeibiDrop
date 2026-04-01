@@ -844,6 +844,13 @@ extern "C" {
     pub fn KD_Stop();
 }
 extern "C" {
+    pub fn KD_CancelDownload(remoteName: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetDownloadProgress(remoteName: *mut ::std::os::raw::c_char)
+        -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn KD_PrintBanner();
 }
 extern "C" {
@@ -895,6 +902,21 @@ extern "C" {
 }
 extern "C" {
     pub fn KD_SetupEventCallbacks();
+}
+extern "C" {
+    pub fn KD_SetFUSEMode(useFUSE: ::std::os::raw::c_int);
+}
+extern "C" {
+    pub fn KD_GetFUSEMode() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetVersion() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetLogPath() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetConfigPath() -> *mut ::std::os::raw::c_char;
 }
 pub type __builtin_va_list = [__va_list_tag; 1usize];
 #[repr(C)]

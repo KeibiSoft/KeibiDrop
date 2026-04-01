@@ -6,7 +6,39 @@
 
 package filesystem
 
-import "sync"
+import (
+	"encoding/binary"
+	"fmt"
+	"os"
+	"sync"
+)
+
+// .kdbitmap file format (binary, little-endian):
+//
+//   [magic 4B] [version 1B] [fileSize 8B] [total 4B] [have 4B] [chunkSize 4B] [bits N*8B]
+//
+// Each field:
+const (
+	bitmapMagicSize     = 4
+	bitmapVersionSize   = 1
+	bitmapFileSizeSize  = 8
+	bitmapTotalSize     = 4
+	bitmapHaveSize      = 4
+	bitmapChunkSizeSize = 4
+	bitmapHeaderSize    = bitmapMagicSize + bitmapVersionSize + bitmapFileSizeSize + bitmapTotalSize + bitmapHaveSize + bitmapChunkSizeSize // 25
+
+	// Header field offsets:
+	offMagic     = 0
+	offVersion   = offMagic + bitmapMagicSize         // 4
+	offFileSize  = offVersion + bitmapVersionSize      // 5
+	offTotal     = offFileSize + bitmapFileSizeSize    // 13
+	offHave      = offTotal + bitmapTotalSize          // 17
+	offChunkSize = offHave + bitmapHaveSize            // 21
+
+	bitmapVersion = 1
+)
+
+var bitmapMagic = [4]byte{'K', 'D', 'B', 'M'}
 
 // ChunkSize is the granularity for tracking downloaded segments.
 const ChunkSize = 512 * 1024 // 512 KiB
@@ -18,26 +50,33 @@ const StreamPoolSize = 4
 // ChunkBitmap tracks which chunks of a file have been downloaded.
 // Thread-safe: Has() uses RLock, Set() uses Lock.
 type ChunkBitmap struct {
-	mu       sync.RWMutex
-	bits     []uint64
-	total    int
-	have     int
-	fileSize int64
+	mu        sync.RWMutex
+	bits      []uint64
+	total     int
+	have      int
+	fileSize  int64
+	chunkSize int
 }
 
-// NewChunkBitmap creates a bitmap for a file of the given size.
+// NewChunkBitmap creates a bitmap for a file of the given size using ChunkSize granularity.
 // Returns nil for size <= 0 (empty files need no tracking).
 func NewChunkBitmap(fileSize int64) *ChunkBitmap {
+	return NewChunkBitmapWithSize(fileSize, ChunkSize)
+}
+
+// NewChunkBitmapWithSize creates a bitmap with a custom chunk size.
+func NewChunkBitmapWithSize(fileSize int64, chunkSize int) *ChunkBitmap {
 	if fileSize <= 0 {
 		return nil
 	}
-	total := int((fileSize + ChunkSize - 1) / ChunkSize)
+	total := int((fileSize + int64(chunkSize) - 1) / int64(chunkSize))
 	numWords := (total + 63) / 64
 	return &ChunkBitmap{
-		bits:     make([]uint64, numWords),
-		total:    total,
-		have:     0,
-		fileSize: fileSize,
+		bits:      make([]uint64, numWords),
+		total:     total,
+		have:      0,
+		fileSize:  fileSize,
+		chunkSize: chunkSize,
 	}
 }
 
@@ -74,8 +113,9 @@ func (b *ChunkBitmap) SetRange(offset int64, size int) {
 	if size <= 0 {
 		return
 	}
-	startChunk := int(offset / ChunkSize)
-	endChunk := int((offset + int64(size) - 1) / ChunkSize)
+	cs := int64(b.chunkSize)
+	startChunk := int(offset / cs)
+	endChunk := int((offset + int64(size) - 1) / cs)
 	for i := startChunk; i <= endChunk; i++ {
 		b.Set(i)
 	}
@@ -86,14 +126,20 @@ func (b *ChunkBitmap) HasRange(offset int64, size int) bool {
 	if size <= 0 {
 		return true
 	}
-	startChunk := int(offset / ChunkSize)
-	endChunk := int((offset + int64(size) - 1) / ChunkSize)
+	cs := int64(b.chunkSize)
+	startChunk := int(offset / cs)
+	endChunk := int((offset + int64(size) - 1) / cs)
 	for i := startChunk; i <= endChunk; i++ {
 		if !b.Has(i) {
 			return false
 		}
 	}
 	return true
+}
+
+// ChunkSizeBytes returns the chunk size used by this bitmap.
+func (b *ChunkBitmap) ChunkSizeBytes() int {
+	return b.chunkSize
 }
 
 // IsComplete returns true if all chunks have been downloaded.
@@ -135,7 +181,83 @@ func (b *ChunkBitmap) Total() int {
 	return b.total
 }
 
+// Have returns the number of downloaded chunks.
+func (b *ChunkBitmap) Have() int {
+	b.mu.RLock()
+	h := b.have
+	b.mu.RUnlock()
+	return h
+}
+
 // FileSize returns the tracked file size.
 func (b *ChunkBitmap) FileSize() int64 {
 	return b.fileSize
+}
+
+// BitmapPath returns the .kdbitmap sidecar path for a given file path.
+func BitmapPath(filePath string) string {
+	return filePath + ".kdbitmap"
+}
+
+// Save writes the bitmap state to a .kdbitmap file.
+func (b *ChunkBitmap) Save(path string) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	buf := make([]byte, bitmapHeaderSize+len(b.bits)*8)
+	copy(buf[offMagic:], bitmapMagic[:])
+	buf[offVersion] = bitmapVersion
+	binary.LittleEndian.PutUint64(buf[offFileSize:], uint64(b.fileSize))
+	binary.LittleEndian.PutUint32(buf[offTotal:], uint32(b.total))
+	binary.LittleEndian.PutUint32(buf[offHave:], uint32(b.have))
+	binary.LittleEndian.PutUint32(buf[offChunkSize:], uint32(b.chunkSize))
+	for i, w := range b.bits {
+		binary.LittleEndian.PutUint64(buf[bitmapHeaderSize+i*8:], w)
+	}
+	return os.WriteFile(path, buf, 0600)
+}
+
+// LoadChunkBitmap reads a bitmap from a .kdbitmap file.
+// Returns an error if the file is corrupt or the fileSize doesn't match.
+func LoadChunkBitmap(path string, expectedFileSize int64) (*ChunkBitmap, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) < bitmapHeaderSize {
+		return nil, fmt.Errorf("bitmap file too short: %d bytes", len(data))
+	}
+	if [4]byte(data[offMagic:offMagic+4]) != bitmapMagic {
+		return nil, fmt.Errorf("invalid bitmap magic")
+	}
+	if data[offVersion] != bitmapVersion {
+		return nil, fmt.Errorf("unsupported bitmap version: %d", data[offVersion])
+	}
+	fileSize := int64(binary.LittleEndian.Uint64(data[offFileSize:]))
+	if fileSize != expectedFileSize {
+		return nil, fmt.Errorf("bitmap fileSize mismatch: got %d, expected %d", fileSize, expectedFileSize)
+	}
+	total := int(binary.LittleEndian.Uint32(data[offTotal:]))
+	have := int(binary.LittleEndian.Uint32(data[offHave:]))
+	chunkSize := int(binary.LittleEndian.Uint32(data[offChunkSize:]))
+	if chunkSize == 0 {
+		chunkSize = ChunkSize // backwards compat
+	}
+
+	numWords := (total + 63) / 64
+	if len(data) < bitmapHeaderSize+numWords*8 {
+		return nil, fmt.Errorf("bitmap data truncated: need %d bytes, have %d", bitmapHeaderSize+numWords*8, len(data))
+	}
+
+	bits := make([]uint64, numWords)
+	for i := range bits {
+		bits[i] = binary.LittleEndian.Uint64(data[bitmapHeaderSize+i*8:])
+	}
+	return &ChunkBitmap{
+		bits:      bits,
+		total:     total,
+		have:      have,
+		fileSize:  fileSize,
+		chunkSize: chunkSize,
+	}, nil
 }
