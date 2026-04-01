@@ -1716,11 +1716,15 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	var cacheFD *os.File
 	var notLocalSynced bool
 	var bitmap *ChunkBitmap
+	var remoteFileSize int64 // snapshot of f.stat.Size under lock
 	if ok {
 		pool = f.StreamPool
 		cacheFD = f.CacheFD
 		notLocalSynced = f.NotLocalSynced
 		bitmap = f.Bitmap
+		if f.stat != nil {
+			remoteFileSize = f.stat.Size
+		}
 	}
 	d.OpenMapLock.RUnlock()
 
@@ -1746,12 +1750,10 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			}
 			// Clamp to remote file size — pre-allocated files may contain
 			// garbage bytes past the actual content boundary.
-			if f.stat != nil {
-				if fileSize := f.stat.Size; fileSize > 0 && offset+int64(n) > fileSize {
-					n = int(fileSize - offset)
-					if n < 0 {
-						n = 0
-					}
+			if remoteFileSize > 0 && offset+int64(n) > remoteFileSize {
+				n = int(remoteFileSize - offset)
+				if n < 0 {
+					n = 0
 				}
 			}
 			return n
@@ -1762,12 +1764,10 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		// Clamp the request size to the file's actual size to prevent
 		// reading garbage past EOF on pre-allocated cache files.
 		readSize := int64(len(buff))
-		if f.stat != nil {
-			if fileSize := f.stat.Size; fileSize > 0 && offset+readSize > fileSize {
-				readSize = fileSize - offset
-				if readSize <= 0 {
-					return 0
-				}
+		if remoteFileSize > 0 && offset+readSize > remoteFileSize {
+			readSize = remoteFileSize - offset
+			if readSize <= 0 {
+				return 0
 			}
 		}
 
@@ -2015,7 +2015,9 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		// (e.g. git's HEAD.lock → HEAD rename), stale bytes past EOF remain
 		// without this truncate.
 		if existing.RealPathOfFile != "" {
-			_ = os.Truncate(existing.RealPathOfFile, stat.Size)
+			if truncErr := os.Truncate(existing.RealPathOfFile, stat.Size); truncErr != nil && !os.IsNotExist(truncErr) {
+				logger.Warn("Failed to truncate cache file to new size", "path", existing.RealPathOfFile, "size", stat.Size, "error", truncErr)
+			}
 		}
 		// Ensure AllFileMap points to the same object so OpenEx sees correct state.
 		d.AfmLock.Lock()

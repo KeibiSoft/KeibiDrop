@@ -348,7 +348,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				switch req.Type {
 				case bindings.NotifyType_ADD_FILE, bindings.NotifyType_EDIT_FILE:
 					// Per-path debounce: update pending and reset deadline.
-					// Only send when the path is stable for 1 second.
+					// Only send when the path is stable for 200ms.
 					pending[req.Path] = &pendingNotify{
 						req:      req,
 						deadline: time.Now().Add(200 * time.Millisecond),
