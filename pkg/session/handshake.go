@@ -120,10 +120,13 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		peerCiphers = []kbc.CipherSuite{kbc.CipherChaCha20}
 	}
 	suite := kbc.NegotiateCipher(kbc.SupportedCiphers(), peerCiphers)
-	// Only update if not already set (outbound may have run first with local preference).
+	session.CipherMu.Lock()
 	if session.CipherSuite == "" {
 		session.CipherSuite = suite
+	} else {
+		suite = session.CipherSuite
 	}
+	session.CipherMu.Unlock()
 	logger.Info("Cipher negotiated", "suite", suite, "peer-offered", msg.SupportedCiphers, "hardware-aes", kbc.HasHardwareAES())
 
 	inboundKey, err := kbc.DeriveKey(suite, seed1, seed2)
@@ -175,11 +178,13 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 
 	// Determine cipher suite. If inbound already negotiated, use that.
 	// Otherwise use local preference (outbound runs before inbound in create-room flow).
+	session.CipherMu.Lock()
 	suite := session.CipherSuite
 	if suite == "" {
-		suite = kbc.SupportedCiphers()[0] // local preference
+		suite = kbc.SupportedCiphers()[0]
 		session.CipherSuite = suite
 	}
+	session.CipherMu.Unlock()
 
 	outboundKey, err := kbc.DeriveKey(suite, seed1, seed2)
 	if err != nil {

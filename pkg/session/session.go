@@ -44,6 +44,7 @@ type Session struct {
 	SEKOutbound []byte
 
 	// Negotiated cipher suite for this session.
+	CipherMu    sync.Mutex
 	CipherSuite kbc.CipherSuite
 
 	// Peer-to-peer TCP connections.
