@@ -99,8 +99,31 @@ checksums: $(DIST)
 clean-dist:
 	rm -rf $(DIST)
 
+# ── Mobile ────────────────────────────────────────────────
+
+build-ios:
+	GOFLAGS="-mod=mod" gomobile bind -target=ios -o KeibiDrop.xcframework ./mobile
+
+build-android:
+	GOFLAGS="-mod=mod" gomobile bind -target=android -o keibidrop.aar ./mobile
+
+# Build + run on iOS Simulator (requires Xcode project setup first)
+run-ios-sim: build-ios
+	xcodebuild -project ios/KeibiDrop.xcodeproj -scheme KeibiDrop \
+		-sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 16' build
+	xcrun simctl boot "iPhone 16" 2>/dev/null || true
+	xcrun simctl install booted ios/build/Debug-iphonesimulator/KeibiDrop.app
+	xcrun simctl launch booted com.keibisoft.keibidrop
+
+# Build + run on Android emulator (requires Android SDK + emulator running)
+run-android-emu: build-android
+	cd android && ./gradlew assembleDebug
+	adb install android/app/build/outputs/apk/debug/app-debug.apk
+	adb shell am start -n com.keibisoft.keibidrop/.MainActivity
+
 clean: clean-dist
 	rm -f keibidrop-cli kd libkeibidrop.a libkeibidrop.h
+	rm -rf KeibiDrop.xcframework keibidrop.aar
 
 # ── Run (dev) ─────────────────────────────────────────────
 # Alice: ports 26001/26002    Bob: ports 26003/26004
@@ -155,6 +178,12 @@ help:
 	@echo "  make package-deb            .deb package (needs nfpm)"
 	@echo "  make checksums              SHA256SUMS for dist/"
 	@echo ""
+	@echo "Mobile:"
+	@echo "  make build-ios              Build iOS framework (.xcframework)"
+	@echo "  make build-android          Build Android library (.aar)"
+	@echo "  make run-ios-sim            Build + run on iOS Simulator"
+	@echo "  make run-android-emu        Build + run on Android emulator"
+	@echo ""
 	@echo "Other:"
 	@echo "  make protoc                 Regenerate gRPC stubs"
 	@echo "  make rust-bindings          Regenerate Rust FFI bindings"
@@ -165,4 +194,5 @@ help:
         package-macos package-tar package-deb checksums clean-dist clean \
         run-alice run-bob \
         run-cli-alice run-cli-bob \
-        run-kd-alice run-kd-bob help
+        run-kd-alice run-kd-bob \
+        build-ios build-android run-ios-sim run-android-emu help

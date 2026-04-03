@@ -25,8 +25,11 @@ MountBob/
 test_mov.mov
 tests.test
 
-# Mobile (closed source, not in this repo)
+# Mobile (closed source, proprietary apps)
+ios/
+android/
 KeibiDrop.xcframework/
+keibidrop.aar
 
 # IDE
 .idea/
