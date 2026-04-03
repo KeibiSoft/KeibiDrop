@@ -101,11 +101,27 @@ clean-dist:
 
 # ── Mobile ────────────────────────────────────────────────
 
+MOBILE_REPO ?= ../KeibiDropMobile
+
 build-ios:
 	GOFLAGS="-mod=mod" gomobile bind -target=ios -o KeibiDrop.xcframework ./mobile
 
 build-android:
 	GOFLAGS="-mod=mod" gomobile bind -target=android -o keibidrop.aar ./mobile
+
+# Sync mobile app source + frameworks to the private KeibiDropMobile repo.
+# Edit in KeibiDrop/ios and KeibiDrop/android, run this, commit in KeibiDropMobile.
+sync-mobile:
+	@echo "Syncing to $(MOBILE_REPO)..."
+	rsync -av --delete --exclude='build/' --exclude='.DS_Store' ios/ $(MOBILE_REPO)/ios/
+	rsync -av --delete --exclude='build/' --exclude='.DS_Store' android/ $(MOBILE_REPO)/android/
+	@if [ -d KeibiDrop.xcframework ]; then \
+		rsync -av --delete KeibiDrop.xcframework/ $(MOBILE_REPO)/ios/KeibiDrop/KeibiDrop.xcframework/; \
+	fi
+	@if [ -f keibidrop.aar ]; then \
+		cp keibidrop.aar $(MOBILE_REPO)/android/keibidrop.aar; \
+	fi
+	@echo "Done. cd $(MOBILE_REPO) && git add -A && git commit"
 
 # Build + run on iOS Simulator (requires Xcode project setup first)
 run-ios-sim: build-ios
@@ -183,6 +199,7 @@ help:
 	@echo "  make build-android          Build Android library (.aar)"
 	@echo "  make run-ios-sim            Build + run on iOS Simulator"
 	@echo "  make run-android-emu        Build + run on Android emulator"
+	@echo "  make sync-mobile            Sync ios/ android/ to KeibiDropMobile repo"
 	@echo ""
 	@echo "Other:"
 	@echo "  make protoc                 Regenerate gRPC stubs"
@@ -195,4 +212,4 @@ help:
         run-alice run-bob \
         run-cli-alice run-cli-bob \
         run-kd-alice run-kd-bob \
-        build-ios build-android run-ios-sim run-android-emu help
+        build-ios build-android run-ios-sim run-android-emu sync-mobile help
