@@ -599,31 +599,29 @@ fn main() {
             let _ = Command::new("explorer").arg(&mount_path).spawn();
         });
 
-        // Handle Add File: native file picker (multi-select) → copy to save folder → KD_AddFile
+        // Handle Add File: native file picker → copy to save folder → KD_AddFile
         let save_path_add = to_save.clone();
         app.on_add_file_pressed(move || {
             println!("Add file pressed");
             let save_path = save_path_add.clone();
             std::thread::spawn(move || {
-                if let Some(paths) = rfd::FileDialog::new().pick_files() {
-                    for path in paths {
-                        let path_str = path.to_string_lossy().to_string();
-                        println!("Selected file: {}", path_str);
-                        // Copy to save folder for safekeeping
-                        let _ = std::fs::create_dir_all(&save_path);
-                        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        let dest = format!("{}/{}", save_path, filename);
-                        if let Err(e) = std::fs::copy(&path_str, &dest) {
-                            eprintln!("Failed to copy file to save folder: {}", e);
-                        }
-                        let c_path = CString::new(path_str.clone()).unwrap();
-                        let res = bindings::KD_AddFile(c_path.into_raw());
-                        if res != 0 {
-                            let err = get_last_error();
-                            eprintln!("Failed to add file: {}", err);
-                        } else {
-                            println!("File added: {}", path_str);
-                        }
+                if let Some(path) = rfd::FileDialog::new().pick_file() {
+                    let path_str = path.to_string_lossy().to_string();
+                    println!("Selected file: {}", path_str);
+                    // Copy to save folder for safekeeping
+                    let _ = std::fs::create_dir_all(&save_path);
+                    let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let dest = format!("{}/{}", save_path, filename);
+                    if let Err(e) = std::fs::copy(&path_str, &dest) {
+                        eprintln!("Failed to copy file to save folder: {}", e);
+                    }
+                    let c_path = CString::new(path_str.clone()).unwrap();
+                    let res = bindings::KD_AddFile(c_path.into_raw());
+                    if res != 0 {
+                        let err = get_last_error();
+                        eprintln!("Failed to add file: {}", err);
+                    } else {
+                        println!("File added: {}", path_str);
                     }
                 }
             });
