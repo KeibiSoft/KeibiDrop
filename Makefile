@@ -125,13 +125,18 @@ sync-mobile:
 	fi
 	@echo "Done. cd $(MOBILE_REPO) && git add -A && git commit"
 
-# Build + run on iOS Simulator (requires Xcode project setup first)
+SIM_ID ?= C415CC66-0845-4AA9-96CB-178CBC42A44F
+
+# Build + run on iOS Simulator
 run-ios-sim: build-ios
+	rm -rf ios/build
 	xcodebuild -project ios/KeibiDrop.xcodeproj -scheme KeibiDrop \
-		-sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 16' build
-	xcrun simctl boot "iPhone 16" 2>/dev/null || true
-	xcrun simctl install booted ios/build/Debug-iphonesimulator/KeibiDrop.app
-	xcrun simctl launch booted com.keibisoft.keibidrop
+		-sdk iphonesimulator -destination 'platform=iOS Simulator,id=$(SIM_ID)' \
+		-derivedDataPath ios/build build
+	xcrun simctl boot $(SIM_ID) 2>/dev/null || true
+	open -a Simulator
+	xcrun simctl install $(SIM_ID) ios/build/Build/Products/Debug-iphonesimulator/KeibiDrop.app
+	xcrun simctl launch $(SIM_ID) com.keibisoft.keibidrop
 
 # Build + run on Android emulator (requires Android SDK + emulator running)
 run-android-emu: build-android
