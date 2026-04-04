@@ -1,6 +1,6 @@
 # Privacy Policy - **KEIBI**DROP Client
 
-Last updated: 11.08.2025
+Last updated: 04.04.2026
 
 **KEIBI**DROP is an open-source peer-to-peer file sharing client developed by **KeibiSoft SRL**. This document outlines the privacy expectations for users of the **KEIBI**DROP client and its default relay infrastructure.
 
@@ -45,9 +45,27 @@ If you don't like this, you're free to run your own relay or use a trusted one o
 
 ---
 
-## 4. No Centralized Logging (Client)
+## 4. Local Logging (Client)
 
-The client itself does not send logging nor file data to KeibiSoft. We don’t want to be responsible for it.
+The client writes debug logs to a file on your machine. These logs stay on your device and are never sent to KeibiSoft automatically.
+
+If you run into a crash or bug, we may ask you to send the log file to help us investigate. On mobile, the app has a "Send Logs" button that sanitizes the file before export (see 4b below). On desktop, the log file is at `~/Library/Logs/KeibiDrop/keibidrop.log` (macOS) or `~/.local/share/keibidrop/keibidrop.log` (Linux).
+
+---
+
+## 4b. Diagnostic Logs (Mobile)
+
+The mobile app writes debug logs to a local file on your device. These logs are never sent automatically.
+
+If you choose to send logs (via the "Send Logs" button in the Files tab), they are sanitized before export:
+- File names are replaced with `<redacted>`, keeping only the file extension (e.g. `.pdf`, `.mp4`)
+- Fingerprint codes and IP addresses are removed
+- Standard directory names (Documents, KeibiDrop, Received) are kept for context
+- No file contents are ever logged
+
+You control when and how the sanitized log is shared. We receive it only if you send it to us.
+
+Log files are rotated automatically and kept under 5 MB.
 
 ---
 

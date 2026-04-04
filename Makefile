@@ -105,6 +105,8 @@ MOBILE_REPO ?= ../KeibiDropMobile
 
 build-ios:
 	GOFLAGS="-mod=mod" gomobile bind -target=ios -o KeibiDrop.xcframework ./mobile
+	rm -rf ios/KeibiDrop/KeibiDrop.xcframework
+	cp -r KeibiDrop.xcframework ios/KeibiDrop/KeibiDrop.xcframework
 
 build-android:
 	GOFLAGS="-mod=mod" gomobile bind -target=android -o keibidrop.aar ./mobile
