@@ -33,6 +33,7 @@ type KeibiDrop struct {
 	RelayEndoint *url.URL
 
 	IsFUSE       bool
+	IsLocalMode  bool
 	OpInProgress atomic.Int32
 
 	session *session.Session
@@ -201,6 +202,9 @@ type EncryptedRegistration struct {
 
 // Map server status errors to semantic errors.
 type ErrorMapperFunc func(statusCode int, err error) error
+
+// InboundPort returns the port this instance listens on for incoming connections.
+func (kd *KeibiDrop) InboundPort() int { return kd.inboundPort }
 
 // IsRunning returns whether the KeibiDrop instance is in a connected session.
 func (kd *KeibiDrop) IsRunning() bool {

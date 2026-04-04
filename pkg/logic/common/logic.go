@@ -397,6 +397,26 @@ func (kd *KeibiDrop) GetPeerFingerprint() (string, error) {
 	return kd.session.ExpectedPeerFingerprint, nil
 }
 
+// SetPeerDirectAddress parses a direct LAN peer address (e.g. "fe80::1%eth0:26431"),
+// stores the peer IP and port, and sets TOFU mode for the handshake.
+func (kd *KeibiDrop) SetPeerDirectAddress(addr string) error {
+	if kd.session == nil {
+		return ErrNilPointer
+	}
+	ip, zone, port, err := ParsePeerDirectAddress(addr)
+	if err != nil {
+		return err
+	}
+	if zone != "" {
+		kd.PeerIPv6IP = ip + "%" + zone
+	} else {
+		kd.PeerIPv6IP = ip
+	}
+	kd.session.PeerPort = port
+	kd.session.ExpectedPeerFingerprint = "TOFU"
+	return nil
+}
+
 func (kd *KeibiDrop) JoinRoom() error {
 	logger := kd.logger.With("method", "join-room")
 	if kd.session == nil {
@@ -423,8 +443,27 @@ func (kd *KeibiDrop) JoinRoom() error {
 		break
 	}
 
-	if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
-		return err
+	// In local mode, PeerIPv6IP and PeerPort are already set by SetPeerDirectAddress.
+	if !kd.IsLocalMode {
+		if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
+			return err
+		}
+	} else {
+		// Local mode: exchange public keys before the PQC handshake.
+		// The relay normally provides peer keys; we do a plaintext pre-exchange instead.
+		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
+		keyConn, err := net.DialTimeout("tcp", peerAddr, 15*time.Second)
+		if err != nil {
+			logger.Error("Failed to dial for key exchange", "addr", peerAddr, "error", err)
+			return err
+		}
+		if err := session.ExchangePublicKeysLocal(kd.session, keyConn, true); err != nil {
+			keyConn.Close()
+			logger.Error("Failed local key exchange", "error", err)
+			return err
+		}
+		keyConn.Close()
+		logger.Info("Local key exchange complete (join side)")
 	}
 
 	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))); err != nil {
@@ -485,13 +524,15 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return ErrAlreadyRunning
 	}
 
-	if err := kd.registerRoomToRelay(); err != nil {
-		return err
+	if !kd.IsLocalMode {
+		if err := kd.registerRoomToRelay(); err != nil {
+			return err
+		}
 	}
 
 	logger.Info("Waiting for peer to join...")
 
-	// Wait for expected peer fingerprint
+	// Wait for expected peer fingerprint (skip if already set, e.g. local mode TOFU).
 	elapsed := 0
 	for {
 		if elapsed >= Timeout {
@@ -504,6 +545,23 @@ func (kd *KeibiDrop) CreateRoom() error {
 			continue
 		}
 		break
+	}
+
+	// In local mode, exchange public keys before the PQC handshake.
+	// The relay normally provides peer keys; local mode uses a plaintext pre-exchange.
+	if kd.IsLocalMode {
+		keyConn, err := kd.listener.Accept()
+		if err != nil {
+			logger.Error("Failed to accept key exchange connection", "error", err)
+			return err
+		}
+		if err := session.ExchangePublicKeysLocal(kd.session, keyConn, false); err != nil {
+			keyConn.Close()
+			logger.Error("Failed local key exchange", "error", err)
+			return err
+		}
+		keyConn.Close()
+		logger.Info("Local key exchange complete (create side)")
 	}
 
 	conn, err := kd.listener.Accept()
@@ -522,9 +580,14 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
-	kd.PeerIPv6IP = addr.IP.String()
+	// Include zone ID for link-local addresses (required for routing on Linux/macOS).
+	peerIP := addr.IP.String()
+	if addr.Zone != "" {
+		peerIP = peerIP + "%" + addr.Zone
+	}
+	kd.PeerIPv6IP = peerIP
 
-	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(addr.IP.String(), strconv.Itoa(kd.session.PeerPort))); err != nil {
+	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))); err != nil {
 		return err
 	}
 

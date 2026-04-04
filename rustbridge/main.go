@@ -545,6 +545,45 @@ func KD_GetFUSEMode() C.int {
 	return 0
 }
 
+//export KD_SetLocalMode
+func KD_SetLocalMode(enabled C.int) {
+	if kd != nil {
+		kd.IsLocalMode = enabled != 0
+	}
+}
+
+//export KD_GetLocalMode
+func KD_GetLocalMode() C.int {
+	if kd != nil && kd.IsLocalMode {
+		return 1
+	}
+	return 0
+}
+
+//export KD_GetLinkLocalAddress
+func KD_GetLinkLocalAddress() *C.char {
+	if kd == nil {
+		return C.CString("")
+	}
+	addr, err := common.GetLinkLocalAddress(kd.InboundPort())
+	if err != nil {
+		return C.CString("")
+	}
+	return C.CString(addr)
+}
+
+//export KD_SetPeerDirectAddress
+func KD_SetPeerDirectAddress(addr *C.char) C.int {
+	if kd == nil {
+		return -1
+	}
+	if err := kd.SetPeerDirectAddress(C.GoString(addr)); err != nil {
+		setLastError(err)
+		return -2
+	}
+	return 0
+}
+
 //export KD_GetVersion
 func KD_GetVersion() *C.char {
 	return C.CString(common.Version + " (" + common.CommitHash + ")")

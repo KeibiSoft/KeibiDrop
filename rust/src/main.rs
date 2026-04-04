@@ -321,6 +321,12 @@ fn main() {
         fuse_present, no_fuse_env, use_fuse
     );
 
+    // Local mode: direct LAN connection, skip relay
+    let local_mode_env = env::var("KEIBIDROP_LOCAL")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    println!("Local mode: {}", local_mode_env);
+
     // Collab sync: auto-enabled with FUSE, can be overridden via env vars.
     let prefetch_on_open = env::var("KEIBIDROP_PREFETCH_ON_OPEN")
         .map(|v| !v.is_empty())
@@ -399,16 +405,43 @@ fn main() {
             bindings::KD_SetFUSEMode(if enabled { 1 } else { 0 });
         });
 
-        // Handle Add: register peer fingerprint
+        // Local mode toggle
+        let local_addr = {
+            let ptr = bindings::KD_GetLinkLocalAddress();
+            if ptr.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(ptr).to_string_lossy().to_string()
+            }
+        };
+        println!("Link-local address: {}", local_addr);
+        app.set_local_mode(local_mode_env);
+        app.set_local_address(slint::SharedString::from(&local_addr));
+        if local_mode_env {
+            bindings::KD_SetLocalMode(1);
+        }
+        app.on_local_mode_toggled(move |enabled| {
+            println!("Local mode toggled: {}", enabled);
+            bindings::KD_SetLocalMode(if enabled { 1 } else { 0 });
+        });
+
+        // Handle Add: register peer fingerprint or direct address (local mode)
         let weak = app.as_weak();
         app.on_add_peer_code(move || {
             if let Some(app) = weak.upgrade() {
                 let peer_code_shared = app.get_peer_code();
                 let peer_code = peer_code_shared.as_str();
-                println!("Peer code entered: {}", peer_code);
+                let is_local = app.get_local_mode();
+                println!("Peer code entered: {} (local={})", peer_code, is_local);
 
-                let c_peer_code = CString::new(peer_code).expect("CString::new failed");
-                let result = bindings::KD_AddPeerFingerprint(c_peer_code.as_ptr() as *mut i8);
+                let result = if is_local {
+                    let c_addr = CString::new(peer_code).expect("CString::new failed");
+                    bindings::KD_SetPeerDirectAddress(c_addr.as_ptr() as *mut i8)
+                } else {
+                    let c_fp = CString::new(peer_code).expect("CString::new failed");
+                    bindings::KD_AddPeerFingerprint(c_fp.as_ptr() as *mut i8)
+                };
+
                 if result != 0 {
                     println!("Received error code: {}", result);
                     app.set_peer_code_added(false);
@@ -420,16 +453,21 @@ fn main() {
             }
         });
 
-        // Handle Copy: copy fingerprint to clipboard
+        // Handle Copy: copy fingerprint or local address to clipboard
         let weak_copy = app.as_weak();
+        let local_addr_copy = local_addr.clone();
         app.on_copy_my_code(move || {
-            let fp = if let Some(app) = weak_copy.upgrade() {
-                app.get_my_code().to_string()
+            let text = if let Some(app) = weak_copy.upgrade() {
+                if app.get_local_mode() {
+                    local_addr_copy.clone()
+                } else {
+                    app.get_my_code().to_string()
+                }
             } else {
                 my_fp.clone()
             };
-            println!("Copy pressed: {}", fp);
-            ctx.set_contents(fp)
+            println!("Copy pressed: {}", text);
+            ctx.set_contents(text)
                 .expect("My operating system hates me");
         });
 

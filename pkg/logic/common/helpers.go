@@ -14,7 +14,136 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 )
+
+// GetLinkLocalAddress finds a link-local IPv6 address on this machine and
+// returns it formatted as "ip%zone:port" for direct LAN peer connections.
+// Falls back to loopback (::1) when no link-local interface is available.
+func GetLinkLocalAddress(port int) (string, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+
+	// First pass: look for a real link-local unicast address.
+	for _, iface := range ifaces {
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err != nil {
+				continue
+			}
+			if ip.To16() != nil && ip.To4() == nil && ip.IsLinkLocalUnicast() {
+				return fmt.Sprintf("%s%%%s:%d", ip.String(), iface.Name, port), nil
+			}
+		}
+	}
+
+	// Fallback: accept loopback for local testing.
+	for _, iface := range ifaces {
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err != nil {
+				continue
+			}
+			if ip.To16() != nil && ip.To4() == nil && ip.IsLoopback() {
+				return fmt.Sprintf("%s:%d", ip.String(), port), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no link-local or loopback IPv6 address found")
+}
+
+// ParsePeerDirectAddress parses a direct LAN peer address in the format
+// "ip%zone:port" (link-local) or "ip:port" (loopback). Returns the IP,
+// zone identifier, port number, and any error.
+func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err error) {
+	if addr == "" {
+		return "", "", 0, fmt.Errorf("empty address")
+	}
+
+	// If there is a zone (%...), the format is: ip%zone:port
+	// Split on % first to detect zone presence.
+	if idx := strings.Index(addr, "%"); idx != -1 {
+		ipPart := addr[:idx]
+		rest := addr[idx+1:] // "zone:port"
+
+		lastColon := strings.LastIndex(rest, ":")
+		if lastColon == -1 {
+			return "", "", 0, fmt.Errorf("missing port in address %q", addr)
+		}
+		zone = rest[:lastColon]
+		portStr := rest[lastColon+1:]
+
+		port, err = strconv.Atoi(portStr)
+		if err != nil {
+			return "", "", 0, fmt.Errorf("invalid port %q: %w", portStr, err)
+		}
+
+		parsedIP := net.ParseIP(ipPart)
+		if parsedIP == nil {
+			return "", "", 0, fmt.Errorf("invalid IP %q", ipPart)
+		}
+		if parsedIP.To4() != nil {
+			return "", "", 0, fmt.Errorf("IPv4 addresses not supported: %q", ipPart)
+		}
+		if !parsedIP.IsLinkLocalUnicast() && !parsedIP.IsLoopback() {
+			return "", "", 0, fmt.Errorf("address must be link-local or loopback: %q", ipPart)
+		}
+
+		if port < 26000 || port > 27000 {
+			return "", "", 0, fmt.Errorf("port %d out of range 26000-27000", port)
+		}
+
+		return ipPart, zone, port, nil
+	}
+
+	// No zone: could be loopback (::1:port) or ambiguous link-local.
+	// For loopback, the known format is "::1:PORT" where PORT is the last
+	// colon-separated segment and "::1" is the IP.
+	// For anything starting with fe80, require a zone — reject as ambiguous.
+	if strings.HasPrefix(addr, "fe80") {
+		return "", "", 0, fmt.Errorf("link-local address requires zone ID (%%iface): %q", addr)
+	}
+
+	lastColon := strings.LastIndex(addr, ":")
+	if lastColon == -1 || lastColon == 0 {
+		return "", "", 0, fmt.Errorf("invalid address format %q", addr)
+	}
+
+	ipPart := addr[:lastColon]
+	portStr := addr[lastColon+1:]
+
+	if portStr == "" {
+		return "", "", 0, fmt.Errorf("missing port in address %q", addr)
+	}
+
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("invalid port %q: %w", portStr, err)
+	}
+
+	parsedIP := net.ParseIP(ipPart)
+	if parsedIP == nil {
+		return "", "", 0, fmt.Errorf("invalid IP %q", ipPart)
+	}
+	if parsedIP.To4() != nil {
+		return "", "", 0, fmt.Errorf("IPv4 addresses not supported: %q", ipPart)
+	}
+	if !parsedIP.IsLoopback() {
+		return "", "", 0, fmt.Errorf("non-loopback address without zone ID: %q", ipPart)
+	}
+
+	if port < 26000 || port > 27000 {
+		return "", "", 0, fmt.Errorf("port %d out of range 26000-27000", port)
+	}
+
+	return ipPart, "", port, nil
+}
 
 func GetLocalIPv6() (string, error) {
 	ifaces, err := net.Interfaces()

@@ -96,6 +96,7 @@ func runDaemon() {
 	}
 
 	isFuse := checkfuse.IsFUSEPresent() && !cfg.NoFUSE
+	isLocal := os.Getenv("KD_LOCAL") != ""
 
 	// Setup logger
 	var logWriter *os.File = os.Stderr
@@ -119,6 +120,7 @@ func runDaemon() {
 		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"init failed: %s"}`+"\n", err)
 		os.Exit(1)
 	}
+	kd.IsLocalMode = isLocal
 	go kd.Run()
 
 	// Listen on Unix socket
@@ -145,6 +147,11 @@ func runDaemon() {
 		"mount_path":  cfg.MountPath,
 		"log_file":    cfg.LogFile,
 		"config_path": config.ConfigPath(),
+	}
+	if isLocal {
+		addr, _ := common.GetLinkLocalAddress(kd.InboundPort())
+		startData["local_mode"] = true
+		startData["local_address"] = addr
 	}
 	b, _ := json.Marshal(Response{OK: true, Data: mustMarshal(startData)})
 	fmt.Println(string(b))
@@ -198,7 +205,14 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 
 	case "register":
 		if len(req.Args) < 1 {
-			return errResponse("usage: kd register <fingerprint>")
+			return errResponse("usage: kd register <fingerprint-or-address>")
+		}
+		if kd.IsLocalMode {
+			err := kd.SetPeerDirectAddress(req.Args[0])
+			if err != nil {
+				return errResponse(err.Error())
+			}
+			return okResponse(map[string]string{"registered_address": req.Args[0]})
 		}
 		err := kd.AddPeerFingerprint(req.Args[0])
 		if err != nil {
@@ -279,11 +293,19 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 	}
 
 	if showAll || what == "fingerprint" {
-		fp, err := kd.ExportFingerprint()
-		if err != nil {
-			return errResponse(err.Error())
+		if kd.IsLocalMode {
+			addr, err := common.GetLinkLocalAddress(kd.InboundPort())
+			if err != nil {
+				return errResponse(err.Error())
+			}
+			data["local_address"] = addr
+		} else {
+			fp, err := kd.ExportFingerprint()
+			if err != nil {
+				return errResponse(err.Error())
+			}
+			data["fingerprint"] = fp
 		}
-		data["fingerprint"] = fp
 	}
 	if showAll || what == "ip" {
 		data["ip"] = kd.LocalIPv6IP
