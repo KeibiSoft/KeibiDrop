@@ -306,12 +306,30 @@ func (api *API) ExportFile(remoteName string, destPath string) error {
 }
 
 // SaveFile downloads a file from the peer into the save folder.
+// If the file already exists at the correct size, it skips the download.
 // Returns the local path where the file was saved.
 func (api *API) SaveFile(remoteName string) (string, error) {
 	if api.kd == nil {
 		return "", fmt.Errorf("not initialized")
 	}
 	localPath := filepath.Join(api.savePath, remoteName)
+
+	// Check if already downloaded at correct size.
+	api.kd.SyncTracker.RemoteFilesMu.RLock()
+	rf, ok := api.kd.SyncTracker.RemoteFiles[remoteName]
+	var expectedSize uint64
+	if ok {
+		expectedSize = rf.Size
+	}
+	api.kd.SyncTracker.RemoteFilesMu.RUnlock()
+
+	if info, statErr := os.Stat(localPath); statErr == nil {
+		if expectedSize > 0 && uint64(info.Size()) == expectedSize {
+			// Already have the full file, no need to re-download.
+			return localPath, nil
+		}
+	}
+
 	if err := api.ExportFile(remoteName, localPath); err != nil {
 		return "", err
 	}
