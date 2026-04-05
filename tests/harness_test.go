@@ -77,8 +77,21 @@ func setupPeerPairImpl(t *testing.T, aliceFuse bool, bobFuse bool, timeout time.
 	// Create temp dirs (auto-cleaned by testing framework)
 	aliceSave := t.TempDir()
 	bobSave := t.TempDir()
-	aliceMount := t.TempDir()
-	bobMount := t.TempDir()
+
+	// WinFSP on Windows requires drive-letter mount points; directory-based
+	// reparse-point mounts fail without SeCreateSymbolicLinkPrivilege.
+	// Use high letters (K:/L:) that are unlikely to already be assigned.
+	var aliceMount, bobMount string
+	if runtime.GOOS == "windows" && aliceFuse {
+		aliceMount = `K:\`
+	} else {
+		aliceMount = t.TempDir()
+	}
+	if runtime.GOOS == "windows" && bobFuse {
+		bobMount = `L:\`
+	} else {
+		bobMount = t.TempDir()
+	}
 
 	// Logger — warn level to reduce noise.
 	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})
@@ -206,9 +219,16 @@ func (tp *TestPair) Teardown() {
 		}
 	}
 
-	// Step 4: Force unmount as fallback via /sbin/umount -f.
+	// Step 4: Force unmount as fallback.
 	for _, dir := range []string{tp.AliceMountDir, tp.BobMountDir} {
-		if dir != "" {
+		if dir == "" {
+			continue
+		}
+		if runtime.GOOS == "windows" {
+			// WinFSP: use fsptool to force-unmount drive letters / directories.
+			exec.Command(`C:\Program Files (x86)\WinFsp\bin\fsptool-x64.exe`, "lsvol").Run()
+			exec.Command(`C:\Program Files (x86)\WinFsp\bin\fsptool-x64.exe`, "unmount", dir).Run()
+		} else {
 			exec.Command("/sbin/umount", "-f", dir).Run()
 		}
 	}
@@ -229,6 +249,11 @@ func (tp *TestPair) Teardown() {
 // waitForUnmount polls until the given directory no longer appears as a mount point.
 // Handles macOS symlink resolution (/var -> /private/var).
 func waitForUnmount(dir string, timeout time.Duration) {
+	// Windows: WinFSP unmounts synchronously via host.Unmount(); no polling needed.
+	if runtime.GOOS == "windows" {
+		return
+	}
+
 	// Build list of path variants to check in mount output.
 	// On macOS, /var is a symlink to /private/var, but `mount` uses /private/var.
 	checks := []string{dir}

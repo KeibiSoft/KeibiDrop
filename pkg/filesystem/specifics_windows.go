@@ -31,5 +31,10 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 }
 
 func getMountOptions() []string {
-	return []string{} // WinFsp handles mount options via its own API.
+	// uid=-1,gid=-1: instruct WinFSP to resolve ownership against the calling
+	// process's token rather than a fixed UID/GID.  This is the Windows
+	// equivalent of macOS's "allow_other,defer_permissions" — without it,
+	// WinFSP treats the current user as "other" (mode 0755 → no write),
+	// causing every Create/Write call to return ERROR_ACCESS_DENIED.
+	return []string{"-o", "uid=-1,gid=-1"}
 }

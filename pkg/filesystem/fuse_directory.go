@@ -193,6 +193,10 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 	logger := d.logger.With("method", "create-ex", "path", path)
 
 	flags := fi.Flags
+	// On Windows, WinFSP does not include O_CREAT in fi.Flags for CreateEx
+	// because the "create" semantics are implicit in the call itself.
+	// Ensure O_CREAT is set so platOpen actually creates the file.
+	flags |= syscall.O_CREAT
 	// accessMode := flags & winfuse.O_ACCMODE
 	// logger.Info("CreateEx called", "flags", flags, "accessMode", accessMode, "mode", mode)
 

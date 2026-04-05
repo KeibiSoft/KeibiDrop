@@ -9,7 +9,7 @@ package filesystem
 import (
 	"log/slog"
 	"path/filepath"
-	"strings"
+	"runtime"
 	"sync"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
@@ -44,8 +44,17 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 		"isSecond", isSecond)
 
 	cleanMountPoint := filepath.Clean(mountPoint)
-	pt := strings.Split(cleanMountPoint, "/")
-	if len(pt) < 1 {
+	// On Windows, normalise drive-letter mount points for WinFSP:
+	//   "K:."  (filepath.Clean("K:"))  → "K:"
+	//   "K:\"  (filepath.Clean("K:\")) → "K:"
+	// WinFSP expects a bare drive letter without a trailing separator.
+	if runtime.GOOS == "windows" && len(cleanMountPoint) >= 2 && cleanMountPoint[1] == ':' {
+		stripped := cleanMountPoint[:2]
+		if len(cleanMountPoint) == 3 && (cleanMountPoint[2] == '.' || cleanMountPoint[2] == '\\' || cleanMountPoint[2] == '/') {
+			cleanMountPoint = stripped
+		}
+	}
+	if cleanMountPoint == "" || cleanMountPoint == "." {
 		fs.logger.Warn("FUSE Mount failed - invalid mount point", "mountPoint", mountPoint)
 		return
 	}
