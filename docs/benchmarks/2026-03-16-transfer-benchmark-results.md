@@ -248,6 +248,71 @@ reaches 452 MB/s, which is the ceiling for FUSE mode.
 
 ---
 
+---
+
+## Windows Results (Intel i5-14600KF, after WinFSP port)
+
+**Machine**: Intel Core i5-14600KF (6P+8E cores, 20 threads), Windows 11 Pro, localhost only
+**Date**: 2026-04-05
+**Includes**: WinFSP/cgofuse port, uid=-1,gid=-1 mount options, O_CREAT fix for CreateEx
+**Note**: MinGW (bash) and PowerShell/CMD numbers are within noise — Go compiles to
+native Windows syscalls regardless of launch shell (no POSIX emulation overhead).
+
+### E2E Transfer Throughput via FUSE (Bob shares, Alice reads via WinFSP, drive K:)
+
+| Size | MinGW MB/s | CMD MB/s | Duration (CMD) |
+|------|-----------|---------|----------------|
+| 1 MB | 57 | 74 | 14ms |
+| 10 MB | 241 | 274 | 37ms |
+| 100 MB | 378 | 358 | 279ms |
+| 1 GB | 264 | 296 | 3.46s |
+
+### Encrypted gRPC Throughput (no FUSE)
+
+| Size | MinGW MB/s | CMD MB/s | Duration (CMD) |
+|------|-----------|---------|----------------|
+| 1 MB | 92 | 98 | 10ms |
+| 10 MB | 513 | 528 | 19ms |
+| 100 MB | 839 | 683 | 146ms |
+| 1 GB | 749 | 751 | 1.363s |
+
+High variance at 1 MB (warmup) and 100 MB (system load) — 1 GB numbers are most stable.
+
+### Raw gRPC Baseline (no encryption, localhost)
+
+| Size | MinGW MB/s | CMD MB/s |
+|------|-----------|---------|
+| 1 MB | 515 | 526 |
+| 10 MB | 618 | 700 |
+| 100 MB | 624 | 670 |
+| 1 GB | 618 | 704 |
+
+### Raw Disk I/O Baseline
+
+| Size | Write MB/s | Read MB/s |
+|------|-----------|----------|
+| 1 KB | 14 | 53 |
+| 10 KB | 138 | 506 |
+| 100 KB | 1,127 | 3,580 |
+| 1 MB | 4,331 | 7,764 |
+| 10 MB | 4,939 | 4,489 |
+| 100 MB | 1,954 | 4,027 |
+| 1 GB | 1,783 | 4,006 |
+
+### Comparison: Windows vs macOS vs Linux (E2E FUSE, 1 GB)
+
+| Platform | CPU | E2E FUSE GB/s | Enc. gRPC MB/s |
+|----------|-----|--------------|----------------|
+| Linux | i5-8265U @ 1.6GHz | N/A (pre-pool) | 361 |
+| macOS | i7-9750H @ 2.6GHz | 240 | 452 |
+| Windows | i5-14600KF, 20T | 264–296 | 749–751 |
+
+Windows encrypted gRPC (749–751 MB/s) exceeds macOS (452 MB/s) — faster CPU.
+FUSE E2E is comparable (264–296 vs 240 MB/s on macOS), confirming WinFSP overhead
+is similar to macFUSE kernel round-trip cost.
+
+---
+
 ## Key Findings
 
 1. **Stream mutex fix (#70) was critical** -- c1bfca0 cannot complete FUSE

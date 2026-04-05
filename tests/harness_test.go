@@ -355,8 +355,15 @@ func isFUSEPresent() bool {
 			return true
 		}
 	case "windows":
-		if exists(`C:\Windows\System32\winfsp-x64.dll`) {
-			return true
+		for _, p := range []string{
+			`C:\Windows\System32\winfsp-x64.dll`,
+			`C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll`,
+			`C:\Program Files\WinFsp\bin\winfsp-x64.dll`,
+			`C:\Program Files (x86)\WinFsp\bin\winfsp-a64.dll`,
+		} {
+			if exists(p) {
+				return true
+			}
 		}
 	}
 	return false
