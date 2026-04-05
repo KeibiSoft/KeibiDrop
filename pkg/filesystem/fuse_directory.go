@@ -568,7 +568,7 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 
 	// If EBADF, the fd was already closed (Release called before Fsync).
 	// This is a FUSE race condition. Workaround: open, fsync, close.
-	if err == syscall.EBADF {
+	if errors.Is(err, syscall.EBADF) {
 		// d.logger.Warn("FUSE Fsync EBADF - attempting fallback open/fsync/close", "path", localPath, "fh", fh)
 
 		fd, openErr := platOpen(localPath, syscall.O_RDONLY, 0)

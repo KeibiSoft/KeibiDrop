@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 
@@ -94,7 +95,7 @@ type implStreamFileReceiver struct {
 func (r *implStreamFileReceiver) Recv() (data []byte, offset uint64, totalSize uint64, err error) {
 	resp, err := r.stream.Recv()
 	if err != nil {
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil, 0, 0, io.EOF
 		}
 		return nil, 0, 0, err

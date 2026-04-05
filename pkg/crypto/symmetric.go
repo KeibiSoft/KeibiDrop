@@ -207,7 +207,7 @@ func DecryptChunked(kek []byte, r io.Reader, w io.Writer, cipherSize uint64) err
 		}
 
 		n, err := io.ReadFull(r, chunkBuf[:toRead])
-		if err == io.EOF && n == 0 {
+		if errors.Is(err, io.EOF) && n == 0 {
 			break
 		}
 		if err != nil {
