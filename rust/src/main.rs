@@ -533,6 +533,25 @@ fn main() {
         let weak_disconnect = app.as_weak();
         let disconnect_confirmed = Arc::new(AtomicBool::new(false));
         let disconnect_confirmed_inner = disconnect_confirmed.clone();
+        app.on_export_logs_pressed(move || {
+            println!("Export logs pressed");
+            std::thread::spawn(move || {
+                if let Some(dest) = rfd::FileDialog::new()
+                    .set_file_name("keibidrop-sanitized.log")
+                    .save_file()
+                {
+                    let c_dest = CString::new(dest.to_string_lossy().to_string()).unwrap();
+                    let res = bindings::KD_SanitizeLogs(c_dest.into_raw());
+                    if res == 0 {
+                        println!("Sanitized logs saved to: {}", dest.display());
+                    } else {
+                        let err = get_last_error();
+                        eprintln!("Failed to export logs: {}", err);
+                    }
+                }
+            });
+        });
+
         app.on_disconnect_pressed(move || {
             // If downloads in progress and not yet confirmed, show warning instead
             if let Some(app) = weak_disconnect.upgrade() {
