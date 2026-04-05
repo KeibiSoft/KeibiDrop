@@ -27,8 +27,16 @@ func GetLinkLocalAddress(port int) (string, error) {
 		return "", err
 	}
 
-	// First pass: look for a real link-local unicast address.
+	// Collect all link-local candidates from non-loopback, up interfaces.
+	type candidate struct {
+		ip    net.IP
+		iface string
+	}
+	var candidates []candidate
 	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
 		addrs, _ := iface.Addrs()
 		for _, addr := range addrs {
 			ip, _, err := net.ParseCIDR(addr.String())
@@ -36,9 +44,34 @@ func GetLinkLocalAddress(port int) (string, error) {
 				continue
 			}
 			if ip.To16() != nil && ip.To4() == nil && ip.IsLinkLocalUnicast() {
-				return fmt.Sprintf("%s%%%s:%d", ip.String(), iface.Name, port), nil
+				candidates = append(candidates, candidate{ip: ip, iface: iface.Name})
 			}
 		}
+	}
+
+	if len(candidates) > 0 {
+		// Prefer common LAN interfaces: en0 (macOS WiFi), eth0/wlan0 (Linux).
+		// Avoid utun*, awdl*, llw*, ap* (VPN, AirDrop, low-latency WLAN, access point).
+		preferred := []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp"}
+		for _, pref := range preferred {
+			for _, c := range candidates {
+				if strings.HasPrefix(c.iface, pref) {
+					return fmt.Sprintf("%s%%%s:%d", c.ip.String(), c.iface, port), nil
+				}
+			}
+		}
+		// No preferred match, pick first non-virtual candidate.
+		for _, c := range candidates {
+			skip := strings.HasPrefix(c.iface, "utun") ||
+				strings.HasPrefix(c.iface, "awdl") ||
+				strings.HasPrefix(c.iface, "llw")
+			if !skip {
+				return fmt.Sprintf("%s%%%s:%d", c.ip.String(), c.iface, port), nil
+			}
+		}
+		// All candidates are virtual, use first one anyway.
+		c := candidates[0]
+		return fmt.Sprintf("%s%%%s:%d", c.ip.String(), c.iface, port), nil
 	}
 
 	// Fallback: accept loopback for local testing.
