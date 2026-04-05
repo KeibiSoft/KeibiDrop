@@ -558,6 +558,28 @@ func (api *API) HasResumableDownload(remoteName string) bool {
 	return err == nil
 }
 
+// GetLocalAddress returns the link-local IPv6 address for local mode connections.
+// Format: "fe80::1234:5678%en0:26431"
+func (api *API) GetLocalAddress() string {
+	port := 26431 // default inbound port
+	if api.kd != nil {
+		port = api.kd.InboundPort()
+	}
+	addr, err := common.GetLinkLocalAddress(port)
+	if err != nil {
+		return ""
+	}
+	return addr
+}
+
+// SetPeerDirectAddress sets the peer's link-local address for local mode (no relay).
+func (api *API) SetPeerDirectAddress(addr string) error {
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	return api.kd.SetPeerDirectAddress(addr)
+}
+
 // RelayEndpoint returns the relay URL string.
 func (api *API) RelayEndpoint() string {
 	if api.kd == nil {

@@ -131,6 +131,12 @@ fn bindgen_test_layout__GoString_() {
         )
     );
 }
+extern "C" {
+    pub fn _GoStringLen(s: _GoString_) -> usize;
+}
+extern "C" {
+    pub fn _GoStringPtr(s: _GoString_) -> *const ::std::os::raw::c_char;
+}
 pub type int_least8_t = i8;
 pub type int_least16_t = i16;
 pub type int_least32_t = i32;
@@ -908,6 +914,18 @@ extern "C" {
 }
 extern "C" {
     pub fn KD_GetFUSEMode() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SetLocalMode(enabled: ::std::os::raw::c_int);
+}
+extern "C" {
+    pub fn KD_GetLocalMode() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetLinkLocalAddress() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SetPeerDirectAddress(addr: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
 extern "C" {
     pub fn KD_GetVersion() -> *mut ::std::os::raw::c_char;

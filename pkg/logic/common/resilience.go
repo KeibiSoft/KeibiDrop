@@ -34,14 +34,16 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	kd.ReconnectManager = session.NewReconnectManager(kd.session, kd.logger)
 	kd.ReconnectManager.CachedPeerIP = kd.PeerIPv6IP
 	kd.ReconnectManager.CachedPeerPort = kd.session.PeerPort
-	kd.ReconnectManager.RelayRefresh = func() error {
-		return kd.registerRoomToRelay()
-	}
-	kd.ReconnectManager.RelayLookup = func(fingerprint string) (string, int, error) {
-		if err := kd.getRoomFromRelay(fingerprint); err != nil {
-			return "", 0, err
+	if !kd.IsLocalMode {
+		kd.ReconnectManager.RelayRefresh = func() error {
+			return kd.registerRoomToRelay()
 		}
-		return kd.PeerIPv6IP, kd.session.PeerPort, nil
+		kd.ReconnectManager.RelayLookup = func(fingerprint string) (string, int, error) {
+			if err := kd.getRoomFromRelay(fingerprint); err != nil {
+				return "", 0, err
+			}
+			return kd.PeerIPv6IP, kd.session.PeerPort, nil
+		}
 	}
 	kd.ReconnectManager.AcceptConn = func(timeout time.Duration) (net.Conn, error) {
 		if tcpL, ok := kd.listener.(*net.TCPListener); ok {
@@ -52,12 +54,14 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	}
 	kd.ReconnectManager.OnReconnected = kd.onReconnected
 
-	// Initialize relay keepalive
-	kd.RelayKeepalive = NewRelayKeepalive(kd, kd.logger)
-
 	// Start all components
 	kd.HealthMonitor.Start()
-	kd.RelayKeepalive.Start()
+
+	// Skip relay keepalive in local mode — no relay to keep alive.
+	if !kd.IsLocalMode {
+		kd.RelayKeepalive = NewRelayKeepalive(kd, kd.logger)
+		kd.RelayKeepalive.Start()
+	}
 
 	logger.Info("Connection resilience initialized")
 	return nil

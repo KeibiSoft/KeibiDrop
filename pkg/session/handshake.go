@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"time"
 
@@ -64,7 +65,10 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		return fmt.Errorf("fingerprint computation failed: %w", err)
 	}
 
-	if subtle.ConstantTimeCompare([]byte(computed), []byte(session.ExpectedPeerFingerprint)) != 1 {
+	if session.ExpectedPeerFingerprint == "TOFU" {
+		logger.Info("Local mode: accepting peer fingerprint (TOFU)", "fingerprint", computed)
+		session.ExpectedPeerFingerprint = computed
+	} else if subtle.ConstantTimeCompare([]byte(computed), []byte(session.ExpectedPeerFingerprint)) != 1 {
 		logger.Error("Fingerprint missmatch")
 		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computed, session.ExpectedPeerFingerprint)
 	}
@@ -156,6 +160,74 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	}
 	session.Session.Inbound = secure
 
+	return nil
+}
+
+// keyExchangeMessage is the plaintext message used for local-mode key pre-exchange.
+type keyExchangeMessage struct {
+	PublicKeys map[string]string `json:"public_keys"`
+	Port       int               `json:"port"`
+}
+
+// ExchangePublicKeysLocal performs a plaintext exchange of public keys over conn.
+// In local mode, the relay is skipped, so both peers need each other's keys before
+// the PQC handshake can run. The initiator (joiner) sends first, responder second.
+func ExchangePublicKeysLocal(session *Session, conn net.Conn, isInitiator bool) error {
+	if session == nil || session.OwnKeys == nil {
+		return fmt.Errorf("nil session or keys")
+	}
+	logger := session.logger.With("phase", "local-key-exchange")
+
+	ownMsg := keyExchangeMessage{
+		PublicKeys: map[string]string{
+			"x25519": encodeBase64(session.OwnKeys.X25519Public.Bytes()),
+			"mlkem":  encodeBase64(session.OwnKeys.MlKemPublic.Bytes()),
+		},
+		Port: session.DefaultInboundPort,
+	}
+
+	if isInitiator {
+		// Send our keys first, then read peer's
+		if err := json.NewEncoder(conn).Encode(ownMsg); err != nil {
+			return fmt.Errorf("failed to send key exchange: %w", err)
+		}
+		var peerMsg keyExchangeMessage
+		if err := json.NewDecoder(conn).Decode(&peerMsg); err != nil {
+			return fmt.Errorf("failed to read peer key exchange: %w", err)
+		}
+		return storePeerKeysFromExchange(session, logger, peerMsg)
+	}
+
+	// Responder: read peer's keys first, then send ours
+	var peerMsg keyExchangeMessage
+	if err := json.NewDecoder(conn).Decode(&peerMsg); err != nil {
+		return fmt.Errorf("failed to read peer key exchange: %w", err)
+	}
+	if err := storePeerKeysFromExchange(session, logger, peerMsg); err != nil {
+		return err
+	}
+	if err := json.NewEncoder(conn).Encode(ownMsg); err != nil {
+		return fmt.Errorf("failed to send key exchange: %w", err)
+	}
+	return nil
+}
+
+func storePeerKeysFromExchange(session *Session, logger *slog.Logger, msg keyExchangeMessage) error {
+	pubKeys := make(map[string][]byte, 2)
+	for k, v := range msg.PublicKeys {
+		decoded, err := decodeBase64(v)
+		if err != nil {
+			return fmt.Errorf("invalid base64 key for %s: %w", k, err)
+		}
+		pubKeys[k] = decoded
+	}
+	peerKeys, err := kbc.ParsePeerKeys(pubKeys)
+	if err != nil {
+		return fmt.Errorf("failed to parse peer keys: %w", err)
+	}
+	session.PeerPubKeys = peerKeys
+	session.PeerPort = msg.Port
+	logger.Info("Local key exchange complete", "peer-port", msg.Port)
 	return nil
 }
 

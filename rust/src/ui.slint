@@ -622,6 +622,10 @@ export component MainWindow inherits Window {
     in property<bool> fuse_available: false;
     in property<string> fuse_install_hint: "Install macFUSE: macfuse.github.io";
     callback fuse_mode_toggled(bool);
+    // Local mode toggle (direct LAN connection, skip relay)
+    in-out property<bool> local_mode: false;
+    in property<string> local_address: "";
+    callback local_mode_toggled(bool);
 
     // Callbacks
     callback add_peer_code();
@@ -689,7 +693,7 @@ export component MainWindow inherits Window {
         SectionElement {
             x: 279px;
             y: 262px;
-            info: "Peer Code";
+            info: root.local_mode ? "Peer Address" : "Peer Code";
             inText <=> root.peer_code;
             readOnly: false;
             buttonText: "Add";
@@ -716,8 +720,12 @@ export component MainWindow inherits Window {
         snd := SectionElement {
             x: 279px;
             y: 437px;
-            info: "Your Code - share via Signal, Telegram, or email";
-            inText: root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY";
+            info: root.local_mode
+                ? "Your Address (local network)"
+                : "Your Code - share via Signal, Telegram, or email";
+            inText: root.local_mode
+                ? (root.local_address != "" ? root.local_address : "No link-local address")
+                : (root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY");
             readOnly: true;
             buttonText: "Copy";
             process_code => { root.copy_my_code() }
@@ -830,17 +838,65 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Status / error message below FUSE toggle
-        if root.status_message != "" && root.error_message == "": Text {
+        // Local mode toggle
+        Rectangle {
             x: snd.x + snd.width + 38px;
             y: snd.y + snd.height - 34px + 118px;
+            width: 350px;
+            height: 24px;
+
+            Rectangle {
+                x: 0;
+                y: 2px;
+                width: 36px;
+                height: 20px;
+                border-radius: 10px;
+                background: root.local_mode ? #3b82f6 : #444;
+                animate background { duration: 150ms; }
+
+                Rectangle {
+                    x: root.local_mode ? parent.width - self.width - 2px : 2px;
+                    y: 2px;
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 8px;
+                    background: white;
+                    animate x { duration: 150ms; easing: ease-out; }
+                }
+
+                local-toggle-touch := TouchArea {
+                    enabled: root.room_action == 0;
+                    clicked => {
+                        root.local_mode = !root.local_mode;
+                        root.local-mode-toggled(root.local_mode);
+                    }
+                }
+            }
+
+            Text {
+                x: 44px;
+                y: 0;
+                height: 24px;
+                text: root.local_mode
+                    ? "Local network (direct connection, no relay)"
+                    : "Internet (connect via relay server)";
+                color: #ccc;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+        }
+
+        // Status / error message below toggles
+        if root.status_message != "" && root.error_message == "": Text {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 148px;
             text: root.status_message;
             color: #94a3b8;
             font-size: 12px;
         }
         if root.error_message != "": Rectangle {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 118px;
+            y: snd.y + snd.height - 34px + 148px;
             width: 161px;
             height: 40px;
             border-radius: 8px;
@@ -863,7 +919,7 @@ export component MainWindow inherits Window {
         // Cancel button - visible while creating or joining, below status
         if root.room_action != 0: OutlineButton {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 136px;
+            y: snd.y + snd.height - 34px + 166px;
             text: "Cancel";
             clicked => { root.cancel_connect_pressed() }
         }

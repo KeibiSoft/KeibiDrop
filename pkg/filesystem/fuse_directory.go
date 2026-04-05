@@ -1171,28 +1171,38 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				// Defer notification with exponential back-off until the file
 				// size stabilizes (two consecutive lstats return the same size).
 				go func() {
-					prevSize := stgo.Size
-					for attempt := 0; attempt < 10; attempt++ {
-						delay := time.Duration(200+attempt*100) * time.Millisecond
+					// Wait for fcopyfile to finish. Require 3 consecutive lstats
+					// with the same size, starting after a 500ms initial delay.
+					// fcopyfile on large files can pause between writes, so 2
+					// matches isn't enough (469 MB -> 469 MB -> then 611 MB).
+					time.Sleep(500 * time.Millisecond)
+					prevSize := int64(-1)
+					stableCount := 0
+					for attempt := 0; attempt < 15; attempt++ {
+						delay := time.Duration(300+attempt*100) * time.Millisecond
 						time.Sleep(delay)
 						if f.openFileCounter.CountOpenDescriptors() > 0 {
-							return // File reopened, that Release will handle it.
+							return
 						}
 						recheckStat, recheckErr := platLstat(cleanPath)
 						if recheckErr != nil {
 							logger.Error("Deferred lstat failed", "path", path, "error", recheckErr)
 							return
 						}
-						if recheckStat.Size == prevSize {
-							// Size stabilized. Send notification.
-							d.OnLocalChange(types.FileEvent{
-								Path:   path,
-								Action: types.AddFile,
-								Attr:   types.StatToAttr(&recheckStat),
-							})
-							f.NotRemoteSynced = false
-							f.HadEdits = false
-							return
+						if recheckStat.Size == prevSize && recheckStat.Size > 0 {
+							stableCount++
+							if stableCount >= 2 {
+								d.OnLocalChange(types.FileEvent{
+									Path:   path,
+									Action: types.AddFile,
+									Attr:   types.StatToAttr(&recheckStat),
+								})
+								f.NotRemoteSynced = false
+								f.HadEdits = false
+								return
+							}
+						} else {
+							stableCount = 0
 						}
 						prevSize = recheckStat.Size
 					}
