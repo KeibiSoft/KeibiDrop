@@ -17,12 +17,19 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
+
+// fileEntry holds a single file's name and size for snapshot reads.
+type fileEntry struct {
+	name string
+	size int64
+}
 
 // API is the main entry point for mobile apps.
 // Create one instance, call Initialize, then Start in a background thread.
@@ -38,6 +45,11 @@ type API struct {
 	// Event channel for health/connection events.
 	eventCh   chan string
 	eventOnce sync.Once
+
+	// Atomic snapshots populated by RefreshFileList.
+	// Read methods operate on these slices without holding any map locks.
+	fileSnapshot  []fileEntry // remote files, sorted alphabetically by name
+	localSnapshot []fileEntry // local files, sorted alphabetically by name
 
 	mu sync.Mutex
 }
@@ -335,75 +347,72 @@ func (api *API) GetDownloadProgress(remoteName string) int {
 
 // --- File lists (index-based for gomobile compatibility) ---
 
-// GetRemoteFileCount returns the number of files the peer is sharing.
+// RefreshFileList takes an atomic snapshot of the remote and local file maps,
+// sorted alphabetically by name.  Call this once per poll cycle; then read
+// counts and entries via the Get* methods without holding any map locks.
+// Safe to call when kd or kd.SyncTracker is nil — snapshots are cleared.
+func (api *API) RefreshFileList() {
+	if api.kd == nil || api.kd.SyncTracker == nil {
+		api.fileSnapshot = api.fileSnapshot[:0]
+		api.localSnapshot = api.localSnapshot[:0]
+		return
+	}
+
+	api.kd.SyncTracker.RemoteFilesMu.RLock()
+	remote := make([]fileEntry, 0, len(api.kd.SyncTracker.RemoteFiles))
+	for name, f := range api.kd.SyncTracker.RemoteFiles {
+		remote = append(remote, fileEntry{name: name, size: int64(f.Size)})
+	}
+	api.kd.SyncTracker.RemoteFilesMu.RUnlock()
+	sort.Slice(remote, func(i, j int) bool { return remote[i].name < remote[j].name })
+
+	api.kd.SyncTracker.LocalFilesMu.RLock()
+	local := make([]fileEntry, 0, len(api.kd.SyncTracker.LocalFiles))
+	for name, f := range api.kd.SyncTracker.LocalFiles {
+		local = append(local, fileEntry{name: name, size: int64(f.Size)})
+	}
+	api.kd.SyncTracker.LocalFilesMu.RUnlock()
+	sort.Slice(local, func(i, j int) bool { return local[i].name < local[j].name })
+
+	api.fileSnapshot = remote
+	api.localSnapshot = local
+}
+
+// GetRemoteFileCount returns the number of remote files in the last snapshot.
 func (api *API) GetRemoteFileCount() int {
-	if api.kd == nil || api.kd.SyncTracker == nil {
-		return 0
-	}
-	api.kd.SyncTracker.RemoteFilesMu.RLock()
-	defer api.kd.SyncTracker.RemoteFilesMu.RUnlock()
-	return len(api.kd.SyncTracker.RemoteFiles)
+	return len(api.fileSnapshot)
 }
 
-// GetRemoteFileName returns the name of the remote file at index i.
+// GetRemoteFileName returns the name of the remote file at index i in the
+// last snapshot.  Returns empty string if i is out of bounds.
 func (api *API) GetRemoteFileName(i int) string {
-	if api.kd == nil || api.kd.SyncTracker == nil {
+	if i < 0 || i >= len(api.fileSnapshot) {
 		return ""
 	}
-	api.kd.SyncTracker.RemoteFilesMu.RLock()
-	defer api.kd.SyncTracker.RemoteFilesMu.RUnlock()
-	idx := 0
-	for name := range api.kd.SyncTracker.RemoteFiles {
-		if idx == i {
-			return name
-		}
-		idx++
-	}
-	return ""
+	return api.fileSnapshot[i].name
 }
 
-// GetRemoteFileSize returns the size in bytes of the remote file at index i.
+// GetRemoteFileSize returns the size in bytes of the remote file at index i
+// in the last snapshot.  Returns 0 if i is out of bounds.
 func (api *API) GetRemoteFileSize(i int) int64 {
-	if api.kd == nil || api.kd.SyncTracker == nil {
+	if i < 0 || i >= len(api.fileSnapshot) {
 		return 0
 	}
-	api.kd.SyncTracker.RemoteFilesMu.RLock()
-	defer api.kd.SyncTracker.RemoteFilesMu.RUnlock()
-	idx := 0
-	for _, f := range api.kd.SyncTracker.RemoteFiles {
-		if idx == i {
-			return int64(f.Size)
-		}
-		idx++
-	}
-	return 0
+	return api.fileSnapshot[i].size
 }
 
-// GetLocalFileCount returns the number of files you are sharing.
+// GetLocalFileCount returns the number of local files in the last snapshot.
 func (api *API) GetLocalFileCount() int {
-	if api.kd == nil || api.kd.SyncTracker == nil {
-		return 0
-	}
-	api.kd.SyncTracker.LocalFilesMu.RLock()
-	defer api.kd.SyncTracker.LocalFilesMu.RUnlock()
-	return len(api.kd.SyncTracker.LocalFiles)
+	return len(api.localSnapshot)
 }
 
-// GetLocalFileName returns the name of the local file at index i.
+// GetLocalFileName returns the name of the local file at index i in the
+// last snapshot.  Returns empty string if i is out of bounds.
 func (api *API) GetLocalFileName(i int) string {
-	if api.kd == nil || api.kd.SyncTracker == nil {
+	if i < 0 || i >= len(api.localSnapshot) {
 		return ""
 	}
-	api.kd.SyncTracker.LocalFilesMu.RLock()
-	defer api.kd.SyncTracker.LocalFilesMu.RUnlock()
-	idx := 0
-	for name := range api.kd.SyncTracker.LocalFiles {
-		if idx == i {
-			return name
-		}
-		idx++
-	}
-	return ""
+	return api.localSnapshot[i].name
 }
 
 // --- Connection status ---
