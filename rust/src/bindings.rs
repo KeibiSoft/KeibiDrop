@@ -5,4 +5,1001 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-# [derive (PartialEq , Copy , Clone , Hash , Debug , Default)] # [repr (C)] pub struct __BindgenComplex < T > { pub re : T , pub im : T } pub type wchar_t = :: std :: os :: raw :: c_ushort ; # [repr (C)] # [derive (Debug , Copy , Clone)] pub struct max_align_t { pub __clang_max_align_nonce1 : :: std :: os :: raw :: c_longlong , pub __clang_max_align_nonce2 : f64 , } # [test] fn bindgen_test_layout_max_align_t () { const UNINIT : :: std :: mem :: MaybeUninit < max_align_t > = :: std :: mem :: MaybeUninit :: uninit () ; let ptr = UNINIT . as_ptr () ; assert_eq ! (:: std :: mem :: size_of :: < max_align_t > () , 16usize , concat ! ("Size of: " , stringify ! (max_align_t))) ; assert_eq ! (:: std :: mem :: align_of :: < max_align_t > () , 8usize , concat ! ("Alignment of " , stringify ! (max_align_t))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . __clang_max_align_nonce1) as usize - ptr as usize } , 0usize , concat ! ("Offset of field: " , stringify ! (max_align_t) , "::" , stringify ! (__clang_max_align_nonce1))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . __clang_max_align_nonce2) as usize - ptr as usize } , 8usize , concat ! ("Offset of field: " , stringify ! (max_align_t) , "::" , stringify ! (__clang_max_align_nonce2))) ; } # [repr (C)] # [derive (Debug , Copy , Clone)] pub struct _GoString_ { pub p : * const :: std :: os :: raw :: c_char , pub n : isize , } # [test] fn bindgen_test_layout__GoString_ () { const UNINIT : :: std :: mem :: MaybeUninit < _GoString_ > = :: std :: mem :: MaybeUninit :: uninit () ; let ptr = UNINIT . as_ptr () ; assert_eq ! (:: std :: mem :: size_of :: < _GoString_ > () , 16usize , concat ! ("Size of: " , stringify ! (_GoString_))) ; assert_eq ! (:: std :: mem :: align_of :: < _GoString_ > () , 8usize , concat ! ("Alignment of " , stringify ! (_GoString_))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . p) as usize - ptr as usize } , 0usize , concat ! ("Offset of field: " , stringify ! (_GoString_) , "::" , stringify ! (p))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . n) as usize - ptr as usize } , 8usize , concat ! ("Offset of field: " , stringify ! (_GoString_) , "::" , stringify ! (n))) ; } extern "C" { pub fn _GoStringLen (s : _GoString_) -> usize ; } extern "C" { pub fn _GoStringPtr (s : _GoString_) -> * const :: std :: os :: raw :: c_char ; } pub type int_least64_t = i64 ; pub type uint_least64_t = u64 ; pub type int_fast64_t = i64 ; pub type uint_fast64_t = u64 ; pub type int_least32_t = i32 ; pub type uint_least32_t = u32 ; pub type int_fast32_t = i32 ; pub type uint_fast32_t = u32 ; pub type int_least16_t = i16 ; pub type uint_least16_t = u16 ; pub type int_fast16_t = i16 ; pub type uint_fast16_t = u16 ; pub type int_least8_t = i8 ; pub type uint_least8_t = u8 ; pub type int_fast8_t = i8 ; pub type uint_fast8_t = u8 ; pub type intmax_t = :: std :: os :: raw :: c_longlong ; pub type uintmax_t = :: std :: os :: raw :: c_ulonglong ; pub type GoInt8 = :: std :: os :: raw :: c_schar ; pub type GoUint8 = :: std :: os :: raw :: c_uchar ; pub type GoInt16 = :: std :: os :: raw :: c_short ; pub type GoUint16 = :: std :: os :: raw :: c_ushort ; pub type GoInt32 = :: std :: os :: raw :: c_int ; pub type GoUint32 = :: std :: os :: raw :: c_uint ; pub type GoInt64 = :: std :: os :: raw :: c_longlong ; pub type GoUint64 = :: std :: os :: raw :: c_ulonglong ; pub type GoInt = GoInt64 ; pub type GoUint = GoUint64 ; pub type GoUintptr = usize ; pub type GoFloat32 = f32 ; pub type GoFloat64 = f64 ; pub type GoComplex64 = __BindgenComplex < f32 > ; pub type GoComplex128 = __BindgenComplex < f64 > ; pub type _check_for_64_bit_pointer_matching_GoInt = [:: std :: os :: raw :: c_char ; 1usize] ; pub type GoString = _GoString_ ; pub type GoMap = * mut :: std :: os :: raw :: c_void ; pub type GoChan = * mut :: std :: os :: raw :: c_void ; # [repr (C)] # [derive (Debug , Copy , Clone)] pub struct GoInterface { pub t : * mut :: std :: os :: raw :: c_void , pub v : * mut :: std :: os :: raw :: c_void , } # [test] fn bindgen_test_layout_GoInterface () { const UNINIT : :: std :: mem :: MaybeUninit < GoInterface > = :: std :: mem :: MaybeUninit :: uninit () ; let ptr = UNINIT . as_ptr () ; assert_eq ! (:: std :: mem :: size_of :: < GoInterface > () , 16usize , concat ! ("Size of: " , stringify ! (GoInterface))) ; assert_eq ! (:: std :: mem :: align_of :: < GoInterface > () , 8usize , concat ! ("Alignment of " , stringify ! (GoInterface))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . t) as usize - ptr as usize } , 0usize , concat ! ("Offset of field: " , stringify ! (GoInterface) , "::" , stringify ! (t))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . v) as usize - ptr as usize } , 8usize , concat ! ("Offset of field: " , stringify ! (GoInterface) , "::" , stringify ! (v))) ; } # [repr (C)] # [derive (Debug , Copy , Clone)] pub struct GoSlice { pub data : * mut :: std :: os :: raw :: c_void , pub len : GoInt , pub cap : GoInt , } # [test] fn bindgen_test_layout_GoSlice () { const UNINIT : :: std :: mem :: MaybeUninit < GoSlice > = :: std :: mem :: MaybeUninit :: uninit () ; let ptr = UNINIT . as_ptr () ; assert_eq ! (:: std :: mem :: size_of :: < GoSlice > () , 24usize , concat ! ("Size of: " , stringify ! (GoSlice))) ; assert_eq ! (:: std :: mem :: align_of :: < GoSlice > () , 8usize , concat ! ("Alignment of " , stringify ! (GoSlice))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . data) as usize - ptr as usize } , 0usize , concat ! ("Offset of field: " , stringify ! (GoSlice) , "::" , stringify ! (data))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . len) as usize - ptr as usize } , 8usize , concat ! ("Offset of field: " , stringify ! (GoSlice) , "::" , stringify ! (len))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . cap) as usize - ptr as usize } , 16usize , concat ! ("Offset of field: " , stringify ! (GoSlice) , "::" , stringify ! (cap))) ; } extern "C" { pub fn KD_Initialize (relayURL : * mut :: std :: os :: raw :: c_char , inbound : :: std :: os :: raw :: c_int , outbound : :: std :: os :: raw :: c_int , toMount : * mut :: std :: os :: raw :: c_char , toSave : * mut :: std :: os :: raw :: c_char , useFUSE : :: std :: os :: raw :: c_int , prefetchOnOpen : :: std :: os :: raw :: c_int , pushOnWrite : :: std :: os :: raw :: c_int) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_CreateRoom () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_JoinRoom () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_AddPeerFingerprint (fp : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetPeerFingerprint () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_AddFile (path : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_ListFiles () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_PullFile (remote : * mut :: std :: os :: raw :: c_char , local : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_Fingerprint () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_UnmountFilesystem () ; } extern "C" { pub fn KD_Disconnect () ; } extern "C" { pub fn KD_Stop () ; } extern "C" { pub fn KD_CancelDownload (remoteName : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetDownloadProgress (remoteName : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_PrintBanner () ; } extern "C" { pub fn KD_GetFileCount () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetFileName (index : :: std :: os :: raw :: c_int) -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetLocalFileCount () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetLocalFileName (index : :: std :: os :: raw :: c_int) -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetFileSize (index : :: std :: os :: raw :: c_int) -> :: std :: os :: raw :: c_long ; } extern "C" { pub fn KD_GetFileSizeByName (name : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_long ; } extern "C" { pub fn KD_GetLocalFileRealPath (name : * mut :: std :: os :: raw :: c_char) -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetConnectionStatus () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_SaveFileAt (index : :: std :: os :: raw :: c_int , localPath : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_SaveFileByName (name : * mut :: std :: os :: raw :: c_char , localPath : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetLastError () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetLastErrorAndClear () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_PollEvent () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_SetupEventCallbacks () ; } extern "C" { pub fn KD_SetFUSEMode (useFUSE : :: std :: os :: raw :: c_int) ; } extern "C" { pub fn KD_GetFUSEMode () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_SetLocalMode (enabled : :: std :: os :: raw :: c_int) ; } extern "C" { pub fn KD_GetLocalMode () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetLinkLocalAddress () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_SetPeerDirectAddress (addr : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetVersion () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetLogPath () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetConfigPath () -> * mut :: std :: os :: raw :: c_char ; }
+#[derive(PartialEq, Copy, Clone, Hash, Debug, Default)]
+#[repr(C)]
+pub struct __BindgenComplex<T> {
+    pub re: T,
+    pub im: T,
+}
+pub const __WORDSIZE: u32 = 64;
+pub const __has_safe_buffers: u32 = 1;
+pub const __DARWIN_ONLY_64_BIT_INO_T: u32 = 0;
+pub const __DARWIN_ONLY_UNIX_CONFORMANCE: u32 = 1;
+pub const __DARWIN_ONLY_VERS_1050: u32 = 0;
+pub const __DARWIN_UNIX03: u32 = 1;
+pub const __DARWIN_64_BIT_INO_T: u32 = 1;
+pub const __DARWIN_VERS_1050: u32 = 1;
+pub const __DARWIN_NON_CANCELABLE: u32 = 0;
+pub const __DARWIN_SUF_64_BIT_INO_T: &[u8; 9] = b"$INODE64\0";
+pub const __DARWIN_SUF_1050: &[u8; 6] = b"$1050\0";
+pub const __DARWIN_SUF_EXTSN: &[u8; 14] = b"$DARWIN_EXTSN\0";
+pub const __DARWIN_C_ANSI: u32 = 4096;
+pub const __DARWIN_C_FULL: u32 = 900000;
+pub const __DARWIN_C_LEVEL: u32 = 900000;
+pub const __STDC_WANT_LIB_EXT1__: u32 = 1;
+pub const __DARWIN_NO_LONG_LONG: u32 = 0;
+pub const _DARWIN_FEATURE_64_BIT_INODE: u32 = 1;
+pub const _DARWIN_FEATURE_ONLY_UNIX_CONFORMANCE: u32 = 1;
+pub const _DARWIN_FEATURE_UNIX_CONFORMANCE: u32 = 3;
+pub const __has_ptrcheck: u32 = 0;
+pub const __has_bounds_safety_attributes: u32 = 0;
+pub const USE_CLANG_TYPES: u32 = 0;
+pub const __PTHREAD_SIZE__: u32 = 8176;
+pub const __PTHREAD_ATTR_SIZE__: u32 = 56;
+pub const __PTHREAD_MUTEXATTR_SIZE__: u32 = 8;
+pub const __PTHREAD_MUTEX_SIZE__: u32 = 56;
+pub const __PTHREAD_CONDATTR_SIZE__: u32 = 8;
+pub const __PTHREAD_COND_SIZE__: u32 = 40;
+pub const __PTHREAD_ONCE_SIZE__: u32 = 8;
+pub const __PTHREAD_RWLOCK_SIZE__: u32 = 192;
+pub const __PTHREAD_RWLOCKATTR_SIZE__: u32 = 16;
+pub const INT8_MAX: u32 = 127;
+pub const INT16_MAX: u32 = 32767;
+pub const INT32_MAX: u32 = 2147483647;
+pub const INT64_MAX: u64 = 9223372036854775807;
+pub const INT8_MIN: i32 = -128;
+pub const INT16_MIN: i32 = -32768;
+pub const INT32_MIN: i32 = -2147483648;
+pub const INT64_MIN: i64 = -9223372036854775808;
+pub const UINT8_MAX: u32 = 255;
+pub const UINT16_MAX: u32 = 65535;
+pub const UINT32_MAX: u32 = 4294967295;
+pub const UINT64_MAX: i32 = -1;
+pub const INT_LEAST8_MIN: i32 = -128;
+pub const INT_LEAST16_MIN: i32 = -32768;
+pub const INT_LEAST32_MIN: i32 = -2147483648;
+pub const INT_LEAST64_MIN: i64 = -9223372036854775808;
+pub const INT_LEAST8_MAX: u32 = 127;
+pub const INT_LEAST16_MAX: u32 = 32767;
+pub const INT_LEAST32_MAX: u32 = 2147483647;
+pub const INT_LEAST64_MAX: u64 = 9223372036854775807;
+pub const UINT_LEAST8_MAX: u32 = 255;
+pub const UINT_LEAST16_MAX: u32 = 65535;
+pub const UINT_LEAST32_MAX: u32 = 4294967295;
+pub const UINT_LEAST64_MAX: i32 = -1;
+pub const INT_FAST8_MIN: i32 = -128;
+pub const INT_FAST16_MIN: i32 = -32768;
+pub const INT_FAST32_MIN: i32 = -2147483648;
+pub const INT_FAST64_MIN: i64 = -9223372036854775808;
+pub const INT_FAST8_MAX: u32 = 127;
+pub const INT_FAST16_MAX: u32 = 32767;
+pub const INT_FAST32_MAX: u32 = 2147483647;
+pub const INT_FAST64_MAX: u64 = 9223372036854775807;
+pub const UINT_FAST8_MAX: u32 = 255;
+pub const UINT_FAST16_MAX: u32 = 65535;
+pub const UINT_FAST32_MAX: u32 = 4294967295;
+pub const UINT_FAST64_MAX: i32 = -1;
+pub const INTPTR_MAX: u64 = 9223372036854775807;
+pub const INTPTR_MIN: i64 = -9223372036854775808;
+pub const UINTPTR_MAX: i32 = -1;
+pub const SIZE_MAX: i32 = -1;
+pub const RSIZE_MAX: i32 = -1;
+pub const WINT_MIN: i32 = -2147483648;
+pub const WINT_MAX: u32 = 2147483647;
+pub const SIG_ATOMIC_MIN: i32 = -2147483648;
+pub const SIG_ATOMIC_MAX: u32 = 2147483647;
+pub type wchar_t = ::std::os::raw::c_int;
+pub type max_align_t = u128;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _GoString_ {
+    pub p: *const ::std::os::raw::c_char,
+    pub n: isize,
+}
+#[test]
+fn bindgen_test_layout__GoString_() {
+    const UNINIT: ::std::mem::MaybeUninit<_GoString_> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_GoString_>(),
+        16usize,
+        concat!("Size of: ", stringify!(_GoString_))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_GoString_>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_GoString_))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).p) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_GoString_),
+            "::",
+            stringify!(p)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).n) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_GoString_),
+            "::",
+            stringify!(n)
+        )
+    );
+}
+extern "C" {
+    pub fn _GoStringLen(s: _GoString_) -> usize;
+}
+extern "C" {
+    pub fn _GoStringPtr(s: _GoString_) -> *const ::std::os::raw::c_char;
+}
+pub type int_least8_t = i8;
+pub type int_least16_t = i16;
+pub type int_least32_t = i32;
+pub type int_least64_t = i64;
+pub type uint_least8_t = u8;
+pub type uint_least16_t = u16;
+pub type uint_least32_t = u32;
+pub type uint_least64_t = u64;
+pub type int_fast8_t = i8;
+pub type int_fast16_t = i16;
+pub type int_fast32_t = i32;
+pub type int_fast64_t = i64;
+pub type uint_fast8_t = u8;
+pub type uint_fast16_t = u16;
+pub type uint_fast32_t = u32;
+pub type uint_fast64_t = u64;
+pub type __int8_t = ::std::os::raw::c_schar;
+pub type __uint8_t = ::std::os::raw::c_uchar;
+pub type __int16_t = ::std::os::raw::c_short;
+pub type __uint16_t = ::std::os::raw::c_ushort;
+pub type __int32_t = ::std::os::raw::c_int;
+pub type __uint32_t = ::std::os::raw::c_uint;
+pub type __int64_t = ::std::os::raw::c_longlong;
+pub type __uint64_t = ::std::os::raw::c_ulonglong;
+pub type __darwin_intptr_t = ::std::os::raw::c_long;
+pub type __darwin_natural_t = ::std::os::raw::c_uint;
+pub type __darwin_ct_rune_t = ::std::os::raw::c_int;
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union __mbstate_t {
+    pub __mbstate8: [::std::os::raw::c_char; 128usize],
+    pub _mbstateL: ::std::os::raw::c_longlong,
+}
+#[test]
+fn bindgen_test_layout___mbstate_t() {
+    const UNINIT: ::std::mem::MaybeUninit<__mbstate_t> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__mbstate_t>(),
+        128usize,
+        concat!("Size of: ", stringify!(__mbstate_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__mbstate_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__mbstate_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__mbstate8) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__mbstate_t),
+            "::",
+            stringify!(__mbstate8)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr)._mbstateL) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__mbstate_t),
+            "::",
+            stringify!(_mbstateL)
+        )
+    );
+}
+pub type __darwin_mbstate_t = __mbstate_t;
+pub type __darwin_ptrdiff_t = ::std::os::raw::c_long;
+pub type __darwin_size_t = ::std::os::raw::c_ulong;
+pub type __darwin_va_list = __builtin_va_list;
+pub type __darwin_wchar_t = ::std::os::raw::c_int;
+pub type __darwin_rune_t = __darwin_wchar_t;
+pub type __darwin_wint_t = ::std::os::raw::c_int;
+pub type __darwin_clock_t = ::std::os::raw::c_ulong;
+pub type __darwin_socklen_t = __uint32_t;
+pub type __darwin_ssize_t = ::std::os::raw::c_long;
+pub type __darwin_time_t = ::std::os::raw::c_long;
+pub type __darwin_blkcnt_t = __int64_t;
+pub type __darwin_blksize_t = __int32_t;
+pub type __darwin_dev_t = __int32_t;
+pub type __darwin_fsblkcnt_t = ::std::os::raw::c_uint;
+pub type __darwin_fsfilcnt_t = ::std::os::raw::c_uint;
+pub type __darwin_gid_t = __uint32_t;
+pub type __darwin_id_t = __uint32_t;
+pub type __darwin_ino64_t = __uint64_t;
+pub type __darwin_ino_t = __darwin_ino64_t;
+pub type __darwin_mach_port_name_t = __darwin_natural_t;
+pub type __darwin_mach_port_t = __darwin_mach_port_name_t;
+pub type __darwin_mode_t = __uint16_t;
+pub type __darwin_off_t = __int64_t;
+pub type __darwin_pid_t = __int32_t;
+pub type __darwin_sigset_t = __uint32_t;
+pub type __darwin_suseconds_t = __int32_t;
+pub type __darwin_uid_t = __uint32_t;
+pub type __darwin_useconds_t = __uint32_t;
+pub type __darwin_uuid_t = [::std::os::raw::c_uchar; 16usize];
+pub type __darwin_uuid_string_t = [::std::os::raw::c_char; 37usize];
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_pthread_handler_rec {
+    pub __routine: ::std::option::Option<unsafe extern "C" fn(arg1: *mut ::std::os::raw::c_void)>,
+    pub __arg: *mut ::std::os::raw::c_void,
+    pub __next: *mut __darwin_pthread_handler_rec,
+}
+#[test]
+fn bindgen_test_layout___darwin_pthread_handler_rec() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_pthread_handler_rec> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_pthread_handler_rec>(),
+        24usize,
+        concat!("Size of: ", stringify!(__darwin_pthread_handler_rec))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_pthread_handler_rec>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_pthread_handler_rec))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__routine) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_pthread_handler_rec),
+            "::",
+            stringify!(__routine)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__arg) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_pthread_handler_rec),
+            "::",
+            stringify!(__arg)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__next) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_pthread_handler_rec),
+            "::",
+            stringify!(__next)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_attr_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 56usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_attr_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_attr_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_attr_t>(),
+        64usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_attr_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_attr_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_attr_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_attr_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_attr_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_cond_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 40usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_cond_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_cond_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_cond_t>(),
+        48usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_cond_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_cond_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_cond_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_cond_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_cond_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_condattr_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 8usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_condattr_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_condattr_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_condattr_t>(),
+        16usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_condattr_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_condattr_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_condattr_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_condattr_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_condattr_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_mutex_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 56usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_mutex_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_mutex_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_mutex_t>(),
+        64usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_mutex_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_mutex_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_mutex_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_mutex_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_mutex_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_mutexattr_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 8usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_mutexattr_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_mutexattr_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_mutexattr_t>(),
+        16usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_mutexattr_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_mutexattr_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_mutexattr_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_mutexattr_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_mutexattr_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_once_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 8usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_once_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_once_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_once_t>(),
+        16usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_once_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_once_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_once_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_once_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_once_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_rwlock_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 192usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_rwlock_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_rwlock_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_rwlock_t>(),
+        200usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_rwlock_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_rwlock_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_rwlock_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_rwlock_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_rwlock_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_rwlockattr_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 16usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_rwlockattr_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_rwlockattr_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_rwlockattr_t>(),
+        24usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_rwlockattr_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_rwlockattr_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_rwlockattr_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_rwlockattr_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_rwlockattr_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __cleanup_stack: *mut __darwin_pthread_handler_rec,
+    pub __opaque: [::std::os::raw::c_char; 8176usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_t> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_t>(),
+        8192usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__cleanup_stack) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_t),
+            "::",
+            stringify!(__cleanup_stack)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+pub type __darwin_pthread_attr_t = _opaque_pthread_attr_t;
+pub type __darwin_pthread_cond_t = _opaque_pthread_cond_t;
+pub type __darwin_pthread_condattr_t = _opaque_pthread_condattr_t;
+pub type __darwin_pthread_key_t = ::std::os::raw::c_ulong;
+pub type __darwin_pthread_mutex_t = _opaque_pthread_mutex_t;
+pub type __darwin_pthread_mutexattr_t = _opaque_pthread_mutexattr_t;
+pub type __darwin_pthread_once_t = _opaque_pthread_once_t;
+pub type __darwin_pthread_rwlock_t = _opaque_pthread_rwlock_t;
+pub type __darwin_pthread_rwlockattr_t = _opaque_pthread_rwlockattr_t;
+pub type __darwin_pthread_t = *mut _opaque_pthread_t;
+pub type intmax_t = ::std::os::raw::c_long;
+pub type uintmax_t = ::std::os::raw::c_ulong;
+pub type GoInt8 = ::std::os::raw::c_schar;
+pub type GoUint8 = ::std::os::raw::c_uchar;
+pub type GoInt16 = ::std::os::raw::c_short;
+pub type GoUint16 = ::std::os::raw::c_ushort;
+pub type GoInt32 = ::std::os::raw::c_int;
+pub type GoUint32 = ::std::os::raw::c_uint;
+pub type GoInt64 = ::std::os::raw::c_longlong;
+pub type GoUint64 = ::std::os::raw::c_ulonglong;
+pub type GoInt = GoInt64;
+pub type GoUint = GoUint64;
+pub type GoUintptr = usize;
+pub type GoFloat32 = f32;
+pub type GoFloat64 = f64;
+pub type GoComplex64 = __BindgenComplex<f32>;
+pub type GoComplex128 = __BindgenComplex<f64>;
+pub type _check_for_64_bit_pointer_matching_GoInt = [::std::os::raw::c_char; 1usize];
+pub type GoString = _GoString_;
+pub type GoMap = *mut ::std::os::raw::c_void;
+pub type GoChan = *mut ::std::os::raw::c_void;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GoInterface {
+    pub t: *mut ::std::os::raw::c_void,
+    pub v: *mut ::std::os::raw::c_void,
+}
+#[test]
+fn bindgen_test_layout_GoInterface() {
+    const UNINIT: ::std::mem::MaybeUninit<GoInterface> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<GoInterface>(),
+        16usize,
+        concat!("Size of: ", stringify!(GoInterface))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<GoInterface>(),
+        8usize,
+        concat!("Alignment of ", stringify!(GoInterface))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).t) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoInterface),
+            "::",
+            stringify!(t)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).v) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoInterface),
+            "::",
+            stringify!(v)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GoSlice {
+    pub data: *mut ::std::os::raw::c_void,
+    pub len: GoInt,
+    pub cap: GoInt,
+}
+#[test]
+fn bindgen_test_layout_GoSlice() {
+    const UNINIT: ::std::mem::MaybeUninit<GoSlice> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<GoSlice>(),
+        24usize,
+        concat!("Size of: ", stringify!(GoSlice))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<GoSlice>(),
+        8usize,
+        concat!("Alignment of ", stringify!(GoSlice))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).data) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoSlice),
+            "::",
+            stringify!(data)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).len) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoSlice),
+            "::",
+            stringify!(len)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).cap) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoSlice),
+            "::",
+            stringify!(cap)
+        )
+    );
+}
+extern "C" {
+    pub fn KD_Initialize(
+        relayURL: *mut ::std::os::raw::c_char,
+        inbound: ::std::os::raw::c_int,
+        outbound: ::std::os::raw::c_int,
+        toMount: *mut ::std::os::raw::c_char,
+        toSave: *mut ::std::os::raw::c_char,
+        useFUSE: ::std::os::raw::c_int,
+        prefetchOnOpen: ::std::os::raw::c_int,
+        pushOnWrite: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_CreateRoom() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_JoinRoom() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_AddPeerFingerprint(fp: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetPeerFingerprint() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_AddFile(path: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_ListFiles() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_PullFile(
+        remote: *mut ::std::os::raw::c_char,
+        local: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_Fingerprint() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_UnmountFilesystem();
+}
+extern "C" {
+    pub fn KD_Disconnect();
+}
+extern "C" {
+    pub fn KD_Stop();
+}
+extern "C" {
+    pub fn KD_CancelDownload(remoteName: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetDownloadProgress(remoteName: *mut ::std::os::raw::c_char)
+        -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_PrintBanner();
+}
+extern "C" {
+    pub fn KD_GetFileCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetFileName(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetLocalFileCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetLocalFileName(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetFileSize(index: ::std::os::raw::c_int) -> ::std::os::raw::c_long;
+}
+extern "C" {
+    pub fn KD_GetFileSizeByName(name: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_long;
+}
+extern "C" {
+    pub fn KD_GetLocalFileRealPath(
+        name: *mut ::std::os::raw::c_char,
+    ) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetConnectionStatus() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SaveFileAt(
+        index: ::std::os::raw::c_int,
+        localPath: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SaveFileByName(
+        name: *mut ::std::os::raw::c_char,
+        localPath: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetLastError() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetLastErrorAndClear() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_PollEvent() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SetupEventCallbacks();
+}
+extern "C" {
+    pub fn KD_SetFUSEMode(useFUSE: ::std::os::raw::c_int);
+}
+extern "C" {
+    pub fn KD_GetFUSEMode() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SetLocalMode(enabled: ::std::os::raw::c_int);
+}
+extern "C" {
+    pub fn KD_GetLocalMode() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetLinkLocalAddress() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SetPeerDirectAddress(addr: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetVersion() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetLogPath() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetConfigPath() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SanitizeLogs(destPath: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+pub type __builtin_va_list = [__va_list_tag; 1usize];
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __va_list_tag {
+    pub gp_offset: ::std::os::raw::c_uint,
+    pub fp_offset: ::std::os::raw::c_uint,
+    pub overflow_arg_area: *mut ::std::os::raw::c_void,
+    pub reg_save_area: *mut ::std::os::raw::c_void,
+}
+#[test]
+fn bindgen_test_layout___va_list_tag() {
+    const UNINIT: ::std::mem::MaybeUninit<__va_list_tag> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__va_list_tag>(),
+        24usize,
+        concat!("Size of: ", stringify!(__va_list_tag))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__va_list_tag>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__va_list_tag))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).gp_offset) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(gp_offset)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).fp_offset) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(fp_offset)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).overflow_arg_area) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(overflow_arg_area)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).reg_save_area) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(reg_save_area)
+        )
+    );
+}
