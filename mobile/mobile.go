@@ -1,3 +1,5 @@
+// ABOUTME: Package mobile exposes a gomobile-compatible API for iOS and Android clients
+// ABOUTME: All types use gomobile-safe primitives; file lists use index-based snapshot access
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // This Source Code Form is subject to the terms of the Mozilla Public
