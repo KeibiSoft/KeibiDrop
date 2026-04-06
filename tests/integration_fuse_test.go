@@ -67,6 +67,19 @@ func WaitForFileContent(t *testing.T, path string, expected []byte, timeout time
 // waitForFUSEMount polls until the directory appears as a FUSE mount point.
 func waitForFUSEMount(t *testing.T, dir string, timeout time.Duration) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		// On Windows, WinFSP mounts don't appear in `mount` output.
+		// Check accessibility by stat-ing the root of the mount point instead.
+		root := dir
+		if len(dir) == 2 && dir[1] == ':' {
+			root = dir + `\`
+		}
+		WaitForCondition(t, timeout, 200*time.Millisecond, func() bool {
+			_, err := os.Stat(root)
+			return err == nil
+		}, "waiting for FUSE mount at: "+dir)
+		return
+	}
 	WaitForCondition(t, timeout, 500*time.Millisecond, func() bool {
 		out, err := exec.Command("mount").Output()
 		if err != nil {

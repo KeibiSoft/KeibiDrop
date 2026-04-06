@@ -6,13 +6,24 @@ DIST    := dist
 GOARCH  := $(shell go env GOARCH)
 GOOS    := $(shell go env GOOS)
 
+# ── Windows: CGO env for WinFSP (cgofuse requires its headers + lib) ──────────
+# Uses the 8.3 short path to avoid spaces breaking the linker -L flag.
+# LIBCLANG_PATH is needed by bindgen (Rust build.rs) to locate libclang.dll.
+ifeq ($(GOOS),windows)
+WINFSP_DIR := C:/PROGRA~2/WinFsp
+export CPATH := $(WINFSP_DIR)/inc/fuse
+export CGO_LDFLAGS := -L$(WINFSP_DIR)/lib
+export LIBCLANG_PATH := C:/Program Files/LLVM/bin
+EXE := .exe
+endif
+
 # ── Build ──────────────────────────────────────────────────
 
 build-cli:
-	go build -ldflags="$(LDFLAGS)" -o keibidrop-cli cmd/cli/keibidrop-cli.go
+	go build -ldflags="$(LDFLAGS)" -o keibidrop-cli$(EXE) cmd/cli/keibidrop-cli.go
 
 build-kd:
-	go build -ldflags="$(LDFLAGS)" -o kd ./cmd/kd
+	go build -ldflags="$(LDFLAGS)" -o kd$(EXE) ./cmd/kd
 
 build-static-rust-bridge:
 	go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
@@ -40,7 +51,8 @@ install-proto:
 	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 protoc:
-	protoc --go_opt=module=github.com/KeibiSoft/KeibiDrop \
+	PATH="$$PATH:$$(go env GOPATH)/bin" protoc \
+	       --go_opt=module=github.com/KeibiSoft/KeibiDrop \
 	       --go-grpc_opt=module=github.com/KeibiSoft/KeibiDrop \
 	       --go_out=. --go-grpc_out=. keibidrop.proto
 
@@ -145,7 +157,7 @@ run-android-emu: build-android
 	adb shell am start -n com.keibisoft.keibidrop/.MainActivity
 
 clean: clean-dist
-	rm -f keibidrop-cli kd libkeibidrop.a libkeibidrop.h
+	rm -f keibidrop-cli keibidrop-cli.exe kd kd.exe libkeibidrop.a libkeibidrop.h
 	rm -rf KeibiDrop.xcframework keibidrop.aar
 
 # ── Run (dev) ─────────────────────────────────────────────
@@ -155,11 +167,21 @@ clean: clean-dist
 RELAY   ?= http://localhost:54321
 SCRIPTS := scripts/dev
 
+# On Windows, WinFSP requires drive letters for FUSE mount points.
+# On Linux/macOS a subdirectory is fine.
+ifeq ($(GOOS),windows)
+ALICE_MOUNT ?= K:
+BOB_MOUNT   ?= L:
+else
+ALICE_MOUNT ?= MountAlice
+BOB_MOUNT   ?= MountBob
+endif
+
 # Rust UI (FUSE toggle is in the UI, no need for NO_FUSE env)
 run-alice:
-	KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_rust_ui_nofuse.sh
+	TO_MOUNT_PATH=$(ALICE_MOUNT) KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_rust_ui_nofuse.sh
 run-bob:
-	KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_rust_ui.sh
+	TO_MOUNT_PATH=$(BOB_MOUNT) KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_rust_ui.sh
 
 # Go CLI
 run-cli-alice:

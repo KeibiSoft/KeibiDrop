@@ -88,7 +88,7 @@ fn start_file_watcher(
                     if is_hidden_file(&name) {
                         continue;
                     }
-                    let size = bindings::KD_GetFileSize(i);
+                    let size = bindings::KD_GetFileSize(i) as i64;
                     let ftype = file_type_from_name(&name);
 
                     // Check download state
@@ -202,7 +202,11 @@ fn is_fuse_present() -> bool {
     }
     #[cfg(target_os = "windows")]
     {
+        // WinFSP may not register in System32 — check the install dir too.
         Path::new(r"C:\Windows\System32\winfsp-x64.dll").exists()
+            || Path::new(r"C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll").exists()
+            || Path::new(r"C:\Program Files\WinFsp\bin\winfsp-x64.dll").exists()
+            || Path::new(r"C:\Program Files (x86)\WinFsp\bin\winfsp-a64.dll").exists()
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
@@ -639,7 +643,7 @@ fn main() {
 
             // Get file size by name
             let c_name = CString::new(name.clone()).unwrap();
-            let size = bindings::KD_GetFileSizeByName(c_name.as_ptr() as *mut i8);
+            let size = bindings::KD_GetFileSizeByName(c_name.as_ptr() as *mut i8) as i64;
 
             let local_path = format!("{}/{}", save_path, name);
             // Create parent directories (handles nested paths like screenshots/foo.png)
@@ -749,14 +753,20 @@ fn main() {
             } else {
                 format!("{}/{}", save_path_open, name)
             };
+            if !std::path::Path::new(&local_path).exists() {
+                println!("Open file: path does not exist: {}", local_path);
+                return;
+            }
             println!("Opening file: {}", local_path);
 
             #[cfg(target_os = "macos")]
             let _ = Command::new("open").arg(&local_path).spawn();
             #[cfg(target_os = "linux")]
             let _ = Command::new("xdg-open").arg(&local_path).spawn();
+            // On Windows, `explorer file.txt` opens the folder, not the file.
+            // `cmd /c start "" "path"` opens the file with its default handler.
             #[cfg(target_os = "windows")]
-            let _ = Command::new("explorer").arg(&local_path).spawn();
+            let _ = Command::new("cmd").args(["/c", "start", "", &local_path]).spawn();
         });
 
         // Handle Save All: save every remote unsaved file
@@ -788,7 +798,7 @@ fn main() {
             let base = save_path_all.clone();
             for name in to_save_names {
                 let c_name = CString::new(name.clone()).unwrap();
-                let size = bindings::KD_GetFileSizeByName(c_name.as_ptr() as *mut i8);
+                let size = bindings::KD_GetFileSizeByName(c_name.as_ptr() as *mut i8) as i64;
                 let local_path = format!("{}/{}", base, name);
                 // Create parent directories (handles nested paths like screenshots/foo.png)
                 if let Some(parent) = Path::new(&local_path).parent() {

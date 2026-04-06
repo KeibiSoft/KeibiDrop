@@ -18,10 +18,23 @@ func IsFUSEPresent() bool {
 	var result bool
 	switch runtime.GOOS {
 	case "windows":
-		path := `C:\Windows\System32\winfsp-x64.dll`
-		e := exists(path)
-		slog.Warn("FUSE windows check", "path", path, "exists", e)
-		result = e
+		// WinFSP registers its DLL in System32 when installed via the MSI/choco with admin.
+		// Fallback: also check the WinFSP installation directory directly (e.g. when
+		// installed without full system registration, or on ARM64 Windows).
+		paths := []string{
+			`C:\Windows\System32\winfsp-x64.dll`,
+			`C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll`,
+			`C:\Program Files\WinFsp\bin\winfsp-x64.dll`,
+			`C:\Program Files (x86)\WinFsp\bin\winfsp-a64.dll`, // ARM64
+		}
+		for _, path := range paths {
+			e := exists(path)
+			slog.Warn("FUSE windows check", "path", path, "exists", e)
+			if e {
+				result = true
+				break
+			}
+		}
 	case "darwin":
 		path1 := `/usr/local/lib/libfuse.dylib`
 		path2 := `/Library/Filesystems/macfuse.fs`

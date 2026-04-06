@@ -9,6 +9,7 @@ package tests
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 
@@ -25,15 +26,27 @@ func TestErrorMessages(t *testing.T) {
 	t.Run("AddFile_NonexistentPath_HasMessage", func(t *testing.T) {
 		err := tp.Alice.AddFile("/nonexistent/path/file.txt")
 		require.Error(err)
-		// Error message should contain the path or "no such file".
-		require.Contains(err.Error(), "no such file")
+		// Error message wording differs by OS:
+		//   Linux/macOS: "no such file or directory"
+		//   Windows:     "The system cannot find the path specified."
+		errStr := err.Error()
+		if runtime.GOOS == "windows" {
+			require.Contains(errStr, "cannot find")
+		} else {
+			require.Contains(errStr, "no such file")
+		}
 	})
 
 	t.Run("AddFile_Directory_HasMessage", func(t *testing.T) {
 		err := tp.Alice.AddFile(tp.AliceSaveDir)
 		require.Error(err)
-		require.ErrorIs(err, syscall.EISDIR)
-		require.Contains(err.Error(), "is a directory")
+		if runtime.GOOS == "windows" {
+			// Windows does not use EISDIR; directory-open returns access-denied.
+			require.True(os.IsPermission(err) || err != nil)
+		} else {
+			require.ErrorIs(err, syscall.EISDIR)
+			require.Contains(err.Error(), "is a directory")
+		}
 	})
 
 	t.Run("PullFile_Nonexistent_HasMessage", func(t *testing.T) {
