@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
 
@@ -489,8 +488,7 @@ func (api *API) GetSavePath() string {
 // meaning a previous download was interrupted and can be resumed.
 func (api *API) HasResumableDownload(remoteName string) bool {
 	localPath := filepath.Join(api.savePath, remoteName)
-	bmPath := filesystem.BitmapPath(localPath)
-	_, err := os.Stat(bmPath)
+	_, err := os.Stat(localPath + ".kdbitmap")
 	return err == nil
 }
 
