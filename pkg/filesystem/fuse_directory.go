@@ -1193,7 +1193,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 							logger.Error("Deferred lstat failed", "path", path, "error", recheckErr)
 							return
 						}
-						if recheckStat.Size == prevSize && recheckStat.Size > 0 {
+						if recheckStat.Size == prevSize {
 							stableCount++
 							if stableCount >= 2 {
 								d.OnLocalChange(types.FileEvent{
