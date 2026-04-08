@@ -61,9 +61,9 @@ func NewHealthMonitor(session *Session, client bindings.KeibiServiceClient, logg
 		grpcClient:  client,
 		logger:      logger.With("component", "health-monitor"),
 		Interval:    5 * time.Second,
-		Timeout:     3 * time.Second,
+		Timeout:     5 * time.Second,
 		DegradedRTT: 500 * time.Millisecond,
-		MaxFailures: 3,
+		MaxFailures: 5,
 	}
 }
 

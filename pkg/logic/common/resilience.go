@@ -80,9 +80,26 @@ func (kd *KeibiDrop) StopConnectionResilience() {
 	}
 }
 
+// hasActiveTransfers returns true if any downloads are in progress.
+// Used to avoid tearing down the connection during active file transfers.
+func (kd *KeibiDrop) hasActiveTransfers() bool {
+	kd.activeDownloadsMu.Lock()
+	defer kd.activeDownloadsMu.Unlock()
+	return len(kd.activeDownloads) > 0
+}
+
 // onDisconnect is called by health monitor when connection is lost.
 func (kd *KeibiDrop) onDisconnect() {
 	logger := kd.logger.With("event", "disconnect")
+
+	// Don't tear down the connection while transfers are active.
+	// Heartbeat failures during large transfers are expected (the gRPC
+	// connection is saturated with file data, starving heartbeat RPCs).
+	if kd.hasActiveTransfers() {
+		logger.Warn("Heartbeat failed but active transfers in progress, deferring disconnect")
+		return
+	}
+
 	logger.Warn("Connection lost, initiating reconnection")
 
 	// Push event to UI so it can react immediately.
