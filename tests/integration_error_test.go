@@ -56,14 +56,13 @@ func TestErrorMessages(t *testing.T) {
 		require.ErrorIs(err, syscall.ENOENT)
 	})
 
-	t.Run("AddFile_Duplicate_HasMessage", func(t *testing.T) {
+	t.Run("AddFile_Duplicate_Upserts", func(t *testing.T) {
 		path := filepath.Join(tp.AliceSaveDir, "dup_msg.txt")
 		require.NoError(os.WriteFile(path, []byte("test"), 0644))
 		require.NoError(tp.Alice.AddFile(path))
 
-		err := tp.Alice.AddFile(path)
-		require.ErrorIs(err, os.ErrExist)
-		require.Contains(err.Error(), "file already exists")
+		// Re-adding the same file should succeed (upsert for retry after failed notify).
+		require.NoError(tp.Alice.AddFile(path))
 	})
 
 	t.Run("InvalidSession_HasMessage", func(t *testing.T) {

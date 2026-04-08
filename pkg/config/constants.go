@@ -9,7 +9,7 @@ package config
 const InboundPort = 26431
 const OutboundPort = 26432
 
-const BlockSize = 1024 * 1024 // 1 MiB - larger chunks = fewer gRPC round-trips
+const BlockSize = 4 * 1024 * 1024 // 4 MiB - larger chunks = fewer gRPC round-trips over WAN
 
 // gRPC message size limits
 // IMPORTANT: GRPCStreamBuffer MUST be smaller than GRPCMaxMsgSize

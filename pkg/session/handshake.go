@@ -266,7 +266,7 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 
 	session.SEKOutbound = outboundKey
 
-	conn, err := net.DialTimeout("tcp", remoteAddr, 15*time.Second)
+	conn, err := DialWithStableAddr("tcp", remoteAddr, 15*time.Second, logger)
 	if err != nil {
 		logger.Error("Failed to dial", "addr", remoteAddr, "error", err)
 		return fmt.Errorf("failed to connect to %s: %w", remoteAddr, err)
@@ -403,4 +403,86 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	logger.Info("Inbound session finalized and secured")
 
 	return nil
+}
+
+// dialWithStableAddr dials a remote address using a net.Dialer that binds to
+// the machine's stable (non-temporary) IPv6 address. This prevents connections
+// from breaking when macOS/Linux deprecates temporary privacy addresses (RFC 4941).
+func DialWithStableAddr(network, addr string, timeout time.Duration, logger *slog.Logger) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: timeout}
+
+	// Try to find a stable local IPv6 to bind to.
+	localIP := findStableIPv6()
+	if localIP != "" {
+		dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(localIP)}
+		logger.Info("Binding outbound to stable IPv6", "addr", localIP)
+	}
+
+	return dialer.Dial(network, addr)
+}
+
+// findStableIPv6 returns the first non-temporary, non-deprecated global IPv6 address.
+// On macOS, the stable address is marked "autoconf secured" (vs "autoconf temporary").
+// We pick the first global unicast address on preferred interfaces -- the OS lists
+// the stable address before temporary ones.
+func findStableIPv6() string {
+	preferred := []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp", "ens"}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+
+	// First pass: preferred interfaces.
+	for _, pref := range preferred {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			if len(pref) <= len(iface.Name) && iface.Name[:len(pref)] != pref {
+				continue
+			}
+			if ip := firstGlobalIPv6(&iface); ip != "" {
+				return ip
+			}
+		}
+	}
+
+	// Second pass: any non-virtual interface.
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		name := iface.Name
+		if len(name) >= 4 && (name[:4] == "utun" || name[:4] == "awdl" || name[:4] == "dock" || name[:4] == "veth") {
+			continue
+		}
+		if len(name) >= 3 && (name[:3] == "llw" || name[:3] == "br-") {
+			continue
+		}
+		if ip := firstGlobalIPv6(&iface); ip != "" {
+			return ip
+		}
+	}
+
+	return ""
+}
+
+// firstGlobalIPv6 returns the first global unicast IPv6 on the interface.
+// The OS lists the stable address before temporary ones, so the first hit
+// is the one we want.
+func firstGlobalIPv6(iface *net.Interface) string {
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			continue
+		}
+		if ip.To16() != nil && ip.To4() == nil && ip.IsGlobalUnicast() && !ip.IsLinkLocalUnicast() {
+			return ip.String()
+		}
+	}
+	return ""
 }

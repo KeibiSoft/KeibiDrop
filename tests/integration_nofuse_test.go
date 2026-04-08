@@ -156,7 +156,8 @@ func TestNoFUSE_BidirectionalTransfer(t *testing.T) {
 	require.Equal(bobContent, pulled)
 }
 
-// TestNoFUSE_DuplicateAdd tests that adding the same file twice returns os.ErrExist.
+// TestNoFUSE_DuplicateAdd tests that re-adding the same file succeeds (upsert).
+// This allows retrying after a failed notification.
 func TestNoFUSE_DuplicateAdd(t *testing.T) {
 	tp := SetupPeerPair(t, false)
 	require := require.New(t)
@@ -164,12 +165,11 @@ func TestNoFUSE_DuplicateAdd(t *testing.T) {
 	path := filepath.Join(tp.AliceSaveDir, "dup.txt")
 	require.NoError(os.WriteFile(path, []byte("duplicate test"), 0644))
 
-	// First add should succeed
+	// First add should succeed.
 	require.NoError(tp.Alice.AddFile(path))
 
-	// Second add of the same file should fail
-	err := tp.Alice.AddFile(path)
-	require.ErrorIs(err, os.ErrExist)
+	// Second add of the same file should also succeed (upsert).
+	require.NoError(tp.Alice.AddFile(path))
 }
 
 // TestNoFUSE_PullNonexistent tests that pulling a file not in RemoteFiles returns ENOENT.

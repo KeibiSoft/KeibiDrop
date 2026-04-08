@@ -8,14 +8,15 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -63,12 +64,7 @@ func (kd *KeibiDrop) AddFile(path string) error {
 
 	kd.SyncTracker.LocalFilesMu.Lock()
 	defer kd.SyncTracker.LocalFilesMu.Unlock()
-	_, ok := kd.SyncTracker.LocalFiles[name]
-	if ok {
-		logger.Error("File already tracked", "name", name, "error", os.ErrExist)
-		return os.ErrExist
-	}
-	kd.SyncTracker.LocalFiles[name] = file
+	kd.SyncTracker.LocalFiles[name] = file // upsert: allows retry after failed notification
 
 	_, err = kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
 		Type: bindings.NotifyType(types.AddFile),
@@ -194,94 +190,62 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	}
 
 	if bitmap != nil && bitmap.Total() > 0 {
-		// Parallel download with N gRPC streams (chunk-index sharding).
-		totalChunks := bitmap.Total()
-		nWorkers := filesystem.StreamPoolSize
-		if totalChunks < nWorkers {
-			nWorkers = totalChunks
-		}
+		// Push-based download via StreamFile: server streams all chunks from the
+		// first missing offset to EOF. No per-chunk round-trip overhead.
+		// Single stream saturates the link; parallel wastes bandwidth (each stream
+		// gets all chunks from its offset, workers must discard 75% of received data).
 
-		// Register active download for pause/cancel support.
 		dlCtx, dlCancel := context.WithCancel(kd.ctx)
 		defer dlCancel()
 		kd.registerDownload(remoteName, dlCancel)
 		defer kd.unregisterDownload(remoteName)
 
-		var wg sync.WaitGroup
-		errCh := make(chan error, nWorkers)
-		var chunksWritten atomic.Int32
-
-		for w := 0; w < nWorkers; w++ {
-			wg.Add(1)
-			go func(workerID int) {
-				defer wg.Done()
-
-				stream, err := kd.session.GRPCClient.Read(dlCtx)
-				if err != nil {
-					errCh <- fmt.Errorf("worker %d: open stream: %w", workerID, err)
-					dlCancel()
-					return
-				}
-				defer stream.CloseSend()
-
-				for i := workerID; i < totalChunks; i += nWorkers {
-					if bitmap.Has(i) {
-						continue // Already downloaded (resume).
-					}
-
-					offset := uint64(i) * uint64(config.BlockSize)
-					size := uint64(config.BlockSize)
-					if offset+size > fileSize {
-						size = fileSize - offset
-					}
-
-					if err := stream.Send(&bindings.ReadRequest{
-						Handle: 0,
-						Path:   relPath,
-						Offset: offset,
-						Size:   uint32(size),
-					}); err != nil {
-						errCh <- fmt.Errorf("worker %d: send chunk %d: %w", workerID, i, err)
-						dlCancel()
-						return
-					}
-
-					data, err := stream.Recv()
-					if err != nil {
-						errCh <- fmt.Errorf("worker %d: recv chunk %d: %w", workerID, i, err)
-						dlCancel()
-						return
-					}
-
-					if uint64(len(data.Data)) != size {
-						errCh <- fmt.Errorf("worker %d: chunk %d: got %d bytes, expected %d", workerID, i, len(data.Data), size)
-						dlCancel()
-						return
-					}
-
-					if _, err := f.WriteAt(data.Data, int64(offset)); err != nil {
-						errCh <- fmt.Errorf("worker %d: write chunk %d: %w", workerID, i, err)
-						dlCancel()
-						return
-					}
-
-					bitmap.Set(i)
-
-					// Save bitmap periodically (every 100 chunks).
-					if chunksWritten.Add(1)%100 == 0 {
-						_ = bitmap.Save(bitmapPath)
-					}
-				}
-			}(w)
+		// Find first missing chunk to resume from.
+		startOffset := uint64(0)
+		for i := 0; i < bitmap.Total(); i++ {
+			if !bitmap.Has(i) {
+				startOffset = uint64(i) * uint64(config.BlockSize)
+				break
+			}
 		}
 
-		wg.Wait()
-		close(errCh)
-		if err := <-errCh; err != nil {
-			logger.Error("Download failed (partial state preserved)", "error", err, "progress", bitmap.Progress())
-			_ = bitmap.Save(bitmapPath)
-			return err
+		stream, err := kd.session.GRPCClient.StreamFile(dlCtx, &bindings.StreamFileRequest{
+			Path:        relPath,
+			StartOffset: startOffset,
+		})
+		if err != nil {
+			logger.Error("Failed to open StreamFile", "error", err)
+			return fmt.Errorf("open stream: %w", err)
 		}
+
+		chunksWritten := 0
+		for {
+			resp, err := stream.Recv()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				logger.Error("Download failed (partial state preserved)", "error", err, "progress", bitmap.Progress())
+				_ = bitmap.Save(bitmapPath)
+				return fmt.Errorf("recv chunk: %w", err)
+			}
+
+			if _, err := f.WriteAt(resp.Data, int64(resp.Offset)); err != nil {
+				_ = bitmap.Save(bitmapPath)
+				return fmt.Errorf("write at offset %d: %w", resp.Offset, err)
+			}
+
+			chunkIdx := int(resp.Offset / uint64(config.BlockSize))
+			if chunkIdx < bitmap.Total() {
+				bitmap.Set(chunkIdx)
+			}
+
+			chunksWritten++
+			if chunksWritten%25 == 0 {
+				_ = bitmap.Save(bitmapPath)
+			}
+		}
+		_ = bitmap.Save(bitmapPath)
 	}
 
 	// Download complete. Clean up bitmap file.
@@ -452,7 +416,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 		// Local mode: exchange public keys before the PQC handshake.
 		// The relay normally provides peer keys; we do a plaintext pre-exchange instead.
 		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
-		keyConn, err := net.DialTimeout("tcp", peerAddr, 15*time.Second)
+		keyConn, err := session.DialWithStableAddr("tcp", peerAddr, 15*time.Second, logger)
 		if err != nil {
 			logger.Error("Failed to dial for key exchange", "addr", peerAddr, "error", err)
 			return err

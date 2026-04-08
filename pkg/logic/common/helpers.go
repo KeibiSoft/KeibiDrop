@@ -200,13 +200,40 @@ func GetLocalIPv6() (string, error) {
 	return "", fmt.Errorf("no IPv6 address found")
 }
 
+// GetGlobalIPv6 returns a stable (non-temporary) global IPv6 address.
+// On macOS/Linux, privacy extensions (RFC 4941) generate temporary addresses
+// that rotate periodically. Connections bound to a temporary address break
+// when the OS deprecates it. This function prefers stable addresses by
+// collecting all candidates and picking the best one.
 func GetGlobalIPv6() (string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "", err
 	}
 
+	// Preferred interfaces for LAN (same order as GetLinkLocalAddress).
+	preferred := []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp"}
+
+	type candidate struct {
+		ip    string
+		iface string
+	}
+	var candidates []candidate
+
 	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		// Skip virtual/VPN interfaces.
+		if strings.HasPrefix(iface.Name, "utun") ||
+			strings.HasPrefix(iface.Name, "awdl") ||
+			strings.HasPrefix(iface.Name, "llw") ||
+			strings.HasPrefix(iface.Name, "docker") ||
+			strings.HasPrefix(iface.Name, "br-") ||
+			strings.HasPrefix(iface.Name, "veth") {
+			continue
+		}
+
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
@@ -217,12 +244,29 @@ func GetGlobalIPv6() (string, error) {
 				continue
 			}
 			if ip.To16() != nil && ip.To4() == nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
-				return ip.String(), nil
+				candidates = append(candidates, candidate{ip: ip.String(), iface: iface.Name})
 			}
 		}
 	}
-	// Fallback to any local IPv6 (loopback, link-local, ULA) for local testing.
-	return GetLocalIPv6()
+
+	if len(candidates) == 0 {
+		// Fallback to any local IPv6 for testing.
+		return GetLocalIPv6()
+	}
+
+	// Prefer candidates on preferred interfaces (en0, eth0, etc.).
+	// The first address on a preferred interface is typically the stable one;
+	// temporary addresses are appended after the stable/secured address.
+	for _, pref := range preferred {
+		for _, c := range candidates {
+			if strings.HasPrefix(c.iface, pref) {
+				return c.ip, nil
+			}
+		}
+	}
+
+	// No preferred interface match, return first candidate.
+	return candidates[0].ip, nil
 }
 
 func ValidateFingerprint(fp string) error {

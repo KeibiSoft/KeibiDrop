@@ -118,14 +118,13 @@ func TestNoFUSE_ErrorTypes(t *testing.T) {
 		require.ErrorIs(err, syscall.ENOENT)
 	})
 
-	t.Run("AddFile_Duplicate", func(t *testing.T) {
+	t.Run("AddFile_Duplicate_Upserts", func(t *testing.T) {
 		content := []byte("dup test")
 		path := filepath.Join(tp.AliceSaveDir, "dup_error.txt")
 		require.NoError(os.WriteFile(path, content, 0644))
 		require.NoError(tp.Alice.AddFile(path))
 
-		// Second add should return os.ErrExist.
-		err := tp.Alice.AddFile(path)
-		require.ErrorIs(err, os.ErrExist)
+		// Re-adding the same file should succeed (upsert).
+		require.NoError(tp.Alice.AddFile(path))
 	})
 }
