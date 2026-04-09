@@ -8,8 +8,10 @@ package session
 
 import (
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"time"
@@ -36,10 +38,26 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 
 	logger := session.logger.With("phase", "inbound-handshake")
 
-	// Read JSON
+	// Read handshake: 4-byte big-endian length prefix, then JSON payload.
+	// We must NOT use json.Decoder here because it buffers ahead and would
+	// consume bytes meant for the SecureConn that wraps this connection later.
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
+		logger.Error("Failed to read handshake length", "error", err)
+		return fmt.Errorf("read handshake length: %w", err)
+	}
+	msgLen := binary.BigEndian.Uint32(lenBuf[:])
+	if msgLen > 64*1024 { // sanity limit: 64 KiB
+		return fmt.Errorf("handshake message too large: %d bytes", msgLen)
+	}
+	msgBuf := make([]byte, msgLen)
+	if _, err := io.ReadFull(conn, msgBuf); err != nil {
+		logger.Error("Failed to read handshake payload", "error", err)
+		return fmt.Errorf("read handshake payload: %w", err)
+	}
 	var msg PeerHandshakeMessage
-	if err := json.NewDecoder(conn).Decode(&msg); err != nil {
-		logger.Error("Failed to decode request", "error", err)
+	if err := json.Unmarshal(msgBuf, &msg); err != nil {
+		logger.Error("Failed to decode handshake", "error", err)
 		return fmt.Errorf("invalid handshake format: %w", err)
 	}
 
@@ -297,7 +315,20 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 		SupportedCiphers: supportedStr,
 	}
 
-	if err := json.NewEncoder(conn).Encode(msg); err != nil {
+	// Write handshake: 4-byte big-endian length prefix, then JSON payload.
+	// Must match PerformInboundHandshake's length-prefixed read.
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("marshal handshake: %w", err)
+	}
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(msgBytes)))
+	if _, err := conn.Write(lenBuf[:]); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("write handshake length: %w", err)
+	}
+	if _, err := conn.Write(msgBytes); err != nil {
 		_ = conn.Close()
 		logger.Error("Failed to send handshake", "error", err)
 		return fmt.Errorf("failed to send handshake: %w", err)
@@ -411,11 +442,18 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 func DialWithStableAddr(network, addr string, timeout time.Duration, logger *slog.Logger) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: timeout}
 
-	// Try to find a stable local IPv6 to bind to.
-	localIP := findStableIPv6()
-	if localIP != "" {
-		dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(localIP)}
-		logger.Info("Binding outbound to stable IPv6", "addr", localIP)
+	// Only bind to stable IPv6 when dialing an IPv6 destination.
+	// IPv4 destinations (e.g., bridge relay) can't use an IPv6 local address.
+	host, _, _ := net.SplitHostPort(addr)
+	destIP := net.ParseIP(host)
+	isIPv6Dest := destIP != nil && destIP.To4() == nil
+
+	if isIPv6Dest {
+		localIP := findStableIPv6()
+		if localIP != "" {
+			dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(localIP)}
+			logger.Info("Binding outbound to stable IPv6", "addr", localIP)
+		}
 	}
 
 	return dialer.Dial(network, addr)

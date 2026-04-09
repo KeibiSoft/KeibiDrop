@@ -407,6 +407,33 @@ func (kd *KeibiDrop) JoinRoom() error {
 		break
 	}
 
+	// Bridge mode: both peers connect outbound to a TCP bridge relay.
+	// No inbound connections needed (bypasses SPI firewalls).
+	if kd.BridgeAddr != "" {
+		logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
+
+		if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
+			return err
+		}
+
+		// Dial bridge twice: once for outbound handshake, once for inbound.
+		// PerformOutboundHandshake dials internally, so pass bridge address.
+		if err := session.PerformOutboundHandshake(kd.session, kd.BridgeAddr); err != nil {
+			return fmt.Errorf("bridge outbound handshake: %w", err)
+		}
+
+		inConn, err := session.DialWithStableAddr("tcp", kd.BridgeAddr, 15*time.Second, logger)
+		if err != nil {
+			return fmt.Errorf("bridge dial (inbound): %w", err)
+		}
+		if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+			inConn.Close()
+			return fmt.Errorf("bridge inbound handshake: %w", err)
+		}
+
+		goto startSession
+	}
+
 	// In local mode, PeerIPv6IP and PeerPort are already set by SetPeerDirectAddress.
 	if !kd.IsLocalMode {
 		if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
@@ -414,7 +441,6 @@ func (kd *KeibiDrop) JoinRoom() error {
 		}
 	} else {
 		// Local mode: exchange public keys before the PQC handshake.
-		// The relay normally provides peer keys; we do a plaintext pre-exchange instead.
 		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
 		keyConn, err := session.DialWithStableAddr("tcp", peerAddr, 15*time.Second, logger)
 		if err != nil {
@@ -435,16 +461,20 @@ func (kd *KeibiDrop) JoinRoom() error {
 		return err
 	}
 
-	conn, err := kd.listener.Accept()
-	if err != nil {
-		logger.Error("Failed to accept", "error", err)
-		return err
+	{
+		conn, err := kd.listener.Accept()
+		if err != nil {
+			logger.Error("Failed to accept", "error", err)
+			return err
+		}
+
+		if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
+			logger.Error("Failed inbound handshake", "error", err)
+			return err
+		}
 	}
 
-	if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-		logger.Error("Failed inbound handshake", "error", err)
-		return err
-	}
+startSession:
 
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
@@ -468,8 +498,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 		return nil
 	}
 
-	err = kd.setupFilesystem(logger, kd.filesystemReady)
-	if err != nil {
+	if err := kd.setupFilesystem(logger, kd.filesystemReady); err != nil {
 		return err
 	}
 
@@ -511,8 +540,28 @@ func (kd *KeibiDrop) CreateRoom() error {
 		break
 	}
 
+	// Bridge mode: both peers connect outbound to a TCP bridge relay.
+	if kd.BridgeAddr != "" {
+		logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
+
+		// Creator: accept inbound via bridge, then outbound via bridge.
+		inConn, err := session.DialWithStableAddr("tcp", kd.BridgeAddr, 30*time.Second, logger)
+		if err != nil {
+			return fmt.Errorf("bridge dial (inbound): %w", err)
+		}
+		if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+			inConn.Close()
+			return fmt.Errorf("bridge inbound handshake: %w", err)
+		}
+
+		if err := session.PerformOutboundHandshake(kd.session, kd.BridgeAddr); err != nil {
+			return fmt.Errorf("bridge outbound handshake: %w", err)
+		}
+
+		goto startCreateSession
+	}
+
 	// In local mode, exchange public keys before the PQC handshake.
-	// The relay normally provides peer keys; local mode uses a plaintext pre-exchange.
 	if kd.IsLocalMode {
 		keyConn, err := kd.listener.Accept()
 		if err != nil {
@@ -528,33 +577,35 @@ func (kd *KeibiDrop) CreateRoom() error {
 		logger.Info("Local key exchange complete (create side)")
 	}
 
-	conn, err := kd.listener.Accept()
-	if err != nil {
-		logger.Error("Failed to accept", "error", err)
-		return err
+	{
+		conn, err := kd.listener.Accept()
+		if err != nil {
+			logger.Error("Failed to accept", "error", err)
+			return err
+		}
+
+		if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
+			return err
+		}
+
+		addr, ok := conn.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			logger.Error("Failed to cast TCP address")
+			return fmt.Errorf("failed to cast TCP address")
+		}
+
+		peerIP := addr.IP.String()
+		if addr.Zone != "" {
+			peerIP = peerIP + "%" + addr.Zone
+		}
+		kd.PeerIPv6IP = peerIP
+
+		if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))); err != nil {
+			return err
+		}
 	}
 
-	if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-		return err
-	}
-
-	addr, ok := conn.RemoteAddr().(*net.TCPAddr)
-	if !ok {
-		logger.Error("Failed to cast TCP address", "error", err)
-		return err
-	}
-
-	// Include zone ID for link-local addresses (required for routing on Linux/macOS).
-	peerIP := addr.IP.String()
-	if addr.Zone != "" {
-		peerIP = peerIP + "%" + addr.Zone
-	}
-	kd.PeerIPv6IP = peerIP
-
-	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))); err != nil {
-		return err
-	}
-
+startCreateSession:
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
 	kd.Start()
@@ -564,20 +615,17 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
-	// Start health monitoring, reconnection, and relay keepalive.
 	if err := kd.InitConnectionResilience(); err != nil {
 		logger.Warn("Failed to init connection resilience", "error", err)
 	}
 
 	if !kd.IsFUSE {
-		// Unblock Run()'s <-filesystemReady so it can process signals.
 		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
 		logger.Info("Success, starting without FUSE")
 		return nil
 	}
 
-	err = kd.setupFilesystem(logger, kd.filesystemReady)
-	if err != nil {
+	if err := kd.setupFilesystem(logger, kd.filesystemReady); err != nil {
 		return err
 	}
 

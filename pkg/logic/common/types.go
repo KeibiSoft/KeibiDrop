@@ -34,6 +34,7 @@ type KeibiDrop struct {
 
 	IsFUSE       bool
 	IsLocalMode  bool
+	BridgeAddr   string // TCP bridge relay address for firewall traversal
 	OpInProgress atomic.Int32
 
 	session *session.Session

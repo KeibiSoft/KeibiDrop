@@ -165,6 +165,7 @@ clean: clean-dist
 # Relay: http://localhost:54321 (start your own relay first)
 
 RELAY   ?= http://localhost:54321
+BRIDGE  ?= 185.104.181.40:26600
 SCRIPTS := scripts/dev
 
 # On Windows, WinFSP requires drive letters for FUSE mount points.
@@ -195,6 +196,31 @@ run-kd-alice:
 run-kd-bob:
 	KD_NO_FUSE=1 KD_RELAY=$(RELAY) KD_INBOUND_PORT=26003 KD_OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_kd_bob.sh
 
+# ── Bridge mode (for peers behind firewalls / NAT) ───────
+# Both peers connect outbound to the bridge relay. No inbound ports needed.
+# Default bridge: 185.104.181.40:26600 (Timisoara)
+# Override: make run-bridge-alice BRIDGE=your-server:26600
+
+run-bridge-alice: build-kd
+	KD_RELAY=https://keibidroprelay.keibisoft.com/ KD_BRIDGE=$(BRIDGE) \
+	KD_NO_FUSE=1 KD_SAVE_PATH=SaveAlice KD_SOCKET=/tmp/kd-alice.sock \
+	./kd start
+
+run-bridge-bob: build-kd
+	KD_RELAY=https://keibidroprelay.keibisoft.com/ KD_BRIDGE=$(BRIDGE) \
+	KD_NO_FUSE=1 KD_SAVE_PATH=SaveBob KD_SOCKET=/tmp/kd-bob.sock \
+	./kd start
+
+run-bridge-alice-fuse: build-kd
+	KD_RELAY=https://keibidroprelay.keibisoft.com/ KD_BRIDGE=$(BRIDGE) \
+	KD_SAVE_PATH=SaveAlice KD_MOUNT_PATH=MountAlice KD_SOCKET=/tmp/kd-alice.sock \
+	./kd start
+
+run-bridge-bob-fuse: build-kd
+	KD_RELAY=https://keibidroprelay.keibisoft.com/ KD_BRIDGE=$(BRIDGE) \
+	KD_SAVE_PATH=SaveBob KD_MOUNT_PATH=MountBob KD_SOCKET=/tmp/kd-bob.sock \
+	./kd start
+
 # ── Help ──────────────────────────────────────────────────
 
 help:
@@ -209,8 +235,12 @@ help:
 	@echo "  make run-bob                Rust UI, Bob   (FUSE toggle in UI)"
 	@echo "  make run-cli-alice          Go CLI, Alice"
 	@echo "  make run-cli-bob            Go CLI, Bob"
-	@echo "  make run-kd-alice           kd daemon, Alice"
-	@echo "  make run-kd-bob             kd daemon, Bob"
+	@echo "  make run-kd-alice           kd daemon, Alice (local/direct)"
+	@echo "  make run-kd-bob             kd daemon, Bob (local/direct)"
+	@echo "  make run-bridge-alice       kd via bridge relay, Alice (no-FUSE)"
+	@echo "  make run-bridge-bob         kd via bridge relay, Bob (no-FUSE)"
+	@echo "  make run-bridge-alice-fuse  kd via bridge relay, Alice (FUSE)"
+	@echo "  make run-bridge-bob-fuse    kd via bridge relay, Bob (FUSE)"
 	@echo ""
 	@echo "Test & Lint:"
 	@echo "  make test                   Run all integration tests"
@@ -235,10 +265,27 @@ help:
 	@echo "  make rust-bindings          Regenerate Rust FFI bindings"
 	@echo "  make clean                  Remove build artifacts"
 
+# ── WAN Testing (Mac <-> VPS) ─────────────────────────────────────────────────
+wan-deploy: build-kd
+	bash scripts/wan/deploy.sh
+
+wan-clean:
+	bash scripts/wan/clean.sh
+
+wan-start:
+	bash scripts/wan/start.sh
+
+wan-benchmark:
+	bash scripts/wan/benchmark.sh
+
+wan-test: wan-clean wan-start wan-benchmark
+
 .PHONY: build-cli build-kd build-static-rust-bridge build-rust build-all \
         test lint sec install-proto protoc rust-bindings slint-preview \
         package-macos package-tar package-deb checksums clean-dist clean \
         run-alice run-bob \
         run-cli-alice run-cli-bob \
         run-kd-alice run-kd-bob \
-        build-ios build-android run-ios-sim run-android-emu sync-mobile help
+        run-bridge-alice run-bridge-bob run-bridge-alice-fuse run-bridge-bob-fuse \
+        build-ios build-android run-ios-sim run-android-emu sync-mobile \
+        wan-deploy wan-clean wan-start wan-benchmark wan-test help

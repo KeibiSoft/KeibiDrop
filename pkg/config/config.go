@@ -25,6 +25,7 @@ type Config struct {
 	LogFile        string `toml:"log_file"`
 	InboundPort    int    `toml:"inbound_port"`
 	OutboundPort   int    `toml:"outbound_port"`
+	BridgeAddr     string `toml:"bridge_addr"` // TCP bridge relay address (e.g., "relay.keibisoft.com:26600")
 	NoFUSE         bool   `toml:"no_fuse"`
 	PrefetchOnOpen bool   `toml:"prefetch_on_open"`
 	PushOnWrite    bool   `toml:"push_on_write"`
@@ -164,6 +165,9 @@ func applyEnvOverrides(cfg *Config) {
 		if port, err := strconv.Atoi(v); err == nil {
 			cfg.OutboundPort = port
 		}
+	}
+	if v := envFirst("BRIDGE_ADDR", "KD_BRIDGE"); v != "" {
+		cfg.BridgeAddr = v
 	}
 	if v := envFirst("NO_FUSE", "KD_NO_FUSE"); v != "" {
 		cfg.NoFUSE = true
