@@ -8,9 +8,7 @@ package common
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -190,60 +188,13 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	}
 
 	if bitmap != nil && bitmap.Total() > 0 {
-		// Push-based download via StreamFile: server streams all chunks from the
-		// first missing offset to EOF. No per-chunk round-trip overhead.
-		// Single stream saturates the link; parallel wastes bandwidth (each stream
-		// gets all chunks from its offset, workers must discard 75% of received data).
-
 		dlCtx, dlCancel := context.WithCancel(kd.ctx)
 		defer dlCancel()
 		kd.registerDownload(remoteName, dlCancel)
 		defer kd.unregisterDownload(remoteName)
 
-		// Find first missing chunk to resume from.
-		startOffset := uint64(0)
-		for i := 0; i < bitmap.Total(); i++ {
-			if !bitmap.Has(i) {
-				startOffset = uint64(i) * uint64(config.BlockSize)
-				break
-			}
-		}
-
-		stream, err := kd.session.GRPCClient.StreamFile(dlCtx, &bindings.StreamFileRequest{
-			Path:        relPath,
-			StartOffset: startOffset,
-		})
-		if err != nil {
-			logger.Error("Failed to open StreamFile", "error", err)
-			return fmt.Errorf("open stream: %w", err)
-		}
-
-		chunksWritten := 0
-		for {
-			resp, err := stream.Recv()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				logger.Error("Download failed (partial state preserved)", "error", err, "progress", bitmap.Progress())
-				_ = bitmap.Save(bitmapPath)
-				return fmt.Errorf("recv chunk: %w", err)
-			}
-
-			if _, err := f.WriteAt(resp.Data, int64(resp.Offset)); err != nil {
-				_ = bitmap.Save(bitmapPath)
-				return fmt.Errorf("write at offset %d: %w", resp.Offset, err)
-			}
-
-			chunkIdx := int(resp.Offset / uint64(config.BlockSize))
-			if chunkIdx < bitmap.Total() {
-				bitmap.Set(chunkIdx)
-			}
-
-			chunksWritten++
-			if chunksWritten%25 == 0 {
-				_ = bitmap.Save(bitmapPath)
-			}
+		if err := kd.pullParallelRead(dlCtx, dlCancel, bitmap, f, relPath, fileSize, config.BlockSize, bitmapPath, logger); err != nil {
+			return err
 		}
 		_ = bitmap.Save(bitmapPath)
 	}
