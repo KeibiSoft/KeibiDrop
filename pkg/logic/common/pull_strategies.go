@@ -2,9 +2,7 @@ package common
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"sync"
@@ -14,68 +12,10 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 )
 
-// pullStreamFile downloads using a single server-streaming StreamFile RPC.
-// No per-chunk round-trip. Best for WAN / relay connections.
-func (kd *KeibiDrop) pullStreamFile(
-	ctx context.Context,
-	bitmap *filesystem.ChunkBitmap,
-	f *os.File,
-	relPath string,
-	fileSize uint64,
-	blockSize int,
-	bitmapPath string,
-	logger *slog.Logger,
-) error {
-	// Find first missing chunk to resume from.
-	startOffset := uint64(0)
-	for i := 0; i < bitmap.Total(); i++ {
-		if !bitmap.Has(i) {
-			startOffset = uint64(i) * uint64(blockSize)
-			break
-		}
-	}
-
-	stream, err := kd.session.GRPCClient.StreamFile(ctx, &bindings.StreamFileRequest{
-		Path:        relPath,
-		StartOffset: startOffset,
-	})
-	if err != nil {
-		return fmt.Errorf("open stream: %w", err)
-	}
-
-	chunksWritten := 0
-	for {
-		resp, err := stream.Recv()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			logger.Error("Download failed (partial state preserved)", "error", err, "progress", bitmap.Progress())
-			_ = bitmap.Save(bitmapPath)
-			return fmt.Errorf("recv chunk: %w", err)
-		}
-
-		if _, err := f.WriteAt(resp.Data, int64(resp.Offset)); err != nil {
-			_ = bitmap.Save(bitmapPath)
-			return fmt.Errorf("write at offset %d: %w", resp.Offset, err)
-		}
-
-		chunkIdx := int(resp.Offset / uint64(blockSize))
-		if chunkIdx < bitmap.Total() {
-			bitmap.Set(chunkIdx)
-		}
-
-		chunksWritten++
-		if chunksWritten%25 == 0 {
-			_ = bitmap.Save(bitmapPath)
-		}
-	}
-	return nil
-}
-
 // pullParallelRead downloads using N parallel bidirectional Read streams.
-// Each worker sends ReadRequest per chunk and waits for ReadResponse.
-// Best for LAN / loopback where RTT is negligible and parallelism helps.
+// Each worker owns a shard of chunk indices and processes them sequentially.
+// 4 workers with interleaved shards saturate the link while keeping per-chunk
+// ordering within each stream (required by gRPC).
 func (kd *KeibiDrop) pullParallelRead(
 	ctx context.Context,
 	cancel context.CancelFunc,
