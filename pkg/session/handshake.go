@@ -249,8 +249,20 @@ func storePeerKeysFromExchange(session *Session, logger *slog.Logger, msg keyExc
 	return nil
 }
 
-// PerformOutboundHandshake connects Alice to Bob and sends her handshake.
+// PerformOutboundHandshake dials remoteAddr and sends the PQC handshake.
 func PerformOutboundHandshake(session *Session, remoteAddr string) error {
+	logger := session.logger.With("phase", "outbound-handshake")
+	conn, err := DialWithStableAddr("tcp", remoteAddr, 15*time.Second, logger)
+	if err != nil {
+		logger.Error("Failed to dial", "addr", remoteAddr, "error", err)
+		return fmt.Errorf("failed to connect to %s: %w", remoteAddr, err)
+	}
+	return PerformOutboundHandshakeOnConn(session, conn)
+}
+
+// PerformOutboundHandshakeOnConn sends the PQC handshake on an existing connection.
+// Used by bridge mode where the connection is pre-established (with room token already sent).
+func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 	if session == nil || session.OwnKeys == nil || session.PeerPubKeys == nil {
 		return fmt.Errorf("nil pointer dereference")
 	}
@@ -266,8 +278,6 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 
 	seed2, encSeed2MLKEM := session.PeerPubKeys.MlKemPublic.Encapsulate()
 
-	// Determine cipher suite. If inbound already negotiated, use that.
-	// Otherwise use local preference (outbound runs before inbound in create-room flow).
 	session.CipherMu.Lock()
 	suite := session.CipherSuite
 	if suite == "" {
@@ -283,12 +293,6 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 	}
 
 	session.SEKOutbound = outboundKey
-
-	conn, err := DialWithStableAddr("tcp", remoteAddr, 15*time.Second, logger)
-	if err != nil {
-		logger.Error("Failed to dial", "addr", remoteAddr, "error", err)
-		return fmt.Errorf("failed to connect to %s: %w", remoteAddr, err)
-	}
 
 	pubKeys := map[string]string{
 		"x25519": encodeBase64(session.OwnKeys.X25519Public.Bytes()),

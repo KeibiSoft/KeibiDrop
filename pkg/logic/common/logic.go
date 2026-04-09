@@ -358,39 +358,8 @@ func (kd *KeibiDrop) JoinRoom() error {
 		break
 	}
 
-	// Bridge mode: both peers connect outbound to a TCP bridge relay.
-	// No inbound connections needed (bypasses SPI firewalls).
-	if kd.BridgeAddr != "" {
-		logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
-
-		if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
-			return err
-		}
-
-		// Dial bridge twice: once for outbound handshake, once for inbound.
-		// PerformOutboundHandshake dials internally, so pass bridge address.
-		if err := session.PerformOutboundHandshake(kd.session, kd.BridgeAddr); err != nil {
-			return fmt.Errorf("bridge outbound handshake: %w", err)
-		}
-
-		inConn, err := session.DialWithStableAddr("tcp", kd.BridgeAddr, 15*time.Second, logger)
-		if err != nil {
-			return fmt.Errorf("bridge dial (inbound): %w", err)
-		}
-		if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
-			inConn.Close()
-			return fmt.Errorf("bridge inbound handshake: %w", err)
-		}
-
-		goto startSession
-	}
-
-	// In local mode, PeerIPv6IP and PeerPort are already set by SetPeerDirectAddress.
-	if !kd.IsLocalMode {
-		if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
-			return err
-		}
-	} else {
+	// Get peer info from relay (needed for both direct and bridge paths).
+	if kd.IsLocalMode {
 		// Local mode: exchange public keys before the PQC handshake.
 		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
 		keyConn, err := session.DialWithStableAddr("tcp", peerAddr, 15*time.Second, logger)
@@ -405,27 +374,62 @@ func (kd *KeibiDrop) JoinRoom() error {
 		}
 		keyConn.Close()
 		logger.Info("Local key exchange complete (join side)")
+	} else {
+		if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
+			return err
+		}
 	}
 
-	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))); err != nil {
-		logger.Error("Failed outbound handshake", "error", err)
-		return err
-	}
-
+	// Try direct P2P first. If it fails and bridge is configured, fall back.
 	{
-		conn, err := kd.listener.Accept()
-		if err != nil {
-			logger.Error("Failed to accept", "error", err)
-			return err
-		}
+		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
+		directErr := session.PerformOutboundHandshake(kd.session, peerAddr)
 
-		if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-			logger.Error("Failed inbound handshake", "error", err)
-			return err
+		if directErr == nil {
+			// Direct outbound succeeded. Accept inbound from peer.
+			logger.Info("Direct P2P outbound connected")
+			conn, err := kd.listener.Accept()
+			if err != nil {
+				logger.Error("Failed to accept", "error", err)
+				return err
+			}
+			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
+				logger.Error("Failed inbound handshake", "error", err)
+				return err
+			}
+		} else if kd.BridgeAddr != "" {
+			// Direct failed. Fall back to bridge relay.
+			logger.Warn("Direct P2P failed, falling back to bridge", "error", directErr, "bridge", kd.BridgeAddr)
+
+			// Reset session crypto state for fresh handshake via bridge.
+			kd.session.SEKOutbound = nil
+			kd.session.CipherMu.Lock()
+			kd.session.CipherSuite = ""
+			kd.session.CipherMu.Unlock()
+
+			outConn, err := kd.dialBridge(logger)
+			if err != nil {
+				return fmt.Errorf("bridge dial (outbound): %w", err)
+			}
+			if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
+				outConn.Close()
+				return fmt.Errorf("bridge outbound handshake: %w", err)
+			}
+
+			inConn, err := kd.dialBridge(logger)
+			if err != nil {
+				return fmt.Errorf("bridge dial (inbound): %w", err)
+			}
+			if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+				inConn.Close()
+				return fmt.Errorf("bridge inbound handshake: %w", err)
+			}
+		} else {
+			// Direct failed, no bridge configured.
+			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
+			return directErr
 		}
 	}
-
-startSession:
 
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
@@ -491,27 +495,6 @@ func (kd *KeibiDrop) CreateRoom() error {
 		break
 	}
 
-	// Bridge mode: both peers connect outbound to a TCP bridge relay.
-	if kd.BridgeAddr != "" {
-		logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
-
-		// Creator: accept inbound via bridge, then outbound via bridge.
-		inConn, err := session.DialWithStableAddr("tcp", kd.BridgeAddr, 30*time.Second, logger)
-		if err != nil {
-			return fmt.Errorf("bridge dial (inbound): %w", err)
-		}
-		if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
-			inConn.Close()
-			return fmt.Errorf("bridge inbound handshake: %w", err)
-		}
-
-		if err := session.PerformOutboundHandshake(kd.session, kd.BridgeAddr); err != nil {
-			return fmt.Errorf("bridge outbound handshake: %w", err)
-		}
-
-		goto startCreateSession
-	}
-
 	// In local mode, exchange public keys before the PQC handshake.
 	if kd.IsLocalMode {
 		keyConn, err := kd.listener.Accept()
@@ -528,35 +511,74 @@ func (kd *KeibiDrop) CreateRoom() error {
 		logger.Info("Local key exchange complete (create side)")
 	}
 
+	// Try direct P2P: accept inbound with timeout. If no peer arrives and
+	// bridge is configured, fall back to bridge relay.
 	{
-		conn, err := kd.listener.Accept()
-		if err != nil {
-			logger.Error("Failed to accept", "error", err)
-			return err
+		useBridge := false
+
+		// Set accept deadline: 15s if bridge available (fallback), no deadline otherwise.
+		if kd.BridgeAddr != "" {
+			kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
 		}
 
-		if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-			return err
+		conn, acceptErr := kd.listener.Accept()
+		if kd.BridgeAddr != "" {
+			kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
 		}
 
-		addr, ok := conn.RemoteAddr().(*net.TCPAddr)
-		if !ok {
-			logger.Error("Failed to cast TCP address")
-			return fmt.Errorf("failed to cast TCP address")
+		if acceptErr != nil {
+			if kd.BridgeAddr != "" {
+				logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
+				useBridge = true
+			} else {
+				logger.Error("Failed to accept", "error", acceptErr)
+				return acceptErr
+			}
 		}
 
-		peerIP := addr.IP.String()
-		if addr.Zone != "" {
-			peerIP = peerIP + "%" + addr.Zone
-		}
-		kd.PeerIPv6IP = peerIP
+		if !useBridge {
+			// Direct inbound succeeded.
+			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
+				return err
+			}
 
-		if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))); err != nil {
-			return err
+			addr, ok := conn.RemoteAddr().(*net.TCPAddr)
+			if !ok {
+				return fmt.Errorf("failed to cast TCP address")
+			}
+			peerIP := addr.IP.String()
+			if addr.Zone != "" {
+				peerIP = peerIP + "%" + addr.Zone
+			}
+			kd.PeerIPv6IP = peerIP
+
+			if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))); err != nil {
+				return err
+			}
+		} else {
+			// Bridge fallback.
+			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
+
+			inConn, err := kd.dialBridge(logger)
+			if err != nil {
+				return fmt.Errorf("bridge dial (inbound): %w", err)
+			}
+			if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+				inConn.Close()
+				return fmt.Errorf("bridge inbound handshake: %w", err)
+			}
+
+			outConn, err := kd.dialBridge(logger)
+			if err != nil {
+				return fmt.Errorf("bridge dial (outbound): %w", err)
+			}
+			if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
+				outConn.Close()
+				return fmt.Errorf("bridge outbound handshake: %w", err)
+			}
 		}
 	}
 
-startCreateSession:
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
 	kd.Start()

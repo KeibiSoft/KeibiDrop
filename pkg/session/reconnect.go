@@ -46,6 +46,10 @@ type ReconnectManager struct {
 	CachedPeerIP   string
 	CachedPeerPort int
 
+	// Bridge relay (for firewall traversal). If set, reconnect uses bridge instead of direct.
+	BridgeAddr string
+	DialBridge func() (net.Conn, error) // Dial bridge with room token
+
 	// Callbacks
 	OnReconnecting  func()                               // Called when reconnection starts
 	OnReconnected   func()                               // Called on successful reconnection
@@ -230,65 +234,132 @@ func (r *ReconnectManager) attemptReconnect() error {
 func (r *ReconnectManager) reconnectAsInitiator() error {
 	logger := r.logger.With("role", "initiator")
 
-	// Try cached IP first (faster if peer didn't change IP)
-	if r.CachedPeerIP != "" && r.CachedPeerPort > 0 {
-		addr := net.JoinHostPort(r.CachedPeerIP, fmt.Sprintf("%d", r.CachedPeerPort))
-		logger.Debug("Trying cached address", "addr", addr)
+	// Bridge mode: both directions via bridge.
+	if r.BridgeAddr != "" && r.DialBridge != nil {
+		logger.Info("Reconnecting via bridge", "addr", r.BridgeAddr)
 
-		if err := PerformOutboundHandshake(r.session, addr); err == nil {
-			logger.Info("Reconnected using cached address")
-			return nil
+		outConn, err := r.DialBridge()
+		if err != nil {
+			return fmt.Errorf("bridge dial (outbound): %w", err)
 		}
-		logger.Debug("Cached address failed, trying relay lookup")
+		if err := PerformOutboundHandshakeOnConn(r.session, outConn); err != nil {
+			outConn.Close()
+			return fmt.Errorf("bridge outbound handshake: %w", err)
+		}
+
+		inConn, err := r.DialBridge()
+		if err != nil {
+			return fmt.Errorf("bridge dial (inbound): %w", err)
+		}
+		if err := PerformInboundHandshake(r.session, inConn); err != nil {
+			inConn.Close()
+			return fmt.Errorf("bridge inbound handshake: %w", err)
+		}
+
+		logger.Info("Both directions reconnected via bridge (initiator)")
+		return nil
 	}
 
-	// Fall back to relay lookup
-	if r.RelayLookup == nil {
-		return fmt.Errorf("no relay lookup function configured")
+	// Direct mode: dial peer, then accept inbound.
+	addr := ""
+	if r.CachedPeerIP != "" && r.CachedPeerPort > 0 {
+		addr = net.JoinHostPort(r.CachedPeerIP, fmt.Sprintf("%d", r.CachedPeerPort))
 	}
-
-	ip, port, err := r.RelayLookup(r.session.ExpectedPeerFingerprint)
-	if err != nil {
-		return fmt.Errorf("relay lookup failed: %w", err)
-	}
-
-	// Update cache
-	r.CachedPeerIP = ip
-	r.CachedPeerPort = port
-
-	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
-	logger.Debug("Connecting via relay lookup", "addr", addr)
 
 	if err := PerformOutboundHandshake(r.session, addr); err != nil {
-		return fmt.Errorf("outbound handshake failed: %w", err)
+		logger.Debug("Cached address failed, trying relay lookup", "error", err)
+		if r.RelayLookup == nil {
+			return fmt.Errorf("outbound failed and no relay lookup: %w", err)
+		}
+		ip, port, lookupErr := r.RelayLookup(r.session.ExpectedPeerFingerprint)
+		if lookupErr != nil {
+			return fmt.Errorf("relay lookup failed: %w", lookupErr)
+		}
+		r.CachedPeerIP = ip
+		r.CachedPeerPort = port
+		addr = net.JoinHostPort(ip, fmt.Sprintf("%d", port))
+
+		if err := PerformOutboundHandshake(r.session, addr); err != nil {
+			return fmt.Errorf("outbound handshake failed: %w", err)
+		}
 	}
 
+	if r.AcceptConn == nil {
+		return fmt.Errorf("no accept function for inbound")
+	}
+	inConn, err := r.AcceptConn(30 * time.Second)
+	if err != nil {
+		return fmt.Errorf("accept inbound: %w", err)
+	}
+	if err := PerformInboundHandshake(r.session, inConn); err != nil {
+		inConn.Close()
+		return fmt.Errorf("inbound handshake: %w", err)
+	}
+	logger.Info("Both directions reconnected (initiator)")
 	return nil
 }
 
 func (r *ReconnectManager) reconnectAsResponder() error {
 	logger := r.logger.With("role", "responder")
 
+	// Bridge mode: both directions via bridge.
+	if r.BridgeAddr != "" && r.DialBridge != nil {
+		logger.Info("Reconnecting via bridge", "addr", r.BridgeAddr)
+
+		inConn, err := r.DialBridge()
+		if err != nil {
+			return fmt.Errorf("bridge dial (inbound): %w", err)
+		}
+		if err := PerformInboundHandshake(r.session, inConn); err != nil {
+			inConn.Close()
+			return fmt.Errorf("bridge inbound handshake: %w", err)
+		}
+
+		outConn, err := r.DialBridge()
+		if err != nil {
+			return fmt.Errorf("bridge dial (outbound): %w", err)
+		}
+		if err := PerformOutboundHandshakeOnConn(r.session, outConn); err != nil {
+			outConn.Close()
+			return fmt.Errorf("bridge outbound handshake: %w", err)
+		}
+
+		logger.Info("Both directions reconnected via bridge (responder)")
+		return nil
+	}
+
+	// Direct mode: accept inbound, then dial outbound.
 	if r.AcceptConn == nil {
 		return fmt.Errorf("no accept function configured")
 	}
 
-	// Accept connection with timeout
-	timeout := 30 * time.Second
-	logger.Debug("Waiting for initiator connection", "timeout", timeout)
-
-	conn, err := r.AcceptConn(timeout)
+	conn, err := r.AcceptConn(30 * time.Second)
 	if err != nil {
 		return fmt.Errorf("accept failed: %w", err)
 	}
-
-	logger.Info("Accepted reconnection", "remote", conn.RemoteAddr())
-
 	if err := PerformInboundHandshake(r.session, conn); err != nil {
 		conn.Close()
-		return fmt.Errorf("inbound handshake failed: %w", err)
+		return fmt.Errorf("inbound handshake: %w", err)
 	}
 
+	addr := ""
+	if r.CachedPeerIP != "" && r.CachedPeerPort > 0 {
+		addr = net.JoinHostPort(r.CachedPeerIP, fmt.Sprintf("%d", r.CachedPeerPort))
+	} else if tcpAddr, ok := conn.RemoteAddr().(*net.TCPAddr); ok {
+		peerIP := tcpAddr.IP.String()
+		if tcpAddr.Zone != "" {
+			peerIP += "%" + tcpAddr.Zone
+		}
+		addr = net.JoinHostPort(peerIP, fmt.Sprintf("%d", r.CachedPeerPort))
+	}
+	if addr == "" {
+		return fmt.Errorf("no peer address for outbound")
+	}
+
+	if err := PerformOutboundHandshake(r.session, addr); err != nil {
+		return fmt.Errorf("outbound handshake: %w", err)
+	}
+	logger.Info("Both directions reconnected (responder)")
 	return nil
 }
 

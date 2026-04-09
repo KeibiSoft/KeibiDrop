@@ -52,6 +52,12 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		}
 		return kd.listener.Accept()
 	}
+	if kd.BridgeAddr != "" {
+		kd.ReconnectManager.BridgeAddr = kd.BridgeAddr
+		kd.ReconnectManager.DialBridge = func() (net.Conn, error) {
+			return kd.dialBridge(kd.logger)
+		}
+	}
 	kd.ReconnectManager.OnReconnected = kd.onReconnected
 
 	// Start all components

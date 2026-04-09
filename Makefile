@@ -103,6 +103,24 @@ package-deb: $(DIST)
 	VERSION=$(VERSION) GOARCH=$(GOARCH) nfpm package -p deb -f nfpm.yaml -t $(DIST)/
 	@echo "Created .deb in $(DIST)/"
 
+# Windows .zip — contains kd.exe + keibidrop-cli.exe + README
+package-windows: $(DIST)
+	@echo "Packaging Windows .zip for $(GOARCH)..."
+	mkdir -p $(DIST)/win-staging/keibidrop-$(VERSION)
+	cp kd.exe $(DIST)/win-staging/keibidrop-$(VERSION)/ 2>/dev/null || cp kd $(DIST)/win-staging/keibidrop-$(VERSION)/kd.exe
+	cp keibidrop-cli.exe $(DIST)/win-staging/keibidrop-$(VERSION)/ 2>/dev/null || cp keibidrop-cli $(DIST)/win-staging/keibidrop-$(VERSION)/keibidrop-cli.exe
+	cp README.md LICENSE $(DIST)/win-staging/keibidrop-$(VERSION)/
+	cd $(DIST)/win-staging && zip -r ../keibidrop-$(VERSION)-windows-$(GOARCH).zip keibidrop-$(VERSION)/
+	rm -rf $(DIST)/win-staging
+	@echo "Created $(DIST)/keibidrop-$(VERSION)-windows-$(GOARCH).zip"
+
+# Chocolatey .nupkg — requires choco pack
+package-choco: $(DIST)
+	@echo "Packaging Chocolatey .nupkg..."
+	VERSION=$(VERSION) envsubst < choco/keibidrop.nuspec.tmpl > $(DIST)/keibidrop.nuspec
+	cd $(DIST) && choco pack keibidrop.nuspec 2>/dev/null || echo "choco not installed, skipping .nupkg"
+	@echo "Created .nupkg in $(DIST)/ (if choco available)"
+
 # Generate SHA256 checksums for all release artifacts
 checksums: $(DIST)
 	cd $(DIST) && shasum -a 256 keibidrop-* > SHA256SUMS
@@ -251,6 +269,8 @@ help:
 	@echo "  make package-macos          .dmg for macOS"
 	@echo "  make package-tar            .tar.gz archive"
 	@echo "  make package-deb            .deb package (needs nfpm)"
+	@echo "  make package-windows        .zip for Windows"
+	@echo "  make package-choco          Chocolatey .nupkg"
 	@echo "  make checksums              SHA256SUMS for dist/"
 	@echo ""
 	@echo "Mobile:"
@@ -282,7 +302,7 @@ wan-test: wan-clean wan-start wan-benchmark
 
 .PHONY: build-cli build-kd build-static-rust-bridge build-rust build-all \
         test lint sec install-proto protoc rust-bindings slint-preview \
-        package-macos package-tar package-deb checksums clean-dist clean \
+        package-macos package-tar package-deb package-windows package-choco checksums clean-dist clean \
         run-alice run-bob \
         run-cli-alice run-cli-bob \
         run-kd-alice run-kd-bob \
