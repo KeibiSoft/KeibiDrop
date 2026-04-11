@@ -936,6 +936,9 @@ extern "C" {
 extern "C" {
     pub fn KD_GetConfigPath() -> *mut ::std::os::raw::c_char;
 }
+extern "C" {
+    pub fn KD_SanitizeLogs(destPath: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
 pub type __builtin_va_list = [__va_list_tag; 1usize];
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

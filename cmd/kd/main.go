@@ -268,6 +268,20 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 			"new_fingerprint": fp,
 		})
 
+	case "export-logs":
+		dest := "keibidrop-sanitized.log"
+		if len(req.Args) > 0 {
+			dest = req.Args[0]
+		}
+		logCfg, err := config.Load()
+		if err != nil {
+			return errResponse(err.Error())
+		}
+		if err := common.SanitizeLogsToFile(logCfg.LogFile, dest); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"path": dest})
+
 	case "stop", "quit":
 		kd.NotifyDisconnect()
 		kd.UnmountFilesystem()

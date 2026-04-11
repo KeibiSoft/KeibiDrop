@@ -633,6 +633,7 @@ export component MainWindow inherits Window {
     callback create_room_pressed();
     callback join_room_pressed();
     callback disconnect_pressed();
+    callback export_logs_pressed();
     callback cancel_connect_pressed();
     callback open_folder_pressed();
     callback add_file_pressed();
@@ -922,6 +923,14 @@ export component MainWindow inherits Window {
             y: snd.y + snd.height - 34px + 166px;
             text: "Cancel";
             clicked => { root.cancel_connect_pressed() }
+        }
+
+        // Export Logs button bottom-left, aligned with version text
+        OutlineButton {
+            x: 16px;
+            y: parent.height - self.height - 12px;
+            text: "Export Logs";
+            clicked => { root.export_logs_pressed() }
         }
 
         // Version text bottom-right

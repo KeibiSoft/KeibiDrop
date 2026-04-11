@@ -96,6 +96,22 @@ func (c *cliContext) executor(in string) {
 	case "disconnect":
 		disconnectRoom(c.kd)
 
+	case "export-logs", "sanitize-logs":
+		dest := "keibidrop-sanitized.log"
+		if len(args) > 1 {
+			dest = args[1]
+		}
+		logCfg, err := config.Load()
+		if err != nil {
+			fmt.Println("Error loading config:", err)
+			return
+		}
+		if err := common.SanitizeLogsToFile(logCfg.LogFile, dest); err != nil {
+			fmt.Println("Error:", err)
+		} else {
+			fmt.Println("Sanitized logs written to", dest)
+		}
+
 	case "exit", "quit":
 		c.kd.NotifyDisconnect()
 		c.kd.UnmountFilesystem()

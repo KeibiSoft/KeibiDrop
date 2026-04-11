@@ -600,4 +600,20 @@ func KD_GetConfigPath() *C.char {
 	return C.CString(config.ConfigPath())
 }
 
+//export KD_SanitizeLogs
+func KD_SanitizeLogs(destPath *C.char) C.int {
+	cfg, _ := config.Load()
+	logPath := cfg.LogFile
+	if logPath == "" {
+		setLastError(fmt.Errorf("no log file configured"))
+		return -1
+	}
+	dest := C.GoString(destPath)
+	if err := common.SanitizeLogsToFile(logPath, dest); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
 func main() {}
