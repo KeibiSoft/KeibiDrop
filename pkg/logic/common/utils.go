@@ -284,6 +284,11 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	// Set collab sync options.
 	fs.PrefetchOnOpen = kd.PrefetchOnOpen
 	fs.PushOnWrite = kd.PushOnWrite
+	fs.OnUnmountError = func(msg string) {
+		if kd.OnEvent != nil {
+			kd.OnEvent("unmount_error:" + msg)
+		}
+	}
 
 	// Notification worker with per-path debounce and batching.
 	//

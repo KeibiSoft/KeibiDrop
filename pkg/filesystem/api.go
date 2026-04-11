@@ -10,8 +10,10 @@ package filesystem
 
 import (
 	"log/slog"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
@@ -23,14 +25,16 @@ type FS struct {
 
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
+	OnUnmountError     func(msg string) // Called when unmount fails (mount busy).
 
 	// Collab sync options (set from env before Mount).
 	PrefetchOnOpen bool // If true, fetch entire file on Open() and write to local disk.
 	PushOnWrite    bool // If true, async push deltas to peer on Write().
 
 	// Host.
-	host *winfuse.FileSystemHost
-	Root *Dir
+	host      *winfuse.FileSystemHost
+	Root      *Dir
+	MountPath string // Set during Mount, used for cleanup verification.
 }
 
 func NewFS(logger *slog.Logger) *FS {
@@ -46,6 +50,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 		"isSecond", isSecond)
 
 	cleanMountPoint := filepath.Clean(mountPoint)
+	fs.MountPath = cleanMountPoint
 	// On Windows, normalise drive-letter mount points for WinFSP:
 	//   "K:."  (filepath.Clean("K:"))  → "K:"
 	//   "K:\"  (filepath.Clean("K:\")) → "K:"
@@ -127,9 +132,50 @@ func (fs *FS) Unmount() {
 		return
 	}
 
-	// TODO: Also call umount on the MountPath in case its stuck or something.
-
 	fs.host.Unmount()
 	fs.Root = nil
+
+	// Verify mount is actually gone. If a process holds a reference (e.g. terminal
+	// cd'd into the mount), Unmount() succeeds but the mount stays busy.
+	if fs.MountPath != "" {
+		if fs.isMountBusy() {
+			fs.logger.Error("FUSE Unmount: mount point still busy, trying force unmount", "path", fs.MountPath)
+			fs.forceUnmount()
+			if fs.isMountBusy() {
+				fs.logger.Error("FUSE Unmount: force unmount failed — mount still busy. Close any terminals in the mount directory.", "path", fs.MountPath)
+				if fs.OnUnmountError != nil {
+					fs.OnUnmountError("Mount point busy: close any terminals or apps using " + fs.MountPath)
+				}
+			}
+		}
+	}
+
 	fs.logger.Warn("FUSE Unmount completed")
+}
+
+// isMountBusy checks if the mount point is still a live FUSE mount.
+func (fs *FS) isMountBusy() bool {
+	// Try to stat the mount point. If it's still a FUSE mount and busy,
+	// os.Stat will either hang or return "device not configured".
+	// Use a simple check: see if /sbin/mount lists it.
+	if runtime.GOOS == "windows" {
+		return false // WinFSP handles cleanup differently.
+	}
+	out, err := exec.Command("mount").Output()
+	if err != nil {
+		return false
+	}
+	// macOS shows /private/var for /var mounts, check both.
+	return strings.Contains(string(out), fs.MountPath) ||
+		strings.Contains(string(out), "/private"+fs.MountPath)
+}
+
+// forceUnmount tries platform-specific force unmount.
+func (fs *FS) forceUnmount() {
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("/sbin/umount", "-f", fs.MountPath).Run()
+	case "linux":
+		_ = exec.Command("fusermount", "-u", fs.MountPath).Run()
+	}
 }
