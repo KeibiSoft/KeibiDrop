@@ -1,3 +1,5 @@
+// ABOUTME: Package mobile exposes a gomobile-compatible API for iOS and Android clients
+// ABOUTME: All types use gomobile-safe primitives; file lists use index-based snapshot access
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -22,7 +24,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
 
@@ -427,14 +428,15 @@ func (api *API) RefreshFileList() {
 	api.snapshotLocalFiles()
 }
 
-// GetRemoteFileCount returns the number of files the peer is sharing.
+// GetRemoteFileCount returns the number of remote files in the last snapshot.
 func (api *API) GetRemoteFileCount() int {
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	return len(api.remoteSnap.names)
 }
 
-// GetRemoteFileName returns the name of the remote file at index i.
+// GetRemoteFileName returns the name of the remote file at index i in the
+// last snapshot.  Returns empty string if i is out of bounds.
 func (api *API) GetRemoteFileName(i int) string {
 	api.mu.Lock()
 	defer api.mu.Unlock()
@@ -444,7 +446,8 @@ func (api *API) GetRemoteFileName(i int) string {
 	return api.remoteSnap.names[i]
 }
 
-// GetRemoteFileSize returns the size in bytes of the remote file at index i.
+// GetRemoteFileSize returns the size in bytes of the remote file at index i
+// in the last snapshot.  Returns 0 if i is out of bounds.
 func (api *API) GetRemoteFileSize(i int) int64 {
 	api.mu.Lock()
 	defer api.mu.Unlock()
@@ -454,14 +457,15 @@ func (api *API) GetRemoteFileSize(i int) int64 {
 	return api.remoteSnap.sizes[i]
 }
 
-// GetLocalFileCount returns the number of files you are sharing.
+// GetLocalFileCount returns the number of local files in the last snapshot.
 func (api *API) GetLocalFileCount() int {
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	return len(api.localSnap.names)
 }
 
-// GetLocalFileName returns the name of the local file at index i.
+// GetLocalFileName returns the name of the local file at index i in the
+// last snapshot.  Returns empty string if i is out of bounds.
 func (api *API) GetLocalFileName(i int) string {
 	api.mu.Lock()
 	defer api.mu.Unlock()
@@ -553,8 +557,7 @@ func (api *API) GetSavePath() string {
 // meaning a previous download was interrupted and can be resumed.
 func (api *API) HasResumableDownload(remoteName string) bool {
 	localPath := filepath.Join(api.savePath, remoteName)
-	bmPath := filesystem.BitmapPath(localPath)
-	_, err := os.Stat(bmPath)
+	_, err := os.Stat(localPath + ".kdbitmap")
 	return err == nil
 }
 
