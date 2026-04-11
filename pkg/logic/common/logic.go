@@ -90,6 +90,57 @@ func (kd *KeibiDrop) AddFile(path string) error {
 	return nil
 }
 
+// AddFileAs adds a file with a custom remote name (preserving folder structure).
+func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
+	logger := kd.logger.With("method", "add-file-as")
+	if kd.session == nil || kd.session.GRPCClient == nil {
+		return ErrInvalidSession
+	}
+
+	cleanPath := filepath.Clean(localPath)
+	finfo, err := os.Stat(cleanPath)
+	if err != nil {
+		return err
+	}
+	if finfo.IsDir() {
+		return syscall.EISDIR
+	}
+
+	file := &synctracker.File{
+		Name:           filepath.Base(remoteName),
+		RelativePath:   remoteName,
+		RealPathOfFile: cleanPath,
+		Size:           uint64(finfo.Size()),
+		LastEditTime:   uint64(finfo.ModTime().UnixNano()),
+		CreatedTime:    uint64(finfo.ModTime().UnixNano()),
+	}
+
+	kd.SyncTracker.LocalFilesMu.Lock()
+	defer kd.SyncTracker.LocalFilesMu.Unlock()
+	kd.SyncTracker.LocalFiles[remoteName] = file
+
+	_, err = kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType(types.AddFile),
+		Path: remoteName,
+		Attr: &bindings.Attr{
+			Mode:             uint32(finfo.Mode().Perm()) | syscall.S_IFREG,
+			Size:             finfo.Size(),
+			AccessTime:       file.LastEditTime,
+			ModificationTime: file.LastEditTime,
+			ChangeTime:       file.LastEditTime,
+			BirthTime:        file.LastEditTime,
+			Flags:            0o444,
+		},
+	})
+	if err != nil {
+		logger.Error("Failed to notify peer", "error", err)
+		return err
+	}
+
+	logger.Info("Success", "remoteName", remoteName)
+	return nil
+}
+
 func (kd *KeibiDrop) ListFiles() (remote []string, local []string) {
 	remote = []string{}
 	local = []string{}
