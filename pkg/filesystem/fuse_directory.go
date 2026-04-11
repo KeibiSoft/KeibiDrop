@@ -10,6 +10,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//go:build !android
+
 package filesystem
 
 import (
@@ -611,6 +613,11 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 	// Synchronous logging on this hot path causes 30-second hangs.
 	logger := d.logger.With("method", "get-attr", "path", path, "fh", fh)
 
+	// Hide .kdbitmap sidecar files from FUSE — they're internal download state.
+	if strings.HasSuffix(path, ".kdbitmap") {
+		return -winfuse.ENOENT
+	}
+
 	// CRITICAL: Lock order is RemoteFilesLock → Adm → AfmLock (prevents deadlock with AddRemoteFile)
 	d.RemoteFilesLock.RLock()
 	isRemote := len(d.RemoteFiles) != 0
@@ -1082,8 +1089,12 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 	fill(".", nil, 0)
 	fill("..", nil, 0)
 	for _, dir := range dirEn {
-		localFiles[dir.Name()] = struct{}{}
-		if !fill(dir.Name(), nil, 0) {
+		name := dir.Name()
+		if strings.HasSuffix(name, ".kdbitmap") {
+			continue // Hide download progress sidecar files from FUSE readdir.
+		}
+		localFiles[name] = struct{}{}
+		if !fill(name, nil, 0) {
 			break
 		}
 	}

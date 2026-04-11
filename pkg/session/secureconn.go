@@ -1,3 +1,5 @@
+// ABOUTME: SecureConn wraps net.Conn with per-message AEAD encryption and re-keying support.
+// ABOUTME: Provides SecureReader, SecureWriter, and SecureConn for encrypted session transport.
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -7,7 +9,6 @@
 package session
 
 import (
-	"bytes"
 	"crypto/cipher"
 	"encoding/binary"
 	"fmt"
@@ -33,6 +34,10 @@ const (
 	NoncePrefixOutbound uint32 = 0x4F555442 // "OUTB"
 	NoncePrefixInbound  uint32 = 0x494E4244 // "INBD"
 )
+
+// encBufPool pools the per-message encrypt buffer to reduce GC pressure.
+// Buffers are safe to reuse because net.Conn.Write copies to kernel space.
+var encBufPool = sync.Pool{}
 
 // SecureWriter encrypts messages and writes them to an underlying writer.
 // Uses a cached AEAD cipher and single combined write for performance.
@@ -73,13 +78,21 @@ func (s *SecureWriter) Write(p []byte) (int, error) {
 	// Layout: [4-byte length header][nonce][ciphertext+tag]
 	// Single allocation, single write to avoid wasting a TCP segment on the header.
 	encSize := kbc.NonceSize + len(p) + s.aead.Overhead()
-	buf := make([]byte, lengthHeaderSize+encSize)
+	totalSize := lengthHeaderSize + encSize
+
+	var buf []byte
+	if poolBuf, ok := encBufPool.Get().([]byte); ok && cap(poolBuf) >= totalSize {
+		buf = poolBuf[:totalSize]
+	} else {
+		buf = make([]byte, totalSize)
+	}
 
 	//#nosec:G115 // safe cast, no TCP stream frame will be 5GB.
 	binary.BigEndian.PutUint32(buf[:lengthHeaderSize], uint32(encSize))
 	copy(buf[lengthHeaderSize:], nonce[:])
 	s.aead.Seal(buf[lengthHeaderSize+kbc.NonceSize:lengthHeaderSize+kbc.NonceSize], nonce[:], p, nil)
 
+	defer encBufPool.Put(buf[:0])
 	if _, err := s.w.Write(buf); err != nil {
 		return 0, fmt.Errorf("write failed: %w", err)
 	}
@@ -136,9 +149,12 @@ type SecureConn struct {
 	r     *SecureReader
 	w     *SecureWriter
 
-	readBuf *bytes.Buffer
-	done    bool
-	closed  chan struct{}
+	// leftover holds decrypted plaintext that didn't fit in the caller's buffer on a
+	// previous Read. Not goroutine-safe: Read must be called from a single goroutine
+	// (gRPC's transport guarantees this for its connections).
+	leftover []byte
+	done     bool
+	closed   chan struct{}
 
 	// Re-keying support: track bytes/messages for forward secrecy.
 	bytesSent    atomic.Uint64
@@ -153,10 +169,9 @@ func NewSecureConn(conn net.Conn, kek []byte, suite kbc.CipherSuite) *SecureConn
 	return &SecureConn{
 		conn:    conn,
 		suite:   suite,
-		r:       NewSecureReader(conn, kek, suite),
-		w:       NewSecureWriter(conn, kek, suite),
-		readBuf: bytes.NewBuffer(nil),
-		closed:  make(chan struct{}),
+		r:      NewSecureReader(conn, kek, suite),
+		w:      NewSecureWriter(conn, kek, suite),
+		closed: make(chan struct{}),
 	}
 }
 
@@ -197,14 +212,16 @@ func (s *SecureConn) LocalAddr() net.Addr {
 }
 
 func (s *SecureConn) Read(p []byte) (int, error) {
-	// Serve leftover decrypted data first
-	if s.readBuf.Len() > 0 {
-		n, err := s.readBuf.Read(p)
+	if len(s.leftover) > 0 {
+		n := copy(p, s.leftover)
+		s.leftover = s.leftover[n:]
+		if len(s.leftover) == 0 {
+			s.leftover = nil
+		}
 		s.bytesRecv.Add(uint64(n))
-		return n, err
+		return n, nil
 	}
 
-	// Nothing buffered, read and decrypt a full new message
 	s.keyMu.RLock()
 	msg, err := s.r.Read()
 	s.keyMu.RUnlock()
@@ -213,10 +230,12 @@ func (s *SecureConn) Read(p []byte) (int, error) {
 	}
 
 	s.msgsRecv.Add(1)
-	s.readBuf.Write(msg)
-	n, err := s.readBuf.Read(p)
+	n := copy(p, msg)
+	if n < len(msg) {
+		s.leftover = msg[n:]
+	}
 	s.bytesRecv.Add(uint64(n))
-	return n, err
+	return n, nil
 }
 
 func (s *SecureConn) Write(p []byte) (int, error) {

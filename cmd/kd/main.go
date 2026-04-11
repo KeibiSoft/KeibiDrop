@@ -121,6 +121,7 @@ func runDaemon() {
 		os.Exit(1)
 	}
 	kd.IsLocalMode = isLocal
+	kd.BridgeAddr = cfg.BridgeAddr
 	go kd.Run()
 
 	// Listen on Unix socket

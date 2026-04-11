@@ -34,6 +34,7 @@ type KeibiDrop struct {
 
 	IsFUSE       bool
 	IsLocalMode  bool
+	BridgeAddr   string // TCP bridge relay address for firewall traversal
 	OpInProgress atomic.Int32
 
 	session *session.Session
@@ -306,8 +307,10 @@ func (kd *KeibiDrop) Run() {
 			default:
 			}
 
-			// Temporary disconnect — refresh session and context, signal completion.
+			// Temporary disconnect — refresh session, tracker, and context.
 			kd.session = kd.refreshSession()
+			kd.SyncTracker = synctracker.NewSyncTracker()
+			kd.activeDownloads = make(map[string]context.CancelFunc)
 			ctx, c := context.WithCancel(context.Background())
 			kd.running.Store(false)
 			kd.mu.Lock()

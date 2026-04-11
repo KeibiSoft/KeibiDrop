@@ -1,3 +1,5 @@
+// ABOUTME: Configuration constants for KeibiDrop: block sizes, gRPC limits, and transfer parameters.
+// ABOUTME: Compile-time assertions enforce invariants between related constants.
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -9,7 +11,7 @@ package config
 const InboundPort = 26431
 const OutboundPort = 26432
 
-const BlockSize = 1024 * 1024 // 1 MiB - larger chunks = fewer gRPC round-trips
+const BlockSize = 4 * 1024 * 1024 // 4 MiB - larger chunks = fewer gRPC round-trips over WAN
 
 // gRPC message size limits
 // IMPORTANT: GRPCStreamBuffer MUST be smaller than GRPCMaxMsgSize

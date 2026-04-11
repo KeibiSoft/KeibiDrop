@@ -52,6 +52,12 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		}
 		return kd.listener.Accept()
 	}
+	if kd.BridgeAddr != "" {
+		kd.ReconnectManager.BridgeAddr = kd.BridgeAddr
+		kd.ReconnectManager.DialBridge = func() (net.Conn, error) {
+			return kd.dialBridge(kd.logger)
+		}
+	}
 	kd.ReconnectManager.OnReconnected = kd.onReconnected
 
 	// Start all components
@@ -80,9 +86,26 @@ func (kd *KeibiDrop) StopConnectionResilience() {
 	}
 }
 
+// hasActiveTransfers returns true if any downloads are in progress.
+// Used to avoid tearing down the connection during active file transfers.
+func (kd *KeibiDrop) hasActiveTransfers() bool {
+	kd.activeDownloadsMu.Lock()
+	defer kd.activeDownloadsMu.Unlock()
+	return len(kd.activeDownloads) > 0
+}
+
 // onDisconnect is called by health monitor when connection is lost.
 func (kd *KeibiDrop) onDisconnect() {
 	logger := kd.logger.With("event", "disconnect")
+
+	// Don't tear down the connection while transfers are active.
+	// Heartbeat failures during large transfers are expected (the gRPC
+	// connection is saturated with file data, starving heartbeat RPCs).
+	if kd.hasActiveTransfers() {
+		logger.Warn("Heartbeat failed but active transfers in progress, deferring disconnect")
+		return
+	}
+
 	logger.Warn("Connection lost, initiating reconnection")
 
 	// Push event to UI so it can react immediately.
@@ -102,32 +125,56 @@ func (kd *KeibiDrop) onDisconnect() {
 }
 
 // onReconnected is called when reconnection succeeds.
+// It rebuilds the gRPC client and server on the fresh P2P sockets so that
+// all subsequent RPCs (file ops, health checks) use the new connection.
 func (kd *KeibiDrop) onReconnected() {
 	logger := kd.logger.With("event", "reconnected")
 	logger.Info("Connection restored")
 
-	// Update cached peer info
+	// Update cached peer info.
 	if kd.ReconnectManager != nil {
 		kd.ReconnectManager.CachedPeerIP = kd.PeerIPv6IP
 		kd.ReconnectManager.CachedPeerPort = kd.session.PeerPort
 	}
 
-	// Resume relay keepalive
+	// Resume relay keepalive.
 	if kd.RelayKeepalive != nil {
 		kd.RelayKeepalive.Resume()
-		// Force refresh with new connection info
 		kd.RelayKeepalive.ForceRefresh()
 	}
 
-	// Restart health monitoring with new connection
+	// Tear down stale gRPC infrastructure.
+	if kd.grpcServer != nil {
+		kd.grpcServer.Stop()
+		kd.grpcServer = nil
+	}
+	if kd.grpcClientConn != nil {
+		kd.grpcClientConn.Close()
+		kd.grpcClientConn = nil
+	}
+	kd.KDClient = nil
+
+	// Rebuild gRPC server on the new inbound socket.
+	go func() {
+		if err := kd.startGRPCServer(); err != nil {
+			logger.Error("Failed to restart gRPC server after reconnect", "err", err)
+		}
+	}()
+
+	// Rebuild gRPC client on the new outbound socket.
+	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {
+		logger.Error("Failed to reconnect gRPC client", "err", err)
+		return
+	}
+
+	// Restart health monitoring with the fresh client.
 	if kd.HealthMonitor != nil {
 		kd.HealthMonitor.Stop()
-		// Reinitialize with potentially new gRPC client
-		if kd.KDClient != nil {
-			kd.HealthMonitor = session.NewHealthMonitor(kd.session, kd.KDClient, kd.logger)
-			kd.HealthMonitor.OnDisconnect = kd.onDisconnect
-			kd.HealthMonitor.Start()
-		}
+	}
+	if kd.KDClient != nil {
+		kd.HealthMonitor = session.NewHealthMonitor(kd.session, kd.KDClient, kd.logger)
+		kd.HealthMonitor.OnDisconnect = kd.onDisconnect
+		kd.HealthMonitor.Start()
 	}
 }
 

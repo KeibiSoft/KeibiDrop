@@ -7,19 +7,28 @@
 ╚═╝  ╚═╝╚══════╝╚═╝╚═════╝ ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝
 ```
 
-End-to-end encrypted, peer-to-peer file sharing between desktops.
+Peer-to-peer encrypted file sharing. Post-quantum. Open source.
 
-Files transfer directly between your machines. No cloud, no accounts, no upload limits. Traffic is encrypted with post-quantum cryptography (ML-KEM-1024 + X25519) and AES-256-GCM / ChaCha20-Poly1305.
+**Your relay can't read your files.**
 
-| Connect | Share files |
-|---|---|
-| ![Connect screen](demo-photos/HomeScreen2-Client2.png) | ![Connected](demo-photos/ConnectedScreen-NO-FUSE3-Client2.png) |
+Files transfer directly between machines when possible, or through an encrypted relay when firewalls block direct connections. Either way, only you and your peer can read the data. The relay sees only encrypted bytes it can't decrypt.
+
+45 MB/s through relay. 442 MB/s on LAN. Zero configuration for end users.
+
+| | KeibiDrop | SCP | Blip | AirDrop |
+|--|--|--|--|--|
+| E2E encryption | Post-quantum (ML-KEM + X25519) | SSH | TLS only (relay can read) | TLS |
+| Cross-platform | macOS, Linux, Windows | All | All | Apple only |
+| No accounts | Yes | N/A | Email required | Apple ID |
+| Virtual filesystem | FUSE mount | No | No | No |
+| Open source | MPL-2.0 | Yes | No | No |
+| Works through firewalls | Encrypted relay fallback | Port forwarding | Relay (can read data) | Local only |
 
 ---
 
 ## Install
 
-### macOS (Homebrew)
+### macOS
 
 ```bash
 brew tap keibisoft/keibidrop
@@ -33,121 +42,124 @@ wget https://github.com/KeibiSoft/KeibiDrop/releases/latest/download/keibidrop_a
 sudo dpkg -i keibidrop_amd64.deb
 ```
 
-### Download binary
+### Windows
 
-Grab the latest release for your platform from [GitHub Releases](https://github.com/KeibiSoft/KeibiDrop/releases).
+```bash
+choco install keibidrop
+```
+
+Or download the `.zip` from [GitHub Releases](https://github.com/KeibiSoft/KeibiDrop/releases).
 
 ### Build from source
 
-Requires Go 1.24+, Rust, and CGO enabled. On macOS, `go env CC` must show `clang`. See [SETUP.md](./SETUP.md) for full instructions.
-
 ```bash
-make build-static-rust-bridge
-cd rust && cargo build --release
+git clone https://github.com/KeibiSoft/KeibiDrop.git
+cd KeibiDrop
+make build-kd       # CLI daemon
+make build-cli      # Interactive CLI
+make build-rust     # Desktop UI (needs Rust + Slint)
 ```
 
 ---
 
 ## Quick start
 
-1. Both peers launch **KEIBI**DROP.
-2. Copy your fingerprint code and send it to your peer (Signal, Telegram, email, anything).
-3. Paste each other's codes.
-4. One peer creates a room, the other joins.
-5. Share files.
+1. Both peers launch KeibiDrop
+2. Copy your fingerprint and send it to your peer (Signal, Telegram, anything)
+3. Paste each other's fingerprints
+4. One peer creates a room, the other joins
+5. Share files
 
-**KEIBI**DROP has two modes. See [docs/MODES.md](./docs/MODES.md) for the full comparison.
+It works through firewalls automatically. If direct IPv6 fails, KeibiDrop falls back to an encrypted relay. No port forwarding, no router configuration.
+
+---
+
+## Two modes
 
 | | Direct Transfer | Virtual Folder (FUSE) |
-|--|---|---|
-| Throughput | ~550 MB/s | ~250 MB/s |
-| Setup | Nothing extra | Install FUSE |
-| Sync | Manual (add/pull) | Automatic |
-| Use case | Sending files | Working on shared files |
+|--|--|--|
+| Speed | Up to 550 MB/s | Up to 250 MB/s |
+| How it works | Add files, peer pulls them | Peer's files appear as a local folder |
+| Setup | Nothing extra | Install [macFUSE](https://macfuse.github.io/) or `fuse3` |
+| Best for | Sending large files | Working on shared files, git repos |
+
+FUSE lets you `cp`, `cat`, or even `git clone` files directly from your peer's machine.
 
 ---
 
-## FUSE setup (optional)
+## Three interfaces
 
-FUSE gives you a virtual folder where the peer's files appear as regular files. Without it, you use add/pull commands instead.
-
-**macOS:** Install [macFUSE](https://macfuse.github.io/). On macOS 15.4+, the FSKit backend works without kernel extensions.
+**Desktop UI** (Rust/Slint)
 ```bash
-sudo sh -c 'echo "user_allow_other" > /etc/fuse.conf'
+./keibidrop
 ```
 
-**Linux:**
-```bash
-sudo apt install fuse3    # Debian/Ubuntu
-```
-
----
-
-## Three ways to run
-
-**Desktop UI** (Rust/Slint) - the main app. Point-and-click file sharing.
-```bash
-./keibidrop-rust
-```
-
-**Interactive CLI** - terminal REPL with autocomplete.
+**Interactive CLI** (terminal REPL)
 ```bash
 ./keibidrop-cli
 ```
 
-**Agent CLI** (`kd`) - for AI agents and scripts. Daemon + JSON protocol over Unix socket.
+**Agent CLI** (for scripts and AI agents)
 ```bash
-KD_SAVE_PATH=./received ./kd start    # Terminal 1
-./kd show fingerprint                  # Terminal 2
-./kd register <peer-fingerprint>
-./kd create
+./kd start                           # Start daemon
+./kd show fingerprint                # Get your fingerprint
+./kd register <peer-fingerprint>     # Register peer
+./kd create                          # Create room (or: kd join)
+./kd add /path/to/file.zip           # Share a file
+./kd list                            # List shared files
+./kd pull file.zip ~/Downloads/      # Download a file
 ```
 
-See [docs/kd-agent-guide.md](./docs/kd-agent-guide.md) for the full agent integration guide.
+All output is JSON for programmatic use. See [docs/kd-agent-guide.md](./docs/kd-agent-guide.md).
+
+---
+
+## How it works
+
+1. Peers exchange fingerprints out-of-band (the fingerprint IS the security)
+2. KeibiDrop registers encrypted connection info to a signaling relay
+3. Both peers try direct IPv6 connection first
+4. If direct fails (firewall, NAT), both connect outbound to an encrypted relay
+5. Post-quantum handshake: ML-KEM-1024 + X25519 hybrid key exchange
+6. Authenticated encryption: AES-256-GCM or ChaCha20-Poly1305
+7. gRPC streams files over the encrypted channel
+8. Re-keying after 1M messages or 1 GB for forward secrecy
+
+The relay is a blind pipe. It forwards encrypted bytes between peers using `io.Copy`. It cannot decrypt, inspect, or modify the data. If the relay is compromised, the attacker gets an encrypted byte stream they can't read.
 
 ---
 
 ## Configuration
 
-**KEIBI**DROP reads `~/.config/keibidrop/config.toml` on startup. A default config is created on first run. Environment variables override the config file.
+KeibiDrop reads `~/.config/keibidrop/config.toml`. Environment variables override the config.
 
-| Setting | Config key | Env var | Default |
-|---|---|---|---|
-| Relay server | `relay` | `KEIBIDROP_RELAY` | `https://keibidroprelay.keibisoft.com/` |
-| Save folder | `save_path` | `TO_SAVE_PATH` | `~/KeibiDrop/Received/` |
-| FUSE mount | `mount_path` | `TO_MOUNT_PATH` | `~/KeibiDrop/Mount/` |
-| Log file | `log_file` | `LOG_FILE` | platform-specific |
-| Inbound port | `inbound_port` | `INBOUND_PORT` | 26431 |
-| Outbound port | `outbound_port` | `OUTBOUND_PORT` | 26432 |
-| Disable FUSE | `no_fuse` | `NO_FUSE` | false |
-
----
-
-## Networking
-
-**KEIBI**DROP connects peers directly over IPv6. Both machines need:
-- Globally routable IPv6 addresses
-- Inbound TCP allowed on the configured port
-- No NAT traversal (no STUN/TURN)
-
-Test your IPv6 at [test-ipv6.com](https://test-ipv6.com/).
+| Setting | Env var | Default |
+|--|--|--|
+| Relay server | `KD_RELAY` | `https://keibidroprelay.keibisoft.com/` |
+| Bridge relay | `KD_BRIDGE` | (auto-fallback when direct fails) |
+| Save folder | `KD_SAVE_PATH` | `~/KeibiDrop/Received/` |
+| FUSE mount | `KD_MOUNT_PATH` | `~/KeibiDrop/Mount/` |
+| Inbound port | `KD_INBOUND_PORT` | 26431 |
+| Disable FUSE | `KD_NO_FUSE` | false |
 
 ---
-
-## Troubleshooting
-
-See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for common issues (connection failures, FUSE problems, build errors).
 
 ## Security
 
-Post-quantum hybrid key exchange, authenticated encryption, forward secrecy via re-keying. Full protocol description in [Security.md](./Security.md).
+Post-quantum hybrid key exchange prevents future quantum computers from decrypting recorded traffic. Forward secrecy via periodic re-keying limits exposure if a session key is ever compromised.
+
+Full protocol description: [Security.md](./Security.md)
+
+## Troubleshooting
+
+See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). All commits must be signed (`git commit -S`) and signed-off (`git commit --sign-off`) per the [DCO](./DCO.txt).
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
 [Mozilla Public License 2.0](./LICENSE)
 
-Developed by [KeibiSoft SRL](https://keibisoft.com).
+Built by [KeibiSoft SRL](https://keibisoft.com).

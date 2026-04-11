@@ -63,12 +63,7 @@ func (kd *KeibiDrop) AddFile(path string) error {
 
 	kd.SyncTracker.LocalFilesMu.Lock()
 	defer kd.SyncTracker.LocalFilesMu.Unlock()
-	_, ok := kd.SyncTracker.LocalFiles[name]
-	if ok {
-		logger.Error("File already tracked", "name", name, "error", os.ErrExist)
-		return os.ErrExist
-	}
-	kd.SyncTracker.LocalFiles[name] = file
+	kd.SyncTracker.LocalFiles[name] = file // upsert: allows retry after failed notification
 
 	_, err = kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
 		Type: bindings.NotifyType(types.AddFile),
@@ -194,94 +189,15 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	}
 
 	if bitmap != nil && bitmap.Total() > 0 {
-		// Parallel download with N gRPC streams (chunk-index sharding).
-		totalChunks := bitmap.Total()
-		nWorkers := filesystem.StreamPoolSize
-		if totalChunks < nWorkers {
-			nWorkers = totalChunks
-		}
-
-		// Register active download for pause/cancel support.
 		dlCtx, dlCancel := context.WithCancel(kd.ctx)
 		defer dlCancel()
 		kd.registerDownload(remoteName, dlCancel)
 		defer kd.unregisterDownload(remoteName)
 
-		var wg sync.WaitGroup
-		errCh := make(chan error, nWorkers)
-		var chunksWritten atomic.Int32
-
-		for w := 0; w < nWorkers; w++ {
-			wg.Add(1)
-			go func(workerID int) {
-				defer wg.Done()
-
-				stream, err := kd.session.GRPCClient.Read(dlCtx)
-				if err != nil {
-					errCh <- fmt.Errorf("worker %d: open stream: %w", workerID, err)
-					dlCancel()
-					return
-				}
-				defer stream.CloseSend()
-
-				for i := workerID; i < totalChunks; i += nWorkers {
-					if bitmap.Has(i) {
-						continue // Already downloaded (resume).
-					}
-
-					offset := uint64(i) * uint64(config.BlockSize)
-					size := uint64(config.BlockSize)
-					if offset+size > fileSize {
-						size = fileSize - offset
-					}
-
-					if err := stream.Send(&bindings.ReadRequest{
-						Handle: 0,
-						Path:   relPath,
-						Offset: offset,
-						Size:   uint32(size),
-					}); err != nil {
-						errCh <- fmt.Errorf("worker %d: send chunk %d: %w", workerID, i, err)
-						dlCancel()
-						return
-					}
-
-					data, err := stream.Recv()
-					if err != nil {
-						errCh <- fmt.Errorf("worker %d: recv chunk %d: %w", workerID, i, err)
-						dlCancel()
-						return
-					}
-
-					if uint64(len(data.Data)) != size {
-						errCh <- fmt.Errorf("worker %d: chunk %d: got %d bytes, expected %d", workerID, i, len(data.Data), size)
-						dlCancel()
-						return
-					}
-
-					if _, err := f.WriteAt(data.Data, int64(offset)); err != nil {
-						errCh <- fmt.Errorf("worker %d: write chunk %d: %w", workerID, i, err)
-						dlCancel()
-						return
-					}
-
-					bitmap.Set(i)
-
-					// Save bitmap periodically (every 100 chunks).
-					if chunksWritten.Add(1)%100 == 0 {
-						_ = bitmap.Save(bitmapPath)
-					}
-				}
-			}(w)
-		}
-
-		wg.Wait()
-		close(errCh)
-		if err := <-errCh; err != nil {
-			logger.Error("Download failed (partial state preserved)", "error", err, "progress", bitmap.Progress())
-			_ = bitmap.Save(bitmapPath)
+		if err := kd.pullParallelRead(dlCtx, dlCancel, bitmap, f, relPath, fileSize, config.BlockSize, bitmapPath, logger); err != nil {
 			return err
 		}
+		_ = bitmap.Save(bitmapPath)
 	}
 
 	// Download complete. Clean up bitmap file.
@@ -304,6 +220,144 @@ updateTracker:
 		logger.Info("PullFile complete", "expectedSize", fileSize, "actualSize", fi.Size(), "match", uint64(fi.Size()) == fileSize)
 	}
 	logger.Info("Success")
+	return nil
+}
+
+// PullFileWithParams downloads remoteName to localPath using the specified
+// blockSize (bytes per gRPC chunk) and nWorkers (parallel streams).
+// Intended for benchmarking; production code uses PullFile with defaults.
+func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize, nWorkers int) error {
+	logger := kd.logger.With("method", "pull-file-with-params")
+	if kd.session == nil || kd.session.GRPCClient == nil {
+		return ErrInvalidSession
+	}
+
+	localPath = filepath.Clean(localPath)
+
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	remFilePtr, ok := kd.SyncTracker.RemoteFiles[remoteName]
+	var fileCopy synctracker.File
+	if ok {
+		fileCopy = *remFilePtr
+	}
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
+	if !ok {
+		return syscall.ENOENT
+	}
+
+	fileSize := fileCopy.Size
+	relPath := fileCopy.RelativePath
+
+	if dir := filepath.Dir(localPath); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+	}
+
+	bitmapPath := filesystem.BitmapPath(localPath)
+	f, err := os.Create(localPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if fileSize > 0 {
+		if err := f.Truncate(int64(fileSize)); err != nil {
+			return err
+		}
+	}
+
+	bitmap := filesystem.NewChunkBitmapWithSize(int64(fileSize), blockSize)
+	if bitmap == nil || bitmap.Total() == 0 {
+		goto updateTracker
+	}
+
+	{
+		totalChunks := bitmap.Total()
+		if nWorkers > totalChunks {
+			nWorkers = totalChunks
+		}
+
+		dlCtx, dlCancel := context.WithCancel(kd.ctx)
+		defer dlCancel()
+		kd.registerDownload(remoteName, dlCancel)
+		defer kd.unregisterDownload(remoteName)
+
+		var wg sync.WaitGroup
+		errCh := make(chan error, nWorkers)
+		var chunksWritten atomic.Int32
+
+		for w := 0; w < nWorkers; w++ {
+			wg.Add(1)
+			go func(workerID int) {
+				defer wg.Done()
+				stream, err := kd.session.GRPCClient.Read(dlCtx)
+				if err != nil {
+					errCh <- fmt.Errorf("worker %d: open stream: %w", workerID, err)
+					dlCancel()
+					return
+				}
+				defer stream.CloseSend()
+
+				for i := workerID; i < totalChunks; i += nWorkers {
+					offset := uint64(i) * uint64(blockSize)
+					size := uint64(blockSize)
+					if offset+size > fileSize {
+						size = fileSize - offset
+					}
+
+					if err := stream.Send(&bindings.ReadRequest{
+						Path:   relPath,
+						Offset: offset,
+						Size:   uint32(size),
+					}); err != nil {
+						errCh <- fmt.Errorf("worker %d: send chunk %d: %w", workerID, i, err)
+						dlCancel()
+						return
+					}
+
+					data, err := stream.Recv()
+					if err != nil {
+						errCh <- fmt.Errorf("worker %d: recv chunk %d: %w", workerID, i, err)
+						dlCancel()
+						return
+					}
+
+					if _, err := f.WriteAt(data.Data, int64(offset)); err != nil {
+						errCh <- fmt.Errorf("worker %d: write chunk %d: %w", workerID, i, err)
+						dlCancel()
+						return
+					}
+
+					bitmap.Set(i)
+					if chunksWritten.Add(1)%100 == 0 {
+						_ = bitmap.Save(bitmapPath)
+					}
+				}
+			}(w)
+		}
+
+		wg.Wait()
+		close(errCh)
+		if err := <-errCh; err != nil {
+			logger.Error("Download failed", "error", err)
+			_ = bitmap.Save(bitmapPath)
+			return err
+		}
+	}
+
+	os.Remove(bitmapPath)
+
+updateTracker:
+	fileCopy.RealPathOfFile = localPath
+	kd.SyncTracker.RemoteFilesMu.Lock()
+	if rf, ok := kd.SyncTracker.RemoteFiles[remoteName]; ok {
+		rf.RealPathOfFile = localPath
+	}
+	kd.SyncTracker.RemoteFilesMu.Unlock()
+	kd.SyncTracker.LocalFilesMu.Lock()
+	kd.SyncTracker.LocalFiles[localPath] = &fileCopy
+	kd.SyncTracker.LocalFilesMu.Unlock()
 	return nil
 }
 
@@ -443,16 +497,11 @@ func (kd *KeibiDrop) JoinRoom() error {
 		break
 	}
 
-	// In local mode, PeerIPv6IP and PeerPort are already set by SetPeerDirectAddress.
-	if !kd.IsLocalMode {
-		if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
-			return err
-		}
-	} else {
+	// Get peer info from relay (needed for both direct and bridge paths).
+	if kd.IsLocalMode {
 		// Local mode: exchange public keys before the PQC handshake.
-		// The relay normally provides peer keys; we do a plaintext pre-exchange instead.
 		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
-		keyConn, err := net.DialTimeout("tcp", peerAddr, 15*time.Second)
+		keyConn, err := session.DialWithStableAddr("tcp", peerAddr, 15*time.Second, logger)
 		if err != nil {
 			logger.Error("Failed to dial for key exchange", "addr", peerAddr, "error", err)
 			return err
@@ -464,22 +513,61 @@ func (kd *KeibiDrop) JoinRoom() error {
 		}
 		keyConn.Close()
 		logger.Info("Local key exchange complete (join side)")
+	} else {
+		if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
+			return err
+		}
 	}
 
-	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))); err != nil {
-		logger.Error("Failed outbound handshake", "error", err)
-		return err
-	}
+	// Try direct P2P first. If it fails and bridge is configured, fall back.
+	{
+		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
+		directErr := session.PerformOutboundHandshake(kd.session, peerAddr)
 
-	conn, err := kd.listener.Accept()
-	if err != nil {
-		logger.Error("Failed to accept", "error", err)
-		return err
-	}
+		if directErr == nil {
+			// Direct outbound succeeded. Accept inbound from peer.
+			logger.Info("Direct P2P outbound connected")
+			conn, err := kd.listener.Accept()
+			if err != nil {
+				logger.Error("Failed to accept", "error", err)
+				return err
+			}
+			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
+				logger.Error("Failed inbound handshake", "error", err)
+				return err
+			}
+		} else if kd.BridgeAddr != "" {
+			// Direct failed. Fall back to bridge relay.
+			logger.Warn("Direct P2P failed, falling back to bridge", "error", directErr, "bridge", kd.BridgeAddr)
 
-	if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-		logger.Error("Failed inbound handshake", "error", err)
-		return err
+			// Reset session crypto state for fresh handshake via bridge.
+			kd.session.SEKOutbound = nil
+			kd.session.CipherMu.Lock()
+			kd.session.CipherSuite = ""
+			kd.session.CipherMu.Unlock()
+
+			outConn, err := kd.dialBridge(logger)
+			if err != nil {
+				return fmt.Errorf("bridge dial (outbound): %w", err)
+			}
+			if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
+				outConn.Close()
+				return fmt.Errorf("bridge outbound handshake: %w", err)
+			}
+
+			inConn, err := kd.dialBridge(logger)
+			if err != nil {
+				return fmt.Errorf("bridge dial (inbound): %w", err)
+			}
+			if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+				inConn.Close()
+				return fmt.Errorf("bridge inbound handshake: %w", err)
+			}
+		} else {
+			// Direct failed, no bridge configured.
+			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
+			return directErr
+		}
 	}
 
 	kd.filesystemReady = make(chan struct{})
@@ -504,8 +592,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 		return nil
 	}
 
-	err = kd.setupFilesystem(logger, kd.filesystemReady)
-	if err != nil {
+	if err := kd.setupFilesystem(logger, kd.filesystemReady); err != nil {
 		return err
 	}
 
@@ -548,7 +635,6 @@ func (kd *KeibiDrop) CreateRoom() error {
 	}
 
 	// In local mode, exchange public keys before the PQC handshake.
-	// The relay normally provides peer keys; local mode uses a plaintext pre-exchange.
 	if kd.IsLocalMode {
 		keyConn, err := kd.listener.Accept()
 		if err != nil {
@@ -564,31 +650,72 @@ func (kd *KeibiDrop) CreateRoom() error {
 		logger.Info("Local key exchange complete (create side)")
 	}
 
-	conn, err := kd.listener.Accept()
-	if err != nil {
-		logger.Error("Failed to accept", "error", err)
-		return err
-	}
+	// Try direct P2P: accept inbound with timeout. If no peer arrives and
+	// bridge is configured, fall back to bridge relay.
+	{
+		useBridge := false
 
-	if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-		return err
-	}
+		// Set accept deadline: 15s if bridge available (fallback), no deadline otherwise.
+		if kd.BridgeAddr != "" {
+			kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+		}
 
-	addr, ok := conn.RemoteAddr().(*net.TCPAddr)
-	if !ok {
-		logger.Error("Failed to cast TCP address", "error", err)
-		return err
-	}
+		conn, acceptErr := kd.listener.Accept()
+		if kd.BridgeAddr != "" {
+			kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
+		}
 
-	// Include zone ID for link-local addresses (required for routing on Linux/macOS).
-	peerIP := addr.IP.String()
-	if addr.Zone != "" {
-		peerIP = peerIP + "%" + addr.Zone
-	}
-	kd.PeerIPv6IP = peerIP
+		if acceptErr != nil {
+			if kd.BridgeAddr != "" {
+				logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
+				useBridge = true
+			} else {
+				logger.Error("Failed to accept", "error", acceptErr)
+				return acceptErr
+			}
+		}
 
-	if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))); err != nil {
-		return err
+		if !useBridge {
+			// Direct inbound succeeded.
+			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
+				return err
+			}
+
+			addr, ok := conn.RemoteAddr().(*net.TCPAddr)
+			if !ok {
+				return fmt.Errorf("failed to cast TCP address")
+			}
+			peerIP := addr.IP.String()
+			if addr.Zone != "" {
+				peerIP = peerIP + "%" + addr.Zone
+			}
+			kd.PeerIPv6IP = peerIP
+
+			if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))); err != nil {
+				return err
+			}
+		} else {
+			// Bridge fallback.
+			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
+
+			inConn, err := kd.dialBridge(logger)
+			if err != nil {
+				return fmt.Errorf("bridge dial (inbound): %w", err)
+			}
+			if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+				inConn.Close()
+				return fmt.Errorf("bridge inbound handshake: %w", err)
+			}
+
+			outConn, err := kd.dialBridge(logger)
+			if err != nil {
+				return fmt.Errorf("bridge dial (outbound): %w", err)
+			}
+			if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
+				outConn.Close()
+				return fmt.Errorf("bridge outbound handshake: %w", err)
+			}
+		}
 	}
 
 	kd.filesystemReady = make(chan struct{})
@@ -600,20 +727,17 @@ func (kd *KeibiDrop) CreateRoom() error {
 		return err
 	}
 
-	// Start health monitoring, reconnection, and relay keepalive.
 	if err := kd.InitConnectionResilience(); err != nil {
 		logger.Warn("Failed to init connection resilience", "error", err)
 	}
 
 	if !kd.IsFUSE {
-		// Unblock Run()'s <-filesystemReady so it can process signals.
 		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
 		logger.Info("Success, starting without FUSE")
 		return nil
 	}
 
-	err = kd.setupFilesystem(logger, kd.filesystemReady)
-	if err != nil {
+	if err := kd.setupFilesystem(logger, kd.filesystemReady); err != nil {
 		return err
 	}
 

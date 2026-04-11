@@ -8,8 +8,10 @@ package session
 
 import (
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"time"
@@ -36,10 +38,26 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 
 	logger := session.logger.With("phase", "inbound-handshake")
 
-	// Read JSON
+	// Read handshake: 4-byte big-endian length prefix, then JSON payload.
+	// We must NOT use json.Decoder here because it buffers ahead and would
+	// consume bytes meant for the SecureConn that wraps this connection later.
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
+		logger.Error("Failed to read handshake length", "error", err)
+		return fmt.Errorf("read handshake length: %w", err)
+	}
+	msgLen := binary.BigEndian.Uint32(lenBuf[:])
+	if msgLen > 64*1024 { // sanity limit: 64 KiB
+		return fmt.Errorf("handshake message too large: %d bytes", msgLen)
+	}
+	msgBuf := make([]byte, msgLen)
+	if _, err := io.ReadFull(conn, msgBuf); err != nil {
+		logger.Error("Failed to read handshake payload", "error", err)
+		return fmt.Errorf("read handshake payload: %w", err)
+	}
 	var msg PeerHandshakeMessage
-	if err := json.NewDecoder(conn).Decode(&msg); err != nil {
-		logger.Error("Failed to decode request", "error", err)
+	if err := json.Unmarshal(msgBuf, &msg); err != nil {
+		logger.Error("Failed to decode handshake", "error", err)
 		return fmt.Errorf("invalid handshake format: %w", err)
 	}
 
@@ -231,8 +249,20 @@ func storePeerKeysFromExchange(session *Session, logger *slog.Logger, msg keyExc
 	return nil
 }
 
-// PerformOutboundHandshake connects Alice to Bob and sends her handshake.
+// PerformOutboundHandshake dials remoteAddr and sends the PQC handshake.
 func PerformOutboundHandshake(session *Session, remoteAddr string) error {
+	logger := session.logger.With("phase", "outbound-handshake")
+	conn, err := DialWithStableAddr("tcp", remoteAddr, 15*time.Second, logger)
+	if err != nil {
+		logger.Error("Failed to dial", "addr", remoteAddr, "error", err)
+		return fmt.Errorf("failed to connect to %s: %w", remoteAddr, err)
+	}
+	return PerformOutboundHandshakeOnConn(session, conn)
+}
+
+// PerformOutboundHandshakeOnConn sends the PQC handshake on an existing connection.
+// Used by bridge mode where the connection is pre-established (with room token already sent).
+func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 	if session == nil || session.OwnKeys == nil || session.PeerPubKeys == nil {
 		return fmt.Errorf("nil pointer dereference")
 	}
@@ -248,8 +278,6 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 
 	seed2, encSeed2MLKEM := session.PeerPubKeys.MlKemPublic.Encapsulate()
 
-	// Determine cipher suite. If inbound already negotiated, use that.
-	// Otherwise use local preference (outbound runs before inbound in create-room flow).
 	session.CipherMu.Lock()
 	suite := session.CipherSuite
 	if suite == "" {
@@ -265,12 +293,6 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 	}
 
 	session.SEKOutbound = outboundKey
-
-	conn, err := net.DialTimeout("tcp", remoteAddr, 15*time.Second)
-	if err != nil {
-		logger.Error("Failed to dial", "addr", remoteAddr, "error", err)
-		return fmt.Errorf("failed to connect to %s: %w", remoteAddr, err)
-	}
 
 	pubKeys := map[string]string{
 		"x25519": encodeBase64(session.OwnKeys.X25519Public.Bytes()),
@@ -297,7 +319,20 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 		SupportedCiphers: supportedStr,
 	}
 
-	if err := json.NewEncoder(conn).Encode(msg); err != nil {
+	// Write handshake: 4-byte big-endian length prefix, then JSON payload.
+	// Must match PerformInboundHandshake's length-prefixed read.
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("marshal handshake: %w", err)
+	}
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(msgBytes)))
+	if _, err := conn.Write(lenBuf[:]); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("write handshake length: %w", err)
+	}
+	if _, err := conn.Write(msgBytes); err != nil {
 		_ = conn.Close()
 		logger.Error("Failed to send handshake", "error", err)
 		return fmt.Errorf("failed to send handshake: %w", err)
@@ -403,4 +438,93 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	logger.Info("Inbound session finalized and secured")
 
 	return nil
+}
+
+// dialWithStableAddr dials a remote address using a net.Dialer that binds to
+// the machine's stable (non-temporary) IPv6 address. This prevents connections
+// from breaking when macOS/Linux deprecates temporary privacy addresses (RFC 4941).
+func DialWithStableAddr(network, addr string, timeout time.Duration, logger *slog.Logger) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: timeout}
+
+	// Only bind to stable IPv6 when dialing an IPv6 destination.
+	// IPv4 destinations (e.g., bridge relay) can't use an IPv6 local address.
+	host, _, _ := net.SplitHostPort(addr)
+	destIP := net.ParseIP(host)
+	isIPv6Dest := destIP != nil && destIP.To4() == nil
+
+	if isIPv6Dest {
+		localIP := findStableIPv6()
+		if localIP != "" {
+			dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(localIP)}
+			logger.Info("Binding outbound to stable IPv6", "addr", localIP)
+		}
+	}
+
+	return dialer.Dial(network, addr)
+}
+
+// findStableIPv6 returns the first non-temporary, non-deprecated global IPv6 address.
+// On macOS, the stable address is marked "autoconf secured" (vs "autoconf temporary").
+// We pick the first global unicast address on preferred interfaces -- the OS lists
+// the stable address before temporary ones.
+func findStableIPv6() string {
+	preferred := []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp", "ens"}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+
+	// First pass: preferred interfaces.
+	for _, pref := range preferred {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			if len(pref) <= len(iface.Name) && iface.Name[:len(pref)] != pref {
+				continue
+			}
+			if ip := firstGlobalIPv6(&iface); ip != "" {
+				return ip
+			}
+		}
+	}
+
+	// Second pass: any non-virtual interface.
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		name := iface.Name
+		if len(name) >= 4 && (name[:4] == "utun" || name[:4] == "awdl" || name[:4] == "dock" || name[:4] == "veth") {
+			continue
+		}
+		if len(name) >= 3 && (name[:3] == "llw" || name[:3] == "br-") {
+			continue
+		}
+		if ip := firstGlobalIPv6(&iface); ip != "" {
+			return ip
+		}
+	}
+
+	return ""
+}
+
+// firstGlobalIPv6 returns the first global unicast IPv6 on the interface.
+// The OS lists the stable address before temporary ones, so the first hit
+// is the one we want.
+func firstGlobalIPv6(iface *net.Interface) string {
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			continue
+		}
+		if ip.To16() != nil && ip.To4() == nil && ip.IsGlobalUnicast() && !ip.IsLinkLocalUnicast() {
+			return ip.String()
+		}
+	}
+	return ""
 }

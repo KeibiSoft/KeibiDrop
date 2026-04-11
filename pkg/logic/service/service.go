@@ -4,6 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+//go:build !android
+
 package service
 
 import (
@@ -738,7 +740,7 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 	fileSize := uint64(finfo.Size())
 
 	buf := make([]byte, config.GRPCStreamBuffer)
-	chunkSize := uint64(filesystem.ChunkSize)
+	chunkSize := uint64(config.BlockSize)
 	offset := req.StartOffset
 
 	logger.Info("StreamFile starting", "fileSize", fileSize, "startOffset", offset)
