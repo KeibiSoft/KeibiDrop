@@ -292,6 +292,14 @@ func (api *API) ImportFile(localPath string) error {
 	return api.kd.AddFile(localPath)
 }
 
+// ImportFileAs adds a local file with a custom remote name (preserving folder paths).
+func (api *API) ImportFileAs(localPath string, remoteName string) error {
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	return api.kd.AddFileAs(localPath, remoteName)
+}
+
 // ExportFile downloads a file from the peer and saves it to destPath.
 // destPath is where to write on the device (app sandbox, then share via OS).
 func (api *API) ExportFile(remoteName string, destPath string) error {
