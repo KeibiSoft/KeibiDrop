@@ -570,54 +570,46 @@ func (kd *KeibiDrop) JoinRoom() error {
 		}
 	}
 
-	// Try direct P2P first. If it fails and bridge is configured, fall back.
-	{
+	// When a bridge is configured, skip direct P2P entirely and connect via the relay.
+	// Direct P2P is unreliable when the peer's relay-registered IP is a loopback address
+	// (e.g. Android with no global IPv6 registers ::1), which would cause the initiator to
+	// connect to itself instead of the peer.
+	if kd.BridgeAddr != "" {
+		logger.Info("Bridge mode: joining via relay", "addr", kd.BridgeAddr)
+
+		outConn, err := kd.dialBridge(logger, 0)
+		if err != nil {
+			return fmt.Errorf("bridge dial (outbound): %w", err)
+		}
+		if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
+			outConn.Close()
+			return fmt.Errorf("bridge outbound handshake: %w", err)
+		}
+
+		inConn, err := kd.dialBridge(logger, 1)
+		if err != nil {
+			return fmt.Errorf("bridge dial (inbound): %w", err)
+		}
+		if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+			inConn.Close()
+			return fmt.Errorf("bridge inbound handshake: %w", err)
+		}
+	} else {
+		// Direct P2P: dial outbound, then accept inbound.
 		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
-		directErr := session.PerformOutboundHandshake(kd.session, peerAddr)
-
-		if directErr == nil {
-			// Direct outbound succeeded. Accept inbound from peer.
-			logger.Info("Direct P2P outbound connected")
-			conn, err := kd.listener.Accept()
-			if err != nil {
-				logger.Error("Failed to accept", "error", err)
-				return err
-			}
-			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-				logger.Error("Failed inbound handshake", "error", err)
-				return err
-			}
-		} else if kd.BridgeAddr != "" {
-			// Direct failed. Fall back to bridge relay.
-			logger.Warn("Direct P2P failed, falling back to bridge", "error", directErr, "bridge", kd.BridgeAddr)
-
-			// Reset session crypto state for fresh handshake via bridge.
-			kd.session.SEKOutbound = nil
-			kd.session.CipherMu.Lock()
-			kd.session.CipherSuite = ""
-			kd.session.CipherMu.Unlock()
-
-			outConn, err := kd.dialBridge(logger)
-			if err != nil {
-				return fmt.Errorf("bridge dial (outbound): %w", err)
-			}
-			if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
-				outConn.Close()
-				return fmt.Errorf("bridge outbound handshake: %w", err)
-			}
-
-			inConn, err := kd.dialBridge(logger)
-			if err != nil {
-				return fmt.Errorf("bridge dial (inbound): %w", err)
-			}
-			if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
-				inConn.Close()
-				return fmt.Errorf("bridge inbound handshake: %w", err)
-			}
-		} else {
-			// Direct failed, no bridge configured.
-			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
-			return directErr
+		if err := session.PerformOutboundHandshake(kd.session, peerAddr); err != nil {
+			logger.Error("Direct P2P failed and no bridge configured", "error", err)
+			return err
+		}
+		logger.Info("Direct P2P outbound connected")
+		conn, err := kd.listener.Accept()
+		if err != nil {
+			logger.Error("Failed to accept", "error", err)
+			return err
+		}
+		if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
+			logger.Error("Failed inbound handshake", "error", err)
+			return err
 		}
 	}
 
@@ -749,7 +741,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 			// Bridge fallback.
 			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
 
-			inConn, err := kd.dialBridge(logger)
+			inConn, err := kd.dialBridge(logger, 0)
 			if err != nil {
 				return fmt.Errorf("bridge dial (inbound): %w", err)
 			}
@@ -758,7 +750,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
 
-			outConn, err := kd.dialBridge(logger)
+			outConn, err := kd.dialBridge(logger, 1)
 			if err != nil {
 				return fmt.Errorf("bridge dial (outbound): %w", err)
 			}

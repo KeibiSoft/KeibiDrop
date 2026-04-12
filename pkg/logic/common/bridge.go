@@ -21,8 +21,12 @@ func bridgeRoomToken(ownFingerprint, peerFingerprint string) [32]byte {
 }
 
 // dialBridge connects to the bridge relay and sends the room token.
-// The bridge pairs connections with matching tokens.
-func (kd *KeibiDrop) dialBridge(logger *slog.Logger) (net.Conn, error) {
+// connIdx (0 or 1) distinguishes the two connection pairs so they cannot
+// mis-pair when one side's connections arrive before the other's.
+// Both peers use the same connIdx for the same logical connection:
+//   CreateRoom: inConn=0, outConn=1
+//   JoinRoom:   outConn=0, inConn=1
+func (kd *KeibiDrop) dialBridge(logger *slog.Logger, connIdx uint8) (net.Conn, error) {
 	conn, err := session.DialWithStableAddr("tcp", kd.BridgeAddr, 15*time.Second, logger)
 	if err != nil {
 		return nil, fmt.Errorf("dial bridge: %w", err)
@@ -31,6 +35,7 @@ func (kd *KeibiDrop) dialBridge(logger *slog.Logger) (net.Conn, error) {
 	ownFP := kd.session.OwnFingerprint
 	peerFP := kd.session.ExpectedPeerFingerprint
 	token := bridgeRoomToken(ownFP, peerFP)
+	token[31] ^= connIdx // Distinct token per connection pair to prevent mis-pairing.
 
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := conn.Write(token[:]); err != nil {

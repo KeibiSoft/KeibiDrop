@@ -1,3 +1,6 @@
+// ABOUTME: Cross-platform utility helpers: fingerprint validation, address parsing,
+// ABOUTME: and HTTP JSON request helpers used across all platforms.
+
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -17,79 +20,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-// GetLinkLocalAddress finds a link-local IPv6 address on this machine and
-// returns it formatted as "ip%zone:port" for direct LAN peer connections.
-// Falls back to loopback (::1) when no link-local interface is available.
-func GetLinkLocalAddress(port int) (string, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "", err
-	}
-
-	// Collect all link-local candidates from non-loopback, up interfaces.
-	type candidate struct {
-		ip    net.IP
-		iface string
-	}
-	var candidates []candidate
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				continue
-			}
-			if ip.To16() != nil && ip.To4() == nil && ip.IsLinkLocalUnicast() {
-				candidates = append(candidates, candidate{ip: ip, iface: iface.Name})
-			}
-		}
-	}
-
-	if len(candidates) > 0 {
-		// Prefer common LAN interfaces: en0 (macOS WiFi), eth0/wlan0 (Linux).
-		// Avoid utun*, awdl*, llw*, ap* (VPN, AirDrop, low-latency WLAN, access point).
-		preferred := []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp"}
-		for _, pref := range preferred {
-			for _, c := range candidates {
-				if strings.HasPrefix(c.iface, pref) {
-					return fmt.Sprintf("%s%%%s:%d", c.ip.String(), c.iface, port), nil
-				}
-			}
-		}
-		// No preferred match, pick first non-virtual candidate.
-		for _, c := range candidates {
-			skip := strings.HasPrefix(c.iface, "utun") ||
-				strings.HasPrefix(c.iface, "awdl") ||
-				strings.HasPrefix(c.iface, "llw")
-			if !skip {
-				return fmt.Sprintf("%s%%%s:%d", c.ip.String(), c.iface, port), nil
-			}
-		}
-		// All candidates are virtual, use first one anyway.
-		c := candidates[0]
-		return fmt.Sprintf("%s%%%s:%d", c.ip.String(), c.iface, port), nil
-	}
-
-	// Fallback: accept loopback for local testing.
-	for _, iface := range ifaces {
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				continue
-			}
-			if ip.To16() != nil && ip.To4() == nil && ip.IsLoopback() {
-				return fmt.Sprintf("%s:%d", ip.String(), port), nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("no link-local or loopback IPv6 address found")
-}
 
 // ParsePeerDirectAddress parses a direct LAN peer address in the format
 // "ip%zone:port" (link-local) or "ip:port" (loopback). Returns the IP,
@@ -176,97 +106,6 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 	}
 
 	return ipPart, "", port, nil
-}
-
-func GetLocalIPv6() (string, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "", err
-	}
-
-	for _, iface := range ifaces {
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				continue
-			}
-			if ip.To16() != nil && ip.To4() == nil {
-				// allow loopback + ULA + link-local
-				return ip.String(), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no IPv6 address found")
-}
-
-// GetGlobalIPv6 returns a stable (non-temporary) global IPv6 address.
-// On macOS/Linux, privacy extensions (RFC 4941) generate temporary addresses
-// that rotate periodically. Connections bound to a temporary address break
-// when the OS deprecates it. This function prefers stable addresses by
-// collecting all candidates and picking the best one.
-func GetGlobalIPv6() (string, error) {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return "", err
-	}
-
-	// Preferred interfaces for LAN (same order as GetLinkLocalAddress).
-	preferred := []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp"}
-
-	type candidate struct {
-		ip    string
-		iface string
-	}
-	var candidates []candidate
-
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		// Skip virtual/VPN interfaces.
-		if strings.HasPrefix(iface.Name, "utun") ||
-			strings.HasPrefix(iface.Name, "awdl") ||
-			strings.HasPrefix(iface.Name, "llw") ||
-			strings.HasPrefix(iface.Name, "docker") ||
-			strings.HasPrefix(iface.Name, "br-") ||
-			strings.HasPrefix(iface.Name, "veth") {
-			continue
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				continue
-			}
-			if ip.To16() != nil && ip.To4() == nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
-				candidates = append(candidates, candidate{ip: ip.String(), iface: iface.Name})
-			}
-		}
-	}
-
-	if len(candidates) == 0 {
-		// Fallback to any local IPv6 for testing.
-		return GetLocalIPv6()
-	}
-
-	// Prefer candidates on preferred interfaces (en0, eth0, etc.).
-	// The first address on a preferred interface is typically the stable one;
-	// temporary addresses are appended after the stable/secured address.
-	for _, pref := range preferred {
-		for _, c := range candidates {
-			if strings.HasPrefix(c.iface, pref) {
-				return c.ip, nil
-			}
-		}
-	}
-
-	// No preferred interface match, return first candidate.
-	return candidates[0].ip, nil
 }
 
 func ValidateFingerprint(fp string) error {

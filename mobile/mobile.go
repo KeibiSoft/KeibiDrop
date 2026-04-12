@@ -591,6 +591,17 @@ func (api *API) SetPeerDirectAddress(addr string) error {
 	return api.kd.SetPeerDirectAddress(addr)
 }
 
+// SetBridgeAddr sets a TCP bridge relay address for NAT traversal fallback.
+// When set, if direct P2P fails, both peers connect through the bridge server
+// instead. Call before CreateRoomAsync or JoinRoomAsync.
+func (api *API) SetBridgeAddr(addr string) error {
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	api.kd.BridgeAddr = addr
+	return nil
+}
+
 // RelayEndpoint returns the relay URL string.
 func (api *API) RelayEndpoint() string {
 	if api.kd == nil {
