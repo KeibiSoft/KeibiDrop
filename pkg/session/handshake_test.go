@@ -7,6 +7,7 @@
 package session
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -56,15 +57,23 @@ func buildHandshakeFixture(t *testing.T) (*Session, PeerHandshakeMessage) {
 	return alice, msg
 }
 
-// pipeWithMessage creates a net.Pipe, writes the JSON message to one end,
-// and returns the other end for the handshake to read from.
+// pipeWithMessage creates a net.Pipe, writes the length-prefixed JSON message
+// to one end, and returns the other end for the handshake to read from.
+// Format matches PerformInboundHandshake: 4-byte big-endian length + JSON body.
 func pipeWithMessage(t *testing.T, msg PeerHandshakeMessage) net.Conn {
 	t.Helper()
 	server, client := net.Pipe()
 
 	go func() {
 		defer server.Close()
-		_ = json.NewEncoder(server).Encode(msg)
+		payload, err := json.Marshal(msg)
+		if err != nil {
+			return
+		}
+		var lenBuf [4]byte
+		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(payload)))
+		_, _ = server.Write(lenBuf[:])
+		_, _ = server.Write(payload)
 	}()
 
 	return client
