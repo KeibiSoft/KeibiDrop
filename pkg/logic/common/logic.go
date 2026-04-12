@@ -570,10 +570,73 @@ func (kd *KeibiDrop) JoinRoom() error {
 		}
 	}
 
-	// Try direct P2P first. If it fails and bridge is configured, fall back.
+	// Connection priority: LAN (2s per addr) → direct IPv6 (15s) → bridge relay.
 	{
-		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
-		directErr := session.PerformOutboundHandshake(kd.session, peerAddr)
+		// 1. Try LAN addresses first (same network, no relay needed).
+		lanConnected := false
+		if len(kd.PeerLocalAddrs) > 0 {
+			logger.Info("Trying LAN addresses first", "addrs", kd.PeerLocalAddrs)
+			for _, localAddr := range kd.PeerLocalAddrs {
+				addr := net.JoinHostPort(localAddr, strconv.Itoa(kd.session.PeerPort))
+				logger.Info("Trying LAN address", "addr", addr)
+				conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+				if err != nil {
+					logger.Info("LAN address failed", "addr", addr, "error", err)
+					continue
+				}
+				// LAN connection succeeded — do handshake on this connection.
+				if err := session.PerformOutboundHandshakeOnConn(kd.session, conn); err != nil {
+					conn.Close()
+					logger.Warn("LAN handshake failed", "addr", addr, "error", err)
+					continue
+				}
+				logger.Info("LAN connection succeeded!", "addr", addr)
+				kd.PeerIPv6IP = localAddr
+				lanConnected = true
+
+				// Accept inbound from peer (LAN, should be fast).
+				inConn, err := kd.listener.Accept()
+				if err != nil {
+					logger.Warn("LAN inbound accept failed", "error", err)
+					// Close outbound, fall through to direct/bridge.
+					if kd.session.Session != nil && kd.session.Session.Outbound != nil {
+						kd.session.Session.Outbound.Close()
+						kd.session.Session.Outbound = nil
+					}
+					kd.session.SEKOutbound = nil
+					kd.session.CipherMu.Lock()
+					kd.session.CipherSuite = ""
+					kd.session.CipherMu.Unlock()
+					lanConnected = false
+					break
+				}
+				if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+					logger.Warn("LAN inbound handshake failed", "error", err)
+					lanConnected = false
+				}
+				break
+			}
+			if lanConnected {
+				if kd.OnEvent != nil {
+					kd.OnEvent("connection_mode:lan")
+				}
+				goto connected
+			}
+			// Reset crypto state after failed LAN attempts.
+			kd.session.SEKOutbound = nil
+			kd.session.CipherMu.Lock()
+			kd.session.CipherSuite = ""
+			kd.session.CipherMu.Unlock()
+		}
+
+		// 2. Try direct IPv6 P2P (skip if peer has no IPv6, e.g. mobile).
+		var directErr error
+		if kd.PeerIPv6IP != "" {
+			peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
+			directErr = session.PerformOutboundHandshake(kd.session, peerAddr)
+		} else {
+			directErr = fmt.Errorf("peer has no IPv6 address")
+		}
 
 		needBridge := false
 
@@ -605,6 +668,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 					if err := session.PerformInboundHandshake(kd.session, res.conn); err != nil {
 						logger.Error("Failed inbound handshake", "error", err)
 						return err
+					}
+					if kd.OnEvent != nil {
+						kd.OnEvent("connection_mode:direct")
 					}
 				}
 			case <-time.After(15 * time.Second):
@@ -657,9 +723,13 @@ func (kd *KeibiDrop) JoinRoom() error {
 				inConn.Close()
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
+			if kd.OnEvent != nil {
+				kd.OnEvent("connection_mode:bridge")
+			}
 		}
 	}
 
+connected:
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
 	kd.Start()

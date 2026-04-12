@@ -138,8 +138,12 @@ build-ios:
 	rm -rf ios/KeibiDrop/KeibiDrop.xcframework
 	cp -r KeibiDrop.xcframework ios/KeibiDrop/KeibiDrop.xcframework
 
+ANDROID_HOME ?= /usr/local/share/android-commandlinetools
+ANDROID_NDK_HOME ?= $(ANDROID_HOME)/ndk/27.0.12077973
+
 build-android:
-	GOFLAGS="-mod=mod" gomobile bind -target=android -o keibidrop.aar ./mobile
+	ANDROID_HOME=$(ANDROID_HOME) ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) \
+	GOFLAGS="-mod=mod" gomobile bind -target=android -androidapi 21 -o keibidrop.aar ./mobile
 
 # Sync mobile app source + frameworks to the private KeibiDropMobile repo.
 # Edit in KeibiDrop/ios and KeibiDrop/android, run this, commit in KeibiDropMobile.
@@ -300,6 +304,33 @@ wan-benchmark:
 
 wan-test: wan-clean wan-start wan-benchmark
 
+# ── Android Dev Helpers ───────────────────────────────────────────────
+# Push text from Mac clipboard to Android device clipboard + paste into focused field.
+# Usage: make android-push-clip FP=<fingerprint>
+# Tap peer code field on Android first, then run this.
+android-push-clip:
+	@if [ -z "$(FP)" ]; then echo "Usage: make android-push-clip FP=<fingerprint>"; exit 1; fi
+	adb shell input text '$(FP)'
+
+# Pull fingerprint from Android screen to Mac clipboard.
+# Works by dumping the UI tree and finding the fingerprint-length text.
+android-pull-clip:
+	@adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; \
+	adb pull /sdcard/ui.xml /tmp/_kd_ui.xml >/dev/null 2>&1; \
+	FP=$$(grep -o 'text="[^"]*"' /tmp/_kd_ui.xml | grep -E '[A-Za-z0-9_-]{60,}' | tail -1 | sed 's/text="//;s/"//'); \
+	if [ -z "$$FP" ]; then echo "No fingerprint found on screen. Make sure the app is open."; exit 1; fi; \
+	echo "$$FP" | tr -d '\n' | pbcopy; \
+	echo "Pulled: $$FP"
+
+# Deploy latest AAR + APK to connected Android device.
+android-deploy: build-android
+	cp keibidrop.aar ../KeibiDropMobile/keibidrop.aar
+	JAVA_HOME=/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home \
+	  cd ../KeibiDropMobile/android && ./gradlew assembleDebug
+	adb install -r ../KeibiDropMobile/android/app/build/outputs/apk/debug/app-debug.apk
+	adb shell am force-stop com.keibisoft.keibidrop
+	adb shell am start -n com.keibisoft.keibidrop/.MainActivity
+
 .PHONY: build-cli build-kd build-static-rust-bridge build-rust build-all \
         test lint sec install-proto protoc rust-bindings slint-preview \
         package-macos package-tar package-deb package-windows package-choco checksums clean-dist clean \
@@ -308,4 +339,5 @@ wan-test: wan-clean wan-start wan-benchmark
         run-kd-alice run-kd-bob \
         run-bridge-alice run-bridge-bob run-bridge-alice-fuse run-bridge-bob-fuse \
         build-ios build-android run-ios-sim run-android-emu sync-mobile \
-        wan-deploy wan-clean wan-start wan-benchmark wan-test help
+        wan-deploy wan-clean wan-start wan-benchmark wan-test help \
+        android-push-clip android-pull-clip android-deploy
