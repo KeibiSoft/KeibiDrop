@@ -291,9 +291,13 @@ func (kd *KeibiDrop) Run() {
 			kd.session = nil
 			kd.PeerIPv6IP = ""
 
-			// Permanent shutdown — exit the goroutine.
+			// Permanent shutdown — close listener and exit.
 			select {
 			case <-kd.shutdown:
+				if kd.listener != nil {
+					kd.listener.Close()
+					kd.listener = nil
+				}
 				kd.running.Store(false)
 				kd.mu.Lock()
 				done := kd.stopDone

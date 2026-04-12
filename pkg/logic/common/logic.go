@@ -575,28 +575,71 @@ func (kd *KeibiDrop) JoinRoom() error {
 		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
 		directErr := session.PerformOutboundHandshake(kd.session, peerAddr)
 
+		needBridge := false
+
 		if directErr == nil {
-			// Direct outbound succeeded. Accept inbound from peer.
-			logger.Info("Direct P2P outbound connected")
-			conn, err := kd.listener.Accept()
-			if err != nil {
-				logger.Error("Failed to accept", "error", err)
-				return err
+			// Direct outbound succeeded. Accept inbound with 15s timeout.
+			// If the peer can't reach us (firewall blocks inbound IPv6),
+			// fall back to bridge for both directions.
+			logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
+
+			type acceptResult struct {
+				conn net.Conn
+				err  error
 			}
-			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-				logger.Error("Failed inbound handshake", "error", err)
-				return err
+			ch := make(chan acceptResult, 1)
+			go func() {
+				c, e := kd.listener.Accept()
+				ch <- acceptResult{c, e}
+			}()
+
+			select {
+			case res := <-ch:
+				if res.err != nil {
+					logger.Warn("Inbound accept failed", "error", res.err)
+					needBridge = kd.BridgeAddr != ""
+					if !needBridge {
+						return res.err
+					}
+				} else {
+					if err := session.PerformInboundHandshake(kd.session, res.conn); err != nil {
+						logger.Error("Failed inbound handshake", "error", err)
+						return err
+					}
+				}
+			case <-time.After(15 * time.Second):
+				logger.Warn("Inbound accept timed out (15s), peer likely behind firewall")
+				needBridge = kd.BridgeAddr != ""
+				if !needBridge {
+					return fmt.Errorf("inbound accept timed out and no bridge configured")
+				}
+			}
+
+			if needBridge {
+				logger.Info("Falling back to bridge for both directions")
+				// Close the direct outbound — we'll redo both via bridge.
+				if kd.session.Session != nil && kd.session.Session.Outbound != nil {
+					kd.session.Session.Outbound.Close()
+					kd.session.Session.Outbound = nil
+				}
+				kd.session.SEKOutbound = nil
+				kd.session.CipherMu.Lock()
+				kd.session.CipherSuite = ""
+				kd.session.CipherMu.Unlock()
 			}
 		} else if kd.BridgeAddr != "" {
-			// Direct failed. Fall back to bridge relay.
 			logger.Warn("Direct P2P failed, falling back to bridge", "error", directErr, "bridge", kd.BridgeAddr)
-
-			// Reset session crypto state for fresh handshake via bridge.
+			needBridge = true
 			kd.session.SEKOutbound = nil
 			kd.session.CipherMu.Lock()
 			kd.session.CipherSuite = ""
 			kd.session.CipherMu.Unlock()
+		} else {
+			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
+			return directErr
+		}
 
+		if needBridge {
 			outConn, err := kd.dialBridge(logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (outbound): %w", err)
@@ -614,10 +657,6 @@ func (kd *KeibiDrop) JoinRoom() error {
 				inConn.Close()
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
-		} else {
-			// Direct failed, no bridge configured.
-			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
-			return directErr
 		}
 	}
 
@@ -742,10 +781,30 @@ func (kd *KeibiDrop) CreateRoom() error {
 			}
 			kd.PeerIPv6IP = peerIP
 
-			if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))); err != nil {
-				return err
+			// Try direct outbound to peer. If it fails (peer behind firewall),
+			// fall back to bridge for the outbound direction.
+			outboundAddr := net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))
+			if err := session.PerformOutboundHandshake(kd.session, outboundAddr); err != nil {
+				if kd.BridgeAddr != "" {
+					logger.Warn("Direct outbound to peer failed, falling back to bridge for outbound", "error", err)
+					// Reset outbound crypto state for bridge handshake.
+					kd.session.SEKOutbound = nil
+					kd.session.CipherMu.Lock()
+					kd.session.CipherSuite = ""
+					kd.session.CipherMu.Unlock()
+					// Close direct inbound too — we need both via bridge.
+					if kd.session.Session != nil && kd.session.Session.Inbound != nil {
+						kd.session.Session.Inbound.Close()
+						kd.session.Session.Inbound = nil
+					}
+					kd.session.SEKInbound = nil
+					useBridge = true
+				} else {
+					return err
+				}
 			}
-		} else {
+		}
+		if useBridge {
 			// Bridge fallback.
 			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
 
