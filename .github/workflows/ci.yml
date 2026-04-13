@@ -37,9 +37,11 @@ jobs:
         run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v6
         with:
-          version: v2.1.6
+          version: v1.64.8
+          args: --timeout=3m
+          install-mode: goinstall
 
   build:
     strategy:
