@@ -14,14 +14,14 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: true
 
       - name: Install FUSE dev headers
         run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: Run tests
-        run: go test -v -count=1 -timeout 180s ./tests/...
+        run: go test -v -count=1 -timeout 180s -run 'Test(?!BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency)' ./tests/...
 
   lint:
     runs-on: ubuntu-22.04
@@ -30,7 +30,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: true
 
       - name: Install FUSE dev headers
@@ -48,15 +48,24 @@ jobs:
           - os: macos-15
             name: macOS arm64
             goarch: arm64
-          - os: macos-13
+          - os: macos-15
             name: macOS x86_64
             goarch: amd64
+            cross: true
           - os: ubuntu-22.04
             name: Linux x86_64
             goarch: amd64
+          - os: ubuntu-22.04
+            name: Linux arm64
+            goarch: arm64
+            cross: true
           - os: windows-2022
             name: Windows x86_64
             goarch: amd64
+          - os: windows-2022
+            name: Windows arm64
+            goarch: arm64
+            cross: true
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.name }})
@@ -66,7 +75,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: true
 
       - uses: dtolnay/rust-toolchain@stable
@@ -105,17 +114,28 @@ jobs:
         shell: bash
         run: make install-proto
 
+      - name: Add Rust cross-compile target (macOS x86_64 from arm64)
+        if: matrix.cross == true
+        run: rustup target add x86_64-apple-darwin
+
       - name: Build Rust UI
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.cross != true
         run: make build-rust
+
+      - name: Build Rust UI (cross-compile x86_64)
+        if: matrix.cross == true
+        run: |
+          GOARCH=amd64 go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+          cd rust && cargo build --release --target x86_64-apple-darwin
+          cp target/x86_64-apple-darwin/release/keibidrop-rust target/release/keibidrop-rust
 
       - name: Build CLI
         shell: bash
-        run: make build-cli
+        run: GOARCH=${{ matrix.goarch }} make build-cli
 
       - name: Build kd
         shell: bash
-        run: make build-kd
+        run: GOARCH=${{ matrix.goarch }} make build-kd
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

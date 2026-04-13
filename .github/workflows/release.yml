@@ -24,21 +24,34 @@ jobs:
             goos: darwin
             goarch: arm64
             package: dmg
-          - os: macos-13
+          - os: macos-15
             name: macOS-x86_64
             goos: darwin
             goarch: amd64
             package: tar
+            cross: true
           - os: ubuntu-22.04
             name: Linux-x86_64
             goos: linux
             goarch: amd64
             package: deb
+          - os: ubuntu-22.04
+            name: Linux-arm64
+            goos: linux
+            goarch: arm64
+            package: tar
+            cross: true
           - os: windows-2022
             name: Windows-x86_64
             goos: windows
             goarch: amd64
             package: zip
+          - os: windows-2022
+            name: Windows-arm64
+            goos: windows
+            goarch: arm64
+            package: zip
+            cross: true
 
     runs-on: ${{ matrix.os }}
     name: Build ${{ matrix.name }}
@@ -61,7 +74,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: true
 
       - uses: dtolnay/rust-toolchain@stable
@@ -104,16 +117,27 @@ jobs:
         if: runner.os == 'Linux'
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 
+      - name: Add Rust cross-compile target (macOS x86_64 from arm64)
+        if: matrix.cross == true
+        run: rustup target add x86_64-apple-darwin
+
       - name: Build Rust UI
-        if: runner.os != 'Windows'
+        if: runner.os != 'Windows' && matrix.cross != true
         run: make build-rust
+
+      - name: Build Rust UI (cross-compile x86_64)
+        if: matrix.cross == true
+        run: |
+          GOARCH=amd64 go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+          cd rust && cargo build --release --target x86_64-apple-darwin
+          cp target/x86_64-apple-darwin/release/keibidrop-rust target/release/keibidrop-rust
 
       - name: Build CLI and kd
         shell: bash
         run: |
           VERSION=${{ steps.version.outputs.version }}
           COMMIT=${{ steps.version.outputs.commit }}
-          make build-cli build-kd VERSION=$VERSION COMMIT=$COMMIT
+          GOARCH=${{ matrix.goarch }} make build-cli build-kd VERSION=$VERSION COMMIT=$COMMIT
 
       - name: Package .dmg (macOS arm64)
         if: matrix.package == 'dmg'
