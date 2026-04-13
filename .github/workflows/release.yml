@@ -113,10 +113,17 @@ jobs:
         if: runner.os != 'Windows' && matrix.cross != true
         run: make build-rust
 
+      - name: Set cross-compile env (macOS x86_64 from arm64)
+        if: matrix.cross == true && runner.os == 'macOS'
+        run: |
+          echo "CGO_ENABLED=1" >> $GITHUB_ENV
+          echo "CGO_CFLAGS=-arch x86_64" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-arch x86_64" >> $GITHUB_ENV
+
       - name: Build Rust UI (cross-compile x86_64)
         if: matrix.cross == true && runner.os == 'macOS'
         run: |
-          CGO_ENABLED=1 GOARCH=amd64 go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+          GOARCH=amd64 go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
           cd rust && cargo build --release --target x86_64-apple-darwin
           mkdir -p target/release
           cp target/x86_64-apple-darwin/release/keibidrop-rust target/release/keibidrop-rust

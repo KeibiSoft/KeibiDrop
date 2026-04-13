@@ -124,6 +124,13 @@ jobs:
           mkdir -p target/release
           cp target/x86_64-apple-darwin/release/keibidrop-rust target/release/keibidrop-rust
 
+      - name: Set cross-compile env (macOS x86_64 from arm64)
+        if: matrix.cross == true && runner.os == 'macOS'
+        run: |
+          echo "CGO_ENABLED=1" >> $GITHUB_ENV
+          echo "CGO_CFLAGS=-arch x86_64" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-arch x86_64" >> $GITHUB_ENV
+
       - name: Build CLI
         shell: bash
         run: GOARCH=${{ matrix.goarch }} make build-cli
