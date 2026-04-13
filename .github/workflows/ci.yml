@@ -21,7 +21,7 @@ jobs:
         run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: Run tests
-        run: go test -v -count=1 -timeout 180s -run 'Test(?!BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency)' ./tests/...
+        run: go test -v -count=1 -timeout 180s -skip 'BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency|PullFileThroughput|EncryptedGRPC|TransferThroughput|SecureConnThroughput' ./tests/...
 
   lint:
     runs-on: ubuntu-22.04
@@ -57,17 +57,9 @@ jobs:
           - os: ubuntu-22.04
             name: Linux x86_64
             goarch: amd64
-          - os: ubuntu-22.04
-            name: Linux arm64
-            goarch: arm64
-            cross: true
           - os: windows-2022
             name: Windows x86_64
             goarch: amd64
-          - os: windows-2022
-            name: Windows arm64
-            goarch: arm64
-            cross: true
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.name }})

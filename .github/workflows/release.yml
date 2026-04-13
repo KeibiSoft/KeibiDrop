@@ -35,23 +35,11 @@ jobs:
             goos: linux
             goarch: amd64
             package: deb
-          - os: ubuntu-22.04
-            name: Linux-arm64
-            goos: linux
-            goarch: arm64
-            package: tar
-            cross: true
           - os: windows-2022
             name: Windows-x86_64
             goos: windows
             goarch: amd64
             package: zip
-          - os: windows-2022
-            name: Windows-arm64
-            goos: windows
-            goarch: arm64
-            package: zip
-            cross: true
 
     runs-on: ${{ matrix.os }}
     name: Build ${{ matrix.name }}
