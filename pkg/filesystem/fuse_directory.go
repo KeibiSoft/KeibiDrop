@@ -1762,6 +1762,24 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	// 	"hasBitmap", bitmap != nil,
 	// 	"fh", fh)
 
+	// If the file is remote and has no stream pool but has incomplete chunks,
+	// try to create a pool on-demand so we can fetch the missing data.
+	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && f.StreamProvider != nil {
+		logger.Info("Creating on-demand stream pool for incomplete remote file")
+		streamCtx, streamCancel := context.WithCancel(context.Background())
+		newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, StreamPoolSize)
+		if openErr != nil {
+			streamCancel()
+			logger.Warn("Failed to create on-demand stream pool", "error", openErr)
+		} else {
+			d.OpenMapLock.Lock()
+			f.StreamPool = newPool
+			f.StreamCancel = streamCancel
+			d.OpenMapLock.Unlock()
+			pool = newPool
+		}
+	}
+
 	if ok && notLocalSynced && pool != nil {
 		// HYBRID READ: Check bitmap to decide local vs remote.
 		// If all chunks for this range are already downloaded (by prefetch or prior read),
@@ -2024,36 +2042,76 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	d.RemoteFilesLock.Lock()
 
 	if existing, ok := d.RemoteFiles[path]; ok {
-		existing.stat = stat
-		existing.NotLocalSynced = true
+		oldSize := existing.stat.Size
+		sizeChanged := oldSize != stat.Size
 		existing.LocalNewer = false // Remote has newer content.
-		existing.Download.Reset(uint64(stat.Size))
-		// Cancel old prefetch if running, create new bitmap.
-		// os.Truncate in startPrefetch extends (doesn't overwrite existing data),
-		// so re-downloading after a size increase is safe — just re-fetches the delta.
-		if existing.PrefetchCancel != nil {
-			existing.PrefetchCancel()
-			existing.PrefetchCancel = nil
+
+		// Reject stale ADD_FILE with smaller size — this happens when git's
+		// debounced notification for a temp file arrives AFTER a RENAME already
+		// set the correct (larger) size. Example: git index-pack appends a
+		// 20-byte SHA-1 checksum between the temp write and the rename.
+		if sizeChanged && stat.Size < oldSize && existing.Bitmap != nil && existing.Bitmap.Have() > 0 {
+			d.RemoteFilesLock.Unlock()
+			d.logger.Info("Ignoring stale ADD_FILE with smaller size (rename already set correct size)",
+				"path", path, "staleSize", stat.Size, "currentSize", oldSize)
+			return nil
 		}
-		existing.Bitmap = NewChunkBitmap(stat.Size)
-		d.RemoteFilesLock.Unlock()
-		// Truncate the local cache file to the new size — if the file shrank
-		// (e.g. git's HEAD.lock → HEAD rename), stale bytes past EOF remain
-		// without this truncate.
-		if existing.RealPathOfFile != "" {
-			if truncErr := os.Truncate(existing.RealPathOfFile, stat.Size); truncErr != nil && !os.IsNotExist(truncErr) {
-				logger.Warn("Failed to truncate cache file to new size", "path", existing.RealPathOfFile, "size", stat.Size, "error", truncErr)
+
+		existing.stat = stat
+
+		if sizeChanged {
+			// Size changed: cancel old prefetch, reset bitmap, re-download.
+			existing.NotLocalSynced = true
+			existing.Download.Reset(uint64(stat.Size))
+			if existing.PrefetchCancel != nil {
+				existing.PrefetchCancel()
+				existing.PrefetchCancel = nil
+			}
+			existing.Bitmap = NewChunkBitmap(stat.Size)
+			d.RemoteFilesLock.Unlock()
+
+			// Only truncate if size actually changed — truncating to the same size
+			// zeros out content that a previous prefetch already wrote.
+			if existing.RealPathOfFile != "" {
+				if truncErr := os.Truncate(existing.RealPathOfFile, stat.Size); truncErr != nil && !os.IsNotExist(truncErr) {
+					logger.Warn("Failed to truncate cache file to new size", "path", existing.RealPathOfFile, "size", stat.Size, "error", truncErr)
+				}
+			}
+
+			d.AfmLock.Lock()
+			d.AllFileMap[path] = existing
+			d.AfmLock.Unlock()
+			d.startPrefetch(logger, existing, path)
+		} else {
+			// Same size: update metadata but don't reset bitmap or truncate.
+			// The previous prefetch may have already completed — don't destroy its work.
+			d.RemoteFilesLock.Unlock()
+			d.AfmLock.Lock()
+			d.AllFileMap[path] = existing
+			d.AfmLock.Unlock()
+			// If prefetch isn't running and bitmap isn't complete, restart it.
+			if existing.PrefetchCancel == nil && existing.Bitmap != nil && !existing.Bitmap.IsComplete() {
+				existing.NotLocalSynced = true
+				d.startPrefetch(logger, existing, path)
 			}
 		}
-		// Ensure AllFileMap points to the same object so OpenEx sees correct state.
-		d.AfmLock.Lock()
-		d.AllFileMap[path] = existing
-		d.AfmLock.Unlock()
-		d.startPrefetch(logger, existing, path)
 		return nil
 	}
 
-	// logger.Info("Adding remote file", "path", path, "size", stat.Size, "mtime", stat.Mtim.Time())
+	// Auto-create parent directories in the FUSE tree if they don't exist.
+	// This handles files from no-FUSE peers (mobile AddFileAs) that send
+	// ADD_FILE for "go-fp/examples/client/client.go" without prior ADD_DIR.
+	parentDir := filepath.Dir(path)
+	if parentDir != "/" && parentDir != "." {
+		d.Adm.Lock()
+		if _, exists := d.AllDirMap[parentDir]; !exists {
+			d.Adm.Unlock()
+			d.MkdirFromPeer(parentDir, 0755)
+		} else {
+			d.Adm.Unlock()
+		}
+	}
+
 	f := &File{
 		logger:          d.logger,
 		openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
@@ -2283,21 +2341,34 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	}
 
 	// logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
+	oldSize := f.stat.Size
+	sizeChanged := oldSize != stat.Size
 	f.stat = stat
-	f.NotLocalSynced = true
 	f.LocalNewer = false // Remote has newer content.
-	// CRITICAL: Reset download state for re-download
-	f.Download.Reset(uint64(stat.Size))
-	// Cancel old prefetch, reset bitmap, start new prefetch.
-	if f.PrefetchCancel != nil {
-		f.PrefetchCancel()
+
+	if sizeChanged {
+		// Size changed: full re-download required.
+		f.NotLocalSynced = true
+		f.Download.Reset(uint64(stat.Size))
+		if f.PrefetchCancel != nil {
+			f.PrefetchCancel()
+		}
+		f.Bitmap = NewChunkBitmap(stat.Size)
+		d.RemoteFilesLock.Unlock()
+		d.AfmLock.Lock()
+		d.AllFileMap[path] = f
+		d.AfmLock.Unlock()
+		d.startPrefetch(logger, f, path)
+	} else {
+		// Same size: metadata update only. Don't reset bitmap or cancel prefetch.
+		d.RemoteFilesLock.Unlock()
+		d.AfmLock.Lock()
+		d.AllFileMap[path] = f
+		d.AfmLock.Unlock()
+		if f.PrefetchCancel == nil && f.Bitmap != nil && !f.Bitmap.IsComplete() {
+			f.NotLocalSynced = true
+			d.startPrefetch(logger, f, path)
+		}
 	}
-	f.Bitmap = NewChunkBitmap(stat.Size)
-	d.RemoteFilesLock.Unlock()
-	// Ensure AllFileMap points to the same object so OpenEx sees correct state.
-	d.AfmLock.Lock()
-	d.AllFileMap[path] = f
-	d.AfmLock.Unlock()
-	d.startPrefetch(logger, f, path)
 	return nil
 }

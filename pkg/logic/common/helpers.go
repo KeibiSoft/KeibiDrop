@@ -269,6 +269,50 @@ func GetGlobalIPv6() (string, error) {
 	return candidates[0].ip, nil
 }
 
+// GetLocalAddrs returns all private/link-local IP addresses for LAN discovery.
+// These are included in the relay registration so peers on the same network
+// can connect directly without going through the bridge relay.
+func GetLocalAddrs() []string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+
+	var addrs []string
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		// Skip virtual/docker/VPN interfaces
+		name := iface.Name
+		if strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "veth") ||
+			strings.HasPrefix(name, "br-") || strings.HasPrefix(name, "utun") {
+			continue
+		}
+
+		ifAddrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range ifAddrs {
+			ipNet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip := ipNet.IP
+			// Private IPv4 (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+			if ip.To4() != nil && ip.IsPrivate() {
+				addrs = append(addrs, ip.String())
+			}
+			// Link-local IPv6 (fe80::)
+			if ip.IsLinkLocalUnicast() && ip.To4() == nil {
+				addrs = append(addrs, ip.String()+"%"+iface.Name)
+			}
+		}
+	}
+	return addrs
+}
+
 func ValidateFingerprint(fp string) error {
 	if fp == "" {
 		return ErrEmptyFingerprint

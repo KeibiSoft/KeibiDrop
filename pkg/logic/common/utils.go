@@ -68,6 +68,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 			Proto: "tcp",
 			Port:  kd.inboundPort,
 		},
+		LocalAddrs: GetLocalAddrs(),
 		PublicKeys: pkMap,
 		Timestamp:  time.Now().UnixNano(),
 	}
@@ -251,12 +252,17 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	}
 
 	kd.session.PeerPort = peerReg.Listen.Port
-	if !isValidIPv6(peerReg.Listen.IP) {
-		logger.Warn("Invalid peer IP", "got", peerReg.Listen.IP, "error", ErrInvalidIP)
-		return ErrInvalidIP
+	if isValidIPv6(peerReg.Listen.IP) {
+		kd.PeerIPv6IP = peerReg.Listen.IP
+	} else if peerReg.Listen.IP != "" {
+		logger.Warn("Peer has no valid IPv6 (mobile peer?)", "got", peerReg.Listen.IP)
 	}
 
-	kd.PeerIPv6IP = peerReg.Listen.IP
+	// Store peer's local addresses for LAN discovery.
+	kd.PeerLocalAddrs = peerReg.LocalAddrs
+	if len(kd.PeerLocalAddrs) > 0 {
+		logger.Info("Peer has local addresses", "addrs", kd.PeerLocalAddrs)
+	}
 
 	logger.Info("Success")
 

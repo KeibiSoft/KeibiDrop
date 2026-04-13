@@ -39,7 +39,8 @@ type KeibiDrop struct {
 
 	session *session.Session
 
-	PeerIPv6IP string
+	PeerIPv6IP     string
+	PeerLocalAddrs []string // LAN IPs from relay registration (for same-network direct connect)
 
 	LocalIPv6IP string
 	inboundPort int
@@ -109,8 +110,10 @@ const (
 func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string, prefetchOnOpen bool, pushOnWrite bool) (*KeibiDrop, error) {
 	ipv6, err := GetGlobalIPv6()
 	if err != nil {
-		logger.Error("Failed to get local IPv6", "error", err)
-		return nil, err
+		// Non-fatal: Android restricts net.Interfaces(). Mobile peers use
+		// the bridge relay (outbound-only), so a local IPv6 isn't required.
+		logger.Warn("Failed to get local IPv6 (non-fatal on mobile)", "error", err)
+		ipv6 = ""
 	}
 
 	return NewKeibiDropWithIP(ctx, logger, isFuse, relayURL, inboundPort, defaultOutboundPort, toMount, toSave, prefetchOnOpen, pushOnWrite, ipv6)
@@ -183,6 +186,7 @@ type PeerRegistration struct {
 	PublicKeys  map[string]string `json:"public_keys"` // base64 encoded
 	Listen      *ConnectionHint   `json:"listen"`
 	Reverse     *ConnectionHint   `json:"reverse,omitempty"`
+	LocalAddrs  []string          `json:"local_addrs,omitempty"` // LAN IPs (192.168.x.x, fe80::x) for same-network detection
 	Timestamp   int64             `json:"timestamp"`
 }
 
@@ -291,9 +295,13 @@ func (kd *KeibiDrop) Run() {
 			kd.session = nil
 			kd.PeerIPv6IP = ""
 
-			// Permanent shutdown — exit the goroutine.
+			// Permanent shutdown — close listener and exit.
 			select {
 			case <-kd.shutdown:
+				if kd.listener != nil {
+					kd.listener.Close()
+					kd.listener = nil
+				}
 				kd.running.Store(false)
 				kd.mu.Lock()
 				done := kd.stopDone

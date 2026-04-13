@@ -91,6 +91,7 @@ func (kd *KeibiDrop) AddFile(path string) error {
 }
 
 // AddFileAs adds a file with a custom remote name (preserving folder structure).
+// Automatically sends ADD_DIR for any parent directories the peer may not have.
 func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 	logger := kd.logger.With("method", "add-file-as")
 	if kd.session == nil || kd.session.GRPCClient == nil {
@@ -105,6 +106,7 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 	if finfo.IsDir() {
 		return syscall.EISDIR
 	}
+
 
 	file := &synctracker.File{
 		Name:           filepath.Base(remoteName),
@@ -570,33 +572,142 @@ func (kd *KeibiDrop) JoinRoom() error {
 		}
 	}
 
-	// Try direct P2P first. If it fails and bridge is configured, fall back.
+	// Connection priority: LAN (2s per addr) → direct IPv6 (15s) → bridge relay.
 	{
-		peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
-		directErr := session.PerformOutboundHandshake(kd.session, peerAddr)
+		// 1. Try LAN addresses first (same network, no relay needed).
+		lanConnected := false
+		if len(kd.PeerLocalAddrs) > 0 {
+			logger.Info("Trying LAN addresses first", "addrs", kd.PeerLocalAddrs)
+			for _, localAddr := range kd.PeerLocalAddrs {
+				addr := net.JoinHostPort(localAddr, strconv.Itoa(kd.session.PeerPort))
+				logger.Info("Trying LAN address", "addr", addr)
+				conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+				if err != nil {
+					logger.Info("LAN address failed", "addr", addr, "error", err)
+					continue
+				}
+				// LAN connection succeeded — do handshake on this connection.
+				if err := session.PerformOutboundHandshakeOnConn(kd.session, conn); err != nil {
+					conn.Close()
+					logger.Warn("LAN handshake failed", "addr", addr, "error", err)
+					continue
+				}
+				logger.Info("LAN connection succeeded!", "addr", addr)
+				kd.PeerIPv6IP = localAddr
+				lanConnected = true
 
-		if directErr == nil {
-			// Direct outbound succeeded. Accept inbound from peer.
-			logger.Info("Direct P2P outbound connected")
-			conn, err := kd.listener.Accept()
-			if err != nil {
-				logger.Error("Failed to accept", "error", err)
-				return err
+				// Accept inbound from peer (LAN, should be fast).
+				inConn, err := kd.listener.Accept()
+				if err != nil {
+					logger.Warn("LAN inbound accept failed", "error", err)
+					// Close outbound, fall through to direct/bridge.
+					if kd.session.Session != nil && kd.session.Session.Outbound != nil {
+						kd.session.Session.Outbound.Close()
+						kd.session.Session.Outbound = nil
+					}
+					kd.session.SEKOutbound = nil
+					kd.session.CipherMu.Lock()
+					kd.session.CipherSuite = ""
+					kd.session.CipherMu.Unlock()
+					lanConnected = false
+					break
+				}
+				if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+					logger.Warn("LAN inbound handshake failed", "error", err)
+					lanConnected = false
+				}
+				break
 			}
-			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-				logger.Error("Failed inbound handshake", "error", err)
-				return err
+			if lanConnected {
+				if kd.OnEvent != nil {
+					kd.OnEvent("connection_mode:lan")
+				}
+				goto connected
 			}
-		} else if kd.BridgeAddr != "" {
-			// Direct failed. Fall back to bridge relay.
-			logger.Warn("Direct P2P failed, falling back to bridge", "error", directErr, "bridge", kd.BridgeAddr)
-
-			// Reset session crypto state for fresh handshake via bridge.
+			// Reset crypto state after failed LAN attempts.
 			kd.session.SEKOutbound = nil
 			kd.session.CipherMu.Lock()
 			kd.session.CipherSuite = ""
 			kd.session.CipherMu.Unlock()
+		}
 
+		// 2. Try direct IPv6 P2P (skip if peer has no IPv6, e.g. mobile).
+		var directErr error
+		if kd.PeerIPv6IP != "" {
+			peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
+			directErr = session.PerformOutboundHandshake(kd.session, peerAddr)
+		} else {
+			directErr = fmt.Errorf("peer has no IPv6 address")
+		}
+
+		needBridge := false
+
+		if directErr == nil {
+			// Direct outbound succeeded. Accept inbound with 15s timeout.
+			// If the peer can't reach us (firewall blocks inbound IPv6),
+			// fall back to bridge for both directions.
+			logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
+
+			type acceptResult struct {
+				conn net.Conn
+				err  error
+			}
+			ch := make(chan acceptResult, 1)
+			go func() {
+				c, e := kd.listener.Accept()
+				ch <- acceptResult{c, e}
+			}()
+
+			select {
+			case res := <-ch:
+				if res.err != nil {
+					logger.Warn("Inbound accept failed", "error", res.err)
+					needBridge = kd.BridgeAddr != ""
+					if !needBridge {
+						return res.err
+					}
+				} else {
+					if err := session.PerformInboundHandshake(kd.session, res.conn); err != nil {
+						logger.Error("Failed inbound handshake", "error", err)
+						return err
+					}
+					if kd.OnEvent != nil {
+						kd.OnEvent("connection_mode:direct")
+					}
+				}
+			case <-time.After(15 * time.Second):
+				logger.Warn("Inbound accept timed out (15s), peer likely behind firewall")
+				needBridge = kd.BridgeAddr != ""
+				if !needBridge {
+					return fmt.Errorf("inbound accept timed out and no bridge configured")
+				}
+			}
+
+			if needBridge {
+				logger.Info("Falling back to bridge for both directions")
+				// Close the direct outbound — we'll redo both via bridge.
+				if kd.session.Session != nil && kd.session.Session.Outbound != nil {
+					kd.session.Session.Outbound.Close()
+					kd.session.Session.Outbound = nil
+				}
+				kd.session.SEKOutbound = nil
+				kd.session.CipherMu.Lock()
+				kd.session.CipherSuite = ""
+				kd.session.CipherMu.Unlock()
+			}
+		} else if kd.BridgeAddr != "" {
+			logger.Warn("Direct P2P failed, falling back to bridge", "error", directErr, "bridge", kd.BridgeAddr)
+			needBridge = true
+			kd.session.SEKOutbound = nil
+			kd.session.CipherMu.Lock()
+			kd.session.CipherSuite = ""
+			kd.session.CipherMu.Unlock()
+		} else {
+			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
+			return directErr
+		}
+
+		if needBridge {
 			outConn, err := kd.dialBridge(logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (outbound): %w", err)
@@ -614,13 +725,13 @@ func (kd *KeibiDrop) JoinRoom() error {
 				inConn.Close()
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
-		} else {
-			// Direct failed, no bridge configured.
-			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
-			return directErr
+			if kd.OnEvent != nil {
+				kd.OnEvent("connection_mode:bridge")
+			}
 		}
 	}
 
+connected:
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
 	kd.Start()
@@ -742,10 +853,30 @@ func (kd *KeibiDrop) CreateRoom() error {
 			}
 			kd.PeerIPv6IP = peerIP
 
-			if err := session.PerformOutboundHandshake(kd.session, net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))); err != nil {
-				return err
+			// Try direct outbound to peer. If it fails (peer behind firewall),
+			// fall back to bridge for the outbound direction.
+			outboundAddr := net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))
+			if err := session.PerformOutboundHandshake(kd.session, outboundAddr); err != nil {
+				if kd.BridgeAddr != "" {
+					logger.Warn("Direct outbound to peer failed, falling back to bridge for outbound", "error", err)
+					// Reset outbound crypto state for bridge handshake.
+					kd.session.SEKOutbound = nil
+					kd.session.CipherMu.Lock()
+					kd.session.CipherSuite = ""
+					kd.session.CipherMu.Unlock()
+					// Close direct inbound too — we need both via bridge.
+					if kd.session.Session != nil && kd.session.Session.Inbound != nil {
+						kd.session.Session.Inbound.Close()
+						kd.session.Session.Inbound = nil
+					}
+					kd.session.SEKInbound = nil
+					useBridge = true
+				} else {
+					return err
+				}
 			}
-		} else {
+		}
+		if useBridge {
 			// Bridge fallback.
 			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
 
