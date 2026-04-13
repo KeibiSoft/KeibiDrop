@@ -2098,7 +2098,20 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		return nil
 	}
 
-	// logger.Info("Adding remote file", "path", path, "size", stat.Size, "mtime", stat.Mtim.Time())
+	// Auto-create parent directories in the FUSE tree if they don't exist.
+	// This handles files from no-FUSE peers (mobile AddFileAs) that send
+	// ADD_FILE for "go-fp/examples/client/client.go" without prior ADD_DIR.
+	parentDir := filepath.Dir(path)
+	if parentDir != "/" && parentDir != "." {
+		d.Adm.Lock()
+		if _, exists := d.AllDirMap[parentDir]; !exists {
+			d.Adm.Unlock()
+			d.MkdirFromPeer(parentDir, 0755)
+		} else {
+			d.Adm.Unlock()
+		}
+	}
+
 	f := &File{
 		logger:          d.logger,
 		openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},

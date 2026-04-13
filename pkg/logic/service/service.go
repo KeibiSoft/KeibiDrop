@@ -408,16 +408,23 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				delete(kd.SyncTracker.RemoteFiles, req.OldPath)
 				f.RelativePath = req.Path
 				f.Name = filepath.Base(req.Path)
-				// Update size from the RENAME attr — the final file may be
-				// larger than the temp file (e.g. git appends 20-byte SHA-1
-				// checksum to pack files between write and rename).
 				if req.Attr != nil && req.Attr.Size > 0 {
 					f.Size = uint64(req.Attr.Size)
 				}
 				kd.SyncTracker.RemoteFiles[req.Path] = f
+				logger.Info("Renamed file in sync tracker", "oldPath", req.OldPath, "newPath", req.Path, "size", f.Size)
+			} else if req.Attr != nil && req.Attr.Size > 0 {
+				// Old path wasn't tracked (temp file notification was debounced away).
+				// Create entry with the correct size from the RENAME attr.
+				kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+					Name:         filepath.Base(req.Path),
+					RelativePath: req.Path,
+					Size:         uint64(req.Attr.Size),
+					LastEditTime: req.Attr.ModificationTime,
+				}
+				logger.Info("Created file from RENAME (old path not tracked)", "path", req.Path, "size", req.Attr.Size)
 			}
 			kd.SyncTracker.RemoteFilesMu.Unlock()
-			logger.Info("Renamed file in sync tracker", "oldPath", req.OldPath, "newPath", req.Path)
 		}
 	case bindings.NotifyType_RENAME_DIR:
 		// Peer renamed/moved a directory. OldPath -> Path.

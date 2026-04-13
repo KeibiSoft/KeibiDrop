@@ -91,6 +91,7 @@ func (kd *KeibiDrop) AddFile(path string) error {
 }
 
 // AddFileAs adds a file with a custom remote name (preserving folder structure).
+// Automatically sends ADD_DIR for any parent directories the peer may not have.
 func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 	logger := kd.logger.With("method", "add-file-as")
 	if kd.session == nil || kd.session.GRPCClient == nil {
@@ -105,6 +106,7 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 	if finfo.IsDir() {
 		return syscall.EISDIR
 	}
+
 
 	file := &synctracker.File{
 		Name:           filepath.Base(remoteName),
