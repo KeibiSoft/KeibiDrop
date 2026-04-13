@@ -37,9 +37,9 @@ jobs:
         run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v2.1.6
 
   build:
     strategy:
@@ -123,10 +123,11 @@ jobs:
         run: make build-rust
 
       - name: Build Rust UI (cross-compile x86_64)
-        if: matrix.cross == true
+        if: matrix.cross == true && runner.os == 'macOS'
         run: |
-          GOARCH=amd64 go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+          CGO_ENABLED=1 GOARCH=amd64 go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
           cd rust && cargo build --release --target x86_64-apple-darwin
+          mkdir -p target/release
           cp target/x86_64-apple-darwin/release/keibidrop-rust target/release/keibidrop-rust
 
       - name: Build CLI
