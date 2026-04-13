@@ -1,5 +1,5 @@
-COMMIT  := $(shell git rev-parse HEAD)
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
+COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "0.1.0-beta")
 LDFLAGS := -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.Version=$(VERSION) \
            -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.CommitHash=$(COMMIT)
 DIST    := dist
@@ -104,15 +104,21 @@ package-deb: $(DIST)
 	@echo "Created .deb in $(DIST)/"
 
 # Windows .zip — contains kd.exe + keibidrop-cli.exe + README
+WINFSP_VERSION ?= 2.1.24292
+WINFSP_MSI_URL ?= https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-$(WINFSP_VERSION).msi
+
 package-windows: $(DIST)
 	@echo "Packaging Windows .zip for $(GOARCH)..."
 	mkdir -p $(DIST)/win-staging/keibidrop-$(VERSION)
 	cp kd.exe $(DIST)/win-staging/keibidrop-$(VERSION)/ 2>/dev/null || cp kd $(DIST)/win-staging/keibidrop-$(VERSION)/kd.exe
 	cp keibidrop-cli.exe $(DIST)/win-staging/keibidrop-$(VERSION)/ 2>/dev/null || cp keibidrop-cli $(DIST)/win-staging/keibidrop-$(VERSION)/keibidrop-cli.exe
 	cp README.md LICENSE $(DIST)/win-staging/keibidrop-$(VERSION)/
+	@echo "Downloading WinFsp $(WINFSP_VERSION)..."
+	curl -sL -o $(DIST)/win-staging/keibidrop-$(VERSION)/winfsp.msi "$(WINFSP_MSI_URL)" || echo "Warning: WinFsp download failed, packaging without it"
+	@echo 'Install WinFsp first (double-click winfsp.msi), then run keibidrop.' > $(DIST)/win-staging/keibidrop-$(VERSION)/INSTALL.txt
 	cd $(DIST)/win-staging && zip -r ../keibidrop-$(VERSION)-windows-$(GOARCH).zip keibidrop-$(VERSION)/
 	rm -rf $(DIST)/win-staging
-	@echo "Created $(DIST)/keibidrop-$(VERSION)-windows-$(GOARCH).zip"
+	@echo "Created $(DIST)/keibidrop-$(VERSION)-windows-$(GOARCH).zip (includes WinFsp installer)"
 
 # Chocolatey .nupkg — requires choco pack
 package-choco: $(DIST)
@@ -187,7 +193,7 @@ clean: clean-dist
 # Relay: http://localhost:54321 (start your own relay first)
 
 RELAY   ?= http://localhost:54321
-BRIDGE  ?= 185.104.181.40:26600
+BRIDGE  ?= bridge.keibisoft.com:26600
 SCRIPTS := scripts/dev
 
 # On Windows, WinFSP requires drive letters for FUSE mount points.

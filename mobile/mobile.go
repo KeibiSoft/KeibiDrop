@@ -90,7 +90,7 @@ func (api *API) Initialize(logFilePath string, relayURL string, inboundPort int,
 
 	// Default bridge relay for mobile peers — direct P2P rarely works on mobile
 	// (NAT, carrier-grade NAT, no inbound ports). The bridge is the primary path.
-	kd.BridgeAddr = "185.104.181.40:26600"
+	kd.BridgeAddr = "bridge.keibisoft.com:26600"
 
 	api.mu.Lock()
 	api.ctxCancel = cancel

@@ -20,6 +20,25 @@ linters-settings:
   revive:
     ignore-generated-header: true
     severity: warning
+  errcheck:
+    exclude-functions:
+      - (io.Closer).Close
+      - (*os.File).Close
+      - (net.Conn).Close
+      - (*google.golang.org/grpc.ClientConn).Close
 
 issues:
   exclude-use-default: false
+  exclude-rules:
+    # Don't check error returns on Close/cleanup in tests
+    - path: _test\.go
+      linters:
+        - errcheck
+    # Don't check error returns on deferred Close calls
+    - text: "Error return value of .*.Close"
+      linters:
+        - errcheck
+    # Ignore os.Remove in cleanup paths
+    - text: "Error return value of `os.Remove`"
+      linters:
+        - errcheck

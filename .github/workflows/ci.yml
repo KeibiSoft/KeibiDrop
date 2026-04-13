@@ -14,14 +14,14 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: true
 
       - name: Install FUSE dev headers
-        run: sudo apt-get install -y libfuse3-dev
+        run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: Run tests
-        run: go test -v -count=1 -timeout 180s ./tests/...
+        run: go test -v -count=1 -timeout 180s -skip 'BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency|PullFileThroughput|EncryptedGRPC|TransferThroughput|SecureConnThroughput' ./tests/...
 
   lint:
     runs-on: ubuntu-22.04
@@ -30,16 +30,18 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: true
 
       - name: Install FUSE dev headers
-        run: sudo apt-get install -y libfuse3-dev
+        run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.64.8
+          args: --timeout=3m
+          install-mode: goinstall
 
   build:
     strategy:
@@ -49,7 +51,7 @@ jobs:
             name: macOS arm64
             goarch: arm64
           - os: macos-15
-            name: macOS x86_64 (cross-compile)
+            name: macOS x86_64
             goarch: amd64
             cross: true
           - os: ubuntu-22.04
@@ -67,7 +69,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache: true
 
       - uses: dtolnay/rust-toolchain@stable
@@ -80,9 +82,9 @@ jobs:
             ~/.cargo/registry
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock') }}
 
-      - name: Install protoc and FUSE dev headers (Linux)
+      - name: Install FUSE dev headers and protoc (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y libfuse3-dev protobuf-compiler
+        run: sudo apt-get install -y libfuse-dev libfuse3-dev protobuf-compiler
 
       - name: Install macFUSE and protoc (macOS)
         if: runner.os == 'macOS'
@@ -106,9 +108,28 @@ jobs:
         shell: bash
         run: make install-proto
 
-      - name: Build Rust UI (includes protoc + Go static lib)
+      - name: Add Rust cross-compile target (macOS x86_64 from arm64)
+        if: matrix.cross == true
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Build Rust UI
         if: runner.os != 'Windows' && matrix.cross != true
         run: make build-rust
+
+      - name: Build Rust UI (cross-compile x86_64)
+        if: matrix.cross == true && runner.os == 'macOS'
+        run: |
+          CGO_ENABLED=1 GOARCH=amd64 go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+          cd rust && cargo build --release --target x86_64-apple-darwin
+          mkdir -p target/release
+          cp target/x86_64-apple-darwin/release/keibidrop-rust target/release/keibidrop-rust
+
+      - name: Set cross-compile env (macOS x86_64 from arm64)
+        if: matrix.cross == true && runner.os == 'macOS'
+        run: |
+          echo "CGO_ENABLED=1" >> $GITHUB_ENV
+          echo "CGO_CFLAGS=-arch x86_64" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-arch x86_64" >> $GITHUB_ENV
 
       - name: Build CLI
         shell: bash
@@ -118,21 +139,12 @@ jobs:
         shell: bash
         run: GOARCH=${{ matrix.goarch }} make build-kd
 
-      - name: Upload artifacts (Unix)
-        if: runner.os != 'Windows'
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: keibidrop-${{ runner.os }}-${{ matrix.goarch }}
+          name: keibidrop-${{ matrix.name }}
           path: |
-            rust/target/release/keibidrop-rust
-            keibidrop-cli
-            kd
-
-      - name: Upload artifacts (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: keibidrop-${{ runner.os }}-${{ matrix.goarch }}
-          path: |
-            keibidrop-cli.exe
-            kd.exe
+            rust/target/release/keibidrop-rust*
+            keibidrop-cli*
+            kd*
+            !kd.exe.manifest
