@@ -8,6 +8,8 @@ license: MPL-2.0
 section: net
 priority: optional
 
+depends:
+  - libfuse2
 suggests:
   - fuse3
 

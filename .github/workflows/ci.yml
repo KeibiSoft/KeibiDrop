@@ -18,7 +18,7 @@ jobs:
           cache: true
 
       - name: Install FUSE dev headers
-        run: sudo apt-get install -y libfuse3-dev
+        run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: Run tests
         run: go test -v -count=1 -timeout 180s ./tests/...
@@ -34,7 +34,7 @@ jobs:
           cache: true
 
       - name: Install FUSE dev headers
-        run: sudo apt-get install -y libfuse3-dev
+        run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
@@ -48,10 +48,9 @@ jobs:
           - os: macos-15
             name: macOS arm64
             goarch: arm64
-          - os: macos-15
-            name: macOS x86_64 (cross-compile)
+          - os: macos-13
+            name: macOS x86_64
             goarch: amd64
-            cross: true
           - os: ubuntu-22.04
             name: Linux x86_64
             goarch: amd64
@@ -80,9 +79,9 @@ jobs:
             ~/.cargo/registry
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock') }}
 
-      - name: Install protoc and FUSE dev headers (Linux)
+      - name: Install FUSE dev headers and protoc (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y libfuse3-dev protobuf-compiler
+        run: sudo apt-get install -y libfuse-dev libfuse3-dev protobuf-compiler
 
       - name: Install macFUSE and protoc (macOS)
         if: runner.os == 'macOS'
@@ -106,33 +105,24 @@ jobs:
         shell: bash
         run: make install-proto
 
-      - name: Build Rust UI (includes protoc + Go static lib)
-        if: runner.os != 'Windows' && matrix.cross != true
+      - name: Build Rust UI
+        if: runner.os != 'Windows'
         run: make build-rust
 
       - name: Build CLI
         shell: bash
-        run: GOARCH=${{ matrix.goarch }} make build-cli
+        run: make build-cli
 
       - name: Build kd
         shell: bash
-        run: GOARCH=${{ matrix.goarch }} make build-kd
+        run: make build-kd
 
-      - name: Upload artifacts (Unix)
-        if: runner.os != 'Windows'
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: keibidrop-${{ runner.os }}-${{ matrix.goarch }}
+          name: keibidrop-${{ matrix.name }}
           path: |
-            rust/target/release/keibidrop-rust
-            keibidrop-cli
-            kd
-
-      - name: Upload artifacts (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: keibidrop-${{ runner.os }}-${{ matrix.goarch }}
-          path: |
-            keibidrop-cli.exe
-            kd.exe
+            rust/target/release/keibidrop-rust*
+            keibidrop-cli*
+            kd*
+            !kd.exe.manifest

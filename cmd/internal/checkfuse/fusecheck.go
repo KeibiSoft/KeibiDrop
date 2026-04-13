@@ -54,6 +54,16 @@ func IsFUSEPresent() bool {
 	}
 
 	slog.Warn("FUSE detection result", "present", result)
+	if !result {
+		switch runtime.GOOS {
+		case "darwin":
+			slog.Warn("macFUSE not found. Install it for virtual folder support: https://macfuse.github.io/ or: brew install macfuse")
+		case "linux":
+			slog.Warn("FUSE not found. Install it for virtual folder support: sudo apt install libfuse-dev (Debian/Ubuntu) or sudo dnf install fuse-devel (Fedora)")
+		case "windows":
+			slog.Warn("WinFsp not found. Install it for virtual folder support: https://winfsp.dev/rel/ or: choco install winfsp")
+		}
+	}
 	return result
 }
 

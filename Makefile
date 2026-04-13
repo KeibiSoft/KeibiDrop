@@ -1,5 +1,5 @@
-COMMIT  := $(shell git rev-parse HEAD)
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
+COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "0.1.0-beta")
 LDFLAGS := -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.Version=$(VERSION) \
            -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.CommitHash=$(COMMIT)
 DIST    := dist

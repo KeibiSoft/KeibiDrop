@@ -1,5 +1,11 @@
 name: Release
 
+# Tag convention (beta only for now):
+#   v0.2.0-beta.1  → Beta prerelease
+#   v0.2.0         → When ready for stable
+#
+# Usage: git tag v0.2.0-beta.1 && git push origin v0.2.0-beta.1
+
 on:
   push:
     tags:
@@ -14,30 +20,44 @@ jobs:
       matrix:
         include:
           - os: macos-15
+            name: macOS-arm64
             goos: darwin
             goarch: arm64
             package: dmg
-          - os: macos-15
+          - os: macos-13
+            name: macOS-x86_64
             goos: darwin
             goarch: amd64
             package: tar
-            cross: true
           - os: ubuntu-22.04
+            name: Linux-x86_64
             goos: linux
             goarch: amd64
             package: deb
           - os: windows-2022
+            name: Windows-x86_64
             goos: windows
             goarch: amd64
             package: zip
 
     runs-on: ${{ matrix.os }}
-    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    name: Build ${{ matrix.name }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set version from tag
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
 
       - uses: actions/setup-go@v5
         with:
@@ -54,9 +74,9 @@ jobs:
             ~/.cargo/registry
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock') }}
 
-      - name: Install protoc and FUSE dev headers (Linux)
+      - name: Install FUSE dev headers and protoc (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y libfuse3-dev protobuf-compiler
+        run: sudo apt-get install -y libfuse-dev libfuse3-dev protobuf-compiler
 
       - name: Install macFUSE and protoc (macOS)
         if: runner.os == 'macOS'
@@ -84,13 +104,16 @@ jobs:
         if: runner.os == 'Linux'
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 
-      - name: Build Rust UI (native only)
-        if: runner.os != 'Windows' && matrix.cross != true
+      - name: Build Rust UI
+        if: runner.os != 'Windows'
         run: make build-rust
 
       - name: Build CLI and kd
         shell: bash
-        run: GOARCH=${{ matrix.goarch }} make build-cli build-kd
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          COMMIT=${{ steps.version.outputs.commit }}
+          make build-cli build-kd VERSION=$VERSION COMMIT=$COMMIT
 
       - name: Package .dmg (macOS arm64)
         if: matrix.package == 'dmg'
@@ -106,20 +129,17 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "0.1.0")
-          zip -j "dist/keibidrop-${VERSION}-windows-amd64.zip" keibidrop-cli.exe kd.exe
+          VERSION=${{ steps.version.outputs.version }}
+          zip -j "dist/keibidrop-${VERSION}-windows-amd64.zip" keibidrop-cli.exe kd.exe README.md LICENSE
 
       - name: Package .deb (Linux)
         if: matrix.package == 'deb'
         run: make package-deb
 
-      - name: Generate checksums
-        run: make checksums
-
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: release-${{ matrix.name }}
           path: dist/*
 
   publish:
@@ -135,24 +155,31 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Collect release files
+      - name: Collect release files and generate checksums
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "SHA256SUMS" \) -exec cp {} release/ \;
-          cd release && shasum -a 256 *.dmg *.deb *.tar.gz *.zip > SHA256SUMS 2>/dev/null || true
-          ls -la release/
+          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
+          cd release && sha256sum * > SHA256SUMS 2>/dev/null || shasum -a 256 * > SHA256SUMS
+          ls -lh release/
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          PRERELEASE=""
-          if [[ "$TAG" == v0.* ]]; then
-            PRERELEASE="--prerelease"
+
+          # Beta for now, stable later
+          PRERELEASE="--prerelease"
+          TITLE="KeibiDrop $TAG (Beta)"
+
+          if [[ "$TAG" != *"-"* ]] && [[ "$TAG" != v0.* ]]; then
+            # Stable: v1.0.0+ with no suffix
+            PRERELEASE=""
+            TITLE="KeibiDrop $TAG"
           fi
+
           gh release create "$TAG" \
-            --title "KeibiDrop $TAG" \
+            --title "$TITLE" \
             --generate-notes \
             $PRERELEASE \
             release/*
