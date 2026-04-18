@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=KeibiDrop
+Comment=End-to-end encrypted peer-to-peer file sharing
+Exec=keibidrop
+Icon=keibidrop
+Terminal=false
+Type=Application
+Categories=Network;FileTransfer;Security;
+Keywords=file;transfer;p2p;encrypted;share;

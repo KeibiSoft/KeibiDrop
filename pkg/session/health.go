@@ -158,11 +158,11 @@ func (m *HealthMonitor) sendHeartbeat() error {
 		m.logger.Debug("Health changed", "from", oldHealth, "to", newHealth, "rtt", rtt)
 	}
 
-	// Log clock skew if significant (>1 second)
+	// Log clock skew if significant (>5 seconds — mobile clocks drift more)
 	if resp.Timestamp > 0 {
 		peerTime := time.Unix(0, int64(resp.Timestamp))
 		skew := time.Since(peerTime) - rtt/2
-		if skew.Abs() > time.Second {
+		if skew.Abs() > 5*time.Second {
 			m.logger.Warn("Clock skew detected", "skew", skew)
 		}
 	}

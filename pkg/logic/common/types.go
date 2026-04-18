@@ -202,7 +202,9 @@ type ConnectionHint struct {
 // The relay cannot read the contents - only the peers with the shared
 // room password can decrypt it.
 type EncryptedRegistration struct {
-	Blob string `json:"blob"` // base64-encoded ChaCha20-Poly1305 ciphertext
+	Blob   string `json:"blob"`             // base64-encoded ChaCha20-Poly1305 ciphertext
+	Bridge string `json:"bridge,omitempty"` // relay-suggested bridge address (e.g., "fra1.bridge.keibisoft.com:26600")
+	Tier   string `json:"tier,omitempty"`   // bandwidth tier: "free", "priority" (relay metadata, not encrypted)
 }
 
 // Map server status errors to semantic errors.

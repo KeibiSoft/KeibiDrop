@@ -106,6 +106,15 @@ func (api *API) Initialize(logFilePath string, relayURL string, inboundPort int,
 	return nil
 }
 
+// SetBridgeAddr overrides the default bridge relay address.
+func (api *API) SetBridgeAddr(addr string) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.kd != nil {
+		api.kd.BridgeAddr = addr
+	}
+}
+
 // Start runs the KeibiDrop event loop. Blocks until Stop is called.
 // Call this from a background thread on mobile.
 func (api *API) Start() error {
@@ -349,6 +358,34 @@ func (api *API) SaveFile(remoteName string) (string, error) {
 	return localPath, nil
 }
 
+// SaveAllFiles downloads all remote files to the save folder sequentially.
+// Returns the number of files successfully saved.
+func (api *API) SaveAllFiles() int {
+	api.mu.Lock()
+	kd := api.kd
+	api.mu.Unlock()
+	if kd == nil || kd.SyncTracker == nil {
+		return 0
+	}
+
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	names := make([]string, 0, len(kd.SyncTracker.RemoteFiles))
+	for name := range kd.SyncTracker.RemoteFiles {
+		if !isInternalFile(name) {
+			names = append(names, name)
+		}
+	}
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
+
+	saved := 0
+	for _, name := range names {
+		if _, err := api.SaveFile(name); err == nil {
+			saved++
+		}
+	}
+	return saved
+}
+
 // CancelDownload stops an active download. Partial data is preserved.
 // Call SaveFile or ExportFile again to resume.
 func (api *API) CancelDownload(remoteName string) error {
@@ -368,6 +405,15 @@ func (api *API) GetDownloadProgress(remoteName string) int {
 		return -1
 	}
 	return int(p * 100)
+}
+
+// isInternalFile returns true for macOS/FUSE internal files that should not appear in the UI.
+func isInternalFile(name string) bool {
+	return strings.Contains(name, ".fuse_hidden") ||
+		strings.Contains(name, ".fseventsd") ||
+		strings.Contains(name, ".fseventuuid") ||
+		strings.Contains(name, ".DS_Store") ||
+		strings.Contains(name, ".kdbitmap")
 }
 
 // --- File lists (index-based for gomobile compatibility) ---
@@ -393,6 +439,9 @@ func (api *API) snapshotRemoteFiles() {
 		sizes: make([]int64, 0, len(api.kd.SyncTracker.RemoteFiles)),
 	}
 	for name, f := range api.kd.SyncTracker.RemoteFiles {
+		if isInternalFile(name) {
+			continue
+		}
 		snap.names = append(snap.names, name)
 		snap.sizes = append(snap.sizes, int64(f.Size))
 	}
@@ -426,6 +475,9 @@ func (api *API) snapshotLocalFiles() {
 		names: make([]string, 0, len(api.kd.SyncTracker.LocalFiles)),
 	}
 	for name := range api.kd.SyncTracker.LocalFiles {
+		if isInternalFile(name) {
+			continue
+		}
 		snap.names = append(snap.names, name)
 	}
 	api.kd.SyncTracker.LocalFilesMu.RUnlock()

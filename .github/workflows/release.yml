@@ -92,7 +92,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install winfsp protoc -y
+          choco install winfsp protoc innosetup -y
           $winfspDir = "C:\Program Files (x86)\WinFsp"
           echo "CPATH=$winfspDir\inc\fuse" >> $env:GITHUB_ENV
           echo "CGO_LDFLAGS=-L$winfspDir\lib" >> $env:GITHUB_ENV
@@ -137,24 +137,21 @@ jobs:
 
       - name: Package .dmg (macOS arm64)
         if: matrix.package == 'dmg'
-        run: make package-macos
+        run: make package-macos VERSION=${{ steps.version.outputs.version }}
 
       - name: Package .tar.gz
         if: matrix.package != 'zip'
         shell: bash
-        run: make package-tar
+        run: make package-tar VERSION=${{ steps.version.outputs.version }}
 
       - name: Package .zip (Windows)
         if: matrix.package == 'zip'
         shell: bash
-        run: |
-          mkdir -p dist
-          VERSION=${{ steps.version.outputs.version }}
-          zip -j "dist/keibidrop-${VERSION}-windows-amd64.zip" keibidrop-cli.exe kd.exe README.md LICENSE
+        run: make package-windows VERSION=${{ steps.version.outputs.version }}
 
       - name: Package .deb (Linux)
         if: matrix.package == 'deb'
-        run: make package-deb
+        run: make package-deb VERSION=${{ steps.version.outputs.version }}
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
@@ -178,7 +175,7 @@ jobs:
       - name: Collect release files and generate checksums
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release/ \;
+          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*-setup.exe" \) -exec cp {} release/ \;
           cd release && sha256sum * > SHA256SUMS 2>/dev/null || shasum -a 256 * > SHA256SUMS
           ls -lh release/
 

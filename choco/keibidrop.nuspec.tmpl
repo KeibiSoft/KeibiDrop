@@ -8,12 +8,16 @@
     <owners>KeibiSoft</owners>
     <licenseUrl>https://github.com/KeibiSoft/KeibiDrop/blob/main/LICENSE</licenseUrl>
     <projectUrl>https://github.com/KeibiSoft/KeibiDrop</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/KeibiSoft/KeibiDrop/main/assets/icons/icon-256.png</iconUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <description>End-to-end encrypted peer-to-peer file sharing with post-quantum cryptography. Transfer files directly between devices with no cloud storage. The relay can't read your data.</description>
+    <description>End-to-end encrypted peer-to-peer file sharing with post-quantum cryptography (ML-KEM + X25519). Transfer files directly between devices with no cloud storage. Features FUSE virtual filesystem, CLI daemon, and desktop UI.</description>
     <summary>E2E encrypted P2P file sharing</summary>
-    <tags>file-transfer p2p encryption security privacy fuse</tags>
+    <tags>file-transfer p2p encryption security privacy fuse post-quantum</tags>
+    <dependencies>
+      <dependency id="winfsp" version="2.0" />
+    </dependencies>
   </metadata>
   <files>
-    <file src="keibidrop-${VERSION}-windows-amd64.zip" target="tools" />
+    <file src="tools\**" target="tools" />
   </files>
 </package>

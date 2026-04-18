@@ -9,6 +9,14 @@ include!("build_platform_other.rs");
 fn main() {
     slint_build::compile("src/ui.slint").unwrap();
 
+    // Embed app icon in Windows executable
+    #[cfg(target_os = "windows")]
+    {
+        let mut res = winresource::WindowsResource::new();
+        res.set_icon("assets/keibidrop.ico");
+        res.compile().expect("Failed to compile Windows resources");
+    }
+
     // Tell cargo to look for shared libraries in the project root
     println!("cargo:rustc-link-search=native=..");
     println!("cargo:rustc-link-lib=static=keibidrop");

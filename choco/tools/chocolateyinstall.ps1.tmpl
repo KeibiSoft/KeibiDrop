@@ -1,0 +1,21 @@
+$ErrorActionPreference = 'Stop'
+
+$toolsDir = "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)"
+$url = "https://github.com/KeibiSoft/KeibiDrop/releases/download/v${VERSION}/keibidrop-${VERSION}-windows-amd64.zip"
+
+$packageArgs = @{
+  packageName    = 'keibidrop'
+  unzipLocation  = $toolsDir
+  url64bit       = $url
+  checksum64     = '${SHA256}'
+  checksumType64 = 'sha256'
+}
+
+Install-ChocolateyZipPackage @packageArgs
+
+# Add to PATH
+$installDir = Join-Path $toolsDir "keibidrop-${VERSION}"
+Install-ChocolateyPath -PathToInstall $installDir -PathType 'Machine'
+
+Write-Host "KeibiDrop installed. Available commands: keibidrop, keibidrop-cli, kd"
+Write-Host "WinFsp is required for FUSE support: choco install winfsp"

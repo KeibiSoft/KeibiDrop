@@ -381,6 +381,19 @@ fn main() {
 
         // Build UI
         let app = MainWindow::new().expect("Failed to create MainWindow");
+
+        // Set window icon from embedded PNG
+        app.window().with_winit_window(|winit_win| {
+            let icon_bytes = include_bytes!("../assets/icon-256.png");
+            if let Ok(img) = image::load_from_memory(icon_bytes) {
+                let rgba = img.to_rgba8();
+                let (w, h) = rgba.dimensions();
+                if let Ok(icon) = slint::winit_030::winit::window::Icon::from_rgba(rgba.into_raw(), w, h) {
+                    winit_win.set_window_icon(Some(icon));
+                }
+            }
+        });
+
         app.set_my_code(slint::SharedString::from(my_fp.clone()));
         app.set_mount_path(slint::SharedString::from(to_mount.clone()));
 

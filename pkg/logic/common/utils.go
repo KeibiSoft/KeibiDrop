@@ -120,6 +120,14 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		logger.Warn("We got a weird status code", "code", resp.StatusCode)
 	}
 
+	// Check if relay returned metadata (bridge hint, tier) in register response.
+	var regResp EncryptedRegistration
+	if err := json.NewDecoder(resp.Body).Decode(&regResp); err == nil {
+		if regResp.Bridge != "" {
+			logger.Info("Relay assigned bridge", "bridge", regResp.Bridge)
+			kd.BridgeAddr = regResp.Bridge
+		}
+	}
 	_ = resp.Body.Close()
 
 	logger.Info("Success")
@@ -177,12 +185,19 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	}
 
 	// Decode encrypted response from relay.
+	// The response may include relay metadata (bridge hint, tier) alongside the encrypted blob.
 	var encResp EncryptedRegistration
 	if err := json.NewDecoder(resp.Body).Decode(&encResp); err != nil {
 		logger.Error("Failed to decode encrypted response", "error", err)
 		return err
 	}
 	_ = resp.Body.Close()
+
+	// If the relay suggests a bridge, use it (both peers get the same suggestion).
+	if encResp.Bridge != "" {
+		logger.Info("Relay suggested bridge", "bridge", encResp.Bridge)
+		kd.BridgeAddr = encResp.Bridge
+	}
 
 	encryptedBlob, err := base64.RawURLEncoding.DecodeString(encResp.Blob)
 	if err != nil {

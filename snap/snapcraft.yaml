@@ -1,0 +1,35 @@
+name: keibidrop
+base: core22
+version: '0.2.0-beta.1'
+summary: E2E encrypted peer-to-peer file sharing
+description: |
+  KeibiDrop is an end-to-end encrypted peer-to-peer file sharing tool with
+  post-quantum cryptography (ML-KEM + X25519). Transfer files directly between
+  devices with no cloud storage. Features FUSE virtual filesystem, desktop UI,
+  interactive CLI, and agent daemon.
+
+grade: devel
+confinement: classic
+
+architectures:
+  - build-on: amd64
+
+apps:
+  keibidrop:
+    command: bin/keibidrop
+  keibidrop-cli:
+    command: bin/keibidrop-cli
+  kd:
+    command: bin/kd
+
+parts:
+  keibidrop:
+    plugin: dump
+    source: https://github.com/KeibiSoft/KeibiDrop/releases/download/v${SNAPCRAFT_PROJECT_VERSION}/keibidrop-${SNAPCRAFT_PROJECT_VERSION}-linux-amd64.tar.gz
+    source-type: tar
+    organize:
+      keibidrop: bin/keibidrop
+      keibidrop-cli: bin/keibidrop-cli
+      kd: bin/kd
+    stage-packages:
+      - libfuse2

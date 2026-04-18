@@ -33,6 +33,47 @@ build-rust: protoc build-static-rust-bridge
 
 build-all: build-rust build-cli build-kd
 
+# Cross-compile for macOS arm64 (from Intel) or x86_64 (from arm64)
+# Usage: make cross-macos CROSS_ARCH=arm64   (from Intel Mac, target M1/M2)
+#        make cross-macos CROSS_ARCH=amd64   (from M1/M2, target Intel)
+CROSS_ARCH ?= arm64
+CROSS_RUST_TARGET_arm64 := aarch64-apple-darwin
+CROSS_RUST_TARGET_amd64 := x86_64-apple-darwin
+CROSS_RUST_TARGET := $(CROSS_RUST_TARGET_$(CROSS_ARCH))
+
+cross-macos:
+	@echo "Cross-compiling for macOS $(CROSS_ARCH)..."
+	# Go static lib for Rust FFI
+	CGO_ENABLED=1 GOARCH=$(CROSS_ARCH) go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+	# Rust UI
+	rustup target add $(CROSS_RUST_TARGET) 2>/dev/null || true
+	cd rust && cargo build --release --target $(CROSS_RUST_TARGET)
+	# Go CLI binaries
+	CGO_ENABLED=1 CGO_CFLAGS="-arch $(if $(filter arm64,$(CROSS_ARCH)),arm64,x86_64)" \
+	  CGO_LDFLAGS="-arch $(if $(filter arm64,$(CROSS_ARCH)),arm64,x86_64)" \
+	  GOARCH=$(CROSS_ARCH) go build -ldflags="$(LDFLAGS)" -o keibidrop-cli-$(CROSS_ARCH) cmd/cli/keibidrop-cli.go
+	CGO_ENABLED=1 CGO_CFLAGS="-arch $(if $(filter arm64,$(CROSS_ARCH)),arm64,x86_64)" \
+	  CGO_LDFLAGS="-arch $(if $(filter arm64,$(CROSS_ARCH)),arm64,x86_64)" \
+	  GOARCH=$(CROSS_ARCH) go build -ldflags="$(LDFLAGS)" -o kd-$(CROSS_ARCH) ./cmd/kd
+	@echo "Done. Binaries: keibidrop-cli-$(CROSS_ARCH), kd-$(CROSS_ARCH)"
+	@echo "Rust UI: rust/target/$(CROSS_RUST_TARGET)/release/keibidrop-rust"
+
+# Package cross-compiled DMG
+cross-macos-dmg: cross-macos $(DIST)
+	@echo "Packaging cross-compiled macOS .dmg for $(CROSS_ARCH)..."
+	mkdir -p $(DIST)/dmg-cross/KeibiDrop.app/Contents/MacOS $(DIST)/dmg-cross/KeibiDrop.app/Contents/Resources
+	cp rust/target/$(CROSS_RUST_TARGET)/release/keibidrop-rust $(DIST)/dmg-cross/KeibiDrop.app/Contents/MacOS/keibidrop
+	cp keibidrop-cli-$(CROSS_ARCH) $(DIST)/dmg-cross/KeibiDrop.app/Contents/MacOS/keibidrop-cli
+	cp kd-$(CROSS_ARCH) $(DIST)/dmg-cross/KeibiDrop.app/Contents/MacOS/kd
+	cp assets/icons/keibidrop.icns $(DIST)/dmg-cross/KeibiDrop.app/Contents/Resources/keibidrop.icns
+	sed 's/VERSION_PLACEHOLDER/$(VERSION)/g' assets/Info.plist.tmpl > $(DIST)/dmg-cross/KeibiDrop.app/Contents/Info.plist
+	ln -s /Applications $(DIST)/dmg-cross/Applications
+	hdiutil create -volname "KeibiDrop $(VERSION)" \
+	  -srcfolder $(DIST)/dmg-cross -ov -format UDZO \
+	  $(DIST)/keibidrop-$(VERSION)-darwin-$(CROSS_ARCH).dmg
+	rm -rf $(DIST)/dmg-cross
+	@echo "Created $(DIST)/keibidrop-$(VERSION)-darwin-$(CROSS_ARCH).dmg"
+
 # ── Test & Lint ────────────────────────────────────────────
 
 test:
@@ -69,15 +110,20 @@ slint-preview:
 $(DIST):
 	mkdir -p $(DIST)
 
-# macOS .dmg — contains all three binaries + README
+# macOS .dmg — .app bundle with Applications symlink (drag-to-install)
 package-macos: $(DIST)
 	@echo "Packaging macOS .dmg for $(GOARCH)..."
 	mkdir -p $(DIST)/dmg-staging
-	cp rust/target/release/keibidrop-rust $(DIST)/dmg-staging/keibidrop
-	cp keibidrop-cli $(DIST)/dmg-staging/
-	cp kd $(DIST)/dmg-staging/
-	cp README.md $(DIST)/dmg-staging/
-	cp LICENSE $(DIST)/dmg-staging/
+	# Create .app bundle
+	mkdir -p $(DIST)/dmg-staging/KeibiDrop.app/Contents/MacOS
+	mkdir -p $(DIST)/dmg-staging/KeibiDrop.app/Contents/Resources
+	cp rust/target/release/keibidrop-rust $(DIST)/dmg-staging/KeibiDrop.app/Contents/MacOS/keibidrop
+	cp keibidrop-cli $(DIST)/dmg-staging/KeibiDrop.app/Contents/MacOS/
+	cp kd $(DIST)/dmg-staging/KeibiDrop.app/Contents/MacOS/
+	cp assets/icons/keibidrop.icns $(DIST)/dmg-staging/KeibiDrop.app/Contents/Resources/keibidrop.icns
+	sed 's/VERSION_PLACEHOLDER/$(VERSION)/g' assets/Info.plist.tmpl > $(DIST)/dmg-staging/KeibiDrop.app/Contents/Info.plist
+	# Applications symlink for drag-to-install
+	ln -s /Applications $(DIST)/dmg-staging/Applications
 	hdiutil create -volname "KeibiDrop $(VERSION)" \
 	  -srcfolder $(DIST)/dmg-staging \
 	  -ov -format UDZO \
@@ -108,17 +154,23 @@ WINFSP_VERSION ?= 2.1.24292
 WINFSP_MSI_URL ?= https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-$(WINFSP_VERSION).msi
 
 package-windows: $(DIST)
-	@echo "Packaging Windows .zip for $(GOARCH)..."
-	mkdir -p $(DIST)/win-staging/keibidrop-$(VERSION)
-	cp kd.exe $(DIST)/win-staging/keibidrop-$(VERSION)/ 2>/dev/null || cp kd $(DIST)/win-staging/keibidrop-$(VERSION)/kd.exe
-	cp keibidrop-cli.exe $(DIST)/win-staging/keibidrop-$(VERSION)/ 2>/dev/null || cp keibidrop-cli $(DIST)/win-staging/keibidrop-$(VERSION)/keibidrop-cli.exe
-	cp README.md LICENSE $(DIST)/win-staging/keibidrop-$(VERSION)/
+	@echo "Packaging Windows installer + zip for $(GOARCH)..."
+	mkdir -p $(DIST)/win-staging
+	cp kd.exe $(DIST)/win-staging/ 2>/dev/null || cp kd $(DIST)/win-staging/kd.exe
+	cp keibidrop-cli.exe $(DIST)/win-staging/ 2>/dev/null || cp keibidrop-cli $(DIST)/win-staging/keibidrop-cli.exe
+	cp rust/target/release/keibidrop-rust.exe $(DIST)/win-staging/keibidrop.exe 2>/dev/null || true
+	cp README.md LICENSE $(DIST)/win-staging/
+	cp assets/icons/keibidrop.ico $(DIST)/win-staging/
 	@echo "Downloading WinFsp $(WINFSP_VERSION)..."
-	curl -sL -o $(DIST)/win-staging/keibidrop-$(VERSION)/winfsp.msi "$(WINFSP_MSI_URL)" || echo "Warning: WinFsp download failed, packaging without it"
-	@echo 'Install WinFsp first (double-click winfsp.msi), then run keibidrop.' > $(DIST)/win-staging/keibidrop-$(VERSION)/INSTALL.txt
-	cd $(DIST)/win-staging && zip -r ../keibidrop-$(VERSION)-windows-$(GOARCH).zip keibidrop-$(VERSION)/
+	curl -sL -o $(DIST)/win-staging/winfsp.msi "$(WINFSP_MSI_URL)" || echo "Warning: WinFsp download failed"
+	# Generate Inno Setup script
+	VERSION=$(VERSION) envsubst < installer/windows/keibidrop.iss.tmpl > $(DIST)/win-staging/keibidrop.iss
+	# Build installer if iscc is available (Inno Setup), otherwise fall back to zip
+	cd $(DIST)/win-staging && (iscc keibidrop.iss 2>/dev/null && cp Output/*.exe ../  || \
+	  (echo "Inno Setup not found, creating zip instead" && \
+	   zip -r ../keibidrop-$(VERSION)-windows-$(GOARCH).zip *.exe *.msi README.md LICENSE))
 	rm -rf $(DIST)/win-staging
-	@echo "Created $(DIST)/keibidrop-$(VERSION)-windows-$(GOARCH).zip (includes WinFsp installer)"
+	@echo "Created Windows package in $(DIST)/"
 
 # Chocolatey .nupkg — requires choco pack
 package-choco: $(DIST)
