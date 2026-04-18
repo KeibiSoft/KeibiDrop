@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
 
@@ -45,6 +46,9 @@ type API struct {
 	// File list snapshots (taken by RefreshFileList, read by getters).
 	remoteSnap fileSnapshot
 	localSnap  fileSnapshot
+
+	// LAN discovery
+	disc *discovery.Service
 
 	mu sync.Mutex
 }
@@ -653,6 +657,85 @@ func (api *API) RelayEndpoint() string {
 		return ""
 	}
 	return api.kd.RelayEndoint.String()
+}
+
+// --- LAN Discovery ---
+
+// StartDiscovery begins broadcasting presence and listening for peers on the LAN.
+func (api *API) StartDiscovery() {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc != nil {
+		return
+	}
+	port := 26431
+	if api.kd != nil {
+		port = api.kd.InboundPort()
+	}
+	logger := api.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	api.disc = discovery.New(port, logger)
+	api.disc.Start()
+}
+
+// StopDiscovery stops LAN discovery.
+func (api *API) StopDiscovery() {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc != nil {
+		api.disc.Stop()
+		api.disc = nil
+	}
+}
+
+// GetDiscoveryName returns this device's random display name for LAN discovery.
+func (api *API) GetDiscoveryName() string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc == nil {
+		return ""
+	}
+	return api.disc.Name()
+}
+
+// GetDiscoveredPeerCount returns the number of discovered peers on the LAN.
+func (api *API) GetDiscoveredPeerCount() int {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc == nil {
+		return 0
+	}
+	return len(api.disc.Peers())
+}
+
+// GetDiscoveredPeerName returns the name of the discovered peer at index i.
+func (api *API) GetDiscoveredPeerName(i int) string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc == nil {
+		return ""
+	}
+	peers := api.disc.Peers()
+	if i < 0 || i >= len(peers) {
+		return ""
+	}
+	return peers[i].Name
+}
+
+// GetDiscoveredPeerAddr returns the address of the discovered peer at index i.
+func (api *API) GetDiscoveredPeerAddr(i int) string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc == nil {
+		return ""
+	}
+	peers := api.disc.Peers()
+	if i < 0 || i >= len(peers) {
+		return ""
+	}
+	return peers[i].Addr
 }
 
 // FormatFileSize returns a human-readable file size string.

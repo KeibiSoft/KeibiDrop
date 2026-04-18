@@ -1,5 +1,11 @@
 import { Button, VerticalBox, ScrollView } from "std-widgets.slint";
 
+// Discovered LAN peer
+export struct DiscoveredPeer {
+    name: string,
+    addr: string,
+}
+
 // File info model for dynamic file list
 export struct FileInfo {
     name: string,
@@ -11,30 +17,6 @@ export struct FileInfo {
     paused: bool,         // download was paused (can resume)
     file-type: string,    // "pdf", "image", "video", "audio", "code", "archive", "text", "other"
     is-local: bool,       // true = my file (shared by me), false = remote file (from peer)
-}
-
-component CustomButton inherits Rectangle {
-    in-out property text <=> txt.text;
-    callback clicked <=> touch.clicked;
-    border-radius: root.height / 2;
-    border-width: 1px;
-    border-color: root.background.darker(25%);
-    background: touch.pressed ? #6b8282 : touch.has-hover ? #6c616c : #456;
-    height: txt.preferred-height * 1.33;
-    min-width: txt.preferred-width + 20px;
-    txt := Text {
-        x: (parent.width - self.width)/2 + (touch.pressed ? 2px : 0);
-        y: (parent.height - self.height)/2 + (touch.pressed ? 1px : 0);
-        color: touch.pressed ? #fff : #eee;
-    }
-    touch := TouchArea { }
-}
-
-export component Recipe inherits Window {
-    VerticalLayout {
-        alignment: start;
-        Button { text: "Button"; }
-    }
 }
 
 component InputArea inherits Rectangle {
@@ -626,6 +608,10 @@ export component MainWindow inherits Window {
     in-out property<bool> local_mode: false;
     in property<string> local_address: "";
     callback local_mode_toggled(bool);
+    // LAN discovery
+    in property<string> discovery_name: "";
+    in-out property<[DiscoveredPeer]> discovered_peers: [];
+    callback discovery_peer_selected(int); // called with peer index
 
     // Callbacks
     callback add_peer_code();
@@ -887,10 +873,66 @@ export component MainWindow inherits Window {
             }
         }
 
+        // Discovery info (shown when local mode is on)
+        if root.local_mode && root.discovery_name != "": Text {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 148px;
+            text: "You appear as: " + root.discovery_name;
+            color: #3b82f6;
+            font-size: 12px;
+        }
+
+        if root.local_mode && root.discovered_peers.length > 0: Text {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 168px;
+            text: "Nearby devices:";
+            color: #94a3b8;
+            font-size: 11px;
+        }
+
+        for peer[idx] in root.discovered_peers: Rectangle {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 184px + idx * 32px;
+            width: 350px;
+            height: 28px;
+            border-radius: 6px;
+            background: peer-touch.has-hover ? #333 : #2a2a2a;
+
+            Text {
+                x: 10px;
+                y: 0;
+                height: parent.height;
+                text: peer.name;
+                color: white;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+            Text {
+                x: parent.width - 70px;
+                y: 0;
+                height: parent.height;
+                text: "Connect";
+                color: #3b82f6;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            peer-touch := TouchArea {
+                clicked => { root.discovery-peer-selected(idx); }
+            }
+        }
+
+        if root.local_mode && root.discovered_peers.length == 0: Text {
+            x: snd.x + snd.width + 38px;
+            y: snd.y + snd.height - 34px + 168px;
+            text: "Searching for devices...";
+            color: #666;
+            font-size: 12px;
+        }
+
         // Status / error message below toggles
         if root.status_message != "" && root.error_message == "": Text {
             x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 148px;
+            y: snd.y + snd.height - 34px + 148px + (root.local_mode ? 80px : 0px);
             text: root.status_message;
             color: #94a3b8;
             font-size: 12px;

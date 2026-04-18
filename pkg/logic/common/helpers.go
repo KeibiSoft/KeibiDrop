@@ -121,11 +121,9 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 		if parsedIP == nil {
 			return "", "", 0, fmt.Errorf("invalid IP %q", ipPart)
 		}
-		if parsedIP.To4() != nil {
-			return "", "", 0, fmt.Errorf("IPv4 addresses not supported: %q", ipPart)
-		}
-		if !parsedIP.IsLinkLocalUnicast() && !parsedIP.IsLoopback() {
-			return "", "", 0, fmt.Errorf("address must be link-local or loopback: %q", ipPart)
+		// IPv4 with zone makes no sense, but accept for consistency.
+		if !parsedIP.IsLinkLocalUnicast() && !parsedIP.IsLoopback() && !parsedIP.IsPrivate() {
+			return "", "", 0, fmt.Errorf("address must be link-local, loopback, or private: %q", ipPart)
 		}
 
 		if port < 26000 || port > 27000 {
@@ -135,10 +133,9 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 		return ipPart, zone, port, nil
 	}
 
-	// No zone: could be loopback (::1:port) or ambiguous link-local.
-	// For loopback, the known format is "::1:PORT" where PORT is the last
-	// colon-separated segment and "::1" is the IP.
-	// For anything starting with fe80, require a zone — reject as ambiguous.
+	// No zone: could be IPv4 (192.168.x.x:port), loopback (::1:port),
+	// or ambiguous link-local.
+	// For fe80, require a zone — reject as ambiguous.
 	if strings.HasPrefix(addr, "fe80") {
 		return "", "", 0, fmt.Errorf("link-local address requires zone ID (%%iface): %q", addr)
 	}
@@ -164,8 +161,15 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 	if parsedIP == nil {
 		return "", "", 0, fmt.Errorf("invalid IP %q", ipPart)
 	}
+	// Accept IPv4 private addresses for LAN discovery
 	if parsedIP.To4() != nil {
-		return "", "", 0, fmt.Errorf("IPv4 addresses not supported: %q", ipPart)
+		if !parsedIP.IsPrivate() && !parsedIP.IsLoopback() {
+			return "", "", 0, fmt.Errorf("IPv4 address must be private or loopback: %q", ipPart)
+		}
+		if port < 26000 || port > 27000 {
+			return "", "", 0, fmt.Errorf("port %d out of range 26000-27000", port)
+		}
+		return ipPart, "", port, nil
 	}
 	if !parsedIP.IsLoopback() {
 		return "", "", 0, fmt.Errorf("non-loopback address without zone ID: %q", ipPart)

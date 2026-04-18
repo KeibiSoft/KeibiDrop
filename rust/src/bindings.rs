@@ -13,13 +13,15 @@ pub struct __BindgenComplex<T> {
 }
 pub const __WORDSIZE: u32 = 64;
 pub const __has_safe_buffers: u32 = 1;
-pub const __DARWIN_ONLY_64_BIT_INO_T: u32 = 1;
+pub const __DARWIN_ONLY_64_BIT_INO_T: u32 = 0;
 pub const __DARWIN_ONLY_UNIX_CONFORMANCE: u32 = 1;
-pub const __DARWIN_ONLY_VERS_1050: u32 = 1;
+pub const __DARWIN_ONLY_VERS_1050: u32 = 0;
 pub const __DARWIN_UNIX03: u32 = 1;
 pub const __DARWIN_64_BIT_INO_T: u32 = 1;
 pub const __DARWIN_VERS_1050: u32 = 1;
 pub const __DARWIN_NON_CANCELABLE: u32 = 0;
+pub const __DARWIN_SUF_64_BIT_INO_T: &[u8; 9] = b"$INODE64\0";
+pub const __DARWIN_SUF_1050: &[u8; 6] = b"$1050\0";
 pub const __DARWIN_SUF_EXTSN: &[u8; 14] = b"$DARWIN_EXTSN\0";
 pub const __DARWIN_C_ANSI: u32 = 4096;
 pub const __DARWIN_C_FULL: u32 = 900000;
@@ -27,8 +29,6 @@ pub const __DARWIN_C_LEVEL: u32 = 900000;
 pub const __STDC_WANT_LIB_EXT1__: u32 = 1;
 pub const __DARWIN_NO_LONG_LONG: u32 = 0;
 pub const _DARWIN_FEATURE_64_BIT_INODE: u32 = 1;
-pub const _DARWIN_FEATURE_ONLY_64_BIT_INODE: u32 = 1;
-pub const _DARWIN_FEATURE_ONLY_VERS_1050: u32 = 1;
 pub const _DARWIN_FEATURE_ONLY_UNIX_CONFORMANCE: u32 = 1;
 pub const _DARWIN_FEATURE_UNIX_CONFORMANCE: u32 = 3;
 pub const __has_ptrcheck: u32 = 0;
@@ -89,7 +89,7 @@ pub const WINT_MAX: u32 = 2147483647;
 pub const SIG_ATOMIC_MIN: i32 = -2147483648;
 pub const SIG_ATOMIC_MAX: u32 = 2147483647;
 pub type wchar_t = ::std::os::raw::c_int;
-pub type max_align_t = f64;
+pub type max_align_t = u128;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _GoString_ {
@@ -928,6 +928,24 @@ extern "C" {
     pub fn KD_SetPeerDirectAddress(addr: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn KD_StartDiscovery();
+}
+extern "C" {
+    pub fn KD_StopDiscovery();
+}
+extern "C" {
+    pub fn KD_GetDiscoveryName() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetDiscoveredPeerCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetDiscoveredPeerName(i: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetDiscoveredPeerAddr(i: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
     pub fn KD_GetVersion() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {
@@ -939,4 +957,67 @@ extern "C" {
 extern "C" {
     pub fn KD_SanitizeLogs(destPath: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
-pub type __builtin_va_list = *mut ::std::os::raw::c_char;
+pub type __builtin_va_list = [__va_list_tag; 1usize];
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __va_list_tag {
+    pub gp_offset: ::std::os::raw::c_uint,
+    pub fp_offset: ::std::os::raw::c_uint,
+    pub overflow_arg_area: *mut ::std::os::raw::c_void,
+    pub reg_save_area: *mut ::std::os::raw::c_void,
+}
+#[test]
+fn bindgen_test_layout___va_list_tag() {
+    const UNINIT: ::std::mem::MaybeUninit<__va_list_tag> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__va_list_tag>(),
+        24usize,
+        concat!("Size of: ", stringify!(__va_list_tag))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__va_list_tag>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__va_list_tag))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).gp_offset) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(gp_offset)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).fp_offset) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(fp_offset)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).overflow_arg_area) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(overflow_arg_area)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).reg_save_area) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(reg_save_area)
+        )
+    );
+}

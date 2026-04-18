@@ -22,9 +22,13 @@ import (
 	"sync"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
+	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
+
+var disc *discovery.Service
+var discMu sync.Mutex
 
 // sortedRemoteKeys returns remote file map keys in sorted order.
 func sortedRemoteKeys() []string {
@@ -582,6 +586,79 @@ func KD_SetPeerDirectAddress(addr *C.char) C.int {
 		return -2
 	}
 	return 0
+}
+
+//export KD_StartDiscovery
+func KD_StartDiscovery() {
+	discMu.Lock()
+	defer discMu.Unlock()
+	if disc != nil {
+		return
+	}
+	port := 26001
+	if kd != nil {
+		port = kd.InboundPort()
+	}
+	disc = discovery.New(port, slog.Default())
+	disc.Start()
+}
+
+//export KD_StopDiscovery
+func KD_StopDiscovery() {
+	discMu.Lock()
+	defer discMu.Unlock()
+	if disc != nil {
+		disc.Stop()
+		disc = nil
+	}
+}
+
+//export KD_GetDiscoveryName
+func KD_GetDiscoveryName() *C.char {
+	discMu.Lock()
+	defer discMu.Unlock()
+	if disc == nil {
+		return C.CString("")
+	}
+	return C.CString(disc.Name())
+}
+
+//export KD_GetDiscoveredPeerCount
+func KD_GetDiscoveredPeerCount() C.int {
+	discMu.Lock()
+	defer discMu.Unlock()
+	if disc == nil {
+		return 0
+	}
+	return C.int(len(disc.Peers()))
+}
+
+//export KD_GetDiscoveredPeerName
+func KD_GetDiscoveredPeerName(i C.int) *C.char {
+	discMu.Lock()
+	defer discMu.Unlock()
+	if disc == nil {
+		return C.CString("")
+	}
+	peers := disc.Peers()
+	if int(i) < 0 || int(i) >= len(peers) {
+		return C.CString("")
+	}
+	return C.CString(peers[int(i)].Name)
+}
+
+//export KD_GetDiscoveredPeerAddr
+func KD_GetDiscoveredPeerAddr(i C.int) *C.char {
+	discMu.Lock()
+	defer discMu.Unlock()
+	if disc == nil {
+		return C.CString("")
+	}
+	peers := disc.Peers()
+	if int(i) < 0 || int(i) >= len(peers) {
+		return C.CString("")
+	}
+	return C.CString(peers[int(i)].Addr)
 }
 
 //export KD_GetVersion
