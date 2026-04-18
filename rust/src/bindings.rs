@@ -928,6 +928,24 @@ extern "C" {
     pub fn KD_SetPeerDirectAddress(addr: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn KD_StartDiscovery();
+}
+extern "C" {
+    pub fn KD_StopDiscovery();
+}
+extern "C" {
+    pub fn KD_GetDiscoveryName() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetDiscoveredPeerCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetDiscoveredPeerName(i: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetDiscoveredPeerAddr(i: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
     pub fn KD_GetVersion() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {

@@ -28,3 +28,15 @@ contents:
     dst: /usr/local/bin/kd
     file_info:
       mode: 0755
+
+  - src: assets/icons/icon-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/keibidrop.png
+
+  - src: assets/icons/icon-128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/keibidrop.png
+
+  - src: assets/icons/icon-64.png
+    dst: /usr/share/icons/hicolor/64x64/apps/keibidrop.png
+
+  - src: assets/keibidrop.desktop
+    dst: /usr/share/applications/keibidrop.desktop

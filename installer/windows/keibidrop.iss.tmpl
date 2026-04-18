@@ -1,0 +1,68 @@
+[Setup]
+AppName=KeibiDrop
+AppVersion=${VERSION}
+AppPublisher=KeibiSoft SRL
+AppPublisherURL=https://keibidrop.com
+AppSupportURL=https://github.com/KeibiSoft/KeibiDrop/issues
+DefaultDirName={autopf}\KeibiDrop
+DefaultGroupName=KeibiDrop
+OutputBaseFilename=keibidrop-${VERSION}-windows-amd64-setup
+SetupIconFile=keibidrop.ico
+Compression=lzma2
+SolidCompression=yes
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+WizardStyle=modern
+LicenseFile=LICENSE
+ChangesEnvironment=yes
+PrivilegesRequired=admin
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Files]
+Source: "keibidrop.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "keibidrop-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "kd.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "winfsp.msi"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: not IsWinFspInstalled
+Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
+
+[Icons]
+Name: "{group}\KeibiDrop"; Filename: "{app}\keibidrop.exe"; IconFilename: "{app}\keibidrop.exe"
+Name: "{group}\KeibiDrop CLI"; Filename: "{app}\keibidrop-cli.exe"
+Name: "{commondesktop}\KeibiDrop"; Filename: "{app}\keibidrop.exe"; Tasks: desktopicon
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
+Name: "addtopath"; Description: "Add to system PATH (for kd CLI)"; GroupDescription: "System integration:"; Flags: checkedonce
+
+[Run]
+; Install WinFsp silently if not already installed
+Filename: "msiexec.exe"; Parameters: "/i ""{tmp}\winfsp.msi"" /qn"; StatusMsg: "Installing WinFsp (FUSE support)..."; Check: not IsWinFspInstalled; Flags: waituntilterminated
+; Offer to launch after install
+Filename: "{app}\keibidrop.exe"; Description: "Launch KeibiDrop"; Flags: nowait postinstall skipifsilent
+
+[Registry]
+; Add to PATH if selected
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addtopath; Check: NeedsAddPath('{app}')
+
+[Code]
+function IsWinFspInstalled: Boolean;
+begin
+  Result := DirExists(ExpandConstant('{commonpf}\WinFsp'));
+end;
+
+function NeedsAddPath(Param: string): boolean;
+var
+  OrigPath: string;
+begin
+  if not RegQueryStringValue(HKEY_LOCAL_MACHINE,
+    'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
+    'Path', OrigPath)
+  then begin
+    Result := True;
+    exit;
+  end;
+  Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
+end;

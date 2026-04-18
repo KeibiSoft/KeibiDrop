@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
 
@@ -45,6 +46,9 @@ type API struct {
 	// File list snapshots (taken by RefreshFileList, read by getters).
 	remoteSnap fileSnapshot
 	localSnap  fileSnapshot
+
+	// LAN discovery
+	disc *discovery.Service
 
 	mu sync.Mutex
 }
@@ -104,6 +108,15 @@ func (api *API) Initialize(logFilePath string, relayURL string, inboundPort int,
 	api.mu.Unlock()
 
 	return nil
+}
+
+// SetBridgeAddr overrides the default bridge relay address.
+func (api *API) SetBridgeAddr(addr string) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.kd != nil {
+		api.kd.BridgeAddr = addr
+	}
 }
 
 // Start runs the KeibiDrop event loop. Blocks until Stop is called.
@@ -349,6 +362,34 @@ func (api *API) SaveFile(remoteName string) (string, error) {
 	return localPath, nil
 }
 
+// SaveAllFiles downloads all remote files to the save folder sequentially.
+// Returns the number of files successfully saved.
+func (api *API) SaveAllFiles() int {
+	api.mu.Lock()
+	kd := api.kd
+	api.mu.Unlock()
+	if kd == nil || kd.SyncTracker == nil {
+		return 0
+	}
+
+	kd.SyncTracker.RemoteFilesMu.RLock()
+	names := make([]string, 0, len(kd.SyncTracker.RemoteFiles))
+	for name := range kd.SyncTracker.RemoteFiles {
+		if !isInternalFile(name) {
+			names = append(names, name)
+		}
+	}
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
+
+	saved := 0
+	for _, name := range names {
+		if _, err := api.SaveFile(name); err == nil {
+			saved++
+		}
+	}
+	return saved
+}
+
 // CancelDownload stops an active download. Partial data is preserved.
 // Call SaveFile or ExportFile again to resume.
 func (api *API) CancelDownload(remoteName string) error {
@@ -368,6 +409,15 @@ func (api *API) GetDownloadProgress(remoteName string) int {
 		return -1
 	}
 	return int(p * 100)
+}
+
+// isInternalFile returns true for macOS/FUSE internal files that should not appear in the UI.
+func isInternalFile(name string) bool {
+	return strings.Contains(name, ".fuse_hidden") ||
+		strings.Contains(name, ".fseventsd") ||
+		strings.Contains(name, ".fseventuuid") ||
+		strings.Contains(name, ".DS_Store") ||
+		strings.Contains(name, ".kdbitmap")
 }
 
 // --- File lists (index-based for gomobile compatibility) ---
@@ -393,6 +443,9 @@ func (api *API) snapshotRemoteFiles() {
 		sizes: make([]int64, 0, len(api.kd.SyncTracker.RemoteFiles)),
 	}
 	for name, f := range api.kd.SyncTracker.RemoteFiles {
+		if isInternalFile(name) {
+			continue
+		}
 		snap.names = append(snap.names, name)
 		snap.sizes = append(snap.sizes, int64(f.Size))
 	}
@@ -426,6 +479,9 @@ func (api *API) snapshotLocalFiles() {
 		names: make([]string, 0, len(api.kd.SyncTracker.LocalFiles)),
 	}
 	for name := range api.kd.SyncTracker.LocalFiles {
+		if isInternalFile(name) {
+			continue
+		}
 		snap.names = append(snap.names, name)
 	}
 	api.kd.SyncTracker.LocalFilesMu.RUnlock()
@@ -587,11 +643,13 @@ func (api *API) GetLocalAddress() string {
 	return addr
 }
 
-// SetPeerDirectAddress sets the peer's link-local address for local mode (no relay).
+// SetPeerDirectAddress sets the peer's address for local mode (no relay).
+// Automatically enables local mode (skips relay, uses TOFU handshake).
 func (api *API) SetPeerDirectAddress(addr string) error {
 	if api.kd == nil {
 		return fmt.Errorf("not initialized")
 	}
+	api.kd.IsLocalMode = true
 	return api.kd.SetPeerDirectAddress(addr)
 }
 
@@ -601,6 +659,90 @@ func (api *API) RelayEndpoint() string {
 		return ""
 	}
 	return api.kd.RelayEndoint.String()
+}
+
+// --- LAN Discovery ---
+
+// StartDiscovery begins broadcasting presence and listening for peers on the LAN.
+// Also enables local mode (skips relay for connections).
+func (api *API) StartDiscovery() {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc != nil {
+		return
+	}
+	port := 26431
+	if api.kd != nil {
+		port = api.kd.InboundPort()
+		api.kd.IsLocalMode = true
+	}
+	logger := api.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	api.disc = discovery.New(port, logger)
+	api.disc.Start()
+}
+
+// StopDiscovery stops LAN discovery and disables local mode.
+func (api *API) StopDiscovery() {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc != nil {
+		api.disc.Stop()
+		api.disc = nil
+	}
+	if api.kd != nil {
+		api.kd.IsLocalMode = false
+	}
+}
+
+// GetDiscoveryName returns this device's random display name for LAN discovery.
+func (api *API) GetDiscoveryName() string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc == nil {
+		return ""
+	}
+	return api.disc.Name()
+}
+
+// GetDiscoveredPeerCount returns the number of discovered peers on the LAN.
+func (api *API) GetDiscoveredPeerCount() int {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc == nil {
+		return 0
+	}
+	return len(api.disc.Peers())
+}
+
+// GetDiscoveredPeerName returns the name of the discovered peer at index i.
+func (api *API) GetDiscoveredPeerName(i int) string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc == nil {
+		return ""
+	}
+	peers := api.disc.Peers()
+	if i < 0 || i >= len(peers) {
+		return ""
+	}
+	return peers[i].Name
+}
+
+// GetDiscoveredPeerAddr returns the address of the discovered peer at index i.
+func (api *API) GetDiscoveredPeerAddr(i int) string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.disc == nil {
+		return ""
+	}
+	peers := api.disc.Peers()
+	if i < 0 || i >= len(peers) {
+		return ""
+	}
+	return peers[i].Addr
 }
 
 // FormatFileSize returns a human-readable file size string.

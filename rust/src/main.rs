@@ -13,7 +13,6 @@ use std::sync::{Arc, Mutex};
 use slint::winit_030::WinitWindowAccessor;
 #[allow(deprecated)]
 use slint::winit_030::WinitWindowEventResult;
-
 slint::include_modules!(); // this loads ui.slint as MainWindow
 
 /// Returns true if a filename should be hidden from the UI.
@@ -381,6 +380,19 @@ fn main() {
 
         // Build UI
         let app = MainWindow::new().expect("Failed to create MainWindow");
+
+        // Set window icon from embedded PNG
+        app.window().with_winit_window(|winit_win| {
+            let icon_bytes = include_bytes!("../assets/icon-256.png");
+            if let Ok(img) = image::load_from_memory(icon_bytes) {
+                let rgba = img.to_rgba8();
+                let (w, h) = rgba.dimensions();
+                if let Ok(icon) = slint::winit_030::winit::window::Icon::from_rgba(rgba.into_raw(), w, h) {
+                    winit_win.set_window_icon(Some(icon));
+                }
+            }
+        });
+
         app.set_my_code(slint::SharedString::from(my_fp.clone()));
         app.set_mount_path(slint::SharedString::from(to_mount.clone()));
 
@@ -427,6 +439,86 @@ fn main() {
         app.on_local_mode_toggled(move |enabled| {
             println!("Local mode toggled: {}", enabled);
             bindings::KD_SetLocalMode(if enabled { 1 } else { 0 });
+            if enabled {
+                bindings::KD_StartDiscovery();
+                let name_ptr = bindings::KD_GetDiscoveryName();
+                if !name_ptr.is_null() {
+                    let name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
+                    println!("Discovery name: {}", name);
+                }
+                // Don't auto-CreateRoom — wait until user taps a peer,
+                // then tiebreaker decides who creates and who joins.
+            } else {
+                bindings::KD_StopDiscovery();
+            }
+        });
+
+        // Poll discovered peers when in local mode
+        let weak_disc = app.as_weak();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let weak = weak_disc.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(app) = weak.upgrade() {
+                        if !app.get_local_mode() {
+                            app.set_discovery_name(slint::SharedString::from(""));
+                            let empty: Vec<DiscoveredPeer> = vec![];
+                            app.set_discovered_peers(slint::ModelRc::new(slint::VecModel::from(empty)));
+                            return;
+                        }
+                        let name_ptr = bindings::KD_GetDiscoveryName();
+                        if !name_ptr.is_null() {
+                            let name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
+                            app.set_discovery_name(slint::SharedString::from(name));
+                        }
+                        let count = bindings::KD_GetDiscoveredPeerCount();
+                        let mut peers: Vec<DiscoveredPeer> = Vec::new();
+                        for i in 0..count {
+                            let n = bindings::KD_GetDiscoveredPeerName(i);
+                            let a = bindings::KD_GetDiscoveredPeerAddr(i);
+                            if !n.is_null() && !a.is_null() {
+                                peers.push(DiscoveredPeer {
+                                    name: slint::SharedString::from(CStr::from_ptr(n).to_string_lossy().as_ref()),
+                                    addr: slint::SharedString::from(CStr::from_ptr(a).to_string_lossy().as_ref()),
+                                });
+                            }
+                        }
+                        app.set_discovered_peers(slint::ModelRc::new(slint::VecModel::from(peers)));
+                    }
+                });
+            }
+        });
+
+        // Handle discovered peer selection
+        let weak_peer_sel = app.as_weak();
+        app.on_discovery_peer_selected(move |idx| {
+            let addr_ptr = bindings::KD_GetDiscoveredPeerAddr(idx);
+            let name_ptr = bindings::KD_GetDiscoveredPeerName(idx);
+            let my_name_ptr = bindings::KD_GetDiscoveryName();
+            if !addr_ptr.is_null() && !name_ptr.is_null() && !my_name_ptr.is_null() {
+                let addr = CStr::from_ptr(addr_ptr).to_string_lossy().to_string();
+                let peer_name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
+                let my_name = CStr::from_ptr(my_name_ptr).to_string_lossy().to_string();
+                println!("Selected peer: {} ({})", peer_name, addr);
+
+                // Deterministic tiebreaker: lower name = creator (listener), higher = joiner
+                let i_am_creator = my_name < peer_name;
+
+                let addr_c = CString::new(addr.clone()).unwrap();
+                bindings::KD_SetPeerDirectAddress(addr_c.into_raw());
+
+                if let Some(app) = weak_peer_sel.upgrade() {
+                    app.set_peer_code(slint::SharedString::from(&addr));
+                    if i_am_creator {
+                        println!("I'm creator (listener) — invoking CreateRoom for {}", peer_name);
+                        app.invoke_create_room_pressed();
+                    } else {
+                        println!("I'm joiner — invoking JoinRoom to {}", peer_name);
+                        app.invoke_join_room_pressed();
+                    }
+                }
+            }
         });
 
         // Handle Add: register peer fingerprint or direct address (local mode)
