@@ -1077,11 +1077,11 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Save All button
-        OutlineButton {
-            x: parent.width - 90px - 10px - 161px - 10px - 120px;
-            y: 20px;
-            width: 120px;
+        // Save All button - aligned with global top-right buttons
+        SmallOutlineButton {
+            x: 700px;
+            y: 93px;
+            width: 70px;
             text: "Save All";
             clicked => { root.save_all_pressed() }
         }
