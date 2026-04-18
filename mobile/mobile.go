@@ -643,11 +643,13 @@ func (api *API) GetLocalAddress() string {
 	return addr
 }
 
-// SetPeerDirectAddress sets the peer's link-local address for local mode (no relay).
+// SetPeerDirectAddress sets the peer's address for local mode (no relay).
+// Automatically enables local mode (skips relay, uses TOFU handshake).
 func (api *API) SetPeerDirectAddress(addr string) error {
 	if api.kd == nil {
 		return fmt.Errorf("not initialized")
 	}
+	api.kd.IsLocalMode = true
 	return api.kd.SetPeerDirectAddress(addr)
 }
 
@@ -662,6 +664,7 @@ func (api *API) RelayEndpoint() string {
 // --- LAN Discovery ---
 
 // StartDiscovery begins broadcasting presence and listening for peers on the LAN.
+// Also enables local mode (skips relay for connections).
 func (api *API) StartDiscovery() {
 	api.mu.Lock()
 	defer api.mu.Unlock()
@@ -671,6 +674,7 @@ func (api *API) StartDiscovery() {
 	port := 26431
 	if api.kd != nil {
 		port = api.kd.InboundPort()
+		api.kd.IsLocalMode = true
 	}
 	logger := api.logger
 	if logger == nil {
@@ -680,13 +684,16 @@ func (api *API) StartDiscovery() {
 	api.disc.Start()
 }
 
-// StopDiscovery stops LAN discovery.
+// StopDiscovery stops LAN discovery and disables local mode.
 func (api *API) StopDiscovery() {
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	if api.disc != nil {
 		api.disc.Stop()
 		api.disc = nil
+	}
+	if api.kd != nil {
+		api.kd.IsLocalMode = false
 	}
 }
 

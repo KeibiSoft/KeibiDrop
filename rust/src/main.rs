@@ -446,6 +446,8 @@ fn main() {
                     let name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
                     println!("Discovery name: {}", name);
                 }
+                // Don't auto-CreateRoom — wait until user taps a peer,
+                // then tiebreaker decides who creates and who joins.
             } else {
                 bindings::KD_StopDiscovery();
             }
@@ -492,14 +494,29 @@ fn main() {
         let weak_peer_sel = app.as_weak();
         app.on_discovery_peer_selected(move |idx| {
             let addr_ptr = bindings::KD_GetDiscoveredPeerAddr(idx);
-            if !addr_ptr.is_null() {
+            let name_ptr = bindings::KD_GetDiscoveredPeerName(idx);
+            let my_name_ptr = bindings::KD_GetDiscoveryName();
+            if !addr_ptr.is_null() && !name_ptr.is_null() && !my_name_ptr.is_null() {
                 let addr = CStr::from_ptr(addr_ptr).to_string_lossy().to_string();
-                println!("Selected peer: {}", addr);
+                let peer_name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
+                let my_name = CStr::from_ptr(my_name_ptr).to_string_lossy().to_string();
+                println!("Selected peer: {} ({})", peer_name, addr);
+
+                // Deterministic tiebreaker: lower name = creator (listener), higher = joiner
+                let i_am_creator = my_name < peer_name;
+
                 let addr_c = CString::new(addr.clone()).unwrap();
                 bindings::KD_SetPeerDirectAddress(addr_c.into_raw());
+
                 if let Some(app) = weak_peer_sel.upgrade() {
                     app.set_peer_code(slint::SharedString::from(&addr));
-                    app.invoke_join_room_pressed();
+                    if i_am_creator {
+                        println!("I'm creator (listener) — invoking CreateRoom for {}", peer_name);
+                        app.invoke_create_room_pressed();
+                    } else {
+                        println!("I'm joiner — invoking JoinRoom to {}", peer_name);
+                        app.invoke_join_room_pressed();
+                    }
                 }
             }
         });

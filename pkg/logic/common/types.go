@@ -143,8 +143,8 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		return nil, err
 	}
 
-	addr := net.JoinHostPort("::", strconv.Itoa(inboundPort))
-	listener, err := net.Listen("tcp6", addr)
+	addr := net.JoinHostPort("", strconv.Itoa(inboundPort))
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}

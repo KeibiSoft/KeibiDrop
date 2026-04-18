@@ -598,6 +598,7 @@ func KD_StartDiscovery() {
 	port := 26001
 	if kd != nil {
 		port = kd.InboundPort()
+		kd.IsLocalMode = true
 	}
 	disc = discovery.New(port, slog.Default())
 	disc.Start()
@@ -610,6 +611,9 @@ func KD_StopDiscovery() {
 	if disc != nil {
 		disc.Stop()
 		disc = nil
+	}
+	if kd != nil {
+		kd.IsLocalMode = false
 	}
 }
 

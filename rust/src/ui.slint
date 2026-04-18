@@ -23,27 +23,26 @@ component InputArea inherits Rectangle {
     in-out property <string> inText: "xxx-xxx-xxx";
     in property <bool> readOnly: false;
     in property <string> buttonText: "Copy";
-    in property <int> paddingFromTop: 35;
 
     callback process_code;
 
-    width: 445px;
+    width: 438px;
     height: 34px;
-    background: #222222;
-    border-color: #FFFFFF;
+    background: transparent;
     clip: true;
-    
+
     ti-clip := Rectangle {
         x: 0px;
-        width: 297px;
+        width: 296px;
         height: 34px;
+        border-radius: 7px;
+        background: #222222;
         clip: true;
-        background: transparent;
 
         // Read-only: use Text with elide (TextInput ignores parent clip)
         if root.readOnly: Text {
-            x: 4px;
-            width: parent.width - 8px;
+            x: 8px;
+            width: parent.width - 16px;
             height: parent.height;
             text: root.inText;
             color: white;
@@ -55,7 +54,8 @@ component InputArea inherits Rectangle {
 
         // Editable: TextInput with scroll
         if !root.readOnly: ti := TextInput {
-            width: parent.width;
+            x: 8px;
+            width: parent.width - 16px;
             height: parent.height;
             horizontal-alignment: left;
             vertical-alignment: center;
@@ -68,17 +68,27 @@ component InputArea inherits Rectangle {
         }
     }
 
-    Button {
-        x: ti-clip.x + ti-clip.width + 6px;
+    Rectangle {
+        x: ti-clip.width;
         y: 0px;
-        text: buttonText;
-        height: 34px;
         width: 142px;
-        clicked => {
-            parent.process_code();
+        height: 34px;
+        border-radius: 7px;
+        background: btn-touch.pressed ? #777777 : btn-touch.has-hover ? #999999 : #888888;
+        animate background { duration: 150ms; }
+
+        Text {
+            text: root.buttonText;
+            color: white;
+            font-size: 14px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        btn-touch := TouchArea {
+            clicked => { root.process_code(); }
         }
     }
-
 }
 
 component DataRectangle inherits Rectangle {
@@ -86,26 +96,38 @@ component DataRectangle inherits Rectangle {
     in-out property <string> inText;
     in property <string> buttonText;
     in property <bool> readOnly;
+    in property <string> helperText: "";
 
     callback process_code;
 
     width: 517px;
-    height: 86px;
+    height: 100%;
 
-    t:= Text {
-        x: 36px;
-        y: 0;
+    t := Text {
+        x: 43px;
+        y: 20px;
         text: parent.info;
         color: #9ca3af;
+        font-size: 14px;
     }
 
     InputArea {
-        x: 36px;
-        y: t.y + 21px;
+        x: 43px;
+        y: 72px;
         inText <=> parent.inText;
         buttonText: parent.buttonText;
         readOnly: parent.readOnly;
-        process_code => {parent.process_code()}
+        process_code => { parent.process_code() }
+    }
+
+    if root.helperText != "": Text {
+        x: 43px;
+        y: 120px;
+        width: parent.width - 86px;
+        text: root.helperText;
+        color: #6A6A6A;
+        font-size: 12px;
+        wrap: word-wrap;
     }
 }
 
@@ -113,13 +135,15 @@ component NumberedToolTip inherits Rectangle {
     in property <int> number: 1;
     width: 34px;
     height: 34px;
-    border-width: 1px;
-    border-color: rgba(255,255,255,0.06);
-    border-radius: 8px;
+    border-width: 0.5px;
+    border-color: white;
+    border-radius: 7px;
+    background: transparent;
 
     Text {
         text: number;
-        color: white;
+        color: #6A6A6A;
+        font-size: 14px;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -130,26 +154,28 @@ component CodeRectangle inherits Rectangle {
     in-out property <string> inText;
     in property <string> buttonText;
     in property <bool> readOnly;
+    in property <string> helperText: "";
     out property <string> codeData;
 
     callback process_code;
 
     width: 517px;
-    height: 157px;
-    border-width: 1px;
-    border-color: rgba(255,255,255,0.06);
-    border-radius: 8px;
-    // padding: 18px;
+    height: 170px;
+    border-width: 0.5px;
+    border-color: white;
+    border-radius: 7px;
     background: #262626;
 
     DataRectangle {
+        width: parent.width;
+        height: parent.height;
         info: parent.info;
         inText <=> parent.inText;
         buttonText: parent.buttonText;
         readOnly: parent.readOnly;
-        process_code => {parent.process_code()}
+        helperText: parent.helperText;
+        process_code => { parent.process_code() }
     }
-
 }
 
 component SectionElement inherits Rectangle {
@@ -158,29 +184,127 @@ component SectionElement inherits Rectangle {
     in property <string> buttonText;
     in property <bool> readOnly;
     in property <int> sectionNumber;
-    
-    callback  process_code;
+    in property <string> helperText: "";
 
-    height: 157px;
-    width: 569px;
+    callback process_code;
 
-   nt := NumberedToolTip{
+    height: 178px;
+    width: 570px;
+
+    nt := NumberedToolTip {
         number: parent.sectionNumber;
-        x:0;
-        y:0;
+        x: 0;
+        y: 0;
     }
 
-    CodeRectangle{
-        x: nt.x + nt.width + 18px;
+    CodeRectangle {
+        x: nt.x + nt.width + 19px;
         y: 0;
+        height: parent.height;
         info: parent.info;
         inText <=> parent.inText;
         readOnly: parent.readOnly;
         buttonText: parent.buttonText;
-        process_code => {parent.process_code()}
+        helperText: parent.helperText;
+        process_code => { parent.process_code() }
+    }
+}
+
+// Toggle switch (reusable for FUSE and local mode)
+component ToggleSwitch inherits Rectangle {
+    in-out property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    width: 36px;
+    height: 20px;
+    border-radius: 7px;
+    background: root.checked ? #3b82f6 : #363434;
+    animate background { duration: 150ms; }
+
+    Rectangle {
+        x: root.checked ? parent.width - self.width - 2px : 2px;
+        y: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 5px;
+        background: white;
+        animate x { duration: 150ms; easing: ease-out; }
     }
 
+    TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+}
 
+// Pill button with blue outline (Create/Join room)
+component PillButton inherits Rectangle {
+    in-out property <string> text: "Button";
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    callback clicked;
+
+    width: 161px;
+    height: 34px;
+    border-radius: 7px;
+    border-width: 0.5px;
+    background: root.active ? #177DF5 : #222222;
+    border-color: !root.enabled ? #555
+               : pill-touch.pressed ? #125ec0
+               : pill-touch.has-hover ? #4a9af7
+               : #177DF5;
+
+    Text {
+        text: root.text;
+        color: root.active ? white
+             : !root.enabled ? #555
+             : pill-touch.pressed ? #125ec0
+             : pill-touch.has-hover ? #4a9af7
+             : #177DF5;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    pill-touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+
+    animate background { duration: 150ms; }
+    animate border-color { duration: 150ms; }
+}
+
+// Small outline button (Report problem, ?, X)
+component SmallOutlineButton inherits Rectangle {
+    in-out property <string> text: "?";
+    callback clicked;
+
+    width: self.preferred-width;
+    preferred-width: btn-label.preferred-width + 16px;
+    height: 24px;
+    border-radius: 7px;
+    border-width: 0.5px;
+    border-color: small-touch.pressed ? #ccc : small-touch.has-hover ? #bbb : white;
+    background: transparent;
+
+    btn-label := Text {
+        text: root.text;
+        color: small-touch.pressed ? #bbb : small-touch.has-hover ? #aaa : #888888;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    small-touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    animate border-color { duration: 150ms; }
 }
 
 component KeibiDropLogo inherits Rectangle {
@@ -568,7 +692,7 @@ export component MainWindow inherits Window {
     preferred-height: 760px;
     min-width: 1144px;
     min-height: 760px;
-    background: #1f1f1f;
+    background: #222222;
 
     // Data bindings from Rust
     in property<string> my_code: "XXXX-XXXX-XXXX-XXXX";
@@ -634,14 +758,14 @@ export component MainWindow inherits Window {
     Rectangle {
         width: 100%;
         height: 100%;
-        background: #1f1f1f;
+        background: #222222;
     }
 
     // ============ SCREEN 0: Connect ============
     if current_screen == 0: Rectangle {
         width: 100%;
         height: 100%;
-        background: #1f1f1f;
+        background: #222222;
         property <float> alpha: 0.0;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
@@ -653,6 +777,7 @@ export component MainWindow inherits Window {
             y: 24px;
         }
 
+        // Title
         t1 := Text {
             y: 127px;
             width: parent.width;
@@ -662,25 +787,28 @@ export component MainWindow inherits Window {
             color: white;
             font-family: "Inter";
             font-size: 23px;
-            font-weight: 800;
+            font-weight: 700;
         }
 
+        // Subtitle
         Text {
             y: t1.y + t1.height + 7px;
             width: parent.width;
             horizontal-alignment: center;
             vertical-alignment: top;
-            text: "Exchange the secret codes to establish a secure connection";
+            text: "Exchange fingerprints to establish a secure connection";
             color: white;
             font-family: "Inter";
             font-size: 16px;
             font-weight: 400;
         }
 
+        // Card 1: Enter Code
         SectionElement {
-            x: 279px;
+            x: 261px;
             y: 262px;
-            info: root.local_mode ? "Peer Address" : "Peer Code";
+            height: 170px;
+            info: root.local_mode ? "Peer Address" : "Enter Code";
             inText <=> root.peer_code;
             readOnly: false;
             buttonText: "Add";
@@ -688,118 +816,84 @@ export component MainWindow inherits Window {
             sectionNumber: 1;
         }
 
-        // Peer code feedback - inside card 1's empty bottom zone
+        // Peer code feedback - below input in card 1
         if root.peer_code_added: Text {
-            x: 390px;
-            y: 383px;
-            text: "✓ Code added";
+            x: 357px;
+            y: 390px;
+            text: "Code added";
             color: #22c55e;
             font-size: 13px;
         }
         if root.peer_code_error: Text {
-            x: 390px;
-            y: 383px;
-            text: "✗ Invalid code";
+            x: 357px;
+            y: 390px;
+            text: "X invalid code";
             color: #ef4444;
             font-size: 13px;
         }
 
+        // Card 2: Your Code
         snd := SectionElement {
-            x: 279px;
-            y: 437px;
+            x: 261px;
+            y: 459px;
+            height: 178px;
             info: root.local_mode
                 ? "Your Address (local network)"
-                : "Your Code - share via Signal, Telegram, or email";
+                : "Your Code";
             inText: root.local_mode
                 ? (root.local_address != "" ? root.local_address : "No link-local address")
                 : (root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY");
             readOnly: true;
             buttonText: "Copy";
+            helperText: root.local_mode ? "" : "Send this code to your peer via Telegram, Signal, Email or Carrier Pigeon.";
             process_code => { root.copy_my_code() }
             sectionNumber: 2;
         }
 
-        Rectangle {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px;
-            width: 161px;
-            height: 34px;
-            background: root.room_action == 1 ? #3b82f6 : transparent;
-            border-width: 1px;
-            border-radius: self.height / 2;
-            border-color: root.room_action != 0 && root.room_action != 1 ? #555 : create-touch.pressed ? #2563eb : create-touch.has-hover ? #60a5fa : #3b82f6;
-            Text {
-                text: root.room_action == 1 ? "Creating..." : "Create Room";
-                color: root.room_action == 1 ? white : root.room_action != 0 ? #555 : create-touch.pressed ? #2563eb : create-touch.has-hover ? #60a5fa : #3b82f6;
-                font-size: 14px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            create-touch := TouchArea {
-                enabled: root.room_action == 0 && root.next_enabled;
-                clicked => { root.create_room_pressed() }
-            }
-            animate background { duration: 150ms; }
-            animate border-color { duration: 150ms; }
+        // Create room button
+        PillButton {
+            x: 868px;
+            y: 459px;
+            text: root.room_action == 1 ? "Creating..." : "Create room";
+            active: root.room_action == 1;
+            enabled: root.room_action == 0 && root.next_enabled;
+            clicked => { root.create_room_pressed() }
         }
 
-        Rectangle {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 44px;
-            width: 161px;
-            height: 34px;
-            background: root.room_action == 2 ? #3b82f6 : transparent;
-            border-width: 1px;
-            border-radius: self.height / 2;
-            border-color: root.room_action != 0 && root.room_action != 2 ? #555 : join-touch.pressed ? #2563eb : join-touch.has-hover ? #60a5fa : #3b82f6;
-            Text {
-                text: root.room_action == 2 ? "Joining..." : "Join Room";
-                color: root.room_action == 2 ? white : root.room_action != 0 ? #555 : join-touch.pressed ? #2563eb : join-touch.has-hover ? #60a5fa : #3b82f6;
-                font-size: 14px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            join-touch := TouchArea {
-                enabled: root.room_action == 0 && root.next_enabled;
-                clicked => { root.join_room_pressed() }
-            }
-            animate background { duration: 150ms; }
-            animate border-color { duration: 150ms; }
+        // Join room button
+        PillButton {
+            x: 868px;
+            y: 503px;
+            text: root.room_action == 2 ? "Joining..." : "Join room";
+            active: root.room_action == 2;
+            enabled: root.room_action == 0 && root.next_enabled;
+            clicked => { root.join_room_pressed() }
         }
 
-        // FUSE mode toggle
+        // Cancel button - visible while creating or joining
+        if root.room_action != 0: PillButton {
+            x: 868px;
+            y: 547px;
+            text: "Cancel";
+            clicked => { root.cancel_connect_pressed() }
+        }
+
+        // FUSE toggle
         Rectangle {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 88px;
-            width: 350px;
+            x: 868px;
+            y: 560px;
+            width: 260px;
             height: root.fuse_available ? 24px : 40px;
+            visible: root.room_action == 0;
 
-            Rectangle {
+            ToggleSwitch {
                 x: 0;
                 y: 2px;
-                width: 36px;
-                height: 20px;
-                border-radius: 10px;
-                background: root.fuse_mode ? #3b82f6 : #444;
-                animate background { duration: 150ms; }
-
-                // Toggle knob
-                Rectangle {
-                    x: root.fuse_mode ? parent.width - self.width - 2px : 2px;
-                    y: 2px;
-                    width: 16px;
-                    height: 16px;
-                    border-radius: 8px;
-                    background: white;
-                    animate x { duration: 150ms; easing: ease-out; }
-                }
-
-                fuse-toggle-touch := TouchArea {
-                    enabled: root.fuse_available && root.room_action == 0;
-                    clicked => {
-                        root.fuse_mode = !root.fuse_mode;
-                        root.fuse-mode-toggled(root.fuse_mode);
-                    }
+                checked: root.fuse_mode;
+                enabled: root.fuse_available && root.room_action == 0;
+                toggled(val) => {
+                    root.fuse_mode = val;
+                    root.fuse-mode-toggled(val);
                 }
             }
 
@@ -810,15 +904,14 @@ export component MainWindow inherits Window {
                 text: root.fuse_available
                     ? (root.fuse_mode ? "Virtual folder (files sync automatically)" : "Direct transfer (select files to send)")
                     : "Virtual folder not available";
-                color: root.fuse_available ? #ccc : #888;
+                color: root.fuse_available ? #ccc : #888888;
                 font-size: 12px;
                 vertical-alignment: center;
             }
 
-            // Install hint when FUSE not detected
             if !root.fuse_available: Text {
                 x: 44px;
-                y: 18px;
+                y: 20px;
                 text: root.fuse_install_hint;
                 color: #555;
                 font-size: 11px;
@@ -827,36 +920,20 @@ export component MainWindow inherits Window {
 
         // Local mode toggle
         Rectangle {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 118px;
-            width: 350px;
+            x: 868px;
+            y: 606px;
+            width: 260px;
             height: 24px;
+            visible: root.room_action == 0;
 
-            Rectangle {
+            ToggleSwitch {
                 x: 0;
                 y: 2px;
-                width: 36px;
-                height: 20px;
-                border-radius: 10px;
-                background: root.local_mode ? #3b82f6 : #444;
-                animate background { duration: 150ms; }
-
-                Rectangle {
-                    x: root.local_mode ? parent.width - self.width - 2px : 2px;
-                    y: 2px;
-                    width: 16px;
-                    height: 16px;
-                    border-radius: 8px;
-                    background: white;
-                    animate x { duration: 150ms; easing: ease-out; }
-                }
-
-                local-toggle-touch := TouchArea {
-                    enabled: root.room_action == 0;
-                    clicked => {
-                        root.local_mode = !root.local_mode;
-                        root.local-mode-toggled(root.local_mode);
-                    }
+                checked: root.local_mode;
+                enabled: root.room_action == 0;
+                toggled(val) => {
+                    root.local_mode = val;
+                    root.local-mode-toggled(val);
                 }
             }
 
@@ -875,25 +952,25 @@ export component MainWindow inherits Window {
 
         // Discovery info (shown when local mode is on)
         if root.local_mode && root.discovery_name != "": Text {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 148px;
+            x: 868px;
+            y: 636px;
             text: "You appear as: " + root.discovery_name;
-            color: #3b82f6;
+            color: #177DF5;
             font-size: 12px;
         }
 
         if root.local_mode && root.discovered_peers.length > 0: Text {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 168px;
+            x: 868px;
+            y: 656px;
             text: "Nearby devices:";
             color: #94a3b8;
             font-size: 11px;
         }
 
         for peer[idx] in root.discovered_peers: Rectangle {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 184px + idx * 32px;
-            width: 350px;
+            x: 868px;
+            y: 672px + idx * 32px;
+            width: 250px;
             height: 28px;
             border-radius: 6px;
             background: peer-touch.has-hover ? #333 : #2a2a2a;
@@ -912,7 +989,7 @@ export component MainWindow inherits Window {
                 y: 0;
                 height: parent.height;
                 text: "Connect";
-                color: #3b82f6;
+                color: #177DF5;
                 font-size: 12px;
                 vertical-alignment: center;
             }
@@ -922,29 +999,29 @@ export component MainWindow inherits Window {
         }
 
         if root.local_mode && root.discovered_peers.length == 0: Text {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 168px;
+            x: 868px;
+            y: 656px;
             text: "Searching for devices...";
             color: #666;
             font-size: 12px;
         }
 
-        // Status / error message below toggles
+        // Status / error message
         if root.status_message != "" && root.error_message == "": Text {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 148px + (root.local_mode ? 80px : 0px);
+            x: 868px;
+            y: root.room_action != 0 ? 547px : 636px + (root.local_mode ? 80px : 0px);
             text: root.status_message;
             color: #94a3b8;
             font-size: 12px;
         }
         if root.error_message != "": Rectangle {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 148px;
+            x: 868px;
+            y: root.room_action != 0 ? 590px : 636px;
             width: 161px;
             height: 40px;
-            border-radius: 8px;
+            border-radius: 7px;
             background: rgba(239,68,68,0.10);
-            border-width: 1px;
+            border-width: 0.5px;
             border-color: rgba(239,68,68,0.30);
 
             Text {
@@ -959,31 +1036,6 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Cancel button - visible while creating or joining, below status
-        if root.room_action != 0: OutlineButton {
-            x: snd.x + snd.width + 38px;
-            y: snd.y + snd.height - 34px + 166px;
-            text: "Cancel";
-            clicked => { root.cancel_connect_pressed() }
-        }
-
-        // Export Logs button bottom-left, aligned with version text
-        OutlineButton {
-            x: 16px;
-            y: parent.height - self.height - 12px;
-            text: "Export Logs";
-            clicked => { root.export_logs_pressed() }
-        }
-
-        // Version text bottom-right
-        Text {
-            x: parent.width - self.width - 16px;
-            y: parent.height - self.height - 12px;
-            text: root.version_text;
-            color: #666666;
-            font-size: 11px;
-            font-family: "Inter";
-        }
     }
 
     // ============ SCREEN 1: Connected (No FUSE) ============
@@ -1023,14 +1075,6 @@ export component MainWindow inherits Window {
                 font-size: 13px;
                 vertical-alignment: center;
             }
-        }
-
-        // Disconnect button top-right - aligned with Exit
-        OutlineButton {
-            x: parent.width - 90px - 10px - 161px;
-            y: 20px;
-            text: "Disconnect";
-            clicked => { root.disconnect_pressed() }
         }
 
         // Save All button
@@ -1115,14 +1159,6 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Disconnect button top-right - aligned with Exit
-        OutlineButton {
-            x: parent.width - 90px - 10px - 161px;
-            y: 20px;
-            text: "Disconnect";
-            clicked => { root.disconnect_pressed() }
-        }
-
         // ── Main content ─────────────────────────────────────────
         VerticalLayout {
             alignment: center;
@@ -1184,13 +1220,45 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Exit button (top-right, all screens)
-    OutlineButton {
-        x: parent.width - 90px;
-        y: 20px;
-        width: 70px;
-        height: 34px;
-        text: "Exit";
+    // ============ GLOBAL: Top-right buttons (all screens) ============
+
+    // Disconnect button (only when connected)
+    if root.current_screen != 0: SmallOutlineButton {
+        x: 780px;
+        y: 93px;
+        width: 78px;
+        text: "Disconnect";
+        clicked => { root.disconnect_pressed() }
+    }
+
+    SmallOutlineButton {
+        x: 868px;
+        y: 93px;
+        width: 96px;
+        text: "Report problem";
+        clicked => { root.export_logs_pressed() }
+    }
+    SmallOutlineButton {
+        x: 973px;
+        y: 93px;
+        width: 24px;
+        text: "?";
+    }
+    SmallOutlineButton {
+        x: 1005px;
+        y: 93px;
+        width: 24px;
+        text: "X";
         clicked => { root.exit_pressed() }
+    }
+
+    // Version text bottom-right (all screens)
+    Text {
+        x: parent.width - self.width - 16px;
+        y: parent.height - self.height - 12px;
+        text: root.version_text;
+        color: #666666;
+        font-size: 11px;
+        font-family: "Inter";
     }
 }

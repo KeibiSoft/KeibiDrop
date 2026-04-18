@@ -25,8 +25,11 @@ import (
 	"sync"
 	"syscall"
 
+	"time"
+
 	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
+	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
 
@@ -221,6 +224,9 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		}
 		return okResponse(map[string]string{"registered": req.Args[0]})
 
+	case "discover":
+		return cmdDiscover(kd)
+
 	case "create":
 		return cmdCreateOrJoin(kd, "create")
 
@@ -344,6 +350,33 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 		return errResponse(fmt.Sprintf("unknown show target: %s", what))
 	}
 	return okResponse(data)
+}
+
+func cmdDiscover(kd *common.KeibiDrop) Response {
+	kd.IsLocalMode = true
+	disc := discovery.New(kd.InboundPort(), slog.Default())
+	disc.Start()
+	defer disc.Stop()
+
+	// Wait for beacons
+	time.Sleep(6 * time.Second)
+	peers := disc.Peers()
+	if len(peers) == 0 {
+		time.Sleep(4 * time.Second)
+		peers = disc.Peers()
+	}
+
+	result := make([]map[string]string, 0, len(peers))
+	for _, p := range peers {
+		result = append(result, map[string]string{
+			"name": p.Name,
+			"addr": p.Addr,
+		})
+	}
+	return okResponse(map[string]any{
+		"my_name": disc.Name(),
+		"peers":   result,
+	})
 }
 
 func cmdCreateOrJoin(kd *common.KeibiDrop, mode string) Response {

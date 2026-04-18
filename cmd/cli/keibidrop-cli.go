@@ -15,9 +15,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
+	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/fatih/color"
@@ -59,6 +61,9 @@ func (c *cliContext) executor(in string) {
 			return
 		}
 		registerPeer(c.kd, args[1])
+
+	case "discover":
+		discoverPeers(c.kd)
 
 	case "create":
 		createRoom(c.kd)
@@ -211,6 +216,37 @@ func handleShow(kd *common.KeibiDrop, what string) {
 	default:
 		fmt.Println("Unknown show command.")
 	}
+}
+
+func discoverPeers(kd *common.KeibiDrop) {
+	kd.IsLocalMode = true
+	disc := discovery.New(kd.InboundPort(), slog.Default())
+	disc.Start()
+	defer disc.Stop()
+
+	fmt.Printf("You appear as: %s\n", disc.Name())
+	fmt.Println("Searching for nearby KeibiDrop devices (10s)...")
+
+	time.Sleep(6 * time.Second)
+
+	peers := disc.Peers()
+	if len(peers) == 0 {
+		// Wait a bit more
+		time.Sleep(4 * time.Second)
+		peers = disc.Peers()
+	}
+
+	if len(peers) == 0 {
+		fmt.Println("No devices found on this network.")
+		return
+	}
+
+	fmt.Printf("\nFound %d device(s):\n", len(peers))
+	for i, p := range peers {
+		fmt.Printf("  [%d] %s  (%s)\n", i+1, p.Name, p.Addr)
+	}
+	fmt.Println("\nTo connect: register <address> then create/join")
+	fmt.Println("Example:  register " + peers[0].Addr)
 }
 
 func registerPeer(kd *common.KeibiDrop, fp string) {
