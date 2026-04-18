@@ -2,8 +2,7 @@ package discovery
 
 import (
 	"fmt"
-	"math/rand"
-	"time"
+	"math/rand/v2"
 )
 
 var adjectives = []string{
@@ -43,8 +42,7 @@ var nouns = []string{
 }
 
 func generateName() string {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	adj := adjectives[r.Intn(len(adjectives))]
-	noun := nouns[r.Intn(len(nouns))]
+	adj := adjectives[rand.IntN(len(adjectives))]
+	noun := nouns[rand.IntN(len(nouns))]
 	return fmt.Sprintf("%s %s", adj, noun)
 }

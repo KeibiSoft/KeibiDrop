@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   timeout: 3m
   tests: true
@@ -7,14 +9,15 @@ linters:
     - govet
     - staticcheck
     - unused
-    - gosimple
     - errcheck
-    - gofmt
     - gocritic
     - revive
-    - typecheck
     - ineffassign
     - gosec
+
+formatters:
+  enable:
+    - gofmt
 
 linters-settings:
   revive:
@@ -25,6 +28,10 @@ linters-settings:
       - (io.Closer).Close
       - (*os.File).Close
       - (net.Conn).Close
+      - (*net.UDPConn).Close
+      - (*net.UDPConn).Write
+      - (*net.UDPConn).SetReadBuffer
+      - (*net.UDPConn).SetReadDeadline
       - (*google.golang.org/grpc.ClientConn).Close
 
 issues:

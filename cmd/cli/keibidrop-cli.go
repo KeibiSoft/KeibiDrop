@@ -221,7 +221,7 @@ func handleShow(kd *common.KeibiDrop, what string) {
 func discoverPeers(kd *common.KeibiDrop) {
 	kd.IsLocalMode = true
 	disc := discovery.New(kd.InboundPort(), slog.Default())
-	disc.Start()
+	_ = disc.Start()
 	defer disc.Stop()
 
 	fmt.Printf("You appear as: %s\n", disc.Name())
