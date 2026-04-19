@@ -28,58 +28,60 @@ component InputArea inherits Rectangle {
 
     width: 438px;
     height: 34px;
-    background: transparent;
+    border-radius: 7px;
+    border-width: 0.5px;
+    border-color: rgba(255,255,255,0.5);
+    background: #222222;
     clip: true;
 
-    ti-clip := Rectangle {
-        x: 0px;
-        width: 296px;
-        height: 34px;
-        border-radius: 7px;
-        background: #222222;
-        clip: true;
-
-        // Read-only: use Text with elide (TextInput ignores parent clip)
-        if root.readOnly: Text {
-            x: 8px;
-            width: parent.width - 16px;
-            height: parent.height;
-            text: root.inText;
-            color: white;
-            font-family: "monospace";
-            font-size: 11px;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-
-        // Editable: TextInput with scroll
-        if !root.readOnly: ti := TextInput {
-            x: 8px;
-            width: parent.width - 16px;
-            height: parent.height;
-            horizontal-alignment: left;
-            vertical-alignment: center;
-            font-family: "monospace";
-            font-size: 12px;
-            color: white;
-            text <=> root.inText;
-            single-line: true;
-            accepted => { root.process_code(); }
-        }
+    // Input text area (left portion)
+    if root.readOnly: Text {
+        x: 8px;
+        width: 288px;
+        height: parent.height;
+        text: root.inText;
+        color: white;
+        font-family: "monospace";
+        font-size: 11px;
+        vertical-alignment: center;
+        overflow: elide;
     }
 
+    if !root.readOnly: TextInput {
+        x: 8px;
+        width: 288px;
+        height: parent.height;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        font-family: "monospace";
+        font-size: 12px;
+        color: white;
+        text <=> root.inText;
+        single-line: true;
+        accepted => { root.process_code(); }
+    }
+
+    // White divider line
     Rectangle {
-        x: ti-clip.width;
+        x: 296px;
+        y: 0px;
+        width: 0.5px;
+        height: parent.height;
+        background: rgba(255,255,255,0.5);
+    }
+
+    // Button (right portion, inside the pill)
+    Rectangle {
+        x: 296px;
         y: 0px;
         width: 142px;
-        height: 34px;
-        border-radius: 7px;
+        height: parent.height;
         background: btn-touch.pressed ? #777777 : btn-touch.has-hover ? #999999 : #888888;
         animate background { duration: 150ms; }
 
         Text {
             text: root.buttonText;
-            color: white;
+            color: black;
             font-size: 14px;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -828,7 +830,7 @@ export component MainWindow inherits Window {
             x: 357px;
             y: 390px;
             text: "X invalid code";
-            color: #ef4444;
+            color: #d97706;
             font-size: 13px;
         }
 
