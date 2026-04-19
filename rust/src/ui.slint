@@ -108,15 +108,16 @@ component DataRectangle inherits Rectangle {
 
     t := Text {
         x: 43px;
-        y: 28px;
+        y: 30px;
         text: parent.info;
         color: white;
-        font-size: 14px;
+        font-size: 16px;
+        font-weight: 600;
     }
 
     InputArea {
         x: 43px;
-        y: 68px;
+        y: 62px;
         inText <=> parent.inText;
         buttonText: parent.buttonText;
         readOnly: parent.readOnly;
@@ -288,7 +289,7 @@ component SmallOutlineButton inherits Rectangle {
     callback clicked;
 
     width: self.preferred-width;
-    preferred-width: btn-label.preferred-width + 16px;
+    preferred-width: btn-label.preferred-width + 28px;
     height: 24px;
     border-radius: 7px;
     border-width: 0.5px;
@@ -311,27 +312,15 @@ component SmallOutlineButton inherits Rectangle {
 }
 
 component KeibiDropLogo inherits Rectangle {
-        // spacing: 1px;
-        width: keibi.width + drop.width;
-        height: keibi.height;
+    width: 195px;
+    height: 24px;
 
-        keibi := Text {
-            text: "KEIBI";
-            color: white;
-            font-family: "Inter";
-            font-size: 26px;
-            font-weight: 700;
-        }
-
-        drop:= Text {
-            text: "DROP";
-            color: white;
-            font-family: "Inter";
-            font-size: 26px;
-            font-weight: 200;
-            x: keibi.x + keibi.width;
-            y: keibi.y;
-        }
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: @image-url("../assets/logo.svg");
+        image-fit: contain;
+    }
 }
 
 

@@ -160,6 +160,10 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-[Mozilla Public License 2.0](./LICENSE)
+Go engine, CLI, and mobile bindings: [Mozilla Public License 2.0](./LICENSE) (per-file copyleft)
+
+Rust UI and brand assets: Proprietary — see [LICENSE-GUIDE.md](./LICENSE-GUIDE.md)
+
+Desktop UI built with [Slint](https://slint.dev)
 
 Built by [KeibiSoft SRL](https://keibisoft.com).
