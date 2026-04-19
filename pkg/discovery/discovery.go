@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 // Package discovery implements LAN peer discovery using UDP multicast.
 // No third-party dependencies — uses only net and encoding/json from stdlib.
 //

@@ -1,10 +1,11 @@
-// ABOUTME: Package mobile exposes a gomobile-compatible API for iOS and Android clients
-// ABOUTME: All types use gomobile-safe primitives; file lists use index-based snapshot access
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// ABOUTME: Package mobile exposes a gomobile-compatible API for iOS and Android clients
+// ABOUTME: All types use gomobile-safe primitives; file lists use index-based snapshot access
 
 // Package mobile provides gomobile-compatible bindings for KeibiDrop.
 // All exported types and functions follow gomobile restrictions:

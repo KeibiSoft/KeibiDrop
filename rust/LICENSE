@@ -1,0 +1,17 @@
+Copyright (c) 2024-2026 KeibiSoft SRL. All rights reserved.
+
+PROPRIETARY SOFTWARE
+
+The source code in this directory is proprietary to KeibiSoft SRL.
+It is provided as source-available for transparency as part of the
+KeibiDrop Community Edition.
+
+You may view and compile this code for personal, non-commercial use
+as part of the KeibiDrop application. You may NOT modify, redistribute,
+or use this code in any other product or service.
+
+The Slint UI framework is used under the Slint Royalty-Free Desktop,
+Mobile, and Web Applications License (not GPLv3).
+See https://slint.dev/pricing
+
+For commercial licensing: marius@keibisoft.com
