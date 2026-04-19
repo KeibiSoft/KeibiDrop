@@ -1,18 +1,18 @@
 # Licensing
 
-## Go Engine, CLI, Mobile Bindings — MPL-2.0 (Open Source)
+## Go Engine, CLI, Mobile Bindings - MPL-2.0 (Open Source)
 
 Go source code files (`pkg/`, `cmd/`, `mobile/`, `tests/`, `keibidrop.proto`) are licensed under the [Mozilla Public License 2.0](LICENSE) on a **per-file** basis.
 
 MPL-2.0 is a file-level copyleft: you may freely use, modify, and distribute each MPL-2.0 licensed file, but modifications to those specific files must remain under MPL-2.0. You may combine MPL-2.0 files with code under other licenses (including proprietary) in the same project.
 
-## Rust UI and FFI Bridge — Proprietary
+## Rust UI and FFI Bridge - Proprietary
 
 The Rust UI (`rust/`) and FFI bridge (`rustbridge/`) are **proprietary software** owned by KeibiSoft SRL. Source is provided for transparency only. See `rust/LICENSE` for terms.
 
-The [Slint](https://slint.dev) UI framework is used under the **Slint Royalty-Free Desktop, Mobile, and Web Applications License** — not GPLv3. Attribution to Slint is provided in the application.
+The [Slint](https://slint.dev) UI framework is used under the **Slint Royalty-Free Desktop, Mobile, and Web Applications License** - not GPLv3. Attribution to Slint is provided in the application.
 
-## Brand Assets — Proprietary, All Rights Reserved
+## Brand Assets - Proprietary, All Rights Reserved
 
 **The following are the exclusive property of KeibiSoft SRL and are NOT covered by any open source license:**
 
@@ -27,18 +27,28 @@ The [Slint](https://slint.dev) UI framework is used under the **Slint Royalty-Fr
 
 **© 2024-2026 KeibiSoft SRL. All rights reserved.**
 
+## Personal Use and Community Edition
+
+You are free to use KeibiDrop, including the Rust UI, for personal and non-commercial purposes as part of the Community Edition.
+
 ## If You Fork This Project
 
-You **must**:
-1. Remove all KeibiDrop and KeibiSoft branding
+You may fork and modify the code for personal use. If you distribute a fork, you **must**:
+1. Remove all KeibiDrop and KeibiSoft branding (name, logos, icons, splash screens)
 2. Choose a different name and create your own visual identity
-3. Remove or replace the Rust UI and FFI bridge — they are not licensed for redistribution
+3. Remove or replace the Rust UI and FFI bridge, which are not licensed for redistribution
 4. Comply with MPL-2.0 for the Go source code
+
+You may NOT distribute any fork or derivative work under the KeibiDrop or KeibiSoft name.
+
+## Dual Licensing
+
+KeibiSoft SRL reserves the right to offer the MPL-2.0 licensed code under alternative commercial licenses. This enables enterprise customers to use KeibiDrop without MPL-2.0 obligations.
 
 ## Contributions
 
-Contributions to MPL-2.0 code are licensed under MPL-2.0. See [DCO](DCO.txt).
+By contributing to this project, you agree to the [Developer Certificate of Origin](DCO.txt) and grant KeibiSoft SRL the right to dual-license your contributions under both MPL-2.0 and any commercial license offered by KeibiSoft SRL.
 
 ## Contact
 
-contact@keibisoft.com
+marius@keibisoft.com
