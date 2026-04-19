@@ -83,6 +83,7 @@ component InputArea inherits Rectangle {
             text: root.buttonText;
             color: black;
             font-size: 14px;
+            font-weight: 600;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -107,15 +108,15 @@ component DataRectangle inherits Rectangle {
 
     t := Text {
         x: 43px;
-        y: 20px;
+        y: 28px;
         text: parent.info;
-        color: #9ca3af;
+        color: white;
         font-size: 14px;
     }
 
     InputArea {
         x: 43px;
-        y: 72px;
+        y: 68px;
         inText <=> parent.inText;
         buttonText: parent.buttonText;
         readOnly: parent.readOnly;
