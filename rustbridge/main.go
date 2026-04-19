@@ -665,6 +665,21 @@ func KD_GetDiscoveredPeerAddr(i C.int) *C.char {
 	return C.CString(peers[int(i)].Addr)
 }
 
+//export KD_GetConnectionMode
+func KD_GetConnectionMode() *C.char {
+	if kd == nil {
+		return C.CString("")
+	}
+	return C.CString(kd.ConnectionMode)
+}
+
+//export KD_SetStrictMode
+func KD_SetStrictMode(enabled C.int) {
+	if kd != nil {
+		kd.StrictMode = enabled != 0
+	}
+}
+
 //export KD_GetVersion
 func KD_GetVersion() *C.char {
 	return C.CString(common.Version + " (" + common.CommitHash + ")")

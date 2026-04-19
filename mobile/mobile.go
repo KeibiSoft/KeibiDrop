@@ -654,6 +654,23 @@ func (api *API) SetPeerDirectAddress(addr string) error {
 	return api.kd.SetPeerDirectAddress(addr)
 }
 
+// GetConnectionMode returns the current connection mode: "lan", "direct", "bridge", or "" if not connected.
+func (api *API) GetConnectionMode() string {
+	if api.kd == nil {
+		return ""
+	}
+	return api.kd.ConnectionMode
+}
+
+// SetStrictMode enables/disables strict mode (no data relay fallback).
+func (api *API) SetStrictMode(enabled bool) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.kd != nil {
+		api.kd.StrictMode = enabled
+	}
+}
+
 // RelayEndpoint returns the relay URL string.
 func (api *API) RelayEndpoint() string {
 	if api.kd == nil {

@@ -574,9 +574,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 	// Connection priority: LAN (2s per addr) → direct IPv6 (15s) → bridge relay.
 	{
-		// 1. Try LAN addresses first (same network, no relay needed).
+		// 1. Try LAN addresses first (only in local mode — internet mode skips this).
 		lanConnected := false
-		if len(kd.PeerLocalAddrs) > 0 {
+		if kd.IsLocalMode && len(kd.PeerLocalAddrs) > 0 {
 			logger.Info("Trying LAN addresses first", "addrs", kd.PeerLocalAddrs)
 			for _, localAddr := range kd.PeerLocalAddrs {
 				addr := net.JoinHostPort(localAddr, strconv.Itoa(kd.session.PeerPort))
@@ -596,8 +596,10 @@ func (kd *KeibiDrop) JoinRoom() error {
 				kd.PeerIPv6IP = localAddr
 				lanConnected = true
 
-				// Accept inbound from peer (LAN, should be fast).
+				// Accept inbound from peer (LAN, should be fast — 5s timeout).
+				kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
 				inConn, err := kd.listener.Accept()
+				kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
 				if err != nil {
 					logger.Warn("LAN inbound accept failed", "error", err)
 					// Close outbound, fall through to direct/bridge.
@@ -619,6 +621,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 				break
 			}
 			if lanConnected {
+				kd.ConnectionMode = "lan"
 				if kd.OnEvent != nil {
 					kd.OnEvent("connection_mode:lan")
 				}
@@ -671,6 +674,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 						logger.Error("Failed inbound handshake", "error", err)
 						return err
 					}
+					kd.ConnectionMode = "direct"
 					if kd.OnEvent != nil {
 						kd.OnEvent("connection_mode:direct")
 					}
@@ -725,6 +729,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 				inConn.Close()
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
+			kd.ConnectionMode = "bridge"
 			if kd.OnEvent != nil {
 				kd.OnEvent("connection_mode:bridge")
 			}
@@ -876,7 +881,17 @@ func (kd *KeibiDrop) CreateRoom() error {
 				}
 			}
 		}
+		if !useBridge {
+			kd.ConnectionMode = "direct"
+			if kd.OnEvent != nil {
+				kd.OnEvent("connection_mode:direct")
+			}
+		}
 		if useBridge {
+			kd.ConnectionMode = "bridge"
+			if kd.OnEvent != nil {
+				kd.OnEvent("connection_mode:bridge")
+			}
 			// Bridge fallback.
 			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
 

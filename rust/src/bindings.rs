@@ -946,6 +946,12 @@ extern "C" {
     pub fn KD_GetDiscoveredPeerAddr(i: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
 }
 extern "C" {
+    pub fn KD_GetConnectionMode() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SetStrictMode(enabled: ::std::os::raw::c_int);
+}
+extern "C" {
     pub fn KD_GetVersion() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {
