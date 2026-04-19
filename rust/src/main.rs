@@ -1032,6 +1032,14 @@ fn main() {
                         libc::free(evt_ptr as *mut libc::c_void);
                         println!("[Event] {}", evt);
 
+                        // Connection mode events
+                        if evt.starts_with("connection_mode:") {
+                            let mode = evt.trim_start_matches("connection_mode:");
+                            if let Some(app) = weak_evt.upgrade() {
+                                app.set_connection_mode(slint::SharedString::from(mode));
+                            }
+                        }
+
                         let is_disconnect = evt.starts_with("peer_disconnected:")
                             || evt.starts_with("gave_up:");
                         if is_disconnect {

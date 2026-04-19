@@ -272,7 +272,7 @@ func createRoom(kd *common.KeibiDrop) {
 			fmt.Println("Error: ", err)
 			return
 		}
-		fmt.Println("Room created and peer connected: ", kd.PeerIPv6IP)
+		fmt.Printf("Room created and peer connected: %s (mode: %s)\n", kd.PeerIPv6IP, kd.ConnectionMode)
 	}()
 }
 
@@ -301,7 +301,7 @@ func joinRoom(kd *common.KeibiDrop) {
 			return
 		}
 
-		fmt.Printf("Room: %v, joined successfully\n", kd.PeerIPv6IP)
+		fmt.Printf("Room: %v, joined successfully (mode: %s)\n", kd.PeerIPv6IP, kd.ConnectionMode)
 	}()
 }
 

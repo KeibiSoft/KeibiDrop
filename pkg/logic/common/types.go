@@ -32,10 +32,12 @@ type KeibiDrop struct {
 	relayClient  *http.Client
 	RelayEndoint *url.URL
 
-	IsFUSE       bool
-	IsLocalMode  bool
-	BridgeAddr   string // TCP bridge relay address for firewall traversal
-	OpInProgress atomic.Int32
+	IsFUSE         bool
+	IsLocalMode    bool
+	BridgeAddr     string // TCP bridge relay address for firewall traversal
+	StrictMode     bool   // Disable data relay fallback (direct connections only)
+	ConnectionMode string // "lan", "direct", "bridge" - set after successful connection
+	OpInProgress   atomic.Int32
 
 	session *session.Session
 
@@ -212,6 +214,41 @@ type ErrorMapperFunc func(statusCode int, err error) error
 
 // InboundPort returns the port this instance listens on for incoming connections.
 func (kd *KeibiDrop) InboundPort() int { return kd.inboundPort }
+
+// UpgradeListenerDualStack replaces the IPv6-only listener with a dual-stack
+// listener that accepts both IPv4 and IPv6. Used when entering local mode
+// (LAN discovery needs IPv4 connectivity).
+func (kd *KeibiDrop) UpgradeListenerDualStack() error {
+	kd.mu.Lock()
+	defer kd.mu.Unlock()
+	if kd.listener != nil {
+		kd.listener.Close()
+	}
+	addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	kd.listener = ln
+	return nil
+}
+
+// DowngradeListenerIPv6Only replaces the dual-stack listener with an IPv6-only
+// listener. Used when leaving local mode.
+func (kd *KeibiDrop) DowngradeListenerIPv6Only() error {
+	kd.mu.Lock()
+	defer kd.mu.Unlock()
+	if kd.listener != nil {
+		kd.listener.Close()
+	}
+	addr := net.JoinHostPort("::", strconv.Itoa(kd.inboundPort))
+	ln, err := net.Listen("tcp6", addr)
+	if err != nil {
+		return err
+	}
+	kd.listener = ln
+	return nil
+}
 
 // IsRunning returns whether the KeibiDrop instance is in a connected session.
 func (kd *KeibiDrop) IsRunning() bool {

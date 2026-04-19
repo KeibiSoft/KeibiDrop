@@ -125,6 +125,7 @@ func runDaemon() {
 	}
 	kd.IsLocalMode = isLocal
 	kd.BridgeAddr = cfg.BridgeAddr
+	kd.StrictMode = cfg.StrictMode
 	go kd.Run()
 
 	// Listen on Unix socket
@@ -451,6 +452,7 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"peer_fingerprint":  pfp,
 		"ip":                kd.LocalIPv6IP,
 		"peer_ip":           kd.PeerIPv6IP,
+		"connection_mode":   kd.ConnectionMode,
 		"relay":             kd.RelayEndoint.String(),
 		"fuse":              kd.IsFUSE,
 		"mount_path":        kd.ToMount,

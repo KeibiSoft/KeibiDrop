@@ -710,6 +710,7 @@ export component MainWindow inherits Window {
     in-out property<bool> drag_hovering: false;
     // Mount path for FUSE mode (Screen 2)
     in property<string> mount_path: "";
+    in property<string> connection_mode: ""; // "lan", "direct", "bridge"
     // Peer code feedback: set by Rust after KD_AddPeerFingerprint
     in-out property<bool> peer_code_added: false;
     in-out property<bool> peer_code_error: false;
@@ -894,9 +895,10 @@ export component MainWindow inherits Window {
                 y: 0;
                 height: 24px;
                 text: root.fuse_available
-                    ? (root.fuse_mode ? "Virtual folder (files sync automatically)" : "Direct transfer (select files to send)")
+                    ? (root.fuse_mode ? "Virtual folder\n(files sync automatically)" : "Direct transfer\n(select files to send)")
                     : "Virtual folder not available";
                 color: root.fuse_available ? #ccc : #888888;
+                wrap: word-wrap;
                 font-size: 12px;
                 vertical-alignment: center;
             }
@@ -913,7 +915,7 @@ export component MainWindow inherits Window {
         // Local mode toggle
         Rectangle {
             x: 868px;
-            y: 606px;
+            y: 592px;
             width: 260px;
             height: 24px;
             visible: root.room_action == 0;
@@ -934,10 +936,11 @@ export component MainWindow inherits Window {
                 y: 0;
                 height: 24px;
                 text: root.local_mode
-                    ? "Local network (direct connection, no relay)"
-                    : "Internet (connect via relay server)";
+                    ? "Local network\n(direct connection, no relay)"
+                    : "Internet\n(connect via relay server)";
                 color: #ccc;
                 font-size: 12px;
+                wrap: word-wrap;
                 vertical-alignment: center;
             }
         }
@@ -1065,6 +1068,17 @@ export component MainWindow inherits Window {
                 text: "Connected";
                 color: #22c55e;
                 font-size: 13px;
+                vertical-alignment: center;
+            }
+            if root.connection_mode != "": Text {
+                text: root.connection_mode == "lan" ? "LAN"
+                    : root.connection_mode == "direct" ? "Direct P2P"
+                    : root.connection_mode == "bridge" ? "Relay"
+                    : root.connection_mode;
+                color: root.connection_mode == "lan" ? #22c55e
+                     : root.connection_mode == "direct" ? #3b82f6
+                     : #d97706;
+                font-size: 11px;
                 vertical-alignment: center;
             }
         }
