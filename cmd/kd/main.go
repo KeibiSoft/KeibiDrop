@@ -234,6 +234,9 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 	case "join":
 		return cmdCreateOrJoin(kd, "join")
 
+	case "connect":
+		return cmdConnect(kd)
+
 	case "add":
 		if len(req.Args) < 1 {
 			return errResponse("usage: kd add <filepath>")
@@ -400,6 +403,24 @@ func cmdCreateOrJoin(kd *common.KeibiDrop, mode string) Response {
 	return okResponse(map[string]string{
 		"status":  "connected",
 		"peer_ip": kd.PeerIPv6IP,
+	})
+}
+
+func cmdConnect(kd *common.KeibiDrop) Response {
+	if kd.OpInProgress.Add(1) != 1 {
+		kd.OpInProgress.Add(-1)
+		return errResponse("operation already in progress")
+	}
+	defer kd.OpInProgress.Add(-1)
+
+	if err := kd.Connect(); err != nil {
+		return errResponse(err.Error())
+	}
+
+	return okResponse(map[string]string{
+		"status":  "connected",
+		"peer_ip": kd.PeerIPv6IP,
+		"mode":    kd.ConnectionMode,
 	})
 }
 

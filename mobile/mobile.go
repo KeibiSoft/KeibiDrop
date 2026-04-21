@@ -268,6 +268,39 @@ func (api *API) JoinRoomAsync() error {
 	return nil
 }
 
+// Connect determines the creator/joiner role automatically via
+// fingerprint comparison, then creates or joins a room. Blocking.
+func (api *API) Connect() error {
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	return api.kd.Connect()
+}
+
+// ConnectAsync starts Connect in the background.
+// Poll GetOpStatus() to check progress.
+func (api *API) ConnectAsync() error {
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	if api.op == nil {
+		api.op = newOpState()
+	}
+	status, _ := api.op.get()
+	if status == OpStatusRunning {
+		return fmt.Errorf("operation already in progress")
+	}
+	api.op.set(OpStatusRunning, "connecting")
+	go func() {
+		if err := api.Connect(); err != nil {
+			api.op.set(OpStatusFailed, err.Error())
+			return
+		}
+		api.op.set(OpStatusSucceeded, "connected")
+	}()
+	return nil
+}
+
 // CancelOp cancels the current async operation.
 func (api *API) CancelOp() error {
 	if api.op == nil {

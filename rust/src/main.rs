@@ -299,6 +299,61 @@ fn connect_room(
     });
 }
 
+/// Connect using deterministic fingerprint tiebreaker (WAN mode).
+fn connect_room_auto(
+    weak: slint::Weak<MainWindow>,
+    running: Arc<AtomicBool>,
+    downloads: Arc<Mutex<HashMap<String, DownloadInfo>>>,
+    save_path: String,
+    target_screen: i32,
+) {
+    println!("Connecting (auto role)...");
+
+    let weak_pre = weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = weak_pre.upgrade() {
+            app.set_room_action(1);
+            app.set_error_message(slint::SharedString::default());
+            app.set_status_message(slint::SharedString::from("Connecting..."));
+            app.set_connect_status(slint::SharedString::default());
+        }
+    });
+
+    std::thread::spawn(move || unsafe {
+        let res = bindings::KD_Connect();
+
+        if res != 0 {
+            let err = get_last_error();
+            eprintln!("Connect failed: {}", err);
+            let weak_err = weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(app) = weak_err.upgrade() {
+                    app.set_room_action(0);
+                    app.set_status_message(slint::SharedString::default());
+                    app.set_connect_status(slint::SharedString::default());
+                    app.set_error_message(slint::SharedString::from(err));
+                }
+            });
+            return;
+        }
+
+        println!("Connected successfully");
+        bindings::KD_SetupEventCallbacks();
+        running.store(true, Ordering::Relaxed);
+        start_file_watcher(running.clone(), weak.clone(), downloads, save_path);
+
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(app) = weak.upgrade() {
+                app.set_room_action(0);
+                app.set_status_message(slint::SharedString::default());
+                app.set_connect_status(slint::SharedString::default());
+                app.set_error_message(slint::SharedString::default());
+                app.set_current_screen(target_screen);
+            }
+        });
+    });
+}
+
 fn main() {
     let mut ctx = ClipboardContext::new().unwrap();
 
@@ -609,6 +664,24 @@ fn main() {
                 save_path_join.clone(),
                 screen,
                 false,
+            );
+        });
+
+        // Connect handler (WAN mode — auto role via fingerprint tiebreaker)
+        let weak_connect = app.as_weak();
+        let watcher_running_connect = watcher_running.clone();
+        let downloads_connect = downloads.clone();
+        let save_path_connect = to_save.clone();
+        app.on_connect_pressed(move || {
+            let screen = if let Some(app) = weak_connect.upgrade() {
+                if app.get_fuse_mode() { 2 } else { 1 }
+            } else { 1 };
+            connect_room_auto(
+                weak_connect.clone(),
+                watcher_running_connect.clone(),
+                downloads_connect.clone(),
+                save_path_connect.clone(),
+                screen,
             );
         });
 
@@ -1037,6 +1110,18 @@ fn main() {
                             let mode = evt.trim_start_matches("connection_mode:");
                             if let Some(app) = weak_evt.upgrade() {
                                 app.set_connection_mode(slint::SharedString::from(mode));
+                            }
+                        }
+
+                        // Connect status events
+                        if evt.starts_with("connect_status:") {
+                            let status = evt.trim_start_matches("connect_status:");
+                            let display = match status {
+                                "peer_not_ready" => "Peer not found yet. Make sure your peer pressed Connect.",
+                                s => s,
+                            };
+                            if let Some(app) = weak_evt.upgrade() {
+                                app.set_connect_status(slint::SharedString::from(display));
                             }
                         }
 

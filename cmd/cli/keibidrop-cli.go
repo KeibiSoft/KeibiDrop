@@ -71,6 +71,9 @@ func (c *cliContext) executor(in string) {
 	case "join":
 		joinRoom(c.kd)
 
+	case "connect":
+		connectPeer(c.kd)
+
 	case "reset":
 		resetSession(c.kd)
 
@@ -303,6 +306,25 @@ func joinRoom(kd *common.KeibiDrop) {
 
 		fmt.Printf("Room: %v, joined successfully (mode: %s)\n", kd.PeerIPv6IP, kd.ConnectionMode)
 	}()
+}
+
+func connectPeer(kd *common.KeibiDrop) {
+	if kd.OpInProgress.Add(1) != 1 {
+		kd.OpInProgress.Add(-1)
+		fmt.Println("Operation already in progress...")
+		return
+	}
+
+	go func() {
+		defer kd.OpInProgress.Add(-1)
+		err := kd.Connect()
+		if err != nil {
+			fmt.Println("Error: ", err)
+			return
+		}
+		fmt.Printf("Connected to peer: %s (mode: %s)\n", kd.PeerIPv6IP, kd.ConnectionMode)
+	}()
+	fmt.Println("Connecting... (role determined by fingerprint comparison)")
 }
 
 func resetSession(kd *common.KeibiDrop) {
