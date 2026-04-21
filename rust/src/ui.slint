@@ -714,6 +714,7 @@ export component MainWindow inherits Window {
     // Peer code feedback: set by Rust after KD_AddPeerFingerprint
     in-out property<bool> peer_code_added: false;
     in-out property<bool> peer_code_error: false;
+    in property<string> connect_status: "";
     // Version string from Go (set by Rust at init)
     in property<string> version_text: "";
     // FUSE mode toggle (can be changed before connecting)
@@ -735,6 +736,7 @@ export component MainWindow inherits Window {
     callback copy_my_code();
     callback create_room_pressed();
     callback join_room_pressed();
+    callback connect_pressed();
     callback disconnect_pressed();
     callback export_logs_pressed();
     callback cancel_connect_pressed();
@@ -843,30 +845,30 @@ export component MainWindow inherits Window {
             sectionNumber: 2;
         }
 
-        // Create room button
-        PillButton {
+        // Connect button (replaces separate Create/Join — role determined by fingerprint tiebreaker)
+        if !root.local_mode: PillButton {
             x: 868px;
             y: 459px;
-            text: root.room_action == 1 ? "Creating..." : "Create room";
-            active: root.room_action == 1;
-            enabled: root.room_action == 0 && root.next_enabled;
-            clicked => { root.create_room_pressed() }
+            text: root.room_action != 0 ? "Connecting..." : "Connect";
+            active: root.room_action != 0;
+            enabled: root.room_action == 0 && root.next_enabled && root.peer_code_added;
+            clicked => { root.connect_pressed() }
         }
 
-        // Join room button
-        PillButton {
+        // Status text while connecting
+        if root.room_action != 0 && root.connect_status != "": Text {
             x: 868px;
-            y: 503px;
-            text: root.room_action == 2 ? "Joining..." : "Join room";
-            active: root.room_action == 2;
-            enabled: root.room_action == 0 && root.next_enabled;
-            clicked => { root.join_room_pressed() }
+            y: 500px;
+            width: 340px;
+            text: root.connect_status;
+            color: #aaa;
+            font-size: 12px;
         }
 
-        // Cancel button - visible while creating or joining
+        // Cancel button
         if root.room_action != 0: PillButton {
             x: 868px;
-            y: 547px;
+            y: 525px;
             text: "Cancel";
             clicked => { root.cancel_connect_pressed() }
         }

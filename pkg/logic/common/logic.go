@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -567,8 +568,35 @@ func (kd *KeibiDrop) JoinRoom() error {
 		keyConn.Close()
 		logger.Info("Local key exchange complete (join side)")
 	} else {
-		if err := kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint); err != nil {
-			return err
+		if kd.OnEvent != nil {
+			kd.OnEvent("connect_status:Waiting for peer...")
+		}
+		const relayRetryDelay = 1 * time.Second
+		const relayPhase1 = 15
+		const relayPhase2 = 45
+		relayMaxRetries := relayPhase1 + relayPhase2
+		var relayErr error
+		for attempt := 0; attempt <= relayMaxRetries; attempt++ {
+			relayErr = kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint)
+			if relayErr == nil {
+				break
+			}
+			if !errors.Is(relayErr, ErrNotFound) {
+				return relayErr
+			}
+			if attempt == relayPhase1 && kd.OnEvent != nil {
+				kd.OnEvent("connect_status:peer_not_ready")
+			}
+			if attempt < relayMaxRetries {
+				select {
+				case <-time.After(relayRetryDelay):
+				case <-kd.ctx.Done():
+					return kd.ctx.Err()
+				}
+			}
+		}
+		if relayErr != nil {
+			return fmt.Errorf("peer not found on relay after %d attempts: %w", relayMaxRetries, relayErr)
 		}
 	}
 
@@ -765,6 +793,34 @@ connected:
 
 	logger.Info("Success")
 	return nil
+}
+
+// Connect determines the creator/joiner role automatically using
+// deterministic fingerprint comparison and calls CreateRoom or JoinRoom.
+// Lower fingerprint = creator (registers to relay, accepts inbound).
+// Higher fingerprint = joiner (fetches from relay, dials out).
+func (kd *KeibiDrop) Connect() error {
+	logger := kd.logger.With("method", "connect")
+	if kd.session == nil {
+		return ErrNilPointer
+	}
+	ownFP := kd.session.OwnFingerprint
+	peerFP := kd.session.ExpectedPeerFingerprint
+	if peerFP == "" {
+		return ErrEmptyFingerprint
+	}
+	if ownFP == peerFP {
+		return ErrIdenticalFingerprints
+	}
+	if ownFP < peerFP {
+		logger.Info("Fingerprint tiebreak: I am creator", "own", ownFP[:8], "peer", peerFP[:8])
+		if kd.OnEvent != nil {
+			kd.OnEvent("connect_status:Waiting for peer to connect...")
+		}
+		return kd.CreateRoom()
+	}
+	logger.Info("Fingerprint tiebreak: I am joiner", "own", ownFP[:8], "peer", peerFP[:8])
+	return kd.JoinRoom()
 }
 
 func (kd *KeibiDrop) CreateRoom() error {

@@ -158,6 +158,18 @@ func KD_JoinRoom() C.int {
 	return 0
 }
 
+//export KD_Connect
+func KD_Connect() C.int {
+	if kd == nil {
+		return -1
+	}
+	if err := kd.Connect(); err != nil {
+		setLastError(err)
+		return -2
+	}
+	return 0
+}
+
 //export KD_AddPeerFingerprint
 func KD_AddPeerFingerprint(fp *C.char) C.int {
 	if kd == nil {

@@ -36,6 +36,7 @@ var (
 	ErrAlreadyRunning                = errors.New("already running")
 	ErrInvalidSession                = errors.New("invalid sesssion")
 	ErrServerAtCapacity              = errors.New("relay server at capacity, please try again in 5 minutes")
+	ErrIdenticalFingerprints         = errors.New("own and peer fingerprints are identical")
 )
 
 func RegisterErrorMapper(statusCode int, err error) error {
@@ -44,6 +45,8 @@ func RegisterErrorMapper(statusCode int, err error) error {
 	}
 
 	switch statusCode {
+	case http.StatusNotFound:
+		return ErrNotFound
 	case http.StatusBadRequest:
 		return ErrInvalidPayload
 	case http.StatusConflict:

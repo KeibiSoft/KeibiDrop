@@ -820,6 +820,9 @@ extern "C" {
     pub fn KD_JoinRoom() -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn KD_Connect() -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn KD_AddPeerFingerprint(fp: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
 extern "C" {
