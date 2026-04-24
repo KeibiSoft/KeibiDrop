@@ -961,6 +961,113 @@ func TestFUSEWriteThroughput(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Benchmark: Full Round-Trip (write on Alice FUSE -> sync to Bob -> verify)
+// ---------------------------------------------------------------------------
+
+func TestRoundTripFUSETransfer(t *testing.T) {
+	skipIfNoFUSE(t)
+	if testing.Short() {
+		t.Skip("skipping round-trip FUSE benchmark in short mode")
+	}
+
+	tp := SetupFUSEPeerPair(t, 300*time.Second)
+	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
+
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"1MB", 1 * 1024 * 1024},
+		{"10MB", 10 * 1024 * 1024},
+		{"100MB", 100 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
+	}
+
+	t.Log("\n=== Round-Trip FUSE Transfer ===")
+	t.Log("Alice writes to her FUSE mount, file syncs to Bob, Bob reads full file from save dir.")
+	t.Logf("%-8s | %-12s | %-12s | %-12s | %-10s", "Size", "Write MB/s", "Sync MB/s", "Total MB/s", "Duration")
+	t.Logf("---------|--------------|--------------|--------------|----------")
+
+	for _, s := range sizes {
+		t.Run("RoundTrip_"+s.name, func(t *testing.T) {
+			require := require.New(t)
+
+			data := make([]byte, s.size)
+			_, err := rand.Read(data)
+			require.NoError(err)
+
+			fileName := fmt.Sprintf("roundtrip_%s.bin", s.name)
+			alicePath := filepath.Join(tp.AliceMountDir, fileName)
+
+			totalStart := time.Now()
+
+			// Phase 1: Alice writes to her FUSE mount
+			writeStart := time.Now()
+			err = os.WriteFile(alicePath, data, 0644)
+			writeElapsed := time.Since(writeStart)
+			require.NoError(err)
+
+			// Phase 2: Wait for Bob to see the file notification
+			WaitForRemoteFile(t, tp.Bob.SyncTracker, "/"+fileName, 30*time.Second)
+
+			// Phase 3: Bob pulls the file (timed)
+			pullStart := time.Now()
+			bobPath := filepath.Join(tp.BobSaveDir, fileName)
+			require.NoError(tp.Bob.PullFile("/"+fileName, bobPath))
+			pullElapsed := time.Since(pullStart)
+
+			totalElapsed := time.Since(totalStart)
+
+			// Phase 4: Verify content
+			bobData, err := os.ReadFile(bobPath)
+			require.NoError(err)
+			require.Equal(len(data), len(bobData), "size mismatch")
+			if s.size <= 10*1024*1024 {
+				require.Equal(data, bobData, "content mismatch")
+			}
+
+			writeMBps := float64(s.size) / writeElapsed.Seconds() / (1024 * 1024)
+			pullMBps := float64(s.size) / pullElapsed.Seconds() / (1024 * 1024)
+			totalMBps := float64(s.size) / totalElapsed.Seconds() / (1024 * 1024)
+			t.Logf("%-8s | %-12.2f | %-12.2f | %-12.2f | %s",
+				s.name, writeMBps, pullMBps, totalMBps, totalElapsed.Round(time.Millisecond))
+		})
+	}
+
+	// Reverse direction: Bob adds file, Alice reads from FUSE mount
+	t.Log("\n=== Reverse: Bob AddFile -> Alice reads from FUSE ===")
+	t.Logf("%-8s | %-12s | %-10s", "Size", "Read MB/s", "Duration")
+	t.Logf("---------|--------------|----------")
+
+	for _, s := range sizes {
+		t.Run("Reverse_"+s.name, func(t *testing.T) {
+			require := require.New(t)
+
+			data := make([]byte, s.size)
+			_, err := rand.Read(data)
+			require.NoError(err)
+
+			fileName := fmt.Sprintf("reverse_%s.bin", s.name)
+			bobPath := filepath.Join(tp.BobSaveDir, fileName)
+			require.NoError(os.WriteFile(bobPath, data, 0644))
+			require.NoError(tp.Bob.AddFile(bobPath))
+
+			alicePath := filepath.Join(tp.AliceMountDir, fileName)
+			WaitForFileOnMount(t, alicePath, 30*time.Second)
+
+			start := time.Now()
+			readData, err := os.ReadFile(alicePath)
+			elapsed := time.Since(start)
+			require.NoError(err)
+			require.Equal(len(data), len(readData), "size mismatch")
+
+			mbps := float64(s.size) / elapsed.Seconds() / (1024 * 1024)
+			t.Logf("%-8s | %-12.2f | %s", s.name, mbps, elapsed.Round(time.Millisecond))
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Legacy portable benchmarks (fixed from hardcoded Mac paths)
 // ---------------------------------------------------------------------------
 
