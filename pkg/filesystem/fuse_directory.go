@@ -945,7 +945,7 @@ func (d *Dir) MkdirFromPeer(path string, mode uint32) (errCode int) {
 }
 
 func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode int) {
-	d.logger.Info("FUSE mkdir", "path", path, "mode", mode, "notifyPeer", notifyPeer)
+	// d.logger.Info("FUSE mkdir", "path", path, "mode", mode, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := platMkdir(cleanPath, mode)
@@ -1335,8 +1335,8 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 			stgo, lstatErr := platLstat(cleanPath)
 			if lstatErr != nil {
-				logger.Error("lstat failed", "cleanPath", cleanPath, "error", lstatErr)
-				return int(convertOsErrToSyscallErrno("lstat", lstatErr))
+				// File was deleted between close and notification — skip notification
+				return 0
 			}
 
 			// logger.Info("Release lstat result", "path", path, "size", stgo.Size)
@@ -1363,7 +1363,6 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 						}
 						recheckStat, recheckErr := platLstat(cleanPath)
 						if recheckErr != nil {
-							logger.Error("Deferred lstat failed", "path", path, "error", recheckErr)
 							return
 						}
 						if recheckStat.Size == prevSize {
@@ -1495,7 +1494,7 @@ func (d *Dir) Releasedir(path string, fh uint64) (errCode int) {
 // When apps try atomic rename-swap, we fall back to basic rename.
 func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	defer d.recoverPanic("Rename", &errCode)
-	d.logger.Info("FUSE rename", "old", oldpath, "new", newpath)
+	// d.logger.Info("FUSE rename", "old", oldpath, "new", newpath)
 	// d.logger.Warn("FUSE Rename called",
 	// 	"oldpath", oldpath,
 	// 	"newpath", newpath,
@@ -1575,7 +1574,7 @@ func (d *Dir) RmdirFromPeer(path string) (errCode int) {
 }
 
 func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
-	d.logger.Info("FUSE rmdir", "path", path, "notifyPeer", notifyPeer)
+	// d.logger.Info("FUSE rmdir", "path", path, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "rmdir", "path", path)
 
 	// Check if this is a remote-only directory (track if we removed it from map).
@@ -1689,7 +1688,7 @@ func (d *Dir) UnlinkFromPeer(path string) (errCode int) {
 }
 
 func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
-	d.logger.Info("FUSE unlink", "path", path, "notifyPeer", notifyPeer)
+	// d.logger.Info("FUSE unlink", "path", path, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "unlink", "path", path)
 
 	// Check if this is a remote-only file (not downloaded locally).
@@ -1814,7 +1813,7 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		fd, err := platOpen(cleanPath, syscall.O_RDWR, 0)
 		openTime := time.Since(startOpen)
 		if err != nil {
-			slog.Error("FCOPYFILE OPEN FAILED", "error", err, "cleanPath", cleanPath)
+			logger.Warn("fcopyfile fallback open failed", "error", err)
 			return int(convertOsErrToSyscallErrno("open", err))
 		}
 		defer platClose(fd)
@@ -1822,7 +1821,7 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		n, err := platPwrite(fd, buff, offset)
 		pwTime := time.Since(startPw)
 		if err != nil {
-			slog.Error("FCOPYFILE PWRITE FAILED", "error", err, "fd", fd, "offset", offset, "len", len(buff))
+			logger.Warn("fcopyfile fallback pwrite failed", "error", err)
 			return int(convertOsErrToSyscallErrno("pwrite", err))
 		}
 		writeStats.record(openTime, pwTime, 0, n)
@@ -1850,13 +1849,13 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 			fd, err2 := platOpen(cleanPath, syscall.O_RDWR, 0)
 			if err2 != nil {
-				slog.Error("Fallback open failed", "error", err2, "cleanPath", cleanPath)
+				logger.Warn("EBADF fallback open failed", "error", err2)
 				return int(convertOsErrToSyscallErrno("open", err2))
 			}
 			defer platClose(fd)
 			n2, err2 := platPwrite(fd, buff, offset)
 			if err2 != nil {
-				slog.Error("Fallback pwrite failed", "error", err2)
+				logger.Warn("EBADF fallback pwrite failed", "error", err2)
 				return int(convertOsErrToSyscallErrno("pwrite", err2))
 			}
 			// slog.Info("Fallback write OK", "bytes", n2)
@@ -1924,7 +1923,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	// If the file is remote and has no stream pool but has incomplete chunks,
 	// try to create a pool on-demand so we can fetch the missing data.
 	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && f.StreamProvider != nil {
-		logger.Info("Creating on-demand stream pool for incomplete remote file")
+		// logger.Info("Creating on-demand stream pool for incomplete remote file")
 		streamCtx, streamCancel := context.WithCancel(context.Background())
 		newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, StreamPoolSize)
 		if openErr != nil {
@@ -2196,7 +2195,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	d.logger.Info("FUSE remote-add", "path", path, "size", stat.Size)
+	// d.logger.Info("FUSE remote-add", "path", path, "size", stat.Size)
 
 	d.RemoteFilesLock.Lock()
 
@@ -2211,8 +2210,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		// 20-byte SHA-1 checksum between the temp write and the rename.
 		if sizeChanged && stat.Size < oldSize && existing.Bitmap != nil && existing.Bitmap.Have() > 0 {
 			d.RemoteFilesLock.Unlock()
-			d.logger.Info("Ignoring stale ADD_FILE with smaller size (rename already set correct size)",
-				"path", path, "staleSize", stat.Size, "currentSize", oldSize)
+			// Stale ADD_FILE with smaller size — rename already set correct size
 			return nil
 		}
 
@@ -2305,7 +2303,7 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 	if info, err := os.Stat(realPath); err == nil && info.Size() == fileSize {
 		if bm, loadErr := LoadChunkBitmap(bmPath, fileSize); loadErr == nil {
 			f.Bitmap = bm
-			logger.Info("Prefetch: resuming from bitmap", "progress", bm.Progress(), "have", bm.Have(), "total", bm.Total())
+			// logger.Info("Prefetch: resuming from bitmap", "progress", bm.Progress(), "have", bm.Have(), "total", bm.Total())
 		}
 	}
 
@@ -2362,7 +2360,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	}
 
 	logger = logger.With("prefetch", path)
-	logger.Info("Push-based prefetch starting", "chunks", bitmap.Total(), "fileSize", bitmap.FileSize())
+	// logger.Info("Push-based prefetch starting", "chunks", bitmap.Total(), "fileSize", bitmap.FileSize())
 
 	fsp := d.OpenStreamProvider()
 	if fsp == nil {
@@ -2406,9 +2404,6 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 			} else if rnErr := os.Rename(realPath, currentDiskPath); rnErr != nil {
 				logger.Warn("Prefetch: atomic rename failed",
 					"from", realPath, "to", currentDiskPath, "error", rnErr)
-			} else {
-				logger.Info("Prefetch: atomically moved content to renamed path",
-					"from", realPath, "to", currentDiskPath)
 			}
 		}
 	}()
@@ -2416,7 +2411,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("Prefetch cancelled", "progress", bitmap.Progress())
+			// logger.Info("Prefetch cancelled", "progress", bitmap.Progress())
 			_ = bitmap.Save(BitmapPath(realPath))
 			return
 		default:
@@ -2448,11 +2443,11 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	}
 
 	if bitmap.IsComplete() {
-		logger.Info("Prefetch complete — all chunks downloaded", "fileSize", bitmap.FileSize())
+		// logger.Info("Prefetch complete — all chunks downloaded", "fileSize", bitmap.FileSize())
 		f.NotLocalSynced = false
 		os.Remove(BitmapPath(realPath))
 	} else {
-		logger.Info("Prefetch finished with gaps", "progress", bitmap.Progress())
+		// logger.Info("Prefetch finished with gaps", "progress", bitmap.Progress())
 		_ = bitmap.Save(BitmapPath(realPath))
 	}
 }
@@ -2462,7 +2457,7 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	d.logger.Info("FUSE remote-edit", "path", path, "size", stat.Size)
+	// d.logger.Info("FUSE remote-edit", "path", path, "size", stat.Size)
 
 	d.RemoteFilesLock.Lock()
 
