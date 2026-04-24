@@ -79,6 +79,9 @@ func platChmod(path string, mode uint32) error {
 	return os.Chmod(path, os.FileMode(mode&0o777))
 }
 
+// platChown is a no-op on Windows: NTFS has no POSIX uid/gid mapping, so chown
+// is only tracked in the in-memory stat. A caller observing the mount via FUSE
+// will see the requested uid/gid; other Windows tooling will not.
 func platChown(path string, uid int, gid int) error {
 	return nil
 }

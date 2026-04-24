@@ -142,7 +142,15 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
 	if gid == ^uint32(0) {
 		chownGid = -1
 	}
-	_ = platChown(cleanPath, chownUid, chownGid)
+	if err := platChown(cleanPath, chownUid, chownGid); err != nil {
+		// EPERM: caller isn't root / lacks CAP_CHOWN — expected for non-privileged flows.
+		// ENOENT: file vanished between lookup and chown — race, not our bug.
+		// ENOSYS: platform has no chown (Windows) — in-memory update below still applies.
+		if !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOENT) && !errors.Is(err, syscall.ENOSYS) {
+			d.logger.Warn("Chown: disk chown failed, in-memory stat will diverge",
+				"path", cleanPath, "uid", chownUid, "gid", chownGid, "error", err)
+		}
+	}
 
 	now := winfuse.NewTimespec(time.Now())
 	applyOwner := func(st *winfuse.Stat_t) {
