@@ -15,6 +15,7 @@ import (
 
 const platO_DIRECTORY = syscall.O_DIRECTORY
 const platENODATA = syscall.ENODATA
+const platDiskModeIsAuthoritative = true
 
 func platTruncate(path string, size int64) error {
 	return syscall.Truncate(path, size)
@@ -50,6 +51,14 @@ func platMkdir(path string, mode uint32) error {
 
 func platMknod(path string, mode uint32, dev int) error {
 	return syscall.Mknod(path, mode, dev)
+}
+
+func platChmod(path string, mode uint32) error {
+	return syscall.Chmod(path, mode)
+}
+
+func platChown(path string, uid int, gid int) error {
+	return syscall.Lchown(path, uid, gid)
 }
 
 // platLstat returns a winfuse.Stat_t populated via syscall.Lstat.

@@ -77,7 +77,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 		LocalDownloadFolder: filepath.Clean(downloadPath),
 
 		OpenMapLock:      sync.RWMutex{},
-		OpenFileHandlers: make(map[uint64]*File),
+		OpenFileHandlers: make(map[uint64]*HandleEntry),
 
 		Adm:       sync.RWMutex{},
 		AllDirMap: make(map[string]*Dir),

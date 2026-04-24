@@ -88,7 +88,7 @@ func TestPrefetchRenameRace(t *testing.T) {
 		LocalDownloadFolder: saveDir,
 		IsLocalPresent:      true,
 		OpenMapLock:         sync.RWMutex{},
-		OpenFileHandlers:    make(map[uint64]*File),
+		OpenFileHandlers:    make(map[uint64]*HandleEntry),
 		Adm:                 sync.RWMutex{},
 		AllDirMap:           make(map[string]*Dir),
 		AfmLock:             sync.RWMutex{},
