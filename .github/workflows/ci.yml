@@ -20,6 +20,10 @@ jobs:
       - name: Install FUSE dev headers
         run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
+      - name: Enable user_allow_other for FUSE mounts
+        run: |
+          sudo sh -c 'echo user_allow_other >> /etc/fuse.conf'
+
       - name: Run tests
         run: go test -v -count=1 -timeout 180s -skip 'BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency|PullFileThroughput|EncryptedGRPC|TransferThroughput|SecureConnThroughput' ./tests/...
 
