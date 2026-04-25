@@ -236,7 +236,8 @@ func TestSecureConn_LeftoverAcrossMessages(t *testing.T) {
 
 	msg1 := randomBytes(t, 8192)
 	msg2 := randomBytes(t, 4096)
-	combined := append(msg1, msg2...)
+	combined := append([]byte{}, msg1...)
+	combined = append(combined, msg2...)
 	const totalSize = 8192 + 4096
 
 	errCh := make(chan error, 1)

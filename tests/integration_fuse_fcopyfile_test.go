@@ -4,7 +4,7 @@
 package tests
 
 import (
-	"crypto/md5"
+	"crypto/md5" //#nosec G501
 	"crypto/rand"
 	"os"
 	"path/filepath"
@@ -27,7 +27,7 @@ func TestFUSE_LargeFileNotificationSize(t *testing.T) {
 	size := 5 * 1024 * 1024
 	data := make([]byte, size)
 	rand.Read(data)
-	originalMD5 := md5.Sum(data)
+	originalMD5 := md5.Sum(data) //#nosec G401
 
 	// Alice writes via FUSE mount.
 	alicePath := filepath.Join(tp.AliceMountDir, "large_notify_test.bin")
@@ -51,7 +51,7 @@ func TestFUSE_LargeFileNotificationSize(t *testing.T) {
 	pulled, err := os.ReadFile(pullDest)
 	require.NoError(err)
 	require.Equal(size, len(pulled), "pulled file size mismatch")
-	require.Equal(originalMD5, md5.Sum(pulled), "MD5 mismatch")
+	require.Equal(originalMD5, md5.Sum(pulled), "MD5 mismatch") //#nosec G401
 }
 
 // Note: the fcopyfile deferred-notification path (HadEdits=false) cannot be

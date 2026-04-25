@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -33,7 +34,7 @@ func main() {
 	useFUSE := os.Getenv("USE_FUSE") == "1"
 	logFile := os.Getenv("LOG_FILE")
 
-	var wr *os.File = os.Stderr
+	wr := os.Stderr
 	if logFile != "" {
 		f, err := os.OpenFile(filepath.Clean(logFile),
 			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -49,7 +50,7 @@ func main() {
 	parsed, err := url.Parse(relayURL)
 	if err != nil {
 		fmt.Println("ERR:invalid relay URL: " + err.Error())
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -141,7 +142,7 @@ func main() {
 			found := false
 			for time.Now().Before(deadline) {
 				p := filepath.Join(mountDir, args[1])
-				if _, err := os.Stat(p); err == nil {
+				if _, err := os.Stat(p); err == nil { // #nosec G703
 					found = true
 					break
 				}
@@ -159,7 +160,7 @@ func main() {
 				continue
 			}
 			p := filepath.Join(mountDir, args[1])
-			data, err := os.ReadFile(p)
+			data, err := os.ReadFile(p) // #nosec G304
 			if err != nil {
 				fmt.Println("ERR:" + err.Error())
 			} else {
@@ -174,7 +175,7 @@ func main() {
 			}
 			p := filepath.Join(mountDir, args[1])
 			content := strings.Join(args[2:], " ")
-			if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			if err := os.WriteFile(p, []byte(content), 0644); err != nil { //nolint:gosec // G306: shared file needs read access
 				fmt.Println("ERR:" + err.Error())
 			} else {
 				fmt.Println("OK")
@@ -221,6 +222,29 @@ func main() {
 				}
 				fmt.Println("END")
 			}
+
+		case "exec":
+			// exec <dir-relative-to-mount> <command> [args...]
+			// Runs a shell command inside the FUSE mount. Returns EXEC:<exit_code>:<output>
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: exec <dir> <command> [args...]")
+				continue
+			}
+			dir := filepath.Join(mountDir, args[1])
+			cmd := exec.Command(args[2], args[3:]...) // #nosec G204 -- test harness, args from stdin
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			exitCode := 0
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					exitCode = exitErr.ExitCode()
+				} else {
+					exitCode = -1
+				}
+			}
+			// Replace newlines with \n literal for single-line protocol
+			escaped := strings.ReplaceAll(strings.TrimRight(string(out), "\n"), "\n", "\\n")
+			fmt.Printf("EXEC:%d:%s\n", exitCode, escaped)
 
 		case "quit":
 			_ = kd.UnmountFilesystem()

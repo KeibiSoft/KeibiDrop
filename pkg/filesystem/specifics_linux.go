@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/winfsp/cgofuse/fuse"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 	"golang.org/x/sys/unix"
 )
@@ -34,30 +33,14 @@ func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNum
 	err = unix.Statfs(filepath.Clean(path), &stat)
 
 	freeBytesAvail = stat.Bavail * uint64(stat.Bsize)
-	totalNumberFreeBytes = stat.Blocks * uint64(stat.Bsize)
+	totalNumberOfBytes = stat.Blocks * uint64(stat.Bsize)
 	totalNumberFreeBytes = stat.Bfree * uint64(stat.Bsize)
 
 	return
 }
 
-func setuidgid() func() {
-	euid := syscall.Geteuid()
-	if 0 == euid {
-		uid, gid, _ := fuse.Getcontext()
-		egid := syscall.Getegid()
-		syscall.Setregid(-1, int(gid))
-		syscall.Setreuid(-1, int(uid))
-		return func() {
-			syscall.Setreuid(-1, int(euid))
-			syscall.Setregid(-1, int(egid))
-		}
-	}
-	return func() {
-	}
-}
-
-func copyFusestatfsFromGostatfs(dst *fuse.Statfs_t, src *syscall.Statfs_t) {
-	*dst = fuse.Statfs_t{}
+func copyFusestatfsFromGostatfs(dst *winfuse.Statfs_t, src *syscall.Statfs_t) {
+	*dst = winfuse.Statfs_t{}
 	dst.Bsize = uint64(src.Bsize)
 	dst.Frsize = 1
 	dst.Blocks = uint64(src.Blocks)
@@ -66,14 +49,14 @@ func copyFusestatfsFromGostatfs(dst *fuse.Statfs_t, src *syscall.Statfs_t) {
 	dst.Files = uint64(src.Files)
 	dst.Ffree = uint64(src.Ffree)
 	dst.Favail = uint64(src.Ffree)
-	dst.Namemax = 255 //uint64(src.Namelen)
+	dst.Namemax = 255 // uint64(src.Namelen)
 }
 
-func copyFusestatFromGostat(dst *fuse.Stat_t, src *syscall.Stat_t) {
-	*dst = fuse.Stat_t{}
+func copyFusestatFromGostat(dst *winfuse.Stat_t, src *syscall.Stat_t) {
+	*dst = winfuse.Stat_t{}
 	dst.Dev = uint64(src.Dev)
 	dst.Ino = uint64(src.Ino)
-	dst.Mode = uint32(src.Mode)
+	dst.Mode = uint32(src.Mode) // #nosec G115
 	dst.Nlink = uint32(src.Nlink)
 	dst.Uid = uint32(src.Uid)
 	dst.Gid = uint32(src.Gid)
@@ -104,14 +87,19 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtim.Sec, src.Birthtim.Nsec
 }
 
-func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
+func syscallStatfs(path string, stat *syscall.Statfs_t) error {
 	return syscall.Statfs(path, stat)
 }
 
 // getMountOptions returns Linux-specific FUSE mount options.
-// nonempty: allow mounting on directories that already contain files (e.g. stale state from a previous session).
-// No allow_other here — that requires user_allow_other in /etc/fuse.conf.
-// The mounting user always has access without it.
+// nonempty: allow mounting on directories that already contain files.
+// allow_other: let other users (e.g. postgres, mysql) access the mount.
+//
+//	Requires user_allow_other in /etc/fuse.conf.
+//
+// Note: NOT using default_permissions — it makes the kernel enforce POSIX
+// chown rules (only root can chown), which blocks database init flows where
+// MySQL/PostgreSQL need to chown their data directories.
 func getMountOptions() []string {
-	return []string{"-o", "nonempty"}
+	return []string{"-o", "nonempty,allow_other"}
 }

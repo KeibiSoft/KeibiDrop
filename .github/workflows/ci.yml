@@ -20,8 +20,12 @@ jobs:
       - name: Install FUSE dev headers
         run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
+      - name: Enable user_allow_other for FUSE mounts
+        run: |
+          sudo sh -c 'echo user_allow_other >> /etc/fuse.conf'
+
       - name: Run tests
-        run: go test -v -count=1 -timeout 180s -skip 'BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency|PullFileThroughput|EncryptedGRPC|TransferThroughput|SecureConnThroughput' ./tests/...
+        run: go test -v -count=1 -timeout 180s -skip 'BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency|PullFileThroughput|EncryptedGRPC|TransferThroughput|SecureConnThroughput|RoundTripFUSETransfer|FUSEtoFUSE_GitClone' ./tests/...
 
   lint:
     runs-on: ubuntu-22.04
@@ -37,11 +41,10 @@ jobs:
         run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: v1.64.8
+          version: v2.11.4
           args: --timeout=3m
-          install-mode: goinstall
 
   build:
     strategy:

@@ -13,9 +13,9 @@ import (
 	"sync"
 	"testing"
 
-	winfuse "github.com/winfsp/cgofuse/fuse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
 // newTestDir builds a minimal Dir rooted at saveDir suitable for unit tests.
@@ -28,7 +28,7 @@ func newTestDir(saveDir string) *Dir {
 		LocalDownloadFolder: saveDir,
 		IsLocalPresent:      true,
 		OpenMapLock:         sync.RWMutex{},
-		OpenFileHandlers:    make(map[uint64]*File),
+		OpenFileHandlers:    make(map[uint64]*HandleEntry),
 		Adm:                 sync.RWMutex{},
 		AllDirMap:           make(map[string]*Dir),
 		AfmLock:             sync.RWMutex{},

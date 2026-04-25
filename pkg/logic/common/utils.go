@@ -324,9 +324,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			req      *bindings.NotifyRequest
 			deadline time.Time // send after this time
 		}
-		pending := make(map[string]*pendingNotify) // path → latest ADD_FILE
+		pending := make(map[string]*pendingNotify)          // path → latest ADD_FILE
 		immediate := make([]*bindings.NotifyRequest, 0, 64) // RENAME/REMOVE/ADD_DIR
-		ticker := time.NewTicker(100 * time.Millisecond) // check deadlines
+		ticker := time.NewTicker(100 * time.Millisecond)    // check deadlines
 		defer ticker.Stop()
 
 		flush := func(batch []*bindings.NotifyRequest) {
@@ -421,7 +421,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		}
 
 		req := &bindings.NotifyRequest{
-			Type:    bindings.NotifyType(event.Action),
+			Type:    bindings.NotifyType(event.Action), // #nosec G115 -- action values are small enums
 			Path:    event.Path,
 			OldPath: event.OldPath, // For RENAME operations.
 		}
@@ -489,8 +489,8 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 				return outboundConn, nil
 			}
 
-			conn, err := grpc.Dial(
-				"keibipipe", // fake target name
+			conn, err := grpc.Dial( //nolint:staticcheck // SA1019: custom dialer over hijacked conn
+				"keibipipe",
 				grpc.WithContextDialer(dialer),
 				grpc.WithTransportCredentials(insecure.NewCredentials()),
 				grpc.WithDefaultCallOptions(
@@ -554,10 +554,10 @@ func (kd *KeibiDrop) startGRPCServer() error {
 }
 
 type singleConnListener struct {
-	conn     net.Conn
-	addr     net.Addr
-	done     chan struct{}
-	inUse    bool
+	conn      net.Conn
+	addr      net.Addr
+	done      chan struct{}
+	inUse     bool
 	closeOnce sync.Once
 }
 

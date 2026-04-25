@@ -126,7 +126,7 @@ func (r *ConflictResolver) GetLocalVersion(path string) (*FileVersion, error) {
 	}
 
 	// Read file for checksum
-	data, err := os.ReadFile(fullPath)
+	data, err := os.ReadFile(fullPath) // #nosec G304
 	if err != nil {
 		return nil, err
 	}

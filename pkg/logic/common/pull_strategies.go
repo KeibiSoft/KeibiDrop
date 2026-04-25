@@ -70,7 +70,7 @@ func (kd *KeibiDrop) pullParallelRead(
 					Handle: 0,
 					Path:   relPath,
 					Offset: offset,
-					Size:   uint32(size),
+					Size:   uint32(size), // #nosec G115 -- size is bounded by blockSize
 				}); err != nil {
 					errCh <- fmt.Errorf("worker %d: send chunk %d: %w", workerID, i, err)
 					cancel()

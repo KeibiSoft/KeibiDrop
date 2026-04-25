@@ -47,7 +47,7 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	}
 	kd.ReconnectManager.AcceptConn = func(timeout time.Duration) (net.Conn, error) {
 		if tcpL, ok := kd.listener.(*net.TCPListener); ok {
-			tcpL.SetDeadline(time.Now().Add(timeout))
+			_ = tcpL.SetDeadline(time.Now().Add(timeout))
 			return tcpL.Accept()
 		}
 		return kd.listener.Accept()
@@ -140,7 +140,7 @@ func (kd *KeibiDrop) onReconnected() {
 	// Resume relay keepalive.
 	if kd.RelayKeepalive != nil {
 		kd.RelayKeepalive.Resume()
-		kd.RelayKeepalive.ForceRefresh()
+		_ = kd.RelayKeepalive.ForceRefresh()
 	}
 
 	// Tear down stale gRPC infrastructure.

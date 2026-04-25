@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/winfsp/cgofuse/fuse"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 	"golang.org/x/sys/unix"
 )
@@ -32,8 +31,10 @@ import (
 // But on Mac M3 had 1.2 GB/s sometimes up to 2GB/s
 // And on Mac Intel I did not benchmark yet.
 
-const FilesystemBlockSize = 2 << 20 // 2 MiB - optimal I/O block size for cp/dd
+// FilesystemBlockSize is the optimal I/O block size for cp/dd on macOS (2 MiB).
+const FilesystemBlockSize = 2 << 20
 
+// GetFreeDiskSpace returns free, total, and available disk space for the given path.
 func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNumberFreeBytes uint64, err error) {
 	stat := unix.Statfs_t{}
 
@@ -46,24 +47,8 @@ func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNum
 	return
 }
 
-func setuidgid() func() {
-	euid := syscall.Geteuid()
-	if euid == 0 {
-		uid, gid, _ := fuse.Getcontext()
-		egid := syscall.Getegid()
-		syscall.Setegid(int(gid))
-		syscall.Seteuid(int(uid))
-		return func() {
-			syscall.Seteuid(euid)
-			syscall.Setegid(egid)
-		}
-	}
-	return func() {
-	}
-}
-
-func copyFusestatfsFromGostatfs(dst *fuse.Statfs_t, src *syscall.Statfs_t) {
-	*dst = fuse.Statfs_t{}
+func copyFusestatfsFromGostatfs(dst *winfuse.Statfs_t, src *syscall.Statfs_t) {
+	*dst = winfuse.Statfs_t{}
 	// Use our custom block size for better I/O performance with cp/dd
 	// macOS cp uses fcopyfile which respects statfs block size for buffer sizing
 	dst.Bsize = FilesystemBlockSize
@@ -76,18 +61,18 @@ func copyFusestatfsFromGostatfs(dst *fuse.Statfs_t, src *syscall.Statfs_t) {
 	dst.Files = uint64(src.Files)
 	dst.Ffree = uint64(src.Ffree)
 	dst.Favail = uint64(src.Ffree)
-	dst.Namemax = 255 //uint64(src.Namelen)
+	dst.Namemax = 255 // uint64(src.Namelen)
 }
 
 func copyFusestatFromGostat(dst *winfuse.Stat_t, src *syscall.Stat_t) {
 	*dst = winfuse.Stat_t{}
-	dst.Dev = uint64(src.Dev)
-	dst.Ino = uint64(src.Ino)
-	dst.Mode = uint32(src.Mode)
-	dst.Nlink = uint32(src.Nlink)
-	dst.Uid = uint32(src.Uid)
-	dst.Gid = uint32(src.Gid)
-	dst.Rdev = uint64(src.Rdev)
+	dst.Dev = uint64(src.Dev)     // #nosec G115 -- dev_t is always non-negative
+	dst.Ino = uint64(src.Ino)     // #nosec G115 -- ino_t is always non-negative
+	dst.Mode = uint32(src.Mode)   // #nosec G115 -- mode_t fits in uint32
+	dst.Nlink = uint32(src.Nlink) // #nosec G115 -- nlink_t fits in uint32
+	dst.Uid = uint32(src.Uid)     // #nosec G115 -- uid_t fits in uint32
+	dst.Gid = uint32(src.Gid)     // #nosec G115 -- gid_t fits in uint32
+	dst.Rdev = uint64(src.Rdev)   // #nosec G115 -- dev_t is always non-negative
 	dst.Size = int64(src.Size)
 	dst.Atim.Sec, dst.Atim.Nsec = src.Atimespec.Sec, src.Atimespec.Nsec
 	dst.Mtim.Sec, dst.Mtim.Nsec = src.Mtimespec.Sec, src.Mtimespec.Nsec
@@ -117,7 +102,7 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtim.Sec, src.Birthtim.Nsec
 }
 
-func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
+func syscallStatfs(path string, stat *syscall.Statfs_t) error {
 	return syscall.Statfs(path, stat)
 }
 
@@ -136,7 +121,7 @@ func getMountOptions() []string {
 		"-o", "slow_statfs",
 		"-o", "allow_other",
 		"-o", "defer_permissions", // Defer permission checks to the FS (enables exec for git hooks).
-		"-o", "noappledouble",    // Block ._ and .DS_Store probes — eliminates 100K+ getattr calls.
-		"-o", "iosize=524288",    // 512KB — matches ChunkSize, best throughput in benchmarks.
+		"-o", "noappledouble", // Block ._ and .DS_Store probes — eliminates 100K+ getattr calls.
+		"-o", "iosize=524288", // 512KB — matches ChunkSize, best throughput in benchmarks.
 	}
 }

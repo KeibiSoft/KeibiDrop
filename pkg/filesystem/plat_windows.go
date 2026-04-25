@@ -15,8 +15,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const platO_DIRECTORY = 0     // O_DIRECTORY not available on Windows.
+const platODIRECTORY = 0           // O_DIRECTORY not available on Windows.
 const platENODATA = syscall.ENOENT // ENODATA does not exist on Windows; map to ENOENT.
+const platDiskModeIsAuthoritative = false
 
 func platTruncate(path string, size int64) error {
 	return os.Truncate(path, size)
@@ -74,6 +75,17 @@ func platMknod(path string, mode uint32, dev int) error {
 	return syscall.ENOSYS
 }
 
+func platChmod(path string, mode uint32) error {
+	return os.Chmod(path, os.FileMode(mode&0o777))
+}
+
+// platChown is a no-op on Windows: NTFS has no POSIX uid/gid mapping, so chown
+// is only tracked in the in-memory stat. A caller observing the mount via FUSE
+// will see the requested uid/gid; other Windows tooling will not.
+func platChown(path string, uid int, gid int) error {
+	return nil
+}
+
 // platLstat returns a winfuse.Stat_t populated via os.Lstat.
 func platLstat(path string) (winfuse.Stat_t, error) {
 	info, err := os.Lstat(path)
@@ -126,6 +138,8 @@ func statFromFileInfo(info os.FileInfo) winfuse.Stat_t {
 	} else {
 		st.Mode = winfuse.S_IFREG | uint32(info.Mode().Perm())
 	}
+	st.Uid = ^uint32(0)
+	st.Gid = ^uint32(0)
 	st.Nlink = 1
 	st.Blksize = int64(FilesystemBlockSize)
 	st.Blocks = (st.Size + 511) / 512

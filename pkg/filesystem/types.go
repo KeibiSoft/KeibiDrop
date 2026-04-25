@@ -21,6 +21,20 @@ import (
 	"github.com/zeebo/xxh3"
 )
 
+// HandleEntry maps an opaque FUSE file handle to the actual kernel fd and File metadata.
+// Opaque handles prevent fd-recycling races: the kernel reuses fd numbers after close(),
+// but handle IDs are monotonically increasing and never reused.
+type HandleEntry struct {
+	FD   int   // The actual kernel file descriptor for syscalls.
+	File *File // The File metadata struct.
+}
+
+var nextHandleID atomic.Uint64
+
+func allocHandleID() uint64 {
+	return nextHandleID.Add(1)
+}
+
 // DownloadState tracks download progress for resumption on reconnect.
 type DownloadState struct {
 	TotalSize       atomic.Uint64 // Expected total bytes from peer.
@@ -152,7 +166,7 @@ type Dir struct {
 	Parent *Dir
 	Root   *Dir
 
-	OpenFileHandlers map[uint64]*File
+	OpenFileHandlers map[uint64]*HandleEntry
 	OpenMapLock      sync.RWMutex
 
 	Adm       sync.RWMutex
@@ -182,8 +196,9 @@ type Dir struct {
 type File struct {
 	logger *slog.Logger
 
-	Inode uint64 `json:"inode"` // Inodes must be unique and not re-used.
-	Name  string `json:"name"`
+	Inode           uint64 `json:"inode"` // Inodes must be unique and not re-used.
+	CurrentHandleID uint64 // Opaque FUSE handle ID for the currently-open fd.
+	Name            string `json:"name"`
 
 	RelativePath string `json:"relativePath"` // Relative (to root) path in the mounted filesystem.
 
@@ -220,10 +235,10 @@ type File struct {
 	openFileCounter OpenFileCounter
 
 	StreamProvider types.FileStreamProvider
-	StreamPool     *StreamPool            // Pool of parallel gRPC streams for on-demand reads.
-	StreamCancel   context.CancelFunc     // Cancel function for the stream context.
-	CacheFD        *os.File               // Persistent cache file descriptor for on-demand writes.
-	CacheWg        sync.WaitGroup         // Tracks in-flight async cache writes; waited on in Release.
+	StreamPool     *StreamPool        // Pool of parallel gRPC streams for on-demand reads.
+	StreamCancel   context.CancelFunc // Cancel function for the stream context.
+	CacheFD        *os.File           // Persistent cache file descriptor for on-demand writes.
+	CacheWg        sync.WaitGroup     // Tracks in-flight async cache writes; waited on in Release.
 
 	// Download resumption state.
 	Download DownloadState

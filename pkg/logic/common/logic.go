@@ -108,7 +108,6 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 		return syscall.EISDIR
 	}
 
-
 	file := &synctracker.File{
 		Name:           filepath.Base(remoteName),
 		RelativePath:   remoteName,
@@ -363,7 +362,7 @@ func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize,
 					if err := stream.Send(&bindings.ReadRequest{
 						Path:   relPath,
 						Offset: offset,
-						Size:   uint32(size),
+						Size:   uint32(size), // #nosec G115 -- size is bounded by blockSize (4 MiB)
 					}); err != nil {
 						errCh <- fmt.Errorf("worker %d: send chunk %d: %w", workerID, i, err)
 						dlCancel()
@@ -625,9 +624,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 				lanConnected = true
 
 				// Accept inbound from peer (LAN, should be fast — 5s timeout).
-				kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
 				inConn, err := kd.listener.Accept()
-				kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
 				if err != nil {
 					logger.Warn("LAN inbound accept failed", "error", err)
 					// Close outbound, fall through to direct/bridge.
@@ -673,7 +672,8 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 		needBridge := false
 
-		if directErr == nil {
+		switch {
+		case directErr == nil:
 			// Direct outbound succeeded. Accept inbound with 15s timeout.
 			// If the peer can't reach us (firewall blocks inbound IPv6),
 			// fall back to bridge for both directions.
@@ -727,14 +727,14 @@ func (kd *KeibiDrop) JoinRoom() error {
 				kd.session.CipherSuite = ""
 				kd.session.CipherMu.Unlock()
 			}
-		} else if kd.BridgeAddr != "" {
+		case kd.BridgeAddr != "":
 			logger.Warn("Direct P2P failed, falling back to bridge", "error", directErr, "bridge", kd.BridgeAddr)
 			needBridge = true
 			kd.session.SEKOutbound = nil
 			kd.session.CipherMu.Lock()
 			kd.session.CipherSuite = ""
 			kd.session.CipherMu.Unlock()
-		} else {
+		default:
 			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
 			return directErr
 		}
@@ -880,12 +880,12 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 		// Set accept deadline: 15s if bridge available (fallback), no deadline otherwise.
 		if kd.BridgeAddr != "" {
-			kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
 		}
 
 		conn, acceptErr := kd.listener.Accept()
 		if kd.BridgeAddr != "" {
-			kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
+			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
 		}
 
 		if acceptErr != nil {

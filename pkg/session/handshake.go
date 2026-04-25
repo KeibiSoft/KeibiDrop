@@ -24,8 +24,8 @@ import (
 // PeerHandshakeMessage defines the JSON payload sent during handshake.
 type PeerHandshakeMessage struct {
 	Fingerprint      string            `json:"fingerprint"`
-	PublicKeys       map[string]string `json:"public_keys"`        // base64 encoded
-	EncSeeds         map[string]string `json:"enc_seeds"`          // optional for key encapsulation
+	PublicKeys       map[string]string `json:"public_keys"` // base64 encoded
+	EncSeeds         map[string]string `json:"enc_seeds"`   // optional for key encapsulation
 	OutboundPort     int               `json:"port"`
 	SupportedCiphers []string          `json:"supported_ciphers"` // cipher negotiation
 }
@@ -327,7 +327,7 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 		return fmt.Errorf("marshal handshake: %w", err)
 	}
 	var lenBuf [4]byte
-	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(msgBytes)))
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(msgBytes))) //nolint:gosec // G115: safe, msg is small
 	if _, err := conn.Write(lenBuf[:]); err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("write handshake length: %w", err)

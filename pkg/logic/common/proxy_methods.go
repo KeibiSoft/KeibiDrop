@@ -102,4 +102,3 @@ func (r *implStreamFileReceiver) Recv() (data []byte, offset uint64, totalSize u
 	}
 	return resp.Data, resp.Offset, resp.TotalSize, nil
 }
-

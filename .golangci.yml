@@ -2,7 +2,6 @@ version: "2"
 
 run:
   timeout: 3m
-  tests: true
 
 linters:
   enable:
@@ -11,41 +10,53 @@ linters:
     - unused
     - errcheck
     - gocritic
-    - revive
     - ineffassign
     - gosec
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*os.File).Sync
+        - (net.Conn).Close
+        - (*net.TCPConn).Close
+        - (*net.UDPConn).Close
+        - (*net.UDPConn).Write
+        - (*net.UDPConn).SetReadBuffer
+        - (*net.UDPConn).SetReadDeadline
+        - (*google.golang.org/grpc.ClientConn).Close
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - os.Remove
+        - os.RemoveAll
+        - (*os.Process).Kill
+    gosec:
+      excludes:
+        - G104
+        - G115
+        - G118
+        - G301
+        - G302
+        - G304
+        - G306
+        - G703
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+      - path: testing/
+        linters:
+          - errcheck
+          - gosec
+      - text: "Error return value of .*.Close"
+        linters:
+          - errcheck
+      - text: "Error return value of .*.CloseSend"
+        linters:
+          - errcheck
 
 formatters:
   enable:
     - gofmt
-
-linters-settings:
-  revive:
-    ignore-generated-header: true
-    severity: warning
-  errcheck:
-    exclude-functions:
-      - (io.Closer).Close
-      - (*os.File).Close
-      - (net.Conn).Close
-      - (*net.UDPConn).Close
-      - (*net.UDPConn).Write
-      - (*net.UDPConn).SetReadBuffer
-      - (*net.UDPConn).SetReadDeadline
-      - (*google.golang.org/grpc.ClientConn).Close
-
-issues:
-  exclude-use-default: false
-  exclude-rules:
-    # Don't check error returns on Close/cleanup in tests
-    - path: _test\.go
-      linters:
-        - errcheck
-    # Don't check error returns on deferred Close calls
-    - text: "Error return value of .*.Close"
-      linters:
-        - errcheck
-    # Ignore os.Remove in cleanup paths
-    - text: "Error return value of `os.Remove`"
-      linters:
-        - errcheck

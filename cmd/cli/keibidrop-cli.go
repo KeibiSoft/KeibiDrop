@@ -122,7 +122,7 @@ func (c *cliContext) executor(in string) {
 
 	case "exit", "quit":
 		c.kd.NotifyDisconnect()
-		c.kd.UnmountFilesystem()
+		_ = c.kd.UnmountFilesystem()
 		fmt.Println("Goodbye.")
 		os.Exit(0)
 
@@ -406,7 +406,7 @@ func main() {
 	fmt.Println("Connecting to relay:", relayURL.String())
 
 	// Setup logger.
-	var wr *os.File = os.Stderr
+	wr := os.Stderr
 	if cfg.LogFile != "" {
 		f, err := os.OpenFile(filepath.Clean(cfg.LogFile),
 			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -433,7 +433,7 @@ func main() {
 	if err != nil {
 		logger.Error("Failed to start keibidrop", "error", err)
 		color.Red("Fatal: %v", err)
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic
 	}
 
 	go kd.Run()

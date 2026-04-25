@@ -122,7 +122,7 @@ func (m *HealthMonitor) sendHeartbeat() error {
 	start := time.Now()
 
 	req := &bindings.HeartbeatRequest{
-		Timestamp: uint64(start.UnixNano()),
+		Timestamp: uint64(start.UnixNano()), //nolint:gosec // G115: UnixNano is positive after 1970
 		Seq:       seqNum,
 	}
 
@@ -160,7 +160,7 @@ func (m *HealthMonitor) sendHeartbeat() error {
 
 	// Log clock skew if significant (>5 seconds — mobile clocks drift more)
 	if resp.Timestamp > 0 {
-		peerTime := time.Unix(0, int64(resp.Timestamp))
+		peerTime := time.Unix(0, int64(resp.Timestamp)) //nolint:gosec // G115: timestamp fits int64 until year 2262
 		skew := time.Since(peerTime) - rtt/2
 		if skew.Abs() > 5*time.Second {
 			m.logger.Warn("Clock skew detected", "skew", skew)

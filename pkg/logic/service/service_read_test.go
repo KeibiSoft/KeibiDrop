@@ -50,11 +50,11 @@ func (m *mockReadStream) Recv() (*bindings.ReadRequest, error) {
 }
 
 func (m *mockReadStream) SetHeader(metadata.MD) error  { return nil }
-func (m *mockReadStream) SendHeader(metadata.MD) error  { return nil }
-func (m *mockReadStream) SetTrailer(metadata.MD)        {}
-func (m *mockReadStream) Context() context.Context       { return context.Background() }
-func (m *mockReadStream) SendMsg(interface{}) error      { return nil }
-func (m *mockReadStream) RecvMsg(interface{}) error      { return nil }
+func (m *mockReadStream) SendHeader(metadata.MD) error { return nil }
+func (m *mockReadStream) SetTrailer(metadata.MD)       {}
+func (m *mockReadStream) Context() context.Context     { return context.Background() }
+func (m *mockReadStream) SendMsg(interface{}) error    { return nil }
+func (m *mockReadStream) RecvMsg(interface{}) error    { return nil }
 
 // TestRead_FUSEMode_FallbackToLocalFiles verifies that when FUSE is active but a
 // file was added via drag-and-drop (AddFile → SyncTracker.LocalFiles), the Read

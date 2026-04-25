@@ -37,12 +37,12 @@ func (kd *KeibiDrop) dialBridge(logger *slog.Logger) (net.Conn, error) {
 	peerFP := kd.session.ExpectedPeerFingerprint
 	token := bridgeRoomToken(ownFP, peerFP)
 
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := conn.Write(token[:]); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("send room token: %w", err)
 	}
-	conn.SetWriteDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Time{})
 
 	logger.Info("Bridge room token sent", "token", fmt.Sprintf("%x..%x", token[:4], token[28:]))
 	return conn, nil

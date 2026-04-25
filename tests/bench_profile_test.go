@@ -47,7 +47,7 @@ func TestPullFileProfile(t *testing.T) {
 	req.NoError(err)
 
 	alicePath := filepath.Join(tp.AliceSaveDir, "bench_profile_1gb.bin")
-	req.NoError(os.WriteFile(alicePath, data, 0644))
+	req.NoError(os.WriteFile(alicePath, data, 0644)) //nolint:gosec // G306: shared file needs read access
 	req.NoError(tp.Alice.AddFile(alicePath))
 
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, "bench_profile_1gb.bin", 30*time.Second)
@@ -98,7 +98,7 @@ func TestSecureConnThroughput(t *testing.T) {
 		t.Skip("skipping SecureConn throughput in short mode")
 	}
 
-	const total = 1 << 30 // 1 GiB
+	const total = 1 << 30                           // 1 GiB
 	blockSizes := []int{1 << 20, 4 << 20, 16 << 20} // 1 MiB, 4 MiB, 16 MiB
 
 	for _, bs := range blockSizes {

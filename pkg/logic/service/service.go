@@ -711,7 +711,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(realPath)
+			fh, err = os.Open(realPath) // #nosec G304
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
