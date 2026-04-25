@@ -92,7 +92,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install winfsp protoc innosetup -y
+          choco install winfsp protoc innosetup zip -y
           $winfspDir = "C:\Program Files (x86)\WinFsp"
           echo "CPATH=$winfspDir\inc\fuse" >> $env:GITHUB_ENV
           echo "CGO_LDFLAGS=-L$winfspDir\lib" >> $env:GITHUB_ENV
