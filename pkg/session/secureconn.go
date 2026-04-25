@@ -169,8 +169,8 @@ type SecureConn struct {
 
 func NewSecureConn(conn net.Conn, kek []byte, suite kbc.CipherSuite) *SecureConn {
 	return &SecureConn{
-		conn:    conn,
-		suite:   suite,
+		conn:   conn,
+		suite:  suite,
 		r:      NewSecureReader(conn, kek, suite),
 		w:      NewSecureWriter(conn, kek, suite),
 		closed: make(chan struct{}),

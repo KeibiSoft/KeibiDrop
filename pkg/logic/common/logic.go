@@ -108,7 +108,6 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 		return syscall.EISDIR
 	}
 
-
 	file := &synctracker.File{
 		Name:           filepath.Base(remoteName),
 		RelativePath:   remoteName,

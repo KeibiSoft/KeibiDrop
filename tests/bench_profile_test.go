@@ -98,7 +98,7 @@ func TestSecureConnThroughput(t *testing.T) {
 		t.Skip("skipping SecureConn throughput in short mode")
 	}
 
-	const total = 1 << 30 // 1 GiB
+	const total = 1 << 30                           // 1 GiB
 	blockSizes := []int{1 << 20, 4 << 20, 16 << 20} // 1 MiB, 4 MiB, 16 MiB
 
 	for _, bs := range blockSizes {

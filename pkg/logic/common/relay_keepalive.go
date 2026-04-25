@@ -17,16 +17,16 @@ import (
 // RelayKeepalive maintains relay registration by periodically refreshing
 // before the TTL expires. This ensures peers can always find each other.
 type RelayKeepalive struct {
-	kd       *KeibiDrop
-	logger   *slog.Logger
+	kd     *KeibiDrop
+	logger *slog.Logger
 
 	// Configuration
 	Interval time.Duration // Refresh interval (default 8 min, relay TTL is 10 min)
 
 	// State
-	lastRefresh   atomic.Int64 // Unix timestamp of last successful refresh
-	failureCount  atomic.Int32
-	paused        atomic.Bool
+	lastRefresh  atomic.Int64 // Unix timestamp of last successful refresh
+	failureCount atomic.Int32
+	paused       atomic.Bool
 
 	// Control
 	ctx    context.Context

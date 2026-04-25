@@ -13,9 +13,9 @@ import (
 	"sync"
 	"testing"
 
-	winfuse "github.com/winfsp/cgofuse/fuse"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
 // newTestDir builds a minimal Dir rooted at saveDir suitable for unit tests.

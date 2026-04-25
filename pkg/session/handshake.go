@@ -24,8 +24,8 @@ import (
 // PeerHandshakeMessage defines the JSON payload sent during handshake.
 type PeerHandshakeMessage struct {
 	Fingerprint      string            `json:"fingerprint"`
-	PublicKeys       map[string]string `json:"public_keys"`        // base64 encoded
-	EncSeeds         map[string]string `json:"enc_seeds"`          // optional for key encapsulation
+	PublicKeys       map[string]string `json:"public_keys"` // base64 encoded
+	EncSeeds         map[string]string `json:"enc_seeds"`   // optional for key encapsulation
 	OutboundPort     int               `json:"port"`
 	SupportedCiphers []string          `json:"supported_ciphers"` // cipher negotiation
 }

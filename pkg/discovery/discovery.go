@@ -30,15 +30,15 @@ const (
 
 // Beacon is the UDP payload broadcast by each peer.
 type Beacon struct {
-	Name string `json:"n"`          // random two-word name (e.g., "Cosmic Waffle")
-	Port int    `json:"p"`          // TCP listening port for KeibiDrop
+	Name string `json:"n"`           // random two-word name (e.g., "Cosmic Waffle")
+	Port int    `json:"p"`           // TCP listening port for KeibiDrop
 	Ver  int    `json:"v,omitempty"` // protocol version (1)
 }
 
 // Peer represents a discovered peer on the LAN.
 type Peer struct {
-	Name    string
-	Addr    string // "192.168.1.42:26431"
+	Name     string
+	Addr     string // "192.168.1.42:26431"
 	LastSeen time.Time
 }
 
@@ -48,10 +48,10 @@ type Service struct {
 	port   int
 	logger *slog.Logger
 
-	mu       sync.RWMutex
-	peers    map[string]*Peer // keyed by addr
-	cancel   context.CancelFunc
-	running  bool
+	mu      sync.RWMutex
+	peers   map[string]*Peer // keyed by addr
+	cancel  context.CancelFunc
+	running bool
 }
 
 // New creates a discovery service with a random two-word name.

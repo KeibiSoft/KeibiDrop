@@ -30,8 +30,8 @@ const (
 // It coordinates with the health monitor and uses a deterministic initiator
 // selection to avoid race conditions.
 type ReconnectManager struct {
-	session  *Session
-	logger   *slog.Logger
+	session *Session
+	logger  *slog.Logger
 
 	// State
 	state    atomic.Int32 // ReconnectState
@@ -51,12 +51,12 @@ type ReconnectManager struct {
 	DialBridge func() (net.Conn, error) // Dial bridge with room token
 
 	// Callbacks
-	OnReconnecting  func()                               // Called when reconnection starts
-	OnReconnected   func()                               // Called on successful reconnection
-	OnGaveUp        func()                               // Called when all attempts exhausted
-	RelayRefresh    func() error                         // Re-register with relay
-	RelayLookup     func(fingerprint string) (ip string, port int, err error) // Lookup peer in relay
-	AcceptConn      func(timeout time.Duration) (net.Conn, error)             // Accept incoming connection
+	OnReconnecting func()                                                    // Called when reconnection starts
+	OnReconnected  func()                                                    // Called on successful reconnection
+	OnGaveUp       func()                                                    // Called when all attempts exhausted
+	RelayRefresh   func() error                                              // Re-register with relay
+	RelayLookup    func(fingerprint string) (ip string, port int, err error) // Lookup peer in relay
+	AcceptConn     func(timeout time.Duration) (net.Conn, error)             // Accept incoming connection
 
 	// Control
 	ctx     context.Context

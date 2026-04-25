@@ -239,24 +239,24 @@ func TestFUSEtoFUSE(t *testing.T) {
 
 	// Spawn Alice (FUSE).
 	alice := spawnPeer(t, binary, map[string]string{
-		"RELAY_URL":    relay.URL(),
-		"INBOUND_PORT": fmt.Sprintf("%d", aliceIn),
+		"RELAY_URL":     relay.URL(),
+		"INBOUND_PORT":  fmt.Sprintf("%d", aliceIn),
 		"OUTBOUND_PORT": fmt.Sprintf("%d", aliceOut),
-		"MOUNT_DIR":    aliceMount,
-		"SAVE_DIR":     aliceSave,
-		"USE_FUSE":     "1",
-		"LOG_FILE":     aliceLog,
+		"MOUNT_DIR":     aliceMount,
+		"SAVE_DIR":      aliceSave,
+		"USE_FUSE":      "1",
+		"LOG_FILE":      aliceLog,
 	})
 
 	// Spawn Bob (FUSE).
 	bob := spawnPeer(t, binary, map[string]string{
-		"RELAY_URL":    relay.URL(),
-		"INBOUND_PORT": fmt.Sprintf("%d", bobIn),
+		"RELAY_URL":     relay.URL(),
+		"INBOUND_PORT":  fmt.Sprintf("%d", bobIn),
 		"OUTBOUND_PORT": fmt.Sprintf("%d", bobOut),
-		"MOUNT_DIR":    bobMount,
-		"SAVE_DIR":     bobSave,
-		"USE_FUSE":     "1",
-		"LOG_FILE":     bobLog,
+		"MOUNT_DIR":     bobMount,
+		"SAVE_DIR":      bobSave,
+		"USE_FUSE":      "1",
+		"LOG_FILE":      bobLog,
 	})
 
 	// Cleanup: quit both peers, force unmount, kill processes.
@@ -535,4 +535,3 @@ func listDir(t *testing.T, p *testPeer, path string, timeout time.Duration) []st
 	}
 	return entries
 }
-

@@ -14,7 +14,7 @@ import (
 // Redacts file names (keeps extensions), fingerprints, and IP addresses.
 // Keeps timestamps, log levels, method names, error types, sizes, and connection events.
 func SanitizeLogs(logPath string) (string, error) {
-	data, err := os.ReadFile(logPath)
+	data, err := os.ReadFile(logPath) // #nosec G304
 	if err != nil {
 		return "", err
 	}

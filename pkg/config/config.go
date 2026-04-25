@@ -25,8 +25,8 @@ type Config struct {
 	LogFile        string `toml:"log_file"`
 	InboundPort    int    `toml:"inbound_port"`
 	OutboundPort   int    `toml:"outbound_port"`
-	BridgeAddr     string `toml:"bridge_addr"`  // TCP bridge relay address
-	StrictMode     bool   `toml:"strict_mode"`  // Disable data relay fallback
+	BridgeAddr     string `toml:"bridge_addr"` // TCP bridge relay address
+	StrictMode     bool   `toml:"strict_mode"` // Disable data relay fallback
 	NoFUSE         bool   `toml:"no_fuse"`
 	PrefetchOnOpen bool   `toml:"prefetch_on_open"`
 	PushOnWrite    bool   `toml:"push_on_write"`

@@ -22,7 +22,7 @@ func TestBitmapSaveLoad(t *testing.T) {
 	require := require.New(t)
 	tmpDir := t.TempDir()
 
-	fileSize := int64(10 * 1024 * 1024) // 10 MB
+	fileSize := int64(10 * 1024 * 1024)                          // 10 MB
 	bm := filesystem.NewChunkBitmapWithSize(fileSize, 1024*1024) // 1 MiB chunks
 	require.NotNil(bm)
 	require.Equal(10, bm.Total())

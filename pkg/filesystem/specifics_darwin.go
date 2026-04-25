@@ -66,13 +66,13 @@ func copyFusestatfsFromGostatfs(dst *winfuse.Statfs_t, src *syscall.Statfs_t) {
 
 func copyFusestatFromGostat(dst *winfuse.Stat_t, src *syscall.Stat_t) {
 	*dst = winfuse.Stat_t{}
-	dst.Dev = uint64(src.Dev)                // #nosec G115 -- dev_t is always non-negative
-	dst.Ino = uint64(src.Ino)                // #nosec G115 -- ino_t is always non-negative
-	dst.Mode = uint32(src.Mode)              // #nosec G115 -- mode_t fits in uint32
-	dst.Nlink = uint32(src.Nlink)            // #nosec G115 -- nlink_t fits in uint32
-	dst.Uid = uint32(src.Uid)                // #nosec G115 -- uid_t fits in uint32
-	dst.Gid = uint32(src.Gid)                // #nosec G115 -- gid_t fits in uint32
-	dst.Rdev = uint64(src.Rdev)              // #nosec G115 -- dev_t is always non-negative
+	dst.Dev = uint64(src.Dev)     // #nosec G115 -- dev_t is always non-negative
+	dst.Ino = uint64(src.Ino)     // #nosec G115 -- ino_t is always non-negative
+	dst.Mode = uint32(src.Mode)   // #nosec G115 -- mode_t fits in uint32
+	dst.Nlink = uint32(src.Nlink) // #nosec G115 -- nlink_t fits in uint32
+	dst.Uid = uint32(src.Uid)     // #nosec G115 -- uid_t fits in uint32
+	dst.Gid = uint32(src.Gid)     // #nosec G115 -- gid_t fits in uint32
+	dst.Rdev = uint64(src.Rdev)   // #nosec G115 -- dev_t is always non-negative
 	dst.Size = int64(src.Size)
 	dst.Atim.Sec, dst.Atim.Nsec = src.Atimespec.Sec, src.Atimespec.Nsec
 	dst.Mtim.Sec, dst.Mtim.Nsec = src.Mtimespec.Sec, src.Mtimespec.Nsec

@@ -34,7 +34,7 @@ func main() {
 	useFUSE := os.Getenv("USE_FUSE") == "1"
 	logFile := os.Getenv("LOG_FILE")
 
-	var wr *os.File = os.Stderr
+	wr := os.Stderr
 	if logFile != "" {
 		f, err := os.OpenFile(filepath.Clean(logFile),
 			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -142,7 +142,7 @@ func main() {
 			found := false
 			for time.Now().Before(deadline) {
 				p := filepath.Join(mountDir, args[1])
-				if _, err := os.Stat(p); err == nil {
+				if _, err := os.Stat(p); err == nil { // #nosec G703
 					found = true
 					break
 				}
@@ -160,7 +160,7 @@ func main() {
 				continue
 			}
 			p := filepath.Join(mountDir, args[1])
-			data, err := os.ReadFile(p)
+			data, err := os.ReadFile(p) // #nosec G304
 			if err != nil {
 				fmt.Println("ERR:" + err.Error())
 			} else {

@@ -425,4 +425,3 @@ func TestRekeyRequest_NilKeys(t *testing.T) {
 		}
 	}
 }
-

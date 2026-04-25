@@ -39,7 +39,7 @@ func (kd *KeibiDrop) dialBridge(logger *slog.Logger) (net.Conn, error) {
 
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := conn.Write(token[:]); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("send room token: %w", err)
 	}
 	_ = conn.SetWriteDeadline(time.Time{})

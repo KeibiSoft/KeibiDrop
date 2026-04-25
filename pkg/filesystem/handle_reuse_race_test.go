@@ -16,8 +16,8 @@ import (
 	"testing"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
-	winfuse "github.com/winfsp/cgofuse/fuse"
 	"github.com/stretchr/testify/require"
+	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
 // TestHandleReuseRace exercises the fd-recycling race that caused 50% data loss

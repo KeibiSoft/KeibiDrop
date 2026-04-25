@@ -47,7 +47,7 @@ var nouns = []string{
 }
 
 func generateName() string {
-	adj := adjectives[rand.IntN(len(adjectives))]  // #nosec G404
-	noun := nouns[rand.IntN(len(nouns))]            // #nosec G404
+	adj := adjectives[rand.IntN(len(adjectives))] // #nosec G404
+	noun := nouns[rand.IntN(len(nouns))]          // #nosec G404
 	return fmt.Sprintf("%s %s", adj, noun)
 }

@@ -72,11 +72,11 @@ func runDaemon() {
 		// Try connecting to see if another daemon is running
 		conn, err := net.Dial("unix", sock)
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 			fmt.Fprintf(os.Stderr, `{"ok":false,"error":"daemon already running at %s"}`+"\n", sock)
 			os.Exit(1)
 		}
-		os.Remove(sock)
+		_ = os.Remove(sock)
 	}
 
 	// Load config (defaults → config file → env vars).
@@ -101,7 +101,7 @@ func runDaemon() {
 	isLocal := os.Getenv("KD_LOCAL") != ""
 
 	// Setup logger
-	var logWriter *os.File = os.Stderr
+	logWriter := os.Stderr
 	if cfg.LogFile != "" {
 		f, err := os.OpenFile(filepath.Clean(cfg.LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err == nil {

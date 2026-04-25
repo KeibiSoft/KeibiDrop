@@ -251,7 +251,7 @@ func TestFUSESync(t *testing.T) {
 		require.NoError(err)
 		require.Equal(len(data), len(fullRead), "full read size mismatch")
 
-		origMD5 := fmt.Sprintf("%x", md5.Sum(data))   //#nosec G401
+		origMD5 := fmt.Sprintf("%x", md5.Sum(data))     //#nosec G401
 		readMD5 := fmt.Sprintf("%x", md5.Sum(fullRead)) //#nosec G401
 		require.Equal(origMD5, readMD5, "MD5 mismatch — file corruption detected")
 	})

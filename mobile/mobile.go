@@ -58,7 +58,7 @@ type API struct {
 // savePath is where received files are stored (app sandbox directory).
 // No FUSE on mobile. prefetchOnOpen and pushOnWrite are ignored.
 func (api *API) Initialize(logFilePath string, relayURL string, inboundPort int, outboundPort int, savePath string) error {
-	var wr *os.File = os.Stderr
+	wr := os.Stderr
 	if logFilePath != "" {
 		f, err := os.OpenFile(filepath.Clean(logFilePath),
 			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -81,7 +81,7 @@ func (api *API) Initialize(logFilePath string, relayURL string, inboundPort int,
 	}
 
 	if savePath != "" {
-		if err := os.MkdirAll(savePath, 0755); err != nil {
+		if err := os.MkdirAll(savePath, 0750); err != nil {
 			return fmt.Errorf("create save path: %w", err)
 		}
 	}
@@ -358,7 +358,7 @@ func (api *API) ExportFile(remoteName string, destPath string) error {
 		return fmt.Errorf("not initialized")
 	}
 	if dir := filepath.Dir(destPath); dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0750); err != nil {
 			return fmt.Errorf("create directory: %w", err)
 		}
 	}

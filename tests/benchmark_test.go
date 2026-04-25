@@ -102,15 +102,15 @@ func TestTransferThroughput(t *testing.T) {
 
 // netemProfile defines a simulated network condition applied via tc netem.
 type netemProfile struct {
-	name    string
-	delay   string // one-way delay (RTT = 2x)
-	jitter  string // optional jitter
-	rate    string // optional bandwidth limit
+	name   string
+	delay  string // one-way delay (RTT = 2x)
+	jitter string // optional jitter
+	rate   string // optional bandwidth limit
 }
 
 var netemProfiles = []netemProfile{
-	{"LAN_1ms", "500us", "100us", ""},             // ~1ms RTT, gigabit LAN
-	{"WiFi_5ms", "2500us", "500us", ""},            // ~5ms RTT, WiFi on same network
+	{"LAN_1ms", "500us", "100us", ""},                // ~1ms RTT, gigabit LAN
+	{"WiFi_5ms", "2500us", "500us", ""},              // ~5ms RTT, WiFi on same network
 	{"LAN_1ms_100Mbps", "500us", "100us", "100mbit"}, // ~1ms RTT, 100 Mbps link
 }
 
@@ -651,8 +651,8 @@ func TestBaselineComparison(t *testing.T) {
 	}
 
 	type result struct {
-		disk    time.Duration
-		e2e     time.Duration
+		disk time.Duration
+		e2e  time.Duration
 	}
 
 	t.Log("\n=== Baseline Comparison: E2E vs Raw Disk ===")

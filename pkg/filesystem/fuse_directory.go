@@ -1151,9 +1151,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	} else {
 		// Local file exists - this may be a partial download from a previous session.
 		existingLocalSize = localStat.Size()
-		if existingLocalSize > 0 && remoteTotalSize > 0 && uint64(existingLocalSize) < remoteTotalSize {
-			// logger.Info("Found partial download, will resume", "localSize", existingLocalSize, "remoteSize", remoteTotalSize)
-		}
+		_ = existingLocalSize > 0 && remoteTotalSize > 0 && uint64(existingLocalSize) < remoteTotalSize
 	}
 
 	// accessMode := flags & winfuse.O_ACCMODE
@@ -1170,7 +1168,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	pool, poolErr := NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
 	if poolErr != nil {
 		streamCancel()
-		platClose(fd)
+		_ = platClose(fd)
 		logger.Error("Failed to open stream pool", "error", poolErr)
 		return -winfuse.EACCES, 0
 	}
@@ -1179,7 +1177,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	if cacheErr != nil {
 		streamCancel()
 		pool.Close()
-		platClose(fd)
+		_ = platClose(fd)
 		logger.Error("Failed to open cache FD", "error", cacheErr)
 		return -winfuse.EIO, 0
 	}
@@ -1409,8 +1407,6 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			if f.Bitmap.IsComplete() {
 				f.NotLocalSynced = false
 				// logger.Info("Download complete (all chunks verified)", "progress", f.Bitmap.Progress())
-			} else {
-				// logger.Info("Download incomplete, keeping NotLocalSynced=true", "progress", f.Bitmap.Progress())
 			}
 		} else {
 			// Fallback for files without bitmap (local-origin or legacy).
@@ -1598,8 +1594,6 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 			logger.Error("Failed to remove dir", "error", err)
 			return int(convertOsErrToSyscallErrno("rmdir", err))
 		}
-	} else {
-		// logger.Info("Local directory removed", "path", path)
 	}
 
 	// Notify peer about the removed directory (only for local changes).
@@ -1717,8 +1711,6 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 			logger.Error("Failed to unlink", "error", err)
 			return int(convertOsErrToSyscallErrno("unlink", err))
 		}
-	} else {
-		// logger.Info("Local file unlinked", "path", path)
 	}
 
 	// Notify peer about the removed file.
@@ -1809,7 +1801,7 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 			logger.Warn("fcopyfile fallback open failed", "error", err)
 			return int(convertOsErrToSyscallErrno("open", err))
 		}
-		defer platClose(fd)
+		defer func() { _ = platClose(fd) }()
 		startPw := time.Now()
 		n, err := platPwrite(fd, buff, offset)
 		pwTime := time.Since(startPw)
@@ -1845,7 +1837,7 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 				logger.Warn("EBADF fallback open failed", "error", err2)
 				return int(convertOsErrToSyscallErrno("open", err2))
 			}
-			defer platClose(fd)
+			defer func() { _ = platClose(fd) }()
 			n2, err2 := platPwrite(fd, buff, offset)
 			if err2 != nil {
 				logger.Warn("EBADF fallback pwrite failed", "error", err2)
@@ -2089,7 +2081,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 				logger.Error("Fallback open failed", "error", err2, "cleanPath", cleanPath)
 				return int(convertOsErrToSyscallErrno("open", err2))
 			}
-			defer platClose(reopenFD)
+			defer func() { _ = platClose(reopenFD) }()
 			n2, err2 := platPread(reopenFD, buff, offset)
 			if err2 != nil {
 				logger.Error("Fallback pread failed", "error", err2)

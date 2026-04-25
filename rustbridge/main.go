@@ -54,7 +54,7 @@ var kd *common.KeibiDrop
 
 // Error reporting: thread-safe last error string.
 var (
-	lastErrorMu sync.Mutex
+	lastErrorMu  sync.Mutex
 	lastErrorMsg string
 )
 

@@ -66,12 +66,12 @@ type KeibiDrop struct {
 	PushOnWrite    bool
 
 	// Signals for loop management.
-	signals  chan TaskSignal
-	running  atomic.Bool
-	stopDone chan struct{} // closed when Stop handler completes
-	ctx      context.Context
-	Cancel   context.CancelFunc // exported so FFI layer can call it for app exit
-	shutdown     chan struct{}   // closed by Shutdown() to permanently exit Run()
+	signals      chan TaskSignal
+	running      atomic.Bool
+	stopDone     chan struct{} // closed when Stop handler completes
+	ctx          context.Context
+	Cancel       context.CancelFunc // exported so FFI layer can call it for app exit
+	shutdown     chan struct{}      // closed by Shutdown() to permanently exit Run()
 	shutdownOnce sync.Once
 	mu           sync.Mutex
 
@@ -79,7 +79,7 @@ type KeibiDrop struct {
 	refreshSession func() *session.Session
 
 	// For stopping the grpc server.
-	grpcServer      *grpc.Server
+	grpcServer          *grpc.Server
 	filesystemReady     chan struct{}
 	filesystemReadyOnce sync.Once
 	serverReadyMu       sync.Mutex
@@ -155,15 +155,15 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 	ctx, cancel := context.WithCancel(ctx)
 
 	kd := &KeibiDrop{
-		logger:          logger,
-		IsFUSE:          isFuse,
-		relayClient:     client,
-		RelayEndoint:    relayURL,
-		session:         session,
-		LocalIPv6IP:     ipv6Address,
-		inboundPort:     inboundPort,
-		listener:        listener,
-		signals:         make(chan TaskSignal, 2),
+		logger:       logger,
+		IsFUSE:       isFuse,
+		relayClient:  client,
+		RelayEndoint: relayURL,
+		session:      session,
+		LocalIPv6IP:  ipv6Address,
+		inboundPort:  inboundPort,
+		listener:     listener,
+		signals:      make(chan TaskSignal, 2),
 		// running is zero-value (false) by default.
 		ctx:             ctx,
 		Cancel:          cancel,

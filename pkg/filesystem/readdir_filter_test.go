@@ -16,9 +16,9 @@ import (
 
 func TestRemoteChildrenForDir_RootWithFlatFiles(t *testing.T) {
 	remoteFiles := map[string]*File{
-		"/hello.txt":   {},
-		"/world.txt":   {},
-		"/readme.md":   {},
+		"/hello.txt": {},
+		"/world.txt": {},
+		"/readme.md": {},
 	}
 
 	files, dirs := remoteChildrenForDir(remoteFiles, "/")
@@ -72,8 +72,8 @@ func TestRemoteChildrenForDir_SubdirectoryListing(t *testing.T) {
 
 func TestRemoteChildrenForDir_DeepNestingDeduplication(t *testing.T) {
 	remoteFiles := map[string]*File{
-		"/a/b/c.txt": {},
-		"/a/b/d.txt": {},
+		"/a/b/c.txt":   {},
+		"/a/b/d.txt":   {},
 		"/a/b/e/f.txt": {},
 	}
 
@@ -99,7 +99,7 @@ func TestRemoteChildrenForDir_NonExistentDirectory(t *testing.T) {
 
 func TestRemoteChildrenForDir_EmptyPathNormalization(t *testing.T) {
 	remoteFiles := map[string]*File{
-		"/hello.txt": {},
+		"/hello.txt":    {},
 		"/sub/deep.txt": {},
 	}
 

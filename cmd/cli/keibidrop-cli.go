@@ -406,7 +406,7 @@ func main() {
 	fmt.Println("Connecting to relay:", relayURL.String())
 
 	// Setup logger.
-	var wr *os.File = os.Stderr
+	wr := os.Stderr
 	if cfg.LogFile != "" {
 		f, err := os.OpenFile(filepath.Clean(cfg.LogFile),
 			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)

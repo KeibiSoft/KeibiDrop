@@ -24,4 +24,3 @@ func GenerateSeed() []byte {
 	res, _ := RandomBytes(seedSize)
 	return res
 }
-

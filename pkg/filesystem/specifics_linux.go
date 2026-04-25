@@ -94,7 +94,9 @@ func syscallStatfs(path string, stat *syscall.Statfs_t) error {
 // getMountOptions returns Linux-specific FUSE mount options.
 // nonempty: allow mounting on directories that already contain files.
 // allow_other: let other users (e.g. postgres, mysql) access the mount.
-//   Requires user_allow_other in /etc/fuse.conf.
+//
+//	Requires user_allow_other in /etc/fuse.conf.
+//
 // Note: NOT using default_permissions — it makes the kernel enforce POSIX
 // chown rules (only root can chown), which blocks database init flows where
 // MySQL/PostgreSQL need to chown their data directories.
