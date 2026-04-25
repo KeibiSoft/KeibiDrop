@@ -398,7 +398,7 @@ func TestFUSEtoFUSE(t *testing.T) {
 // mount must show directory names at the correct hierarchy level — never raw
 // file basenames from deeper levels (phantoms).
 func TestFUSEtoFUSE_ReaddirNoPhantoms(t *testing.T) {
-	t.Skip("Flaky: timing-dependent readdir race")
+	t.Skip("Flaky: timing-dependent readdir race — tracked in #117")
 	skipIfNoFUSE(t)
 
 	binary := getTestPeerBinary(t)
