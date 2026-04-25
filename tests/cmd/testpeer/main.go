@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -221,6 +222,29 @@ func main() {
 				}
 				fmt.Println("END")
 			}
+
+		case "exec":
+			// exec <dir-relative-to-mount> <command> [args...]
+			// Runs a shell command inside the FUSE mount. Returns EXEC:<exit_code>:<output>
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: exec <dir> <command> [args...]")
+				continue
+			}
+			dir := filepath.Join(mountDir, args[1])
+			cmd := exec.Command(args[2], args[3:]...)
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			exitCode := 0
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					exitCode = exitErr.ExitCode()
+				} else {
+					exitCode = -1
+				}
+			}
+			// Replace newlines with \n literal for single-line protocol
+			escaped := strings.ReplaceAll(strings.TrimRight(string(out), "\n"), "\n", "\\n")
+			fmt.Printf("EXEC:%d:%s\n", exitCode, escaped)
 
 		case "quit":
 			_ = kd.UnmountFilesystem()
