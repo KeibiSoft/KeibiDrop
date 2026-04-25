@@ -15,7 +15,7 @@ import (
 
 // .kdbitmap file format (binary, little-endian):
 //
-//   [magic 4B] [version 1B] [fileSize 8B] [total 4B] [have 4B] [chunkSize 4B] [bits N*8B]
+//	[magic 4B] [version 1B] [fileSize 8B] [total 4B] [have 4B] [chunkSize 4B] [bits N*8B]
 //
 // Each field:
 const (
@@ -29,11 +29,11 @@ const (
 
 	// Header field offsets:
 	offMagic     = 0
-	offVersion   = offMagic + bitmapMagicSize         // 4
-	offFileSize  = offVersion + bitmapVersionSize      // 5
-	offTotal     = offFileSize + bitmapFileSizeSize    // 13
-	offHave      = offTotal + bitmapTotalSize          // 17
-	offChunkSize = offHave + bitmapHaveSize            // 21
+	offVersion   = offMagic + bitmapMagicSize       // 4
+	offFileSize  = offVersion + bitmapVersionSize   // 5
+	offTotal     = offFileSize + bitmapFileSizeSize // 13
+	offHave      = offTotal + bitmapTotalSize       // 17
+	offChunkSize = offHave + bitmapHaveSize         // 21
 
 	bitmapVersion = 1
 )

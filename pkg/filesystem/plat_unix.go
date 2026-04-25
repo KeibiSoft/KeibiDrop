@@ -13,7 +13,7 @@ import (
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
-const platO_DIRECTORY = syscall.O_DIRECTORY
+const platODIRECTORY = syscall.O_DIRECTORY
 const platENODATA = syscall.ENODATA
 const platDiskModeIsAuthoritative = true
 
@@ -86,7 +86,7 @@ func platStat(path string) (winfuse.Stat_t, error) {
 // platStatfs returns a winfuse.Statfs_t populated via syscall.Statfs.
 func platStatfs(path string) (winfuse.Statfs_t, error) {
 	var raw syscall.Statfs_t
-	if err := syscall_Statfs(path, &raw); err != nil {
+	if err := syscallStatfs(path, &raw); err != nil {
 		return winfuse.Statfs_t{}, err
 	}
 	var st winfuse.Statfs_t

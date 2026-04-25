@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const platO_DIRECTORY = 0     // O_DIRECTORY not available on Windows.
+const platODIRECTORY = 0     // O_DIRECTORY not available on Windows.
 const platENODATA = syscall.ENOENT // ENODATA does not exist on Windows; map to ENOENT.
 const platDiskModeIsAuthoritative = false
 

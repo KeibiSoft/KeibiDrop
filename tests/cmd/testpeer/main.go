@@ -231,7 +231,7 @@ func main() {
 				continue
 			}
 			dir := filepath.Join(mountDir, args[1])
-			cmd := exec.Command(args[2], args[3:]...)
+			cmd := exec.Command(args[2], args[3:]...) // #nosec G204 -- test harness, args from stdin
 			cmd.Dir = dir
 			out, err := cmd.CombinedOutput()
 			exitCode := 0

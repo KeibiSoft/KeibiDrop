@@ -1220,7 +1220,7 @@ func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
 	// d.logger.Info("FUSE opendir", "path", path)
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "opendir", "path", path)
-	f, err := platOpen(path, syscall.O_RDONLY|platO_DIRECTORY, 0)
+	f, err := platOpen(path, syscall.O_RDONLY|platODIRECTORY, 0)
 	if err != nil {
 		logger.Error("Failed to open dir", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err)), 0
@@ -1823,8 +1823,8 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	}
 	f := entry.File
 	f.HadEdits = true
-	f.NotLocalSynced = false  // Local write makes us authoritative - don't read from remote
-	f.NotRemoteSynced = true  // File content changed - notify peer on Release with new size
+	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
+	f.NotRemoteSynced = true // File content changed - notify peer on Release with new size
 	f.LocalNewer = true
 
 	startPwrite := time.Now()

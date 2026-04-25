@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   timeout: 3m
   tests: true
@@ -8,16 +10,39 @@ linters:
     - staticcheck
     - unused
     - errcheck
-    - gofmt
     - gocritic
     - revive
     - ineffassign
     - gosec
 
-linters-settings:
+formatters:
+  enable:
+    - gofmt
+
+settings:
   revive:
     ignore-generated-header: true
     severity: warning
+    rules:
+      - name: exported
+        disabled: true
+      - name: package-comments
+        disabled: true
+      - name: var-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: blank-imports
+      - name: context-as-argument
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: increment-decrement
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-naming
+      - name: var-declaration
   errcheck:
     exclude-functions:
       - (io.Closer).Close
@@ -32,15 +57,12 @@ linters-settings:
 issues:
   exclude-use-default: false
   exclude-rules:
-    # Don't check error returns on Close/cleanup in tests
     - path: _test\.go
       linters:
         - errcheck
-    # Don't check error returns on deferred Close calls
     - text: "Error return value of .*.Close"
       linters:
         - errcheck
-    # Ignore os.Remove in cleanup paths
     - text: "Error return value of `os.Remove`"
       linters:
         - errcheck

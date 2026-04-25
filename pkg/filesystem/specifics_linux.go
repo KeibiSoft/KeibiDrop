@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/winfsp/cgofuse/fuse"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 	"golang.org/x/sys/unix"
 )
@@ -40,8 +39,8 @@ func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNum
 	return
 }
 
-func copyFusestatfsFromGostatfs(dst *fuse.Statfs_t, src *syscall.Statfs_t) {
-	*dst = fuse.Statfs_t{}
+func copyFusestatfsFromGostatfs(dst *winfuse.Statfs_t, src *syscall.Statfs_t) {
+	*dst = winfuse.Statfs_t{}
 	dst.Bsize = uint64(src.Bsize)
 	dst.Frsize = 1
 	dst.Blocks = uint64(src.Blocks)
@@ -53,8 +52,8 @@ func copyFusestatfsFromGostatfs(dst *fuse.Statfs_t, src *syscall.Statfs_t) {
 	dst.Namemax = 255 // uint64(src.Namelen)
 }
 
-func copyFusestatFromGostat(dst *fuse.Stat_t, src *syscall.Stat_t) {
-	*dst = fuse.Stat_t{}
+func copyFusestatFromGostat(dst *winfuse.Stat_t, src *syscall.Stat_t) {
+	*dst = winfuse.Stat_t{}
 	dst.Dev = uint64(src.Dev)
 	dst.Ino = uint64(src.Ino)
 	dst.Mode = uint32(src.Mode) // #nosec G115
@@ -88,7 +87,7 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtim.Sec, src.Birthtim.Nsec
 }
 
-func syscall_Statfs(path string, stat *syscall.Statfs_t) error {
+func syscallStatfs(path string, stat *syscall.Statfs_t) error {
 	return syscall.Statfs(path, stat)
 }
 
