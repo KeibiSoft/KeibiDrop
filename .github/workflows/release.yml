@@ -176,27 +176,25 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*-setup.exe" \) -exec cp {} release/ \;
-          cd release && sha256sum * > SHA256SUMS 2>/dev/null || shasum -a 256 * > SHA256SUMS
           ls -lh release/
+          cd release && sha256sum * > SHA256SUMS 2>/dev/null || shasum -a 256 * > SHA256SUMS
 
-      - name: Create GitHub Release
+      - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
 
-          # Beta for now, stable later
-          PRERELEASE="--prerelease"
-          TITLE="KeibiDrop $TAG (Beta)"
-
-          if [[ "$TAG" != *"-"* ]] && [[ "$TAG" != v0.* ]]; then
-            # Stable: v1.0.0+ with no suffix
+          # Create release if it doesn't exist yet
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
             PRERELEASE=""
             TITLE="KeibiDrop $TAG"
+            if [[ "$TAG" == *"-"* ]] || [[ "$TAG" == v0.* ]]; then
+              PRERELEASE="--prerelease"
+              TITLE="KeibiDrop $TAG (Beta)"
+            fi
+            gh release create "$TAG" --title "$TITLE" --generate-notes $PRERELEASE
           fi
 
-          gh release create "$TAG" \
-            --title "$TITLE" \
-            --generate-notes \
-            $PRERELEASE \
-            release/*
+          # Upload artifacts
+          gh release upload "$TAG" release/* --clobber
