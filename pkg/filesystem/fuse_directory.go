@@ -2071,13 +2071,17 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		return n
 	}
 
-	// Fallback: read directly from local file
-	// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "local")
-	n, err := platPread(fd, buff, offset)
+	// Fallback: read directly from local file.
+	// If handle was not in the map (ok=false), fd is 0 which is invalid.
+	// Go straight to the reopen-by-path fallback in that case.
+	n, err := 0, error(nil)
+	if ok {
+		n, err = platPread(fd, buff, offset)
+	} else {
+		err = syscall.EBADF
+	}
 	if err != nil {
-		// EBADF fallback: fd may have been closed by fcopyfile race or fd reuse.
-		// Reopen the file and read from it.
-		if errors.Is(err, syscall.EBADF) {
+		if errors.Is(err, syscall.EBADF) || errors.Is(err, syscall.ENXIO) {
 			// d.logger.Warn("EBADF on pread, falling back to reopen", "path", path, "fh", fh)
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 			reopenFD, err2 := platOpen(cleanPath, syscall.O_RDONLY, 0)
