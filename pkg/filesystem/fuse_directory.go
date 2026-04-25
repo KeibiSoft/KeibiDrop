@@ -2212,13 +2212,16 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		sizeChanged := oldSize != stat.Size
 		existing.LocalNewer = false // Remote has newer content.
 
-		// Reject stale ADD_FILE with smaller size — this happens when git's
-		// debounced notification for a temp file arrives AFTER a RENAME already
-		// set the correct (larger) size. Example: git index-pack appends a
-		// 20-byte SHA-1 checksum between the temp write and the rename.
-		if sizeChanged && stat.Size < oldSize && existing.Bitmap != nil && existing.Bitmap.Have() > 0 {
+		// Reject stale ADD_FILE only when the incoming mtime is older than
+		// what we already have. A debounced notification for a temp file can
+		// arrive AFTER a RENAME set the correct size (git index-pack appends
+		// 20 bytes between write and rename). But we cannot reject based on
+		// size alone: git's HEAD goes from 25 bytes (.invalid placeholder)
+		// to 21 bytes (ref: refs/heads/main), so smaller size can be correct.
+		incomingMtime := stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
+		existingMtime := existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
+		if sizeChanged && stat.Size < oldSize && existing.Bitmap != nil && existing.Bitmap.Have() > 0 && incomingMtime < existingMtime {
 			d.RemoteFilesLock.Unlock()
-			// Stale ADD_FILE with smaller size — rename already set correct size
 			return nil
 		}
 
