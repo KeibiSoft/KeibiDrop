@@ -33,7 +33,7 @@ func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNum
 	err = unix.Statfs(filepath.Clean(path), &stat)
 
 	freeBytesAvail = stat.Bavail * uint64(stat.Bsize)
-	totalNumberFreeBytes = stat.Blocks * uint64(stat.Bsize)
+	totalNumberOfBytes = stat.Blocks * uint64(stat.Bsize)
 	totalNumberFreeBytes = stat.Bfree * uint64(stat.Bsize)
 
 	return
