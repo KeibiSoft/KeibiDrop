@@ -71,7 +71,7 @@ func pipeWithMessage(t *testing.T, msg PeerHandshakeMessage) net.Conn {
 			return
 		}
 		var lenBuf [4]byte
-		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(payload)))
+		binary.BigEndian.PutUint32(lenBuf[:], uint32(len(payload))) //nolint:gosec // G115: test payload is small
 		_, _ = server.Write(lenBuf[:])
 		_, _ = server.Write(payload)
 	}()

@@ -116,7 +116,7 @@ func (rk *RelayKeepalive) loop() {
 				continue
 			}
 			rk.mu.Lock()
-			rk.refresh()
+			_ = rk.refresh()
 			rk.mu.Unlock()
 		}
 	}

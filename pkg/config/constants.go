@@ -17,9 +17,9 @@ const BlockSize = 4 * 1024 * 1024 // 4 MiB - larger chunks = fewer gRPC round-tr
 // IMPORTANT: GRPCStreamBuffer MUST be smaller than GRPCMaxMsgSize
 // to leave room for protobuf framing overhead (~10-20 bytes per message)
 const (
-	GRPCMaxMsgSize    = 20 * 1024 * 1024 // 20 MiB - max gRPC message size
-	GRPCStreamBuffer  = 16 * 1024 * 1024 // 16 MiB - buffer for streaming reads
-	GRPCOverheadRoom  = GRPCMaxMsgSize - GRPCStreamBuffer // 4 MiB headroom
+	GRPCMaxMsgSize   = 20 * 1024 * 1024                  // 20 MiB - max gRPC message size
+	GRPCStreamBuffer = 16 * 1024 * 1024                  // 16 MiB - buffer for streaming reads
+	GRPCOverheadRoom = GRPCMaxMsgSize - GRPCStreamBuffer // 4 MiB headroom
 )
 
 // Compile-time check: ensure buffer fits within max message size

@@ -128,7 +128,7 @@ func applyNetem(t *testing.T, p netemProfile) func() {
 		args = append(args, p.jitter)
 	}
 
-	out, err := exec.Command("tc", args...).CombinedOutput()
+	out, err := exec.Command("tc", args...).CombinedOutput() //#nosec G204
 	if err != nil {
 		t.Skipf("tc netem failed (need sudo): %s: %v", string(out), err)
 	}
@@ -137,7 +137,7 @@ func applyNetem(t *testing.T, p netemProfile) func() {
 	if p.rate != "" {
 		tbfArgs := []string{"qdisc", "add", "dev", "lo", "parent", "1:", "handle", "2:",
 			"tbf", "rate", p.rate, "burst", "256kb", "latency", "50ms"}
-		out, err := exec.Command("tc", tbfArgs...).CombinedOutput()
+		out, err := exec.Command("tc", tbfArgs...).CombinedOutput() //#nosec G204
 		if err != nil {
 			// Clean up the netem qdisc before skipping
 			exec.Command("tc", "qdisc", "del", "dev", "lo", "root").Run()

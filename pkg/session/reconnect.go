@@ -243,7 +243,7 @@ func (r *ReconnectManager) reconnectAsInitiator() error {
 			return fmt.Errorf("bridge dial (outbound): %w", err)
 		}
 		if err := PerformOutboundHandshakeOnConn(r.session, outConn); err != nil {
-			outConn.Close()
+			_ = outConn.Close()
 			return fmt.Errorf("bridge outbound handshake: %w", err)
 		}
 
@@ -252,7 +252,7 @@ func (r *ReconnectManager) reconnectAsInitiator() error {
 			return fmt.Errorf("bridge dial (inbound): %w", err)
 		}
 		if err := PerformInboundHandshake(r.session, inConn); err != nil {
-			inConn.Close()
+			_ = inConn.Close()
 			return fmt.Errorf("bridge inbound handshake: %w", err)
 		}
 
@@ -311,7 +311,7 @@ func (r *ReconnectManager) reconnectAsResponder() error {
 			return fmt.Errorf("bridge dial (inbound): %w", err)
 		}
 		if err := PerformInboundHandshake(r.session, inConn); err != nil {
-			inConn.Close()
+			_ = inConn.Close()
 			return fmt.Errorf("bridge inbound handshake: %w", err)
 		}
 
@@ -320,7 +320,7 @@ func (r *ReconnectManager) reconnectAsResponder() error {
 			return fmt.Errorf("bridge dial (outbound): %w", err)
 		}
 		if err := PerformOutboundHandshakeOnConn(r.session, outConn); err != nil {
-			outConn.Close()
+			_ = outConn.Close()
 			return fmt.Errorf("bridge outbound handshake: %w", err)
 		}
 

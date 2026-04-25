@@ -8,7 +8,6 @@ package crypto
 
 import (
 	"crypto/rand"
-	"fmt"
 )
 
 func RandomBytes(size int) ([]byte, error) {
@@ -26,10 +25,3 @@ func GenerateSeed() []byte {
 	return res
 }
 
-// TODO: Remove it?
-func safeInt(u uint64) (int, error) {
-	if u > uint64(^uint(0)>>1) {
-		return 0, fmt.Errorf("value too large to fit into int: %d", u)
-	}
-	return int(u), nil
-}

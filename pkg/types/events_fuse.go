@@ -20,7 +20,7 @@ import (
 
 // timespecToNano converts a fuse.Timespec to total nanoseconds since Unix epoch.
 func timespecToNano(ts fuse.Timespec) uint64 {
-	return uint64(ts.Sec)*uint64(time.Second) + uint64(ts.Nsec)
+	return uint64(ts.Sec)*uint64(time.Second) + uint64(ts.Nsec) //nolint:gosec // G115: FUSE timespec values are positive
 }
 
 // StatToAttr converts a FUSE Stat_t to a protobuf Attr.
@@ -63,5 +63,5 @@ func AttrToStat(attr *keibidrop.Attr) *fuse.Stat_t {
 
 // NanoToTimespec converts nanoseconds since Unix epoch to a fuse.Timespec.
 func NanoToTimespec(ns uint64) fuse.Timespec {
-	return fuse.NewTimespec(time.Unix(0, int64(ns)))
+	return fuse.NewTimespec(time.Unix(0, int64(ns))) //nolint:gosec // G115: nanoseconds fit int64 until year 2262
 }

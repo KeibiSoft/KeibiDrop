@@ -20,7 +20,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -121,7 +120,7 @@ func runDaemon() {
 		cfg.PrefetchOnOpen, cfg.PushOnWrite)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"init failed: %s"}`+"\n", err)
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic
 	}
 	kd.IsLocalMode = isLocal
 	kd.BridgeAddr = cfg.BridgeAddr
@@ -166,9 +165,9 @@ func runDaemon() {
 		<-sigCh
 		logger.Info("Shutting down")
 		kd.NotifyDisconnect()
-		kd.UnmountFilesystem()
+		_ = kd.UnmountFilesystem()
 		kd.Shutdown()
-		ln.Close()
+		_ = ln.Close()
 	}()
 
 	for {
@@ -294,10 +293,10 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 
 	case "stop", "quit":
 		kd.NotifyDisconnect()
-		kd.UnmountFilesystem()
+		_ = kd.UnmountFilesystem()
 		kd.Shutdown()
 		go func() {
-			ln.Close()
+			_ = ln.Close()
 		}()
 		return okResponse(map[string]string{"status": "stopped"})
 
@@ -359,7 +358,7 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 func cmdDiscover(kd *common.KeibiDrop) Response {
 	kd.IsLocalMode = true
 	disc := discovery.New(kd.InboundPort(), slog.Default())
-	disc.Start()
+	_ = disc.Start()
 	defer disc.Stop()
 
 	// Wait for beacons
@@ -505,7 +504,7 @@ func runClient(cmd string, args []string) {
 
 	req := Request{Command: cmd, Args: args}
 	b, _ := json.Marshal(req)
-	fmt.Fprintf(conn, "%s\n", b)
+	_, _ = fmt.Fprintf(conn, "%s\n", b)
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer for large responses
@@ -518,25 +517,12 @@ func runClient(cmd string, args []string) {
 
 func writeResponse(conn net.Conn, resp Response) {
 	b, _ := json.Marshal(resp)
-	fmt.Fprintf(conn, "%s\n", b)
+	_, _ = fmt.Fprintf(conn, "%s\n", b)
 }
 
 func mustMarshal(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
-}
-
-func envInt(key string, fallback int) int {
-	s := os.Getenv(key)
-	if s == "" {
-		return fallback
-	}
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"invalid %s: %s"}`+"\n", key, s)
-		os.Exit(1)
-	}
-	return v
 }
 
 func printHelp() {

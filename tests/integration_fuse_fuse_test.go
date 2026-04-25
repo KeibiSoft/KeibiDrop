@@ -132,8 +132,7 @@ func getTestPeerBinary(t *testing.T) string {
 	t.Helper()
 	testPeerBuildOnce.Do(func() {
 		binPath := filepath.Join(t.TempDir(), "testpeer")
-		cmd := exec.Command("go", "build", "-o", binPath, "./tests/cmd/testpeer/")
-		cmd.Dir = filepath.Join("..")
+		cmd := exec.Command("go", "build", "-o", binPath, "./tests/cmd/testpeer/") //#nosec G204
 		// Use the project root as working directory
 		// Find project root by looking for go.mod
 		cwd, _ := os.Getwd()

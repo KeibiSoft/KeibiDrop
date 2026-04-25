@@ -4,7 +4,7 @@
 package tests
 
 import (
-	"crypto/md5"
+	"crypto/md5" //#nosec G501
 	"crypto/rand"
 	"fmt"
 	"os"

@@ -50,7 +50,7 @@ func main() {
 	parsed, err := url.Parse(relayURL)
 	if err != nil {
 		fmt.Println("ERR:invalid relay URL: " + err.Error())
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -175,7 +175,7 @@ func main() {
 			}
 			p := filepath.Join(mountDir, args[1])
 			content := strings.Join(args[2:], " ")
-			if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			if err := os.WriteFile(p, []byte(content), 0644); err != nil { //nolint:gosec // G306: shared file needs read access
 				fmt.Println("ERR:" + err.Error())
 			} else {
 				fmt.Println("OK")

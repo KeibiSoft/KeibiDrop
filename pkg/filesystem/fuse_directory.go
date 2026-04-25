@@ -459,8 +459,6 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 				needsRemark = true
 			}
 		}
-	} else {
-		// logger.Info("=== REMOTE CHECK ===", "path", path, "hasRemote", false)
 	}
 	d.RemoteFilesLock.RUnlock()
 
@@ -527,7 +525,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	if hasCreate && !isLocalPresent {
 		// Create parent directories if needed
 		parentDir := filepath.Dir(localPath)
-		if err := os.MkdirAll(parentDir, 0755); err != nil {
+		if err := os.MkdirAll(parentDir, 0750); err != nil {
 			logger.Error("Failed to create parent directories", "error", err)
 			return -winfuse.EIO
 		}
@@ -610,21 +608,21 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	var cacheFD *os.File
 	if remoteHasUpdate {
 		fsp := d.OpenStreamProvider()
-		var streamCtx context.Context
-		streamCtx, streamCancel = context.WithCancel(context.Background())
+		streamCtx, cancel := context.WithCancel(context.Background())
+		streamCancel = cancel
 		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
 		if err != nil {
-			streamCancel()
-			platClose(fd)
+			cancel()
+			_ = platClose(fd)
 			logger.Error("Failed to open stream pool", "error", err)
 			return -winfuse.EACCES
 		}
 		// Open persistent cache FD for on-demand writes (avoids open/close per chunk).
-		cacheFD, err = os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY, 0644)
+		cacheFD, err = os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
-			streamCancel()
+			cancel()
 			pool.Close()
-			platClose(fd)
+			_ = platClose(fd)
 			logger.Error("Failed to open cache FD", "error", err)
 			return -winfuse.EIO
 		}
@@ -650,12 +648,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		// Without this, non-sequential reads (e.g., video moov atom at end) can cause corruption.
 		// macOS reads video files non-sequentially (header, then trailer at end, then content).
 		if existingLocalSize == 0 && remoteTotalSize > 0 {
-			if truncErr := os.Truncate(localPath, int64(remoteTotalSize)); truncErr != nil {
-				// logger.Warn("Failed to pre-allocate local file", "size", remoteTotalSize, "error", truncErr)
-				_ = truncErr
-			} else {
-				// logger.Info("Pre-allocated local file", "size", remoteTotalSize)
-			}
+			_ = os.Truncate(localPath, int64(remoteTotalSize))
 		}
 
 		// NOTE: We intentionally do NOT use local file size for resume tracking.
@@ -665,8 +658,6 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	}
 	d.OpenMapLock.Unlock()
 	d.AfmLock.Unlock()
-
-
 
 	fi.Fh = handleID
 	fi.DirectIo = shouldUseDirectIo(path, flags)
@@ -719,7 +710,7 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 		}
 
 		fsyncErr := platFsync(fd)
-		platClose(fd)
+		_ = platClose(fd)
 
 		if fsyncErr != nil {
 			// d.logger.Warn("FUSE Fsync fallback fsync failed", "path", localPath, "error", fsyncErr)
@@ -1012,7 +1003,7 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "mknod", "path", path, "mode", mode, "dev", dev)
-	err := platMknod(path, mode, int(dev))
+	err := platMknod(path, mode, int(dev)) // #nosec G115
 	if err != nil {
 		logger.Error("Failed to mknor", "errro", err)
 		return int(convertOsErrToSyscallErrno("mknod", err))
@@ -1184,7 +1175,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 		return -winfuse.EACCES, 0
 	}
 	// Open persistent cache FD for on-demand writes (avoids open/close per chunk).
-	cacheFD, cacheErr := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY, 0644)
+	cacheFD, cacheErr := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY, 0600)
 	if cacheErr != nil {
 		streamCancel()
 		pool.Close()
@@ -1210,12 +1201,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 		// Pre-allocate local file to expected size for out-of-order writes.
 		// Without this, non-sequential reads (e.g., video moov atom at end) can cause corruption.
 		if existingLocalSize == 0 && remoteTotalSize > 0 {
-			if truncErr := os.Truncate(localPath, int64(remoteTotalSize)); truncErr != nil {
-				// logger.Warn("Failed to pre-allocate local file", "size", remoteTotalSize, "error", truncErr)
-				_ = truncErr
-			} else {
-				// logger.Info("Pre-allocated local file", "size", remoteTotalSize)
-			}
+			_ = os.Truncate(localPath, int64(remoteTotalSize))
 		}
 	}
 	handleID := allocHandleID()
@@ -1430,13 +1416,12 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			// Fallback for files without bitmap (local-origin or legacy).
 			expectedSize := f.Download.TotalSize.Load()
 			bytesDownloaded := f.Download.BytesDownloaded.Load()
-			if expectedSize > 0 && bytesDownloaded >= expectedSize {
+			switch {
+			case expectedSize > 0 && bytesDownloaded >= expectedSize:
 				f.NotLocalSynced = false
-				// logger.Info("Download complete (bytes check)", "bytesDownloaded", bytesDownloaded, "expectedSize", expectedSize)
-			} else if expectedSize > 0 {
-				// logger.Info("Download incomplete, keeping NotLocalSynced=true", "bytesDownloaded", bytesDownloaded, "expectedSize", expectedSize)
-			} else {
-				// No expected size tracked (local file, not from remote) - mark as synced
+			case expectedSize > 0:
+				// Download incomplete, keeping NotLocalSynced=true
+			default:
 				cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 				if localInfo, statErr := os.Stat(cleanPath); statErr == nil && localInfo.Size() > 0 {
 					f.NotLocalSynced = false
@@ -1488,7 +1473,7 @@ func (d *Dir) Releasedir(path string, fh uint64) (errCode int) {
 	defer d.recoverPanic("Releasedir", &errCode)
 	// d.logger.Info("Releasedir", "path", path, "inode", d.Inode, "fh", fh)
 	logger := d.logger.With("method", "release-dir", "path", path, "fh", fh)
-	err := platClose(int(fh))
+	err := platClose(int(fh)) // #nosec G115
 	if err != nil {
 		logger.Error("Failed to release", "error", err)
 		return int(convertOsErrToSyscallErrno("release", err))
@@ -2325,10 +2310,10 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 	}
 
 	// Pre-allocate local cache file to full size so pwrite at any offset works.
-	if err := os.MkdirAll(filepath.Dir(realPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(realPath), 0o750); err != nil {
 		logger.Warn("Prefetch: failed to create dirs", "path", realPath, "error", err)
 	}
-	if _, statErr := os.Stat(realPath); os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(realPath); os.IsNotExist(statErr) { // #nosec G304
 		// Only create/truncate if file doesn't exist (resume keeps existing data).
 		if err := os.Truncate(realPath, fileSize); err != nil {
 			lf, createErr := os.Create(realPath)
@@ -2394,7 +2379,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	}
 
 	// Open local file for writing.
-	lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0644)
+	lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		logger.Warn("Prefetch: failed to open local file", "error", err)
 		return

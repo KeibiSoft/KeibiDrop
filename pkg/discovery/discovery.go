@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	multicastAddr = "224.0.0.167:26999" // KeibiDrop discovery group
+	multicastAddr  = "224.0.0.167:26999" // KeibiDrop discovery group
 	beaconInterval = 3 * time.Second
 	peerTimeout    = 10 * time.Second
 	maxBeaconSize  = 512
@@ -134,14 +134,14 @@ func (s *Service) advertise(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Send immediately, then on tick.
-	conn.Write(data)
+	_, _ = conn.Write(data)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			conn.Write(data)
+			_, _ = conn.Write(data)
 		}
 	}
 }
@@ -160,7 +160,7 @@ func (s *Service) listen(ctx context.Context) {
 	}
 	defer conn.Close()
 
-	conn.SetReadBuffer(maxBeaconSize * 10)
+	_ = conn.SetReadBuffer(maxBeaconSize * 10)
 
 	buf := make([]byte, maxBeaconSize)
 	for {
@@ -170,7 +170,7 @@ func (s *Service) listen(ctx context.Context) {
 		default:
 		}
 
-		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		n, src, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {

@@ -7,7 +7,7 @@
 package tests
 
 import (
-	"crypto/md5"
+	"crypto/md5" //#nosec G501
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -243,7 +243,7 @@ func TestFUSESync(t *testing.T) {
 			if err != nil {
 				return false
 			}
-			return md5.Sum(saved) == md5.Sum(data)
+			return md5.Sum(saved) == md5.Sum(data) //#nosec G401
 		}, "waiting for complete download with correct MD5")
 
 		// Final verification: full file read from FUSE mount should match.
@@ -251,8 +251,8 @@ func TestFUSESync(t *testing.T) {
 		require.NoError(err)
 		require.Equal(len(data), len(fullRead), "full read size mismatch")
 
-		origMD5 := fmt.Sprintf("%x", md5.Sum(data))
-		readMD5 := fmt.Sprintf("%x", md5.Sum(fullRead))
+		origMD5 := fmt.Sprintf("%x", md5.Sum(data))   //#nosec G401
+		readMD5 := fmt.Sprintf("%x", md5.Sum(fullRead)) //#nosec G401
 		require.Equal(origMD5, readMD5, "MD5 mismatch — file corruption detected")
 	})
 
@@ -304,7 +304,7 @@ func TestFUSESync(t *testing.T) {
 			if err != nil || len(saved) != fileSize {
 				return false
 			}
-			return md5.Sum(saved) == md5.Sum(data)
+			return md5.Sum(saved) == md5.Sum(data) //#nosec G401
 		}, "waiting for full download of random_seek.bin")
 
 		origMD5 := fmt.Sprintf("%x", md5.Sum(data))

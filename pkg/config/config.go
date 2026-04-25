@@ -25,8 +25,8 @@ type Config struct {
 	LogFile        string `toml:"log_file"`
 	InboundPort    int    `toml:"inbound_port"`
 	OutboundPort   int    `toml:"outbound_port"`
-	BridgeAddr     string `toml:"bridge_addr"`   // TCP bridge relay address
-	StrictMode     bool   `toml:"strict_mode"`   // Disable data relay fallback
+	BridgeAddr     string `toml:"bridge_addr"`  // TCP bridge relay address
+	StrictMode     bool   `toml:"strict_mode"`  // Disable data relay fallback
 	NoFUSE         bool   `toml:"no_fuse"`
 	PrefetchOnOpen bool   `toml:"prefetch_on_open"`
 	PushOnWrite    bool   `toml:"push_on_write"`
@@ -91,7 +91,7 @@ func EnsureDirectories(cfg Config) error {
 		if d == "" {
 			continue
 		}
-		if err := os.MkdirAll(d, 0755); err != nil {
+		if err := os.MkdirAll(d, 0750); err != nil { // #nosec G301
 			return fmt.Errorf("create directory %s: %w", d, err)
 		}
 	}
@@ -105,7 +105,7 @@ func WriteDefault() error {
 	if _, err := os.Stat(path); err == nil {
 		return nil // already exists
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil { // #nosec G301
 		return err
 	}
 	cfg := DefaultConfig()
@@ -141,7 +141,7 @@ no_fuse = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.NoFUSE)
 
-	return os.WriteFile(path, []byte(content), 0644)
+	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }
 
 func applyEnvOverrides(cfg *Config) {

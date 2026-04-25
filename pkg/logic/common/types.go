@@ -372,8 +372,7 @@ func (kd *KeibiDrop) Run() {
 			logger.Info("Run loop: context refreshed, ready for next session")
 			continue
 		case s := <-kd.signals:
-			switch s {
-			case Start:
+			if s == Start {
 				logger.Info("Signal start")
 				if kd.session == nil || kd.session.Session == nil || kd.session.Session.Inbound == nil {
 					logger.Warn("Nil session")
@@ -424,7 +423,6 @@ func (kd *KeibiDrop) Run() {
 					continue
 				default:
 				}
-
 			}
 		}
 	}

@@ -188,7 +188,7 @@ func TestChunkBitmap_ConcurrentAccess(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		rng := rand.New(rand.NewSource(42))
+		rng := rand.New(rand.NewSource(42)) // #nosec G404
 		for i := 0; i < 100; i++ {
 			idx := rng.Intn(b.Total())
 			b.Set(idx)

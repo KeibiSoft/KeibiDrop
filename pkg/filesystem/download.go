@@ -86,7 +86,7 @@ func (b *ChunkBitmap) Has(chunkIdx int) bool {
 		return false
 	}
 	word := chunkIdx / 64
-	bit := uint(chunkIdx % 64)
+	bit := uint(chunkIdx % 64) // #nosec G115
 	b.mu.RLock()
 	v := b.bits[word] & (1 << bit)
 	b.mu.RUnlock()
@@ -99,7 +99,7 @@ func (b *ChunkBitmap) Set(chunkIdx int) {
 		return
 	}
 	word := chunkIdx / 64
-	bit := uint(chunkIdx % 64)
+	bit := uint(chunkIdx % 64) // #nosec G115
 	b.mu.Lock()
 	if b.bits[word]&(1<<bit) == 0 {
 		b.bits[word] |= 1 << bit
@@ -168,7 +168,7 @@ func (b *ChunkBitmap) NextMissing(from int) int {
 	defer b.mu.RUnlock()
 	for i := from; i < b.total; i++ {
 		word := i / 64
-		bit := uint(i % 64)
+		bit := uint(i % 64) // #nosec G115
 		if b.bits[word]&(1<<bit) == 0 {
 			return i
 		}
@@ -207,7 +207,7 @@ func (b *ChunkBitmap) Save(path string) error {
 	buf := make([]byte, bitmapHeaderSize+len(b.bits)*8)
 	copy(buf[offMagic:], bitmapMagic[:])
 	buf[offVersion] = bitmapVersion
-	binary.LittleEndian.PutUint64(buf[offFileSize:], uint64(b.fileSize))
+	binary.LittleEndian.PutUint64(buf[offFileSize:], uint64(b.fileSize)) // #nosec G115
 	binary.LittleEndian.PutUint32(buf[offTotal:], uint32(b.total))
 	binary.LittleEndian.PutUint32(buf[offHave:], uint32(b.have))
 	binary.LittleEndian.PutUint32(buf[offChunkSize:], uint32(b.chunkSize))
@@ -220,7 +220,7 @@ func (b *ChunkBitmap) Save(path string) error {
 // LoadChunkBitmap reads a bitmap from a .kdbitmap file.
 // Returns an error if the file is corrupt or the fileSize doesn't match.
 func LoadChunkBitmap(path string, expectedFileSize int64) (*ChunkBitmap, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +233,7 @@ func LoadChunkBitmap(path string, expectedFileSize int64) (*ChunkBitmap, error) 
 	if data[offVersion] != bitmapVersion {
 		return nil, fmt.Errorf("unsupported bitmap version: %d", data[offVersion])
 	}
-	fileSize := int64(binary.LittleEndian.Uint64(data[offFileSize:]))
+	fileSize := int64(binary.LittleEndian.Uint64(data[offFileSize:])) // #nosec G115
 	if fileSize != expectedFileSize {
 		return nil, fmt.Errorf("bitmap fileSize mismatch: got %d, expected %d", fileSize, expectedFileSize)
 	}

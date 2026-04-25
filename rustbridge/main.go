@@ -123,6 +123,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 
 	instance, err := common.NewKeibiDrop(ctx, logger, fuse, parsed, int(inbound), int(outbound), m, s, prefetch, push)
 	if err != nil {
+		c()
 		logger.Error("Failed to create KeibiDrop instance", "error", err)
 		setLastError(err)
 		return -2
@@ -613,7 +614,7 @@ func KD_StartDiscovery() {
 		kd.IsLocalMode = true
 	}
 	disc = discovery.New(port, slog.Default())
-	disc.Start()
+	_ = disc.Start()
 }
 
 //export KD_StopDiscovery

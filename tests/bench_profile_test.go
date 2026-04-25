@@ -47,7 +47,7 @@ func TestPullFileProfile(t *testing.T) {
 	req.NoError(err)
 
 	alicePath := filepath.Join(tp.AliceSaveDir, "bench_profile_1gb.bin")
-	req.NoError(os.WriteFile(alicePath, data, 0644))
+	req.NoError(os.WriteFile(alicePath, data, 0644)) //nolint:gosec // G306: shared file needs read access
 	req.NoError(tp.Alice.AddFile(alicePath))
 
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, "bench_profile_1gb.bin", 30*time.Second)

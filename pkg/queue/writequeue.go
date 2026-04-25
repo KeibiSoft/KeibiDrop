@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -463,17 +462,10 @@ func (q *WriteQueue) removeOps(ids []uint64) {
 }
 
 func (q *WriteQueue) deleteOpFile(id uint64) {
-	os.Remove(q.opFilename(id))
+	_ = os.Remove(q.opFilename(id))
 }
 
 func (q *WriteQueue) updateRetryCount(op *QueuedOperation) {
 	// Re-persist with updated retry count
-	q.persistOp(op)
-}
-
-// parseOpID extracts the operation ID from a filename like "123.json"
-func parseOpID(filename string) (uint64, bool) {
-	name := strings.TrimSuffix(filename, ".json")
-	id, err := strconv.ParseUint(name, 10, 64)
-	return id, err == nil
+	_ = q.persistOp(op)
 }

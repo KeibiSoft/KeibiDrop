@@ -37,7 +37,9 @@ const (
 
 // encBufPool pools the per-message encrypt buffer to reduce GC pressure.
 // Buffers are safe to reuse because net.Conn.Write copies to kernel space.
-var encBufPool = sync.Pool{}
+var encBufPool = sync.Pool{
+	New: func() any { return new([]byte) },
+}
 
 // SecureWriter encrypts messages and writes them to an underlying writer.
 // Uses a cached AEAD cipher and single combined write for performance.
@@ -81,8 +83,8 @@ func (s *SecureWriter) Write(p []byte) (int, error) {
 	totalSize := lengthHeaderSize + encSize
 
 	var buf []byte
-	if poolBuf, ok := encBufPool.Get().([]byte); ok && cap(poolBuf) >= totalSize {
-		buf = poolBuf[:totalSize]
+	if bp, ok := encBufPool.Get().(*[]byte); ok && cap(*bp) >= totalSize {
+		buf = (*bp)[:totalSize]
 	} else {
 		buf = make([]byte, totalSize)
 	}
@@ -92,7 +94,7 @@ func (s *SecureWriter) Write(p []byte) (int, error) {
 	copy(buf[lengthHeaderSize:], nonce[:])
 	s.aead.Seal(buf[lengthHeaderSize+kbc.NonceSize:lengthHeaderSize+kbc.NonceSize], nonce[:], p, nil)
 
-	defer encBufPool.Put(buf[:0])
+	defer func() { b := buf[:0]; encBufPool.Put(&b) }()
 	if _, err := s.w.Write(buf); err != nil {
 		return 0, fmt.Errorf("write failed: %w", err)
 	}
@@ -122,7 +124,7 @@ func (s *SecureReader) Read() ([]byte, error) {
 	}
 	length := binary.BigEndian.Uint32(s.head[:])
 
-	if length < uint32(kbc.NonceSize)+uint32(s.aead.Overhead()) {
+	if length < uint32(kbc.NonceSize)+uint32(s.aead.Overhead()) { //nolint:gosec // G115: NonceSize and Overhead are small constants
 		return nil, fmt.Errorf("encrypted message too short: %d bytes", length)
 	}
 
@@ -218,7 +220,7 @@ func (s *SecureConn) Read(p []byte) (int, error) {
 		if len(s.leftover) == 0 {
 			s.leftover = nil
 		}
-		s.bytesRecv.Add(uint64(n))
+		s.bytesRecv.Add(uint64(n)) //nolint:gosec // G115: n is non-negative copy count
 		return n, nil
 	}
 
@@ -234,7 +236,7 @@ func (s *SecureConn) Read(p []byte) (int, error) {
 	if n < len(msg) {
 		s.leftover = msg[n:]
 	}
-	s.bytesRecv.Add(uint64(n))
+	s.bytesRecv.Add(uint64(n)) //nolint:gosec // G115: n is non-negative copy count
 	return n, nil
 }
 
@@ -248,7 +250,7 @@ func (s *SecureConn) Write(p []byte) (int, error) {
 	if n != len(p) {
 		return n, io.ErrShortWrite
 	}
-	s.bytesSent.Add(uint64(n))
+	s.bytesSent.Add(uint64(n)) //nolint:gosec // G115: n is non-negative write count
 	s.msgsSent.Add(1)
 	return n, nil
 }

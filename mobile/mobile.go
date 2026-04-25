@@ -732,7 +732,7 @@ func (api *API) StartDiscovery() {
 		logger = slog.Default()
 	}
 	api.disc = discovery.New(port, logger)
-	api.disc.Start()
+	_ = api.disc.Start()
 }
 
 // StopDiscovery stops LAN discovery and disables local mode.

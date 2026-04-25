@@ -40,22 +40,6 @@ func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNum
 	return
 }
 
-func setuidgid() func() {
-	euid := syscall.Geteuid()
-	if 0 == euid {
-		uid, gid, _ := fuse.Getcontext()
-		egid := syscall.Getegid()
-		syscall.Setregid(-1, int(gid))
-		syscall.Setreuid(-1, int(uid))
-		return func() {
-			syscall.Setreuid(-1, int(euid))
-			syscall.Setregid(-1, int(egid))
-		}
-	}
-	return func() {
-	}
-}
-
 func copyFusestatfsFromGostatfs(dst *fuse.Statfs_t, src *syscall.Statfs_t) {
 	*dst = fuse.Statfs_t{}
 	dst.Bsize = uint64(src.Bsize)
@@ -66,14 +50,14 @@ func copyFusestatfsFromGostatfs(dst *fuse.Statfs_t, src *syscall.Statfs_t) {
 	dst.Files = uint64(src.Files)
 	dst.Ffree = uint64(src.Ffree)
 	dst.Favail = uint64(src.Ffree)
-	dst.Namemax = 255 //uint64(src.Namelen)
+	dst.Namemax = 255 // uint64(src.Namelen)
 }
 
 func copyFusestatFromGostat(dst *fuse.Stat_t, src *syscall.Stat_t) {
 	*dst = fuse.Stat_t{}
 	dst.Dev = uint64(src.Dev)
 	dst.Ino = uint64(src.Ino)
-	dst.Mode = uint32(src.Mode)
+	dst.Mode = uint32(src.Mode) // #nosec G115
 	dst.Nlink = uint32(src.Nlink)
 	dst.Uid = uint32(src.Uid)
 	dst.Gid = uint32(src.Gid)

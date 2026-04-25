@@ -421,7 +421,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		}
 
 		req := &bindings.NotifyRequest{
-			Type:    bindings.NotifyType(event.Action),
+			Type:    bindings.NotifyType(event.Action), // #nosec G115 -- action values are small enums
 			Path:    event.Path,
 			OldPath: event.OldPath, // For RENAME operations.
 		}
@@ -489,8 +489,8 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 				return outboundConn, nil
 			}
 
-			conn, err := grpc.Dial(
-				"keibipipe", // fake target name
+			conn, err := grpc.Dial( //nolint:staticcheck // SA1019: custom dialer over hijacked conn
+				"keibipipe",
 				grpc.WithContextDialer(dialer),
 				grpc.WithTransportCredentials(insecure.NewCredentials()),
 				grpc.WithDefaultCallOptions(
