@@ -224,21 +224,36 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		btim := time.Unix(0, int64(req.Attr.BirthTime))
 
 		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
-			kd.SyncTracker.RemoteFilesMu.RLock()
-			defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+			kd.SyncTracker.RemoteFilesMu.Lock()
+			defer kd.SyncTracker.RemoteFilesMu.Unlock()
 			f, ok := kd.SyncTracker.RemoteFiles[req.Path]
 			if !ok {
-				logger.Error("File does not exists", "error", ErrGRPCNotFound)
-				return nil, ErrGRPCNotFound
+				name := req.Name
+				if name == "" {
+					name = filepath.Base(req.Path)
+				}
+				kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+					Name:         name,
+					RelativePath: req.Path,
+					Size:         uint64(req.Attr.Size),
+					LastEditTime: req.Attr.ModificationTime,
+					CreatedTime:  req.Attr.BirthTime,
+				}
+			} else {
+				f.Name = req.Name
+				f.RelativePath = req.Path
+				f.Size = uint64(req.Attr.Size)
+				f.LastEditTime = req.Attr.ModificationTime
+				f.CreatedTime = req.Attr.BirthTime
 			}
 
-			f.Name = req.Name
-			f.RelativePath = req.Path
-			f.Size = uint64(req.Attr.Size)
-			f.LastEditTime = req.Attr.ModificationTime
-			f.CreatedTime = req.Attr.BirthTime
-
-			logger.Info("Success")
+			if kd.OnEvent != nil {
+				name := req.Name
+				if name == "" {
+					name = filepath.Base(req.Path)
+				}
+				kd.OnEvent(fmt.Sprintf("file_arrived:%s:%d", name, req.Attr.Size))
+			}
 
 			return &bindings.NotifyResponse{}, nil
 		}

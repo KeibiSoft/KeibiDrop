@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -376,6 +377,12 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					}
 					flush(remaining)
 					return
+				}
+
+				// Filter macOS metadata files from peer sync.
+				baseName := filepath.Base(req.Path)
+				if baseName == ".DS_Store" || baseName == ".fseventsd" || strings.HasPrefix(baseName, "._") {
+					continue
 				}
 
 				switch req.Type {
