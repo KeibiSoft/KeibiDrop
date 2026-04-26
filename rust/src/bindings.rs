@@ -832,6 +832,12 @@ extern "C" {
     pub fn KD_AddFile(path: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn KD_AddFileAs(
+        localPath: *mut ::std::os::raw::c_char,
+        remoteName: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn KD_ListFiles() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {

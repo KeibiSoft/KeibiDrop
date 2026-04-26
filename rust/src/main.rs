@@ -1082,18 +1082,23 @@ fn main() {
                     std::thread::spawn(move || {
                         let _ = std::fs::create_dir_all(&save);
                         if path.is_dir() {
+                            let dir_name = path.file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default();
                             for entry in walkdir(&path) {
                                 if entry.is_file() {
                                     let rel = entry.strip_prefix(&path).unwrap_or(&entry);
-                                    let dest = Path::new(&save).join(rel);
+                                    let remote_name = format!("{}/{}", dir_name, rel.to_string_lossy());
+                                    let dest = Path::new(&save).join(&dir_name).join(rel);
                                     if let Some(parent) = dest.parent() {
                                         let _ = std::fs::create_dir_all(parent);
                                     }
                                     let _ = std::fs::copy(&entry, &dest);
-                                    let c_path = CString::new(dest.to_string_lossy().to_string()).unwrap();
-                                    let res = bindings::KD_AddFile(c_path.into_raw());
+                                    let c_local = CString::new(dest.to_string_lossy().to_string()).unwrap();
+                                    let c_remote = CString::new(remote_name.clone()).unwrap();
+                                    let res = bindings::KD_AddFileAs(c_local.into_raw(), c_remote.into_raw());
                                     if res != 0 {
-                                        eprintln!("Failed to add: {}", entry.display());
+                                        eprintln!("Failed to add: {}", remote_name);
                                     }
                                 }
                             }
