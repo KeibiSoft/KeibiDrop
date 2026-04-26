@@ -11,9 +11,12 @@ package filesystem
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	winfuse "github.com/winfsp/cgofuse/fuse"
@@ -50,6 +53,25 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		"isSecond", isSecond)
 
 	cleanMountPoint := filepath.Clean(mountPoint)
+
+	// Clean up stale FUSE mounts from a previous crash.
+	if runtime.GOOS != "windows" {
+		if _, err := os.Stat(cleanMountPoint); err == nil {
+			// Try reading the directory. If it fails with "device not configured",
+			// the mount point has a stale FUSE mount that needs force-unmounting.
+			if _, readErr := os.ReadDir(cleanMountPoint); readErr != nil {
+				fs.logger.Warn("Stale FUSE mount detected, force-unmounting",
+					"mountPoint", cleanMountPoint, "error", readErr)
+				if runtime.GOOS == "darwin" {
+					exec.Command("diskutil", "unmount", "force", cleanMountPoint).Run()
+				} else {
+					exec.Command("fusermount", "-u", cleanMountPoint).Run()
+				}
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	}
+
 	// On Windows, normalise drive-letter mount points for WinFSP:
 	//   "K:."  (filepath.Clean("K:"))  → "K:"
 	//   "K:\"  (filepath.Clean("K:\")) → "K:"

@@ -2305,23 +2305,19 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		return
 	}
 
-	// Pre-allocate local cache file to full size so pwrite at any offset works.
+	// Create cache file (empty). Pre-allocation to full size is deferred to
+	// prefetchFile or OpenEx to avoid leaving zero-filled files when the
+	// prefetch queue is full and the session closes before download starts.
 	if err := os.MkdirAll(filepath.Dir(realPath), 0o750); err != nil {
 		logger.Warn("Prefetch: failed to create dirs", "path", realPath, "error", err)
 	}
 	if _, statErr := os.Stat(realPath); os.IsNotExist(statErr) { // #nosec G304
-		// Only create/truncate if file doesn't exist (resume keeps existing data).
-		if err := os.Truncate(realPath, fileSize); err != nil {
-			lf, createErr := os.Create(realPath)
-			if createErr != nil {
-				logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
-				return
-			}
-			if truncErr := lf.Truncate(fileSize); truncErr != nil {
-				logger.Warn("Prefetch: failed to truncate cache file", "path", realPath, "error", truncErr)
-			}
-			lf.Close()
+		lf, createErr := os.Create(realPath)
+		if createErr != nil {
+			logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
+			return
 		}
+		lf.Close()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -2352,7 +2348,12 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	}
 
 	logger = logger.With("prefetch", path)
-	// logger.Info("Push-based prefetch starting", "chunks", bitmap.Total(), "fileSize", bitmap.FileSize())
+
+	// Pre-allocate now that we have a semaphore slot and will actually download.
+	fileSize := bitmap.FileSize()
+	if info, err := os.Stat(realPath); err == nil && info.Size() < fileSize {
+		_ = os.Truncate(realPath, fileSize)
+	}
 
 	fsp := d.OpenStreamProvider()
 	if fsp == nil {

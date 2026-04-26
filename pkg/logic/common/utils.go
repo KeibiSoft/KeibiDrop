@@ -17,6 +17,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -357,9 +359,19 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			select {
 			case req, ok := <-kd.notifyCh:
 				if !ok {
-					// Channel closed — flush all pending.
+					// Channel closed — flush all pending with fresh sizes.
 					remaining := make([]*bindings.NotifyRequest, 0, len(pending))
-					for _, p := range pending {
+					for path, p := range pending {
+						if p.req.Attr != nil && kd.FS != nil {
+							diskPath := filepath.Join(kd.FS.Root.LocalDownloadFolder, p.req.Path)
+							if info, err := os.Lstat(diskPath); err == nil {
+								p.req.Attr.Size = info.Size()
+								p.req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
+							} else if os.IsNotExist(err) {
+								delete(pending, path)
+								continue
+							}
+						}
 						remaining = append(remaining, p.req)
 					}
 					flush(remaining)
@@ -386,6 +398,13 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					immediate = append(immediate, req)
 				default:
 					// REMOVE, ADD_DIR, REMOVE_DIR, DISCONNECT — send immediately.
+					// Skip REMOVE if there's a debounced ADD for the same path:
+					// the file was deleted and recreated quickly (e.g., initdb).
+					if req.Type == bindings.NotifyType_REMOVE_FILE || req.Type == bindings.NotifyType_REMOVE_DIR {
+						if _, hasPending := pending[req.Path]; hasPending {
+							continue
+						}
+					}
 					immediate = append(immediate, req)
 				}
 
@@ -401,6 +420,16 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				ready := make([]*bindings.NotifyRequest, 0, 16)
 				for path, p := range pending {
 					if now.After(p.deadline) {
+						if p.req.Attr != nil && kd.FS != nil {
+							diskPath := filepath.Join(kd.FS.Root.LocalDownloadFolder, p.req.Path)
+							if info, err := os.Lstat(diskPath); err == nil {
+								p.req.Attr.Size = info.Size()
+								p.req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
+							} else if os.IsNotExist(err) {
+								delete(pending, path)
+								continue
+							}
+						}
 						ready = append(ready, p.req)
 						delete(pending, path)
 					}

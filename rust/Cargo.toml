@@ -10,6 +10,7 @@ slint = { version = "~1.14.1", features = ["backend-winit", "unstable-winit-030"
 copypasta = "0.8"
 rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["png"] }
+notify-rust = "4"
 
 [build-dependencies]
 slint-build = "1.14.1"

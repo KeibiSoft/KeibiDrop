@@ -11,6 +11,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -46,7 +47,7 @@ type KeibidropServiceImpl struct {
 	OnEvent      func(string)
 	OnDisconnect func() // Called (in goroutine) when peer sends DISCONNECT; cancels context to trigger cleanup.
 
-	// pendingRemoves buffers REMOVE_FILE events for 500ms. If an ADD_FILE or
+	// pendingRemoves buffers REMOVE_FILE events for 1000ms. If an ADD_FILE or
 	// RENAME_FILE arrives for the same path within that window, the REMOVE is
 	// cancelled (it was part of git's atomic .lock→rename dance, not a real deletion).
 	pendingRemovesMu sync.Mutex
@@ -168,7 +169,9 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				CreatedTime:  req.Attr.BirthTime,
 			}
 
-			logger.Info("Success")
+			if kd.OnEvent != nil {
+				kd.OnEvent(fmt.Sprintf("file_arrived:%s:%d", req.Name, req.Attr.Size))
+			}
 
 			return &bindings.NotifyResponse{}, nil
 		}
@@ -199,6 +202,14 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		})
 		if err != nil {
 			return nil, ErrGRPCInvalidArgument
+		}
+
+		if kd.OnEvent != nil {
+			name := req.Name
+			if name == "" {
+				name = filepath.Base(req.Path)
+			}
+			kd.OnEvent(fmt.Sprintf("file_arrived:%s:%d", name, req.Attr.Size))
 		}
 	case bindings.NotifyType_EDIT_FILE:
 		kd.cancelPendingRemove(req.Path)
@@ -261,12 +272,12 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 	case bindings.NotifyType_REMOVE_FILE:
-		// Buffer REMOVE for 500ms. Git's atomic write pattern is:
+		// Buffer REMOVE for 1000ms. Git's atomic write pattern is:
 		//   REMOVE HEAD → CREATE HEAD → RENAME HEAD.lock (all within <1ms)
 		// If an ADD_FILE or RENAME_FILE arrives for the same path within the
 		// window, the REMOVE is cancelled — it was part of an atomic write,
 		// not a real user deletion.
-		logger.Info("Buffering remove (500ms)", "path", req.Path)
+		logger.Info("Buffering remove (1000ms)", "path", req.Path)
 		kd.bufferRemove(req.Path, logger)
 	case bindings.NotifyType_RENAME_FILE:
 		// Cancel pending removes for both old and new path.
@@ -468,7 +479,7 @@ func (kd *KeibidropServiceImpl) BatchNotify(ctx context.Context, req *bindings.B
 	return &bindings.BatchNotifyResponse{Status: "ok", Processed: processed}, nil
 }
 
-// bufferRemove delays a REMOVE_FILE by 500ms. If cancelPendingRemove is called
+// bufferRemove delays a REMOVE_FILE by 1000ms. If cancelPendingRemove is called
 // for the same path before the timer fires, the remove is discarded.
 func (kd *KeibidropServiceImpl) bufferRemove(path string, logger *slog.Logger) {
 	kd.pendingRemovesMu.Lock()
@@ -483,7 +494,7 @@ func (kd *KeibidropServiceImpl) bufferRemove(path string, logger *slog.Logger) {
 		t.Stop()
 	}
 
-	kd.pendingRemoves[path] = time.AfterFunc(500*time.Millisecond, func() {
+	kd.pendingRemoves[path] = time.AfterFunc(1000*time.Millisecond, func() {
 		kd.pendingRemovesMu.Lock()
 		delete(kd.pendingRemoves, path)
 		kd.pendingRemovesMu.Unlock()

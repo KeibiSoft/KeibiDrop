@@ -15,6 +15,21 @@ use slint::winit_030::WinitWindowAccessor;
 use slint::winit_030::WinitWindowEventResult;
 slint::include_modules!(); // this loads ui.slint as MainWindow
 
+fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                files.extend(walkdir(&p));
+            } else {
+                files.push(p);
+            }
+        }
+    }
+    files
+}
+
 /// Returns true if a filename should be hidden from the UI.
 fn is_hidden_file(name: &str) -> bool {
     name.starts_with('.')
@@ -1062,22 +1077,44 @@ fn main() {
                     }
                     let path_str = path.to_string_lossy().to_string();
                     println!("File dropped: {}", path_str);
-                    // Copy to save folder for safekeeping
-                    let _ = std::fs::create_dir_all(&save_path_dnd);
-                    if let Some(fname) = path.file_name() {
-                        let dest = format!("{}/{}", save_path_dnd, fname.to_string_lossy());
-                        if let Err(e) = std::fs::copy(&path, &dest) {
-                            eprintln!("Failed to copy dropped file to save folder: {}", e);
+                    let save = save_path_dnd.clone();
+                    let path = path.to_path_buf();
+                    std::thread::spawn(move || {
+                        let _ = std::fs::create_dir_all(&save);
+                        if path.is_dir() {
+                            for entry in walkdir(&path) {
+                                if entry.is_file() {
+                                    let rel = entry.strip_prefix(&path).unwrap_or(&entry);
+                                    let dest = Path::new(&save).join(rel);
+                                    if let Some(parent) = dest.parent() {
+                                        let _ = std::fs::create_dir_all(parent);
+                                    }
+                                    let _ = std::fs::copy(&entry, &dest);
+                                    let c_path = CString::new(dest.to_string_lossy().to_string()).unwrap();
+                                    let res = bindings::KD_AddFile(c_path.into_raw());
+                                    if res != 0 {
+                                        eprintln!("Failed to add: {}", entry.display());
+                                    }
+                                }
+                            }
+                            println!("Directory added: {}", path_str);
+                        } else {
+                            if let Some(fname) = path.file_name() {
+                                let dest = format!("{}/{}", save, fname.to_string_lossy());
+                                if let Err(e) = std::fs::copy(&path, &dest) {
+                                    eprintln!("Failed to copy dropped file: {}", e);
+                                }
+                            }
+                            let c_path = CString::new(path_str.clone()).unwrap();
+                            let res = bindings::KD_AddFile(c_path.into_raw());
+                            if res != 0 {
+                                let err = get_last_error();
+                                eprintln!("Failed to add dropped file: {}", err);
+                            } else {
+                                println!("Dropped file added: {}", path_str);
+                            }
                         }
-                    }
-                    let c_path = CString::new(path_str.clone()).unwrap();
-                    let res = bindings::KD_AddFile(c_path.into_raw());
-                    if res != 0 {
-                        let err = get_last_error();
-                        eprintln!("Failed to add dropped file: {}", err);
-                    } else {
-                        println!("Dropped file added: {}", path_str);
-                    }
+                    });
                     WinitWindowEventResult::Propagate
                 }
                 _ => WinitWindowEventResult::Propagate,
@@ -1087,11 +1124,13 @@ fn main() {
         // Event polling timer — runs on UI thread, independent of file watcher.
         // This ensures disconnect/health events are always processed even when
         // the file watcher thread has stopped or hasn't started yet.
+        let arrived_files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let _event_timer = {
             let timer = slint::Timer::default();
             let weak_evt = app.as_weak();
             let disconnecting_evt = disconnecting.clone();
             let watcher_running_evt = watcher_running.clone();
+            let arrived_files = arrived_files.clone();
             timer.start(
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_millis(200),
@@ -1122,6 +1161,17 @@ fn main() {
                             };
                             if let Some(app) = weak_evt.upgrade() {
                                 app.set_connect_status(slint::SharedString::from(display));
+                            }
+                        }
+
+                        // File arrival notifications
+                        if evt.starts_with("file_arrived:") {
+                            let parts: Vec<&str> = evt.splitn(3, ':').collect();
+                            if parts.len() >= 2 {
+                                let name = parts[1];
+                                if !is_hidden_file(name) {
+                                    arrived_files.lock().unwrap().push(name.to_string());
+                                }
                             }
                         }
 
@@ -1180,6 +1230,45 @@ fn main() {
                             });
                             break;
                         }
+                    }
+
+                    // Send batched notification for files that arrived this tick
+                    let mut files = arrived_files.lock().unwrap();
+                    if !files.is_empty() {
+                        let count = files.len();
+                        let body = if count == 1 {
+                            format!("{}", files[0])
+                        } else if count <= 3 {
+                            files.join(", ")
+                        } else {
+                            format!("{} files received", count)
+                        };
+                        files.clear();
+                        drop(files);
+
+                        std::thread::spawn(move || {
+                            let _ = std::panic::catch_unwind(|| {
+                                #[cfg(target_os = "macos")]
+                                {
+                                    let script = format!(
+                                        "display notification \"{}\" with title \"KeibiDrop\"",
+                                        body.replace('\"', "\\\"")
+                                    );
+                                    let _ = Command::new("osascript")
+                                        .arg("-e")
+                                        .arg(&script)
+                                        .output();
+                                }
+                                #[cfg(not(target_os = "macos"))]
+                                {
+                                    let _ = notify_rust::Notification::new()
+                                        .summary("KeibiDrop")
+                                        .body(&body)
+                                        .timeout(notify_rust::Timeout::Milliseconds(4000))
+                                        .show();
+                                }
+                            });
+                        });
                     }
                 },
             );
