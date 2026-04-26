@@ -63,9 +63,9 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 				fs.logger.Warn("Stale FUSE mount detected, force-unmounting",
 					"mountPoint", cleanMountPoint, "error", readErr)
 				if runtime.GOOS == "darwin" {
-					exec.Command("diskutil", "unmount", "force", cleanMountPoint).Run()
+					_ = exec.Command("diskutil", "unmount", "force", cleanMountPoint).Run() // #nosec G204 -- mount point from config
 				} else {
-					exec.Command("fusermount", "-u", cleanMountPoint).Run()
+					_ = exec.Command("fusermount", "-u", cleanMountPoint).Run() // #nosec G204 -- mount point from config
 				}
 				time.Sleep(500 * time.Millisecond)
 			}
