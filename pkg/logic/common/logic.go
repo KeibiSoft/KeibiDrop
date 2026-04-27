@@ -1035,8 +1035,10 @@ func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond boo
 	fs := filesystem.NewFS(logger)
 	kd.KDSvc.FS = fs
 
-	fs.Mount(filepath.Clean(toMount), isSecond, filepath.Clean(toSave))
-
+	if err := fs.Mount(filepath.Clean(toMount), isSecond, filepath.Clean(toSave)); err != nil {
+		logger.Error("Filesystem mount failed", "error", err)
+		return err
+	}
 	return nil
 }
 

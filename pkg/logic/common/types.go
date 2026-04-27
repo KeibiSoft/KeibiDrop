@@ -405,8 +405,11 @@ func (kd *KeibiDrop) Run() {
 				if kd.FS != nil && kd.KDSvc != nil {
 					logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
 					kd.KDSvc.FS = kd.FS
-					kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave))
-					logger.Info("Filesystem mounted successfully")
+					if err := kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave)); err != nil {
+						logger.Error("Filesystem mount failed", "error", err)
+					} else {
+						logger.Info("Filesystem mount session ended")
+					}
 				} else {
 					logger.Warn("No FS to mount")
 				}

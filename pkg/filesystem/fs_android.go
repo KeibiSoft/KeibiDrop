@@ -31,8 +31,8 @@ func NewFS(_ *slog.Logger) *FS {
 	return &FS{}
 }
 
-// Mount is a no-op on Android.
-func (fs *FS) Mount(_ string, _ bool, _ string) {}
+// Mount is a no-op on Android. The error return matches the desktop signature.
+func (fs *FS) Mount(_ string, _ bool, _ string) error { return nil }
 
 // Unmount is a no-op on Android.
 func (fs *FS) Unmount() {}
