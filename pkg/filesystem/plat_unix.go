@@ -13,7 +13,6 @@ import (
 	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
-const platODIRECTORY = syscall.O_DIRECTORY
 const platENODATA = syscall.ENODATA
 const platDiskModeIsAuthoritative = true
 
