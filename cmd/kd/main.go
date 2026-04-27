@@ -305,11 +305,16 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 	}
 }
 
+// isShowAll reports whether `kd show <args>` should show every field.
+// Both `kd show` (no args) and `kd show all` qualify.
+func isShowAll(args []string) bool {
+	return len(args) == 0 || (len(args) == 1 && args[0] == "all")
+}
+
 func cmdShow(kd *common.KeibiDrop, args []string) Response {
 	data := map[string]string{}
 
-	// If no args, show everything
-	showAll := len(args) == 0
+	showAll := isShowAll(args)
 
 	what := ""
 	if len(args) > 0 {

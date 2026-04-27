@@ -9,6 +9,7 @@
 package filesystem
 
 import (
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"runtime"
@@ -39,7 +40,10 @@ func NewFS(logger *slog.Logger) *FS {
 	}
 }
 
-func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
+// Mount blocks for the lifetime of the FUSE session. It returns an error
+// immediately if the mount point is invalid or host.Mount() refuses to come
+// up; on success it returns nil only after a clean unmount.
+func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error {
 	fs.logger.Warn("FUSE Mount starting",
 		"mountPoint", mountPoint,
 		"downloadPath", downloadPath,
@@ -58,7 +62,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 	}
 	if cleanMountPoint == "" || cleanMountPoint == "." {
 		fs.logger.Warn("FUSE Mount failed - invalid mount point", "mountPoint", mountPoint)
-		return
+		return fmt.Errorf("invalid mount point %q", mountPoint)
 	}
 
 	root := &Dir{
@@ -115,9 +119,10 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) {
 	ok := fs.host.Mount(cleanMountPoint, opts)
 	if !ok {
 		fs.logger.Error("FUSE Mount failed", "mountPoint", cleanMountPoint)
-		return
+		return fmt.Errorf("FUSE mount failed for %s: ensure user_allow_other is set in /etc/fuse.conf, or run with KD_NO_FUSE=1", cleanMountPoint)
 	}
 	fs.logger.Warn("FUSE Mount completed", "mountPoint", cleanMountPoint)
+	return nil
 }
 
 func (fs *FS) Unmount() {
