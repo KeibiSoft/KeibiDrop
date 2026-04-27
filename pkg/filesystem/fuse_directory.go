@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -691,7 +692,9 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 		if err == nil {
 			return 0
 		}
-		if !errors.Is(err, syscall.EBADF) {
+		// On Windows, "bad file descriptor" is ERROR_INVALID_HANDLE (6), not POSIX EBADF.
+		// Fall through to the fallback for any handle-related error.
+		if !errors.Is(err, syscall.EBADF) && !errors.Is(err, os.ErrClosed) {
 			logger.Error("Fsync failed", "error", err)
 			return int(convertOsErrToSyscallErrno("fsync", err))
 		}
@@ -700,24 +703,20 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	// Handle not found or EBADF: fd was already closed (Release called before Fsync).
 	// This is a FUSE race condition. Workaround: open, fsync, close.
 	{
-		// d.logger.Warn("FUSE Fsync EBADF - attempting fallback open/fsync/close", "path", localPath, "fh", fh)
-
-		fd, openErr := platOpen(localPath, syscall.O_RDONLY, 0)
+		// Open with write access — FlushFileBuffers on Windows requires it.
+		fd, openErr := platOpen(localPath, syscall.O_RDWR, 0)
 		if openErr != nil {
 			// File might have been renamed/deleted - that's OK, data was already written
-			// d.logger.Warn("FUSE Fsync fallback open failed (file may have been renamed)", "path", localPath, "error", openErr)
-			return 0 // Return success - the data was committed before close
+			return 0
 		}
 
 		fsyncErr := platFsync(fd)
 		_ = platClose(fd)
 
 		if fsyncErr != nil {
-			// d.logger.Warn("FUSE Fsync fallback fsync failed", "path", localPath, "error", fsyncErr)
 			return int(convertOsErrToSyscallErrno("fsync", fsyncErr))
 		}
 
-		// d.logger.Warn("FUSE Fsync fallback SUCCESS", "path", localPath)
 		return 0
 	}
 }
@@ -945,12 +944,27 @@ func (d *Dir) MkdirFromPeer(path string, mode uint32) (errCode int) {
 
 func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode int) {
 	// d.logger.Info("FUSE mkdir", "path", path, "mode", mode, "notifyPeer", notifyPeer)
+
+	// Root directory always exists. WinFSP calls Mkdir("\") on mount and on
+	// every file notification — return success immediately.
+	cp := filepath.Clean(path)
+	if cp == "." || cp == string(filepath.Separator) || cp == "/" || cp == "\\" {
+		return 0
+	}
+
 	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := platMkdir(cleanPath, mode)
 	if err != nil {
-		logger.Error("Failed to mkdir", "path", cleanPath, "error", err)
-		return int(convertOsErrToSyscallErrno("mkdir", err))
+		// On Windows, FUSE may call Mkdir for directories that already exist
+		// (e.g. during git clone when peer notifications race with local ops).
+		// Treat EEXIST as success — the directory exists, which is what we want.
+		if errors.Is(err, os.ErrExist) {
+			// Not an error — proceed to update internal state below.
+		} else {
+			logger.Error("Failed to mkdir", "path", cleanPath, "error", err)
+			return int(convertOsErrToSyscallErrno("mkdir", err))
+		}
 	}
 
 	if stgo, statErr := platLstat(cleanPath); statErr == nil {
@@ -1216,12 +1230,16 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
 	defer d.recoverPanic("Opendir", &errCode)
 	// d.logger.Info("FUSE opendir", "path", path)
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	logger := d.logger.With("method", "opendir", "path", path)
-	f, err := platOpen(path, syscall.O_RDONLY|platODIRECTORY, 0)
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+
+	// Ensure the directory exists (it may not yet on a fresh mount).
+	_ = os.MkdirAll(cleanPath, 0755)
+
+	f, err := platOpendir(cleanPath)
 	if err != nil {
+		logger := d.logger.With("method", "opendir", "path", cleanPath)
 		logger.Error("Failed to open dir", "error", err)
-		return int(convertOsErrToSyscallErrno("open", err)), 0
+		return int(convertOsErrToSyscallErrno("opendir", err)), 0
 	}
 
 	return 0, uint64(f)
@@ -1500,7 +1518,21 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	_, isRemote := d.RemoteFiles[oldpath]
 	d.RemoteFilesLock.RUnlock()
 
-	err := syscall.Rename(cleanOldPath, cleanNewPath)
+	// On Windows, rename fails if source OR target has an open handle.
+	// Close any handles we hold on either path before attempting the rename.
+	if runtime.GOOS == "windows" {
+		d.OpenMapLock.Lock()
+		for fh, entry := range d.OpenFileHandlers {
+			entryPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, entry.File.RelativePath))
+			if entryPath == cleanOldPath || entryPath == cleanNewPath {
+				_ = platClose(entry.FD)
+				delete(d.OpenFileHandlers, fh)
+			}
+		}
+		d.OpenMapLock.Unlock()
+	}
+
+	err := os.Rename(cleanOldPath, cleanNewPath)
 	if err != nil {
 		// d.logger.Warn("FUSE Rename FAILED", "oldpath", oldpath, "newpath", newpath, "error", err)
 		logger.Error("Failed to rename", "error", err)
@@ -1691,6 +1723,22 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	d.AfmLock.Lock()
 	delete(d.AllFileMap, path)
 	d.AfmLock.Unlock()
+
+	// On Windows, close any open handle we hold on this file before removing.
+	// Windows does not allow deleting files with open handles.
+	if runtime.GOOS == "windows" {
+		cleanTarget := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+		d.OpenMapLock.Lock()
+		for fh, entry := range d.OpenFileHandlers {
+			entryPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, entry.File.RelativePath))
+			if entryPath == cleanTarget {
+				_ = platClose(entry.FD)
+				delete(d.OpenFileHandlers, fh)
+				break
+			}
+		}
+		d.OpenMapLock.Unlock()
+	}
 
 	// Try to unlink local file (may not exist if remote-only).
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))

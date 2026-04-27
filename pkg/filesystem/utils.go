@@ -23,6 +23,28 @@ func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 		return 0
 	}
 
+	// Cross-platform error mapping using Go's os.Err* sentinels.
+	// On Windows, raw syscall.Errno values are Windows error codes (e.g.
+	// ERROR_ALREADY_EXISTS = 183), NOT POSIX errno values that cgofuse expects.
+	// These sentinel checks work correctly on all platforms.
+	var posixErr syscall.Errno
+	switch {
+	case errors.Is(err, os.ErrExist):
+		posixErr = syscall.Errno(winfuse.EEXIST)
+		return -posixErr
+	case errors.Is(err, os.ErrNotExist):
+		posixErr = syscall.Errno(winfuse.ENOENT)
+		return -posixErr
+	case errors.Is(err, os.ErrPermission):
+		posixErr = syscall.Errno(winfuse.EACCES)
+		return -posixErr
+	case errors.Is(err, os.ErrClosed):
+		posixErr = syscall.Errno(winfuse.EBADF)
+		return -posixErr
+	}
+
+	// Platform-specific fallback: extract raw syscall.Errno.
+	// Correct on Linux/macOS (Errno = POSIX); lossy on Windows for unmapped errors.
 	e := os.NewSyscallError(name, err)
 	var targetErr syscall.Errno
 
