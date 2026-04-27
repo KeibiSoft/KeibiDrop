@@ -172,12 +172,21 @@ package-windows: $(DIST)
 	rm -rf $(DIST)/win-staging
 	@echo "Created Windows package in $(DIST)/"
 
-# Chocolatey .nupkg — requires choco pack
+# Chocolatey .nupkg — requires choco pack + package-windows first
+# Choco requires semver without 'v' prefix (e.g. 0.1.1, not v0.1.1).
+CHOCO_VERSION := $(patsubst v%,%,$(VERSION))
+
 package-choco: $(DIST)
-	@echo "Packaging Chocolatey .nupkg..."
-	VERSION=$(VERSION) envsubst < choco/keibidrop.nuspec.tmpl > $(DIST)/keibidrop.nuspec
-	cd $(DIST) && choco pack keibidrop.nuspec 2>/dev/null || echo "choco not installed, skipping .nupkg"
-	@echo "Created .nupkg in $(DIST)/ (if choco available)"
+	@echo "Packaging Chocolatey .nupkg ($(CHOCO_VERSION))..."
+	$(eval WIN_ZIP := $(DIST)/keibidrop-$(VERSION)-windows-$(GOARCH).zip)
+	$(eval SHA256 := $(shell shasum -a 256 $(WIN_ZIP) 2>/dev/null | cut -d' ' -f1))
+	@test -n "$(SHA256)" || (echo "ERROR: $(WIN_ZIP) not found — run 'make package-windows' first" && exit 1)
+	VERSION=$(CHOCO_VERSION) envsubst '$$VERSION' < choco/keibidrop.nuspec.tmpl > $(DIST)/keibidrop.nuspec
+	mkdir -p $(DIST)/tools
+	TAG=$(VERSION) SEMVER=$(CHOCO_VERSION) SHA256=$(SHA256) envsubst '$$TAG$$SEMVER$$SHA256' < choco/tools/chocolateyinstall.ps1.tmpl > $(DIST)/tools/chocolateyinstall.ps1
+	cp choco/tools/chocolateyuninstall.ps1 $(DIST)/tools/
+	cd $(DIST) && choco pack keibidrop.nuspec || echo "choco pack failed"
+	@echo "Created .nupkg in $(DIST)/ (SHA256=$(SHA256))"
 
 # Generate SHA256 checksums for all release artifacts
 checksums: $(DIST)

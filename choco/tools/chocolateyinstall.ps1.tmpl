@@ -1,7 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
 $toolsDir = "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)"
-$url = "https://github.com/KeibiSoft/KeibiDrop/releases/download/v${VERSION}/keibidrop-${VERSION}-windows-amd64.zip"
+# TAG has the v prefix (v0.1.1), SEMVER does not (0.1.1)
+$url = "https://github.com/KeibiSoft/KeibiDrop/releases/download/${TAG}/keibidrop-${SEMVER}-windows-amd64.zip"
 
 $packageArgs = @{
   packageName    = 'keibidrop'
@@ -13,9 +14,8 @@ $packageArgs = @{
 
 Install-ChocolateyZipPackage @packageArgs
 
-# Add to PATH
-$installDir = Join-Path $toolsDir "keibidrop-${VERSION}"
-Install-ChocolateyPath -PathToInstall $installDir -PathType 'Machine'
+# Add to PATH — binaries are at the root of the zip
+Install-ChocolateyPath -PathToInstall $toolsDir -PathType 'Machine'
 
 Write-Host "KeibiDrop installed. Available commands: keibidrop, keibidrop-cli, kd"
 Write-Host "WinFsp is required for FUSE support: choco install winfsp"
