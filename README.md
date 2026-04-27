@@ -103,7 +103,7 @@ It works through firewalls automatically. If direct IPv6 fails, KeibiDrop falls 
 |--|--|--|
 | Speed | Up to 550 MB/s | Up to 250 MB/s |
 | How it works | Add files, peer pulls them | Peer's files appear as a local folder |
-| Setup | Nothing extra | Install [macFUSE](https://macfuse.github.io/) or `fuse3` |
+| Setup | Nothing extra | Install [macFUSE](https://macfuse.github.io/), [fuse3](https://github.com/libfuse/libfuse), or [WinFsp](https://winfsp.dev/) |
 | Best for | Sending large files | Working on shared files, git repos |
 
 FUSE lets you `cp`, `cat`, or even `git clone` files directly from your peer's machine.
