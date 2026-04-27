@@ -15,6 +15,29 @@ Files transfer directly between machines when possible, or through an encrypted 
 
 45 MB/s through relay. 442 MB/s on LAN. Zero configuration for end users.
 
+<p align="center">
+  <img src="demo-photos/initial-screen.png" alt="KeibiDrop connection screen" width="700">
+</p>
+
+### Two modes in action
+
+| Direct Transfer | Virtual Folder (FUSE) |
+|:---:|:---:|
+| <img src="demo-photos/connected-in-direct-transfer-mode.png" alt="Direct transfer mode" width="450"> | <img src="demo-photos/connected-as-virtual-filesystem.png" alt="Virtual filesystem mode" width="450"> |
+| Drag files in. Your peer saves what they need. | Peer files appear as a folder. Open in any app. |
+
+### It behaves like a real folder
+
+| Finder | Terminal (git) |
+|:---:|:---:|
+| <img src="demo-photos/as-filesystem-accessible-from-finder.png" alt="Shared files in Finder" width="450"> | <img src="demo-photos/as-filesystem-git-ops-work.png" alt="Git on FUSE mount" width="450"> |
+
+<p align="center">
+  <img src="demo-photos/direct-peer-browse-git-folder.png" alt="Browsing peer folders" width="700">
+  <br>
+  <em>Browsing a git repository received from a peer</em>
+</p>
+
 | | KeibiDrop | SCP | Blip | AirDrop |
 |--|--|--|--|--|
 | E2E encryption | Post-quantum (ML-KEM + X25519) | SSH | TLS only (relay can read) | TLS |
@@ -167,3 +190,13 @@ Rust UI and brand assets: Proprietary - see [DUAL-LICENSE.md](./DUAL-LICENSE.md)
 Desktop UI built with [Slint](https://slint.dev)
 
 Built by [KeibiSoft SRL](https://keibisoft.com).
+
+---
+
+## Links
+
+- [**KEIBI**DROP website](https://keibidrop.com) - screenshots, download, overview
+- [Technical deep dive](https://keibisoft.com/tools/keibidrop.html) - architecture, blog series, CLI reference
+- [Blog posts](https://keibisoft.com/blog.html) - 22 posts covering FUSE, crypto, performance, testing
+- [FAQ](https://keibisoft.com/tools/keibidrop-faq.html)
+- [Comparison with alternatives](https://keibisoft.com/tools/keibidrop-vs-alternatives.html)
