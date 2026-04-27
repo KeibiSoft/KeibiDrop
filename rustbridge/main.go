@@ -204,6 +204,18 @@ func KD_AddFile(path *C.char) C.int {
 	return 0
 }
 
+//export KD_AddFileAs
+func KD_AddFileAs(localPath *C.char, remoteName *C.char) C.int {
+	if kd == nil {
+		return -1
+	}
+	if err := kd.AddFileAs(C.GoString(localPath), C.GoString(remoteName)); err != nil {
+		setLastError(err)
+		return -2
+	}
+	return 0
+}
+
 //export KD_ListFiles
 func KD_ListFiles() *C.char {
 	if kd == nil {

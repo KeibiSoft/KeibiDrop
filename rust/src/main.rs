@@ -15,6 +15,21 @@ use slint::winit_030::WinitWindowAccessor;
 use slint::winit_030::WinitWindowEventResult;
 slint::include_modules!(); // this loads ui.slint as MainWindow
 
+fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                files.extend(walkdir(&p));
+            } else {
+                files.push(p);
+            }
+        }
+    }
+    files
+}
+
 /// Returns true if a filename should be hidden from the UI.
 fn is_hidden_file(name: &str) -> bool {
     name.starts_with('.')
@@ -60,6 +75,7 @@ fn start_file_watcher(
     weak: slint::Weak<MainWindow>,
     downloads: Arc<Mutex<HashMap<String, DownloadInfo>>>,
     save_path: String,
+    current_folder: Arc<Mutex<String>>,
 ) {
     std::thread::spawn(move || {
         println!("[FileWatcher] Started");
@@ -70,25 +86,71 @@ fn start_file_watcher(
             // This thread only updates the file list.
             unsafe {
                 let count = bindings::KD_GetFileCount();
+                let folder = current_folder.lock().unwrap().clone();
 
-                // Build file list model
-                let mut files: Vec<FileInfo> = Vec::new();
-                let dl = downloads.lock().unwrap();
-
+                // Collect all remote file names
+                let mut all_names: Vec<(String, i64)> = Vec::new();
                 for i in 0..count {
                     let name_ptr = bindings::KD_GetFileName(i);
                     if name_ptr.is_null() {
                         continue;
                     }
                     let raw_name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
-                    // Remote file keys have leading "/" — strip it for display and paths
                     let name = raw_name.trim_start_matches('/').to_string();
-                    // Skip hidden files
                     if is_hidden_file(&name) {
                         continue;
                     }
                     let size = bindings::KD_GetFileSize(i) as i64;
-                    let ftype = file_type_from_name(&name);
+                    all_names.push((name, size));
+                }
+
+                // Group by current folder: show items at this level,
+                // collapse subdirectories into folder cards
+                let mut files: Vec<FileInfo> = Vec::new();
+                let mut seen_folders: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let dl = downloads.lock().unwrap();
+
+                for (name, size) in all_names.iter() {
+                    let name = name.clone();
+                    let size = *size;
+                    let relative = if folder.is_empty() {
+                        name.clone()
+                    } else if let Some(stripped) = name.strip_prefix(&format!("{}/", folder)) {
+                        stripped.to_string()
+                    } else {
+                        continue; // not in current folder
+                    };
+
+                    if let Some(slash_pos) = relative.find('/') {
+                        // This file is in a subfolder. Show the subfolder as a folder card.
+                        let subfolder = &relative[..slash_pos];
+                        let full_folder = if folder.is_empty() {
+                            subfolder.to_string()
+                        } else {
+                            format!("{}/{}", folder, subfolder)
+                        };
+                        if seen_folders.insert(full_folder.clone()) {
+                            // Count files in this subfolder
+                            let child_count = all_names.iter()
+                                .filter(|(n, _)| n.starts_with(&format!("{}/", full_folder)))
+                                .count();
+                            files.push(FileInfo {
+                                name: slint::SharedString::from(subfolder),
+                                size_bytes: child_count as i32,
+                                downloading: false,
+                                uploading: false,
+                                progress: 0.0,
+                                saved: false,
+                                paused: false,
+                                file_type: slint::SharedString::from("folder"),
+                                is_local: false,
+                            });
+                        }
+                        continue;
+                    }
+
+                    // Regular file at this level
+                    let ftype = file_type_from_name(&relative);
 
                     // Check download state
                     let (downloading, progress, saved, paused) = if let Some(info) = dl.get(&name) {
@@ -135,33 +197,68 @@ fn start_file_watcher(
 
                 // Also include local files (files I shared) — show as already saved
                 let local_count = bindings::KD_GetLocalFileCount();
+                let mut local_names: Vec<String> = Vec::new();
                 for i in 0..local_count {
                     let name_ptr = bindings::KD_GetLocalFileName(i);
                     if name_ptr.is_null() {
                         continue;
                     }
                     let raw_name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
-                    // Key may be a full path (from PullFile) or bare name (from AddFile)
-                    let display_name = Path::new(&raw_name)
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or(raw_name.clone());
-                    // Skip hidden files
-                    if is_hidden_file(&display_name) {
+                    let name = raw_name.trim_start_matches('/').to_string();
+                    if !is_hidden_file(&name) {
+                        local_names.push(name);
+                    }
+                }
+
+                for lname in &local_names {
+                    let relative = if folder.is_empty() {
+                        lname.clone()
+                    } else if let Some(stripped) = lname.strip_prefix(&format!("{}/", folder)) {
+                        stripped.to_string()
+                    } else {
+                        continue;
+                    };
+
+                    if let Some(slash_pos) = relative.find('/') {
+                        let subfolder = &relative[..slash_pos];
+                        let full_folder = if folder.is_empty() {
+                            subfolder.to_string()
+                        } else {
+                            format!("{}/{}", folder, subfolder)
+                        };
+                        if seen_folders.insert(full_folder.clone()) {
+                            let child_count = local_names.iter()
+                                .filter(|n| n.starts_with(&format!("{}/", full_folder)))
+                                .count();
+                            if !files.iter().any(|f| f.name.as_str() == subfolder) {
+                                files.push(FileInfo {
+                                    name: slint::SharedString::from(subfolder),
+                                    size_bytes: child_count as i32,
+                                    downloading: false,
+                                    uploading: false,
+                                    progress: 0.0,
+                                    saved: true,
+                                    paused: false,
+                                    file_type: slint::SharedString::from("folder"),
+                                    is_local: true,
+                                });
+                            }
+                        }
                         continue;
                     }
-                    // Skip if already in remote list (peer has it too, or we downloaded it)
-                    if files.iter().any(|f| f.name.as_str() == display_name) {
+
+                    // Skip if already in remote list
+                    if files.iter().any(|f| f.name.as_str() == relative) {
                         continue;
                     }
-                    let ftype = file_type_from_name(&display_name);
+                    let ftype = file_type_from_name(&relative);
                     files.push(FileInfo {
-                        name: slint::SharedString::from(&display_name),
+                        name: slint::SharedString::from(&relative),
                         size_bytes: 0,
                         downloading: false,
                         uploading: false,
                         progress: 1.0,
-                        saved: true, // local file = already on disk
+                        saved: true,
                         paused: false,
                         file_type: slint::SharedString::from(ftype),
                         is_local: true,
@@ -231,6 +328,7 @@ fn connect_room(
     running: Arc<AtomicBool>,
     downloads: Arc<Mutex<HashMap<String, DownloadInfo>>>,
     save_path: String,
+    current_folder: Arc<Mutex<String>>,
     target_screen: i32,
     create: bool,
 ) {
@@ -285,7 +383,7 @@ fn connect_room(
 
         // Start file watcher
         running.store(true, Ordering::Relaxed);
-        start_file_watcher(running.clone(), weak.clone(), downloads, save_path);
+        start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder.clone());
 
         // Transition to connected screen
         let _ = slint::invoke_from_event_loop(move || {
@@ -305,6 +403,7 @@ fn connect_room_auto(
     running: Arc<AtomicBool>,
     downloads: Arc<Mutex<HashMap<String, DownloadInfo>>>,
     save_path: String,
+    current_folder: Arc<Mutex<String>>,
     target_screen: i32,
 ) {
     println!("Connecting (auto role)...");
@@ -340,7 +439,7 @@ fn connect_room_auto(
         println!("Connected successfully");
         bindings::KD_SetupEventCallbacks();
         running.store(true, Ordering::Relaxed);
-        start_file_watcher(running.clone(), weak.clone(), downloads, save_path);
+        start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder.clone());
 
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(app) = weak.upgrade() {
@@ -405,6 +504,9 @@ fn main() {
     // Shared download state
     let downloads: Arc<Mutex<HashMap<String, DownloadInfo>>> =
         Arc::new(Mutex::new(HashMap::new()));
+
+    // Folder navigation state (shared with file watcher and callbacks)
+    let current_folder: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
     unsafe {
         let result = bindings::KD_Initialize(
@@ -633,6 +735,7 @@ fn main() {
         let watcher_running_create = watcher_running.clone();
         let downloads_create = downloads.clone();
         let save_path_create = to_save.clone();
+        let current_folder_create = current_folder.clone();
         app.on_create_room_pressed(move || {
             // Read current FUSE mode at press time (user may have toggled)
             let screen = if let Some(app) = weak_create.upgrade() {
@@ -643,6 +746,7 @@ fn main() {
                 watcher_running_create.clone(),
                 downloads_create.clone(),
                 save_path_create.clone(),
+                current_folder_create.clone(),
                 screen,
                 true,
             );
@@ -653,6 +757,7 @@ fn main() {
         let watcher_running_join = watcher_running.clone();
         let downloads_join = downloads.clone();
         let save_path_join = to_save.clone();
+        let current_folder_join = current_folder.clone();
         app.on_join_room_pressed(move || {
             let screen = if let Some(app) = weak_join.upgrade() {
                 if app.get_fuse_mode() { 2 } else { 1 }
@@ -662,13 +767,15 @@ fn main() {
                 watcher_running_join.clone(),
                 downloads_join.clone(),
                 save_path_join.clone(),
+                current_folder_join.clone(),
                 screen,
                 false,
             );
         });
 
-        // Connect handler (WAN mode — auto role via fingerprint tiebreaker)
+        // Connect handler (WAN mode -- auto role via fingerprint tiebreaker)
         let weak_connect = app.as_weak();
+        let current_folder_connect = current_folder.clone();
         let watcher_running_connect = watcher_running.clone();
         let downloads_connect = downloads.clone();
         let save_path_connect = to_save.clone();
@@ -681,6 +788,7 @@ fn main() {
                 watcher_running_connect.clone(),
                 downloads_connect.clone(),
                 save_path_connect.clone(),
+                current_folder_connect.clone(),
                 screen,
             );
         });
@@ -786,6 +894,38 @@ fn main() {
             #[cfg(target_os = "windows")]
             let _ = Command::new("explorer").arg(&mount_path).spawn();
         });
+
+        {
+            let folder = current_folder.clone();
+            let weak = app.as_weak();
+            app.on_navigate_folder(move |name| {
+                let mut f = folder.lock().unwrap();
+                if f.is_empty() {
+                    *f = name.to_string();
+                } else {
+                    *f = format!("{}/{}", *f, name);
+                }
+                if let Some(app) = weak.upgrade() {
+                    app.set_current_folder(slint::SharedString::from(f.as_str()));
+                }
+            });
+        }
+
+        {
+            let folder = current_folder.clone();
+            let weak = app.as_weak();
+            app.on_back_folder(move || {
+                let mut f = folder.lock().unwrap();
+                if let Some(pos) = f.rfind('/') {
+                    *f = f[..pos].to_string();
+                } else {
+                    *f = String::new();
+                }
+                if let Some(app) = weak.upgrade() {
+                    app.set_current_folder(slint::SharedString::from(f.as_str()));
+                }
+            });
+        }
 
         // Handle Add File: native file picker (multi-select) → copy to save folder → KD_AddFile
         let save_path_add = to_save.clone();
@@ -1062,22 +1202,49 @@ fn main() {
                     }
                     let path_str = path.to_string_lossy().to_string();
                     println!("File dropped: {}", path_str);
-                    // Copy to save folder for safekeeping
-                    let _ = std::fs::create_dir_all(&save_path_dnd);
-                    if let Some(fname) = path.file_name() {
-                        let dest = format!("{}/{}", save_path_dnd, fname.to_string_lossy());
-                        if let Err(e) = std::fs::copy(&path, &dest) {
-                            eprintln!("Failed to copy dropped file to save folder: {}", e);
+                    let save = save_path_dnd.clone();
+                    let path = path.to_path_buf();
+                    std::thread::spawn(move || {
+                        let _ = std::fs::create_dir_all(&save);
+                        if path.is_dir() {
+                            let dir_name = path.file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            for entry in walkdir(&path) {
+                                if entry.is_file() {
+                                    let rel = entry.strip_prefix(&path).unwrap_or(&entry);
+                                    let remote_name = format!("{}/{}", dir_name, rel.to_string_lossy());
+                                    let dest = Path::new(&save).join(&dir_name).join(rel);
+                                    if let Some(parent) = dest.parent() {
+                                        let _ = std::fs::create_dir_all(parent);
+                                    }
+                                    let _ = std::fs::copy(&entry, &dest);
+                                    let c_local = CString::new(dest.to_string_lossy().to_string()).unwrap();
+                                    let c_remote = CString::new(remote_name.clone()).unwrap();
+                                    let res = bindings::KD_AddFileAs(c_local.into_raw(), c_remote.into_raw());
+                                    if res != 0 {
+                                        eprintln!("Failed to add: {}", remote_name);
+                                    }
+                                }
+                            }
+                            println!("Directory added: {}", path_str);
+                        } else {
+                            if let Some(fname) = path.file_name() {
+                                let dest = format!("{}/{}", save, fname.to_string_lossy());
+                                if let Err(e) = std::fs::copy(&path, &dest) {
+                                    eprintln!("Failed to copy dropped file: {}", e);
+                                }
+                            }
+                            let c_path = CString::new(path_str.clone()).unwrap();
+                            let res = bindings::KD_AddFile(c_path.into_raw());
+                            if res != 0 {
+                                let err = get_last_error();
+                                eprintln!("Failed to add dropped file: {}", err);
+                            } else {
+                                println!("Dropped file added: {}", path_str);
+                            }
                         }
-                    }
-                    let c_path = CString::new(path_str.clone()).unwrap();
-                    let res = bindings::KD_AddFile(c_path.into_raw());
-                    if res != 0 {
-                        let err = get_last_error();
-                        eprintln!("Failed to add dropped file: {}", err);
-                    } else {
-                        println!("Dropped file added: {}", path_str);
-                    }
+                    });
                     WinitWindowEventResult::Propagate
                 }
                 _ => WinitWindowEventResult::Propagate,
@@ -1087,11 +1254,13 @@ fn main() {
         // Event polling timer — runs on UI thread, independent of file watcher.
         // This ensures disconnect/health events are always processed even when
         // the file watcher thread has stopped or hasn't started yet.
+        let arrived_files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let _event_timer = {
             let timer = slint::Timer::default();
             let weak_evt = app.as_weak();
             let disconnecting_evt = disconnecting.clone();
             let watcher_running_evt = watcher_running.clone();
+            let arrived_files = arrived_files.clone();
             timer.start(
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_millis(200),
@@ -1122,6 +1291,17 @@ fn main() {
                             };
                             if let Some(app) = weak_evt.upgrade() {
                                 app.set_connect_status(slint::SharedString::from(display));
+                            }
+                        }
+
+                        // File arrival notifications
+                        if evt.starts_with("file_arrived:") {
+                            let parts: Vec<&str> = evt.splitn(3, ':').collect();
+                            if parts.len() >= 2 {
+                                let name = parts[1];
+                                if !is_hidden_file(name) {
+                                    arrived_files.lock().unwrap().push(name.to_string());
+                                }
                             }
                         }
 
@@ -1180,6 +1360,45 @@ fn main() {
                             });
                             break;
                         }
+                    }
+
+                    // Send batched notification for files that arrived this tick
+                    let mut files = arrived_files.lock().unwrap();
+                    if !files.is_empty() {
+                        let count = files.len();
+                        let body = if count == 1 {
+                            format!("{}", files[0])
+                        } else if count <= 3 {
+                            files.join(", ")
+                        } else {
+                            format!("{} files received", count)
+                        };
+                        files.clear();
+                        drop(files);
+
+                        std::thread::spawn(move || {
+                            let _ = std::panic::catch_unwind(|| {
+                                #[cfg(target_os = "macos")]
+                                {
+                                    let script = format!(
+                                        "display notification \"{}\" with title \"KeibiDrop\"",
+                                        body.replace('\"', "\\\"")
+                                    );
+                                    let _ = Command::new("osascript")
+                                        .arg("-e")
+                                        .arg(&script)
+                                        .output();
+                                }
+                                #[cfg(not(target_os = "macos"))]
+                                {
+                                    let _ = notify_rust::Notification::new()
+                                        .summary("KeibiDrop")
+                                        .body(&body)
+                                        .timeout(notify_rust::Timeout::Milliseconds(4000))
+                                        .show();
+                                }
+                            });
+                        });
                     }
                 },
             );

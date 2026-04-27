@@ -487,7 +487,8 @@ component FileTypeIcon inherits Rectangle {
 
     // Icon text based on file type
     Text {
-        text: root.file-type == "pdf" ? "PDF"
+        text: root.file-type == "folder" ? "DIR"
+            : root.file-type == "pdf" ? "PDF"
             : root.file-type == "image" ? "IMG"
             : root.file-type == "video" ? "VID"
             : root.file-type == "audio" ? "SND"
@@ -495,7 +496,8 @@ component FileTypeIcon inherits Rectangle {
             : root.file-type == "archive" ? "ZIP"
             : root.file-type == "text" ? "TXT"
             : "FILE";
-        color: root.file-type == "pdf" ? #ef4444
+        color: root.file-type == "folder" ? #60a5fa
+             : root.file-type == "pdf" ? #ef4444
              : root.file-type == "image" ? #22c55e
              : root.file-type == "video" ? #a855f7
              : root.file-type == "audio" ? #f59e0b
@@ -660,14 +662,16 @@ component FileCard inherits Rectangle {
             height: 28px;
             // "Open" is blue accent, "Save" is white/grey
             accent: root.is-local || root.saved;
-            text: root.downloading ? Math.round(root.progress * 100) + "%"
+            text: root.file-type == "folder" ? "Open"
+                : root.downloading ? Math.round(root.progress * 100) + "%"
                 : root.paused ? Math.round(root.progress * 100) + "%"
                 : root.is-local ? "Open"
                 : root.saved ? "Open"
                 : "Save";
-            enabled: !root.downloading || root.paused;
+            enabled: root.file-type == "folder" || !root.downloading || root.paused;
             clicked => {
-                if (root.paused) { root.save-clicked(); }
+                if (root.file-type == "folder") { root.open-clicked(); }
+                else if (root.paused) { root.save-clicked(); }
                 else if (root.is-local || root.saved) { root.open-clicked(); }
                 else { root.save-clicked(); }
             }
@@ -704,6 +708,10 @@ export component MainWindow inherits Window {
 
     // Dynamic file list model (populated by Rust file watcher)
     in-out property<[FileInfo]> file_list: [];
+    // Current folder path for navigation (empty = root)
+    in-out property<string> current_folder: "";
+    callback navigate_folder(string);
+    callback back_folder();
     // Set by Rust when any file is actively downloading
     in-out property<bool> any_downloading: false;
     // Set by Rust when a file is being dragged over the window
@@ -1103,11 +1111,39 @@ export component MainWindow inherits Window {
             clicked => { root.add_file_pressed() }
         }
 
+        // Back button (visible when inside a folder)
+        if root.current_folder != "" : Rectangle {
+            y: 310px;
+            x: 40px;
+            width: 200px;
+            height: 30px;
+
+            Text {
+                text: "< Back";
+                color: #60a5fa;
+                font-size: 14px;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                clicked => { root.back_folder() }
+            }
+        }
+
+        // Current folder label
+        if root.current_folder != "" : Text {
+            y: 312px;
+            x: 250px;
+            text: root.current_folder;
+            color: #9ca3af;
+            font-size: 13px;
+        }
+
         // Scrollable file grid
         ScrollView {
-            y: 310px;
+            y: root.current_folder != "" ? 345px : 310px;
             width: parent.width;
-            height: parent.height - 310px;
+            height: parent.height - (root.current_folder != "" ? 345px : 310px);
             viewport-height: Math.ceil(root.file_list.length / 4) * 200px;
 
             for file[idx] in root.file_list: FileCard {
@@ -1121,8 +1157,20 @@ export component MainWindow inherits Window {
                 saved: file.saved;
                 is-local: file.is-local;
                 paused: file.paused;
-                save-clicked => { root.save_file(file.name) }
-                open-clicked => { root.open_file(file.name) }
+                save-clicked => {
+                    if file.file-type == "folder" {
+                        root.navigate_folder(file.name)
+                    } else {
+                        root.save_file(file.name)
+                    }
+                }
+                open-clicked => {
+                    if file.file-type == "folder" {
+                        root.navigate_folder(file.name)
+                    } else {
+                        root.open_file(file.name)
+                    }
+                }
                 pause-clicked => { root.pause_file(file.name) }
             }
         }

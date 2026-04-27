@@ -15,7 +15,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const platODIRECTORY = 0           // O_DIRECTORY not available on Windows.
 const platENODATA = syscall.ENOENT // ENODATA does not exist on Windows; map to ENOENT.
 const platDiskModeIsAuthoritative = false
 
@@ -28,8 +27,65 @@ func platUnlink(path string) error {
 }
 
 func platOpen(path string, flags int, mode uint32) (int, error) {
-	h, err := syscall.Open(path, flags, mode)
-	return int(h), err
+	// Use CreateFile directly so we can pass FILE_SHARE_DELETE.
+	// Without this, no other process (or our own Rename/Unlink) can
+	// rename or delete the file while our handle is open — breaking
+	// POSIX semantics that git, compilers, etc. rely on.
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+
+	access := uint32(syscall.GENERIC_READ)
+	if flags&(syscall.O_WRONLY|syscall.O_RDWR) != 0 {
+		access = syscall.GENERIC_READ | syscall.GENERIC_WRITE
+	}
+
+	shareMode := uint32(syscall.FILE_SHARE_READ | syscall.FILE_SHARE_WRITE | syscall.FILE_SHARE_DELETE)
+
+	var disposition uint32
+	switch {
+	case flags&(syscall.O_CREAT|syscall.O_EXCL) == (syscall.O_CREAT | syscall.O_EXCL):
+		disposition = syscall.CREATE_NEW
+	case flags&(syscall.O_CREAT|syscall.O_TRUNC) == (syscall.O_CREAT | syscall.O_TRUNC):
+		disposition = syscall.CREATE_ALWAYS
+	case flags&syscall.O_CREAT != 0:
+		disposition = syscall.OPEN_ALWAYS
+	case flags&syscall.O_TRUNC != 0:
+		disposition = syscall.TRUNCATE_EXISTING
+	default:
+		disposition = syscall.OPEN_EXISTING
+	}
+
+	attrs := uint32(syscall.FILE_ATTRIBUTE_NORMAL)
+
+	h, err := syscall.CreateFile(p, access, shareMode, nil, disposition, attrs, 0)
+	if err != nil {
+		return 0, err
+	}
+	return int(h), nil
+}
+
+// platOpendir opens a directory handle on Windows. syscall.Open can't open
+// directories — we need CreateFile with FILE_FLAG_BACKUP_SEMANTICS.
+func platOpendir(path string) (int, error) {
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return 0, err
+	}
+	h, err := syscall.CreateFile(
+		p,
+		syscall.GENERIC_READ,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+		nil,
+		syscall.OPEN_EXISTING,
+		syscall.FILE_FLAG_BACKUP_SEMANTICS, // Required to open directories
+		0,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return int(h), nil
 }
 
 func platClose(fd int) error {
@@ -48,6 +104,10 @@ func platPread(fd int, buf []byte, offset int64) (int, error) {
 	var done uint32
 	err := windows.ReadFile(h, buf, &done, &overlapped)
 	if err != nil {
+		// ERROR_HANDLE_EOF is normal — POSIX semantics: return 0 bytes, no error.
+		if err == windows.ERROR_HANDLE_EOF {
+			return int(done), nil
+		}
 		return int(done), err
 	}
 	return int(done), nil

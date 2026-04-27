@@ -1149,6 +1149,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
 
 [[package]]
+name = "deranged"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+dependencies = [
+ "powerfmt",
+]
+
+[[package]]
 name = "derive_more"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2516,6 +2525,7 @@ dependencies = [
  "env",
  "image",
  "libc",
+ "notify-rust",
  "rfd",
  "slint",
  "slint-build",
@@ -2749,6 +2759,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mac-notification-sys"
+version = "0.6.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29a16783dd1a47849b8c8133c9cd3eb2112cfbc6901670af3dba47c8bbfb07d3"
+dependencies = [
+ "cc",
+ "objc2 0.6.3",
+ "objc2-foundation 0.3.2",
+ "time",
+]
+
+[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2941,6 +2963,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
+name = "notify-rust"
+version = "4.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e551a9f0db223eaf3eb156906f99f46897fd951ee66dd1cb0be14db4d36d2fa"
+dependencies = [
+ "futures-lite",
+ "log",
+ "mac-notification-sys",
+ "serde",
+ "tauri-winrt-notification",
+ "zbus",
+]
+
+[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2949,6 +2985,12 @@ dependencies = [
  "num-integer",
  "num-traits",
 ]
+
+[[package]]
+name = "num-conv"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6673768db2d862beb9b39a78fdcb1a69439615d5794a1be50caa9bc92c81967"
 
 [[package]]
 name = "num-derive"
@@ -3271,6 +3313,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags 2.10.0",
+ "block2 0.6.2",
+ "libc",
  "objc2 0.6.3",
  "objc2-core-foundation",
 ]
@@ -3614,6 +3658,12 @@ checksum = "b73949432f5e2a09657003c25bca5e19a0e9c84f8058ca374f49e0ebe605af77"
 dependencies = [
  "zerovec",
 ]
+
+[[package]]
+name = "powerfmt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
 name = "ppv-lite86"
@@ -4632,6 +4682,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
+name = "tauri-winrt-notification"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b1e66e07de489fe43a46678dd0b8df65e0c973909df1b60ba33874e297ba9b9"
+dependencies = [
+ "quick-xml 0.37.5",
+ "thiserror 2.0.17",
+ "windows 0.61.3",
+ "windows-version",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4712,6 +4774,25 @@ dependencies = [
  "weezl",
  "zune-jpeg",
 ]
+
+[[package]]
+name = "time"
+version = "0.3.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c"
+dependencies = [
+ "deranged",
+ "num-conv",
+ "powerfmt",
+ "serde_core",
+ "time-core",
+]
+
+[[package]]
+name = "time-core"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca"
 
 [[package]]
 name = "tiny-skia"
@@ -5863,6 +5944,15 @@ name = "windows-threading"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3949bd5b99cafdf1c7ca86b43ca564028dfe27d66958f2470940f73d86d75b37"
+dependencies = [
+ "windows-link 0.2.1",
+]
+
+[[package]]
+name = "windows-version"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4060a1da109b9d0326b7262c8e12c84df67cc0dbc9e33cf49e01ccc2eb63631"
 dependencies = [
  "windows-link 0.2.1",
 ]

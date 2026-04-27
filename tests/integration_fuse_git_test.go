@@ -194,7 +194,7 @@ func TestFUSEtoFUSE_GitClone(t *testing.T) {
 		t.Logf("Alice git add: %s", resp)
 		require.True(strings.HasPrefix(resp, "EXEC:0:"), "git add failed: %s", resp)
 
-		resp = alice.send(t, "exec go-fp git -c user.name=Alice -c user.email=alice@test commit -m cross-peer-test", 15*time.Second)
+		resp = alice.send(t, "exec go-fp git -c user.name=Alice -c user.email=alice@test -c commit.gpgsign=false commit -m cross-peer-test", 15*time.Second)
 		t.Logf("Alice git commit: %s", resp)
 		require.True(strings.HasPrefix(resp, "EXEC:0:"), "git commit failed: %s", resp)
 	})
@@ -234,22 +234,14 @@ func TestFUSEtoFUSE_GitClone(t *testing.T) {
 	})
 
 	// Bob checks out Alice's branch and reads the file.
-	// KNOWN ISSUE: git loose objects (.git/objects/xx/...) created during
-	// Alice's commit may arrive as 0-byte placeholders on Bob due to the
-	// notification timing bug. git checkout finds the ref but can't
-	// reconstruct the working tree without the blob objects.
 	t.Run("BobCheckoutAliceBranch", func(t *testing.T) {
 		resp := bob.send(t, "exec go-fp git checkout test_cross_peer", 15*time.Second)
 		t.Logf("Bob checkout test_cross_peer: %s", resp)
-		if !strings.HasPrefix(resp, "EXEC:0:") {
-			t.Skipf("KNOWN ISSUE: Bob checkout failed (git objects may not have synced): %s", resp)
-		}
+		require.True(strings.HasPrefix(resp, "EXEC:0:"), "Bob checkout failed: %s", resp)
 
 		resp = bob.send(t, "exec go-fp cat cross_peer.txt", 10*time.Second)
 		t.Logf("Bob cat cross_peer.txt: %s", resp)
-		if !strings.HasPrefix(resp, "EXEC:0:") {
-			t.Skipf("KNOWN ISSUE: cross_peer.txt not found (blob object sync issue): %s", resp)
-		}
+		require.True(strings.HasPrefix(resp, "EXEC:0:"), "cross_peer.txt not found: %s", resp)
 		content := strings.TrimPrefix(resp, "EXEC:0:")
 		require.Equal("hello from alice", content, "file content mismatch")
 		t.Log("Bob reads Alice's file on her branch")
@@ -259,13 +251,9 @@ func TestFUSEtoFUSE_GitClone(t *testing.T) {
 	t.Run("BobGitLogOnAliceBranch", func(t *testing.T) {
 		resp := bob.send(t, "exec go-fp git log --oneline", 10*time.Second)
 		t.Logf("Bob git log on test_cross_peer: %s", resp)
-		if !strings.HasPrefix(resp, "EXEC:0:") {
-			t.Skipf("KNOWN ISSUE: Bob git log failed (git objects may not have synced): %s", resp)
-		}
+		require.True(strings.HasPrefix(resp, "EXEC:0:"), "Bob git log failed: %s", resp)
 		output := strings.TrimPrefix(resp, "EXEC:0:")
-		if !strings.Contains(output, "cross-peer-test") {
-			t.Skipf("KNOWN ISSUE: Alice's commit not visible (loose object sync): %s", output)
-		}
+		require.Contains(output, "cross-peer-test", "Alice's commit not visible on Bob")
 		t.Log("Bob sees Alice's commit on her branch")
 	})
 }
