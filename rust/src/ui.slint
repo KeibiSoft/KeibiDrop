@@ -772,6 +772,8 @@ export component MainWindow inherits Window {
     callback pause_file(string);
     callback save_all_pressed();
     callback exit_pressed();
+    callback open_fuse_install();
+    in-out property<bool> help_visible: false;
 
     // Opaque backdrop - ensures full coverage on Wayland where
     // Window.background alone may not fill the compositor surface.
@@ -949,12 +951,21 @@ export component MainWindow inherits Window {
                 vertical-alignment: center;
             }
 
-            if !root.fuse_available: Text {
+            if !root.fuse_available: Rectangle {
                 x: 44px;
                 y: 20px;
-                text: root.fuse_install_hint;
-                color: #555;
-                font-size: 11px;
+                width: fuse-hint-text.preferred-width;
+                height: 16px;
+
+                fuse-hint-text := Text {
+                    text: root.fuse_install_hint;
+                    color: fuse-hint-touch.has-hover ? #888 : #555;
+                    font-size: 11px;
+                }
+                fuse-hint-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open-fuse-install(); }
+                }
             }
         }
 
@@ -1327,6 +1338,13 @@ export component MainWindow inherits Window {
                 horizontal-alignment: center;
             }
 
+            Text {
+                text: "Files stream on access. Open videos, documents, or code without waiting for the full download.";
+                color: #666;
+                font-size: 12px;
+                horizontal-alignment: center;
+            }
+
             if root.mount_path != "": Rectangle {
                 height: 38px;
                 border-radius: 19px;
@@ -1382,6 +1400,7 @@ export component MainWindow inherits Window {
         y: 93px;
         width: 24px;
         text: "?";
+        clicked => { root.help_visible = !root.help_visible; }
     }
     SmallOutlineButton {
         x: 1005px;
@@ -1389,6 +1408,58 @@ export component MainWindow inherits Window {
         width: 24px;
         text: "X";
         clicked => { root.exit_pressed() }
+    }
+
+    // Help panel overlay
+    if root.help_visible: Rectangle {
+        x: (parent.width - 440px) / 2;
+        y: (parent.height - 320px) / 2;
+        width: 440px;
+        height: 320px;
+        border-radius: 10px;
+        background: #2a2a2a;
+        border-width: 1px;
+        border-color: rgba(255,255,255,0.12);
+
+        // Close button
+        SmallOutlineButton {
+            x: parent.width - 36px;
+            y: 8px;
+            width: 24px;
+            text: "X";
+            clicked => { root.help_visible = false; }
+        }
+
+        Text {
+            x: 20px;
+            y: 16px;
+            text: "How to use KeibiDrop";
+            color: white;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        Text {
+            x: 20px;
+            y: 48px;
+            width: parent.width - 40px;
+            wrap: word-wrap;
+            color: #bbb;
+            font-size: 13px;
+            text: root.current_screen == 0
+                ? "1. Copy your code and send it to your peer\n2. Paste their code and press Add\n3. Press Connect (both peers)\n4. Drag files to share, or toggle Virtual Folder\n\nLocal Network: Toggle to find devices on the same WiFi automatically.\n\nVirtual Folder (FUSE): Your peer's files appear as a folder on your machine. Requires macFUSE (macOS), fuse3 (Linux), or WinFsp (Windows).\n\nDirect Transfer: Drag files in and your peer saves what they need."
+                : root.current_screen == 1
+                ? "Connected in Direct Transfer mode.\n\nDrag files onto the window or press Add File.\nYour peer sees your files and can save them.\nClick Save to download a peer's file.\n\nFiles are encrypted end-to-end.\nThe connection badge shows how you're connected:\n  LAN = same network (fastest)\n  Direct P2P = over the internet\n  Via Relay = through an encrypted bridge"
+                : "Connected in Virtual Folder mode.\n\nYour peer's files appear in the mounted folder.\nOpen it with any app: Finder, Terminal, git, etc.\nFiles stream on access, you don't need to wait for the full download.\n\nChanges sync both ways.\nDrag files into the folder to share them with your peer.";
+        }
+
+        Text {
+            x: 20px;
+            y: parent.height - 28px;
+            text: "keibidrop.com";
+            color: #555;
+            font-size: 11px;
+        }
     }
 
     // Toast notification (bottom-center, all screens)

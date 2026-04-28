@@ -567,7 +567,8 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(26002);
 
-    // Determine if FUSE should be used (mirrors Go CLI logic)
+    // Determine if FUSE should be used (mirrors Go CLI logic).
+    // ON by default if FUSE is present, OFF if NO_FUSE env is set.
     let no_fuse_env = env::var("NO_FUSE").map(|v| !v.is_empty()).unwrap_or(false);
     let fuse_present = is_fuse_present();
     let use_fuse = fuse_present && !no_fuse_env;
@@ -1272,6 +1273,15 @@ fn main() {
             if let Some(app) = weak_exit.upgrade() {
                 let _ = app.hide();
             }
+        });
+
+        app.on_open_fuse_install(|| {
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg("https://macfuse.github.io/").spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg("https://github.com/libfuse/libfuse").spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("explorer").arg("https://winfsp.dev/").spawn();
         });
 
         // Drag-and-drop: intercept winit events for OS file drops
