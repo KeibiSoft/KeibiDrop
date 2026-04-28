@@ -81,6 +81,23 @@ func Load() (Config, error) {
 	// Support both KEIBIDROP_ prefix (Rust UI / CLI) and KD_ prefix (kd daemon).
 	applyEnvOverrides(&cfg)
 
+	// Resolve relative paths to absolute.
+	if cfg.SavePath != "" {
+		if abs, err := filepath.Abs(cfg.SavePath); err == nil {
+			cfg.SavePath = abs
+		}
+	}
+	if cfg.MountPath != "" {
+		if abs, err := filepath.Abs(cfg.MountPath); err == nil {
+			cfg.MountPath = abs
+		}
+	}
+	if cfg.LogFile != "" {
+		if abs, err := filepath.Abs(cfg.LogFile); err == nil {
+			cfg.LogFile = abs
+		}
+	}
+
 	return cfg, nil
 }
 
@@ -140,6 +157,46 @@ no_fuse = %v
 # push_on_write = false
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.NoFUSE)
+
+	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
+}
+
+// Save writes the config to the standard path (~/.config/keibidrop/config.toml).
+func Save(cfg Config) error {
+	path := ConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil { // #nosec G301
+		return err
+	}
+	content := fmt.Sprintf(`# KeibiDrop configuration
+# https://keibidrop.com
+
+# Relay server for peer discovery.
+relay = %q
+
+# Where received files are saved.
+save_path = %q
+
+# FUSE mount point (if FUSE is enabled).
+mount_path = %q
+
+# Log file path.
+log_file = %q
+
+# TCP ports for peer connections (must be in 26000-27000 range).
+inbound_port = %d
+outbound_port = %d
+
+# Bridge relay address for fallback when direct P2P fails.
+bridge_addr = %q
+
+# Set to true to disable FUSE.
+no_fuse = %v
+
+# Set to true to disable data relay fallback (direct connections only).
+strict_mode = %v
+`, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
+		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
+		cfg.NoFUSE, cfg.StrictMode)
 
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }
