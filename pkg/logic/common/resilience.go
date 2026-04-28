@@ -75,23 +75,15 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 
 // StopConnectionResilience stops all resilience components.
 func (kd *KeibiDrop) StopConnectionResilience() {
-	logger := kd.logger.With("method", "stop-connection-resilience")
 	if kd.HealthMonitor != nil {
-		logger.Info("stopping health monitor")
 		kd.HealthMonitor.Stop()
-		logger.Info("health monitor stopped")
 	}
 	if kd.ReconnectManager != nil {
-		logger.Info("stopping reconnect manager")
 		kd.ReconnectManager.Stop()
-		logger.Info("reconnect manager stopped")
 	}
 	if kd.RelayKeepalive != nil {
-		logger.Info("stopping relay keepalive")
 		kd.RelayKeepalive.Stop()
-		logger.Info("relay keepalive stopped")
 	}
-	logger.Info("all resilience components stopped")
 }
 
 // hasActiveTransfers returns true if any downloads are in progress.

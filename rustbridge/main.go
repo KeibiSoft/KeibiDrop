@@ -8,6 +8,11 @@ package main
 
 /*
 #include <stdint.h>
+#include <signal.h>
+
+static void ignore_sigpipe(void) {
+    signal(SIGPIPE, SIG_IGN);
+}
 */
 import "C"
 
@@ -30,6 +35,7 @@ import (
 )
 
 func init() {
+	C.ignore_sigpipe()
 	signal.Ignore(syscall.SIGPIPE)
 }
 
