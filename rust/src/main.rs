@@ -323,6 +323,25 @@ fn get_last_error() -> String {
     }
 }
 
+fn show_toast(weak: &slint::Weak<MainWindow>, msg: &str) {
+    let w = weak.clone();
+    let m = msg.to_string();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = w.upgrade() {
+            app.set_toast_message(slint::SharedString::from(&m));
+        }
+    });
+    let w2 = weak.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(app) = w2.upgrade() {
+                app.set_toast_message(slint::SharedString::default());
+            }
+        });
+    });
+}
+
 fn humanize_error(msg: &str) -> String {
     let lower = msg.to_lowercase();
     if lower.contains("timeout") || lower.contains("timed out") {
@@ -787,6 +806,7 @@ fn main() {
 
         // Handle Copy: copy fingerprint or local address to clipboard
         let weak_copy = app.as_weak();
+        let weak_toast_copy = app.as_weak();
         let local_addr_copy = local_addr.clone();
         app.on_copy_my_code(move || {
             let text = if let Some(app) = weak_copy.upgrade() {
@@ -798,9 +818,9 @@ fn main() {
             } else {
                 my_fp.clone()
             };
-            println!("Copy pressed: {}", text);
             ctx.set_contents(text)
                 .expect("My operating system hates me");
+            show_toast(&weak_toast_copy, "Copied to clipboard");
         });
 
         // Create/Join Room setup

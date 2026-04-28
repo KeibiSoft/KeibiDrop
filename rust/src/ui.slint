@@ -535,6 +535,7 @@ component ProgressBar inherits Rectangle {
 component FileCard inherits Rectangle {
     in property <string> filename: "Project 123";
     in property <string> file-type: "other";
+    in property <int> size-bytes: 0;
     in property <bool> downloading: false;
     in property <bool> uploading: false;
     in property <float> progress: 0.0;
@@ -598,13 +599,27 @@ component FileCard inherits Rectangle {
             progress: root.progress;
         }
 
-        // Progress percentage
+        // Progress: percentage and size
         if root.downloading: Text {
+            x: 8px;
             y: parent.height - 14px;
-            horizontal-alignment: center;
             text: Math.round(root.progress * 100) + "%";
             color: #22c55e;
             font-size: 10px;
+        }
+        if root.downloading && root.size-bytes > 0: Text {
+            x: parent.width - 8px;
+            y: parent.height - 14px;
+            horizontal-alignment: right;
+            text: root.size-bytes > 1073741824
+                ? Math.round(root.size-bytes / 10737418.24) / 100 + " GB"
+                : root.size-bytes > 1048576
+                ? Math.round(root.size-bytes / 10485.76) / 100 + " MB"
+                : root.size-bytes > 1024
+                ? Math.round(root.size-bytes / 10.24) / 100 + " KB"
+                : root.size-bytes + " B";
+            color: #888;
+            font-size: 9px;
         }
 
         // Saved checkmark
@@ -719,6 +734,8 @@ export component MainWindow inherits Window {
     // Mount path for FUSE mode (Screen 2)
     in property<string> mount_path: "";
     in property<string> connection_mode: ""; // "lan", "direct", "bridge"
+    // Toast message (brief feedback shown at bottom-center, auto-hides)
+    in-out property<string> toast_message: "";
     // Peer code feedback: set by Rust after KD_AddPeerFingerprint
     in-out property<bool> peer_code_added: false;
     in-out property<bool> peer_code_error: false;
@@ -1091,12 +1108,12 @@ export component MainWindow inherits Window {
             y: 24px;
         }
 
-        // Connected status - below logo, vertically aligned
+        // Connected status - below logo
         HorizontalLayout {
             x: 115px;
             y: 55px;
-            height: 14px;
-            spacing: 6px;
+            height: 22px;
+            spacing: 8px;
             alignment: start;
 
             Rectangle {
@@ -1112,16 +1129,27 @@ export component MainWindow inherits Window {
                 font-size: 13px;
                 vertical-alignment: center;
             }
-            if root.connection_mode != "": Text {
-                text: root.connection_mode == "lan" ? "LAN"
-                    : root.connection_mode == "direct" ? "Direct P2P"
-                    : root.connection_mode == "bridge" ? "Relay"
-                    : root.connection_mode;
-                color: root.connection_mode == "lan" ? #22c55e
-                     : root.connection_mode == "direct" ? #3b82f6
-                     : #d97706;
-                font-size: 11px;
-                vertical-alignment: center;
+            if root.connection_mode != "": Rectangle {
+                width: mode-text.preferred-width + 14px;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                background: root.connection_mode == "lan" ? rgba(34,197,94,0.12)
+                          : root.connection_mode == "direct" ? rgba(59,130,246,0.12)
+                          : rgba(217,119,6,0.12);
+                mode-text := Text {
+                    text: root.connection_mode == "lan" ? "LAN"
+                        : root.connection_mode == "direct" ? "Direct P2P"
+                        : root.connection_mode == "bridge" ? "Via Relay"
+                        : root.connection_mode;
+                    color: root.connection_mode == "lan" ? #22c55e
+                         : root.connection_mode == "direct" ? #3b82f6
+                         : #d97706;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
         }
 
@@ -1183,6 +1211,7 @@ export component MainWindow inherits Window {
                 y: floor(idx / 4) * 200px;
                 filename: file.name;
                 file-type: file.file-type;
+                size-bytes: file.size-bytes;
                 downloading: file.downloading;
                 uploading: file.uploading;
                 progress: file.progress;
@@ -1224,12 +1253,12 @@ export component MainWindow inherits Window {
             y: 24px;
         }
 
-        // Connected status - below logo, vertically aligned
+        // Connected status - below logo
         HorizontalLayout {
             x: 115px;
             y: 55px;
-            height: 14px;
-            spacing: 6px;
+            height: 22px;
+            spacing: 8px;
             alignment: start;
 
             Rectangle {
@@ -1244,6 +1273,28 @@ export component MainWindow inherits Window {
                 color: #22c55e;
                 font-size: 13px;
                 vertical-alignment: center;
+            }
+            if root.connection_mode != "": Rectangle {
+                width: fuse-mode-text.preferred-width + 14px;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                background: root.connection_mode == "lan" ? rgba(34,197,94,0.12)
+                          : root.connection_mode == "direct" ? rgba(59,130,246,0.12)
+                          : rgba(217,119,6,0.12);
+                fuse-mode-text := Text {
+                    text: root.connection_mode == "lan" ? "LAN"
+                        : root.connection_mode == "direct" ? "Direct P2P"
+                        : root.connection_mode == "bridge" ? "Via Relay"
+                        : root.connection_mode;
+                    color: root.connection_mode == "lan" ? #22c55e
+                         : root.connection_mode == "direct" ? #3b82f6
+                         : #d97706;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
         }
 
@@ -1338,6 +1389,28 @@ export component MainWindow inherits Window {
         width: 24px;
         text: "X";
         clicked => { root.exit_pressed() }
+    }
+
+    // Toast notification (bottom-center, all screens)
+    if root.toast_message != "": Rectangle {
+        x: (parent.width - 280px) / 2;
+        y: parent.height - 56px;
+        width: 280px;
+        height: 32px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.10);
+        border-width: 0.5px;
+        border-color: rgba(255,255,255,0.15);
+
+        Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.toast_message;
+            color: #ccc;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
     }
 
     // Version text bottom-right (all screens)
