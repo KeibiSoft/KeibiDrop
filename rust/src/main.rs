@@ -78,7 +78,7 @@ fn start_file_watcher(
     current_folder: Arc<Mutex<String>>,
 ) {
     std::thread::spawn(move || {
-        println!("[FileWatcher] Started");
+        // FileWatcher running
         while running.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(500));
 
@@ -279,7 +279,7 @@ fn start_file_watcher(
                 });
             }
         }
-        println!("[FileWatcher] Stopped");
+        // FileWatcher stopped
     });
 }
 
@@ -399,9 +399,7 @@ fn connect_room(
     target_screen: i32,
     create: bool,
 ) {
-    let action = if create { "Creating" } else { "Joining" };
     let room_action_val = if create { 1 } else { 2 };
-    println!("{} room...", action);
 
     // Set button state immediately on UI thread
     let weak_pre = weak.clone();
@@ -896,7 +894,7 @@ fn main() {
         // Handle Cancel (abort room creation/join)
         let weak_cancel = app.as_weak();
         app.on_cancel_connect_pressed(move || {
-            println!("Cancel connect pressed");
+            
             bindings::KD_UnmountFilesystem();
             bindings::KD_Disconnect();
             if let Some(app) = weak_cancel.upgrade() {
@@ -911,7 +909,7 @@ fn main() {
         let disconnect_confirmed = Arc::new(AtomicBool::new(false));
         let disconnect_confirmed_inner = disconnect_confirmed.clone();
         app.on_export_logs_pressed(move || {
-            println!("Export logs pressed");
+            
             std::thread::spawn(move || {
                 if let Some(dest) = rfd::FileDialog::new()
                     .set_file_name("keibidrop-sanitized.log")
@@ -1027,29 +1025,32 @@ fn main() {
 
         // Handle Add File: native file picker (multi-select) → copy to save folder → KD_AddFile
         let save_path_add = to_save.clone();
+        let weak_toast_add = app.as_weak();
         app.on_add_file_pressed(move || {
-            println!("Add file pressed");
             let save_path = save_path_add.clone();
+            let weak = weak_toast_add.clone();
             std::thread::spawn(move || {
                 if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                    let count = paths.len();
                     for path in paths {
                         let path_str = path.to_string_lossy().to_string();
-                        println!("Selected file: {}", path_str);
-                        // Copy to save folder for safekeeping
                         let _ = std::fs::create_dir_all(&save_path);
                         let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
                         let dest = format!("{}/{}", save_path, filename);
                         if let Err(e) = std::fs::copy(&path_str, &dest) {
                             eprintln!("Failed to copy file to save folder: {}", e);
                         }
-                        let c_path = CString::new(path_str.clone()).unwrap();
+                        let c_path = CString::new(path_str).unwrap();
                         let res = bindings::KD_AddFile(c_path.into_raw());
                         if res != 0 {
                             let err = get_last_error();
                             eprintln!("Failed to add file: {}", err);
-                        } else {
-                            println!("File added: {}", path_str);
                         }
+                    }
+                    if count == 1 {
+                        show_toast(&weak, "File shared with peer");
+                    } else if count > 1 {
+                        show_toast(&weak, &format!("{} files shared with peer", count));
                     }
                 }
             });
@@ -1076,7 +1077,7 @@ fn main() {
                 }
             }
 
-            println!("Saving file {} -> {}", name, local_path);
+            
 
             // Mark as downloading
             {
@@ -1107,7 +1108,6 @@ fn main() {
                     info.downloading = false;
                     if res == 0 {
                         info.saved = true;
-                        println!("Download complete: {}", name);
                     } else {
                         let err = get_last_error();
                         eprintln!("Download failed for {}: {}", name, err);
@@ -1150,7 +1150,7 @@ fn main() {
                             info.paused = false;
                             if res == 0 {
                                 info.saved = true;
-                                println!("Download complete (resumed): {}", name_clone);
+                                
                             } else {
                                 let err = get_last_error();
                                 eprintln!("Download failed for {}: {}", name_clone, err);
@@ -1194,9 +1194,8 @@ fn main() {
         // Handle Save All: save every remote unsaved file
         let downloads_all = downloads.clone();
         let save_path_all = to_save.clone();
+        let weak_toast_all = app.as_weak();
         app.on_save_all_pressed(move || {
-            // Collect remote file names that haven't been saved yet
-            // Use same name format as file watcher: trim leading "/" but keep subdirs
             let file_count = bindings::KD_GetFileCount();
             let mut to_save_names: Vec<String> = Vec::new();
             for i in 0..file_count {
@@ -1206,7 +1205,6 @@ fn main() {
                 }
                 let raw = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
                 let name = raw.trim_start_matches('/').to_string();
-                // Skip already-saved or currently-downloading
                 let dl = downloads_all.lock().unwrap();
                 let dominated = dl.get(&name).map_or(false, |d| d.saved || d.downloading);
                 drop(dl);
@@ -1214,7 +1212,12 @@ fn main() {
                     to_save_names.push(name);
                 }
             }
-            println!("Save All: {} files to save", to_save_names.len());
+            let total = to_save_names.len();
+            if total == 0 {
+                show_toast(&weak_toast_all, "All files already saved");
+                return;
+            }
+            show_toast(&weak_toast_all, &format!("Downloading {} files...", total));
 
             let downloads = downloads_all.clone();
             let base = save_path_all.clone();
@@ -1253,7 +1256,7 @@ fn main() {
                         info.downloading = false;
                         if res == 0 {
                             info.saved = true;
-                            println!("Download complete: {}", n);
+                            
                         } else {
                             let err = get_last_error();
                             eprintln!("Download failed for {}: {}", n, err);
