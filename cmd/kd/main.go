@@ -353,6 +353,19 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 		data["connected"] = fmt.Sprintf("%v", kd.IsRunning())
 		data["connection_status"] = kd.ConnectionStatus()
 	}
+	if showAll || what == "config" {
+		cfg, _ := config.Load()
+		data["config_path"] = config.ConfigPath()
+		data["relay"] = cfg.Relay
+		data["save_path"] = cfg.SavePath
+		data["mount_path"] = cfg.MountPath
+		data["log_file"] = cfg.LogFile
+		data["inbound_port"] = fmt.Sprintf("%d", cfg.InboundPort)
+		data["outbound_port"] = fmt.Sprintf("%d", cfg.OutboundPort)
+		data["bridge_addr"] = cfg.BridgeAddr
+		data["no_fuse"] = fmt.Sprintf("%v", cfg.NoFUSE)
+		data["strict_mode"] = fmt.Sprintf("%v", cfg.StrictMode)
+	}
 
 	if len(data) == 0 {
 		return errResponse(fmt.Sprintf("unknown show target: %s", what))

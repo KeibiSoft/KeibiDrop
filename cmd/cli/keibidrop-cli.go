@@ -50,10 +50,25 @@ func (c *cliContext) executor(in string) {
 
 	case "show":
 		if len(args) < 2 {
-			fmt.Println("Usage: show <fingerprint|ip|peer fingerprint|peer ip>")
+			fmt.Println("Usage: show <fingerprint|ip|peer fingerprint|peer ip|config>")
 			return
 		}
-		handleShow(c.kd, strings.Join(args[1:], " "))
+		target := strings.Join(args[1:], " ")
+		if target == "config" {
+			cfg, _ := config.Load()
+			fmt.Printf("Config file: %s\n", config.ConfigPath())
+			fmt.Printf("Relay:       %s\n", cfg.Relay)
+			fmt.Printf("Save path:   %s\n", cfg.SavePath)
+			fmt.Printf("Mount path:  %s\n", cfg.MountPath)
+			fmt.Printf("Log file:    %s\n", cfg.LogFile)
+			fmt.Printf("Inbound:     %d\n", cfg.InboundPort)
+			fmt.Printf("Outbound:    %d\n", cfg.OutboundPort)
+			fmt.Printf("Bridge:      %s\n", cfg.BridgeAddr)
+			fmt.Printf("No FUSE:     %v\n", cfg.NoFUSE)
+			fmt.Printf("Strict:      %v\n", cfg.StrictMode)
+			return
+		}
+		handleShow(c.kd, target)
 
 	case "register":
 		if len(args) != 2 {

@@ -733,6 +733,36 @@ func KD_GetConfigPath() *C.char {
 	return C.CString(config.ConfigPath())
 }
 
+//export KD_GetConfig
+func KD_GetConfig() *C.char {
+	cfg, _ := config.Load()
+	return C.CString(fmt.Sprintf(
+		"relay=%s\nsave_path=%s\nmount_path=%s\nlog_file=%s\ninbound_port=%d\noutbound_port=%d\nbridge_addr=%s\nno_fuse=%v\nstrict_mode=%v",
+		cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
+		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
+		cfg.NoFUSE, cfg.StrictMode,
+	))
+}
+
+//export KD_SaveConfig
+func KD_SaveConfig(relay, savePath, mountPath *C.char) C.int {
+	cfg, _ := config.Load()
+	if r := C.GoString(relay); r != "" {
+		cfg.Relay = r
+	}
+	if s := C.GoString(savePath); s != "" {
+		cfg.SavePath = s
+	}
+	if m := C.GoString(mountPath); m != "" {
+		cfg.MountPath = m
+	}
+	if err := config.Save(cfg); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
 //export KD_SanitizeLogs
 func KD_SanitizeLogs(destPath *C.char) C.int {
 	cfg, _ := config.Load()

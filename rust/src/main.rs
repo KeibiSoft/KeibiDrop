@@ -657,6 +657,29 @@ fn main() {
             app.set_version_text(slint::SharedString::from(version_str));
         }
 
+        // Settings: populate from Go config
+        let config_ptr = bindings::KD_GetConfig();
+        if !config_ptr.is_null() {
+            let config_str = CStr::from_ptr(config_ptr).to_string_lossy().to_string();
+            for line in config_str.lines() {
+                if let Some((key, val)) = line.split_once('=') {
+                    match key.trim() {
+                        "relay" => app.set_cfg_relay(slint::SharedString::from(val.trim())),
+                        "save_path" => app.set_cfg_save_path(slint::SharedString::from(val.trim())),
+                        "mount_path" => app.set_cfg_mount_path(slint::SharedString::from(val.trim())),
+                        "log_file" => app.set_cfg_log_file(slint::SharedString::from(val.trim())),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        let cfg_path_ptr = bindings::KD_GetConfigPath();
+        if !cfg_path_ptr.is_null() {
+            app.set_cfg_config_path(slint::SharedString::from(
+                CStr::from_ptr(cfg_path_ptr).to_string_lossy().as_ref(),
+            ));
+        }
+
         // FUSE mode toggle
         app.set_fuse_available(fuse_present);
         app.set_fuse_mode(use_fuse);
