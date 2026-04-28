@@ -317,9 +317,57 @@ fn get_last_error() -> String {
         if ptr.is_null() {
             "Unknown error".to_string()
         } else {
-            CStr::from_ptr(ptr).to_string_lossy().to_string()
+            let raw = CStr::from_ptr(ptr).to_string_lossy().to_string();
+            humanize_error(&raw)
         }
     }
+}
+
+fn humanize_error(msg: &str) -> String {
+    let lower = msg.to_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") {
+        return "Peer didn't respond in time. Check that they pressed Connect.".into();
+    }
+    if lower.contains("relay at full capacity") || lower.contains("relay at maximum capacity") {
+        return "Relay is busy. Try again in a minute, or switch to Local Network mode.".into();
+    }
+    if lower.contains("rate limit") {
+        return "Too many attempts. Wait a few minutes and try again.".into();
+    }
+    if lower.contains("session not established") {
+        return "Not connected yet. Exchange codes and press Connect first.".into();
+    }
+    if lower.contains("not found") && lower.contains("relay") {
+        return "Peer not found on relay. Check the code and try again.".into();
+    }
+    if lower.contains("not found") {
+        return "Peer not found. Check that they are online and try again.".into();
+    }
+    if lower.contains("fingerprint mismatch") {
+        return "Security check failed. The peer's identity doesn't match. Try exchanging codes again.".into();
+    }
+    if lower.contains("identical fingerprint") {
+        return "You entered your own code. Paste your peer's code, not yours.".into();
+    }
+    if lower.contains("nil pointer") || lower.contains("nil filesystem") {
+        return "Something went wrong internally. Try restarting the app.".into();
+    }
+    if lower.contains("already running") || lower.contains("already mounted") {
+        return "Already connected. Disconnect first before starting a new session.".into();
+    }
+    if lower.contains("invalid session") {
+        return "Session expired. Reconnect to continue.".into();
+    }
+    if lower.contains("connection refused") || lower.contains("no route") {
+        return "Can't reach peer. Check your internet connection or try Local Network mode.".into();
+    }
+    if lower.contains("invalid fingerprint") || lower.contains("invalid length") {
+        return "Invalid code format. Check that you copied the full code.".into();
+    }
+    if lower.contains("context canceled") || lower.contains("canceled") {
+        return "Connection cancelled.".into();
+    }
+    msg.to_string()
 }
 
 /// Shared logic for Create Room / Join Room buttons.
@@ -418,8 +466,34 @@ fn connect_room_auto(
         }
     });
 
+    let countdown_weak = weak.clone();
+    let countdown_running = Arc::new(AtomicBool::new(true));
+    let countdown_flag = countdown_running.clone();
+    std::thread::spawn(move || {
+        let total_secs: u64 = 595;
+        for elapsed in 0..total_secs {
+            if !countdown_flag.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let remaining = total_secs - elapsed;
+            let mins = remaining / 60;
+            let secs = remaining % 60;
+            let msg = format!("Waiting for peer... ({}:{:02} remaining)", mins, secs);
+            let w = countdown_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(app) = w.upgrade() {
+                    if app.get_room_action() != 0 {
+                        app.set_connect_status(slint::SharedString::from(msg));
+                    }
+                }
+            });
+        }
+    });
+
     std::thread::spawn(move || unsafe {
         let res = bindings::KD_Connect();
+        countdown_running.store(false, Ordering::Relaxed);
 
         if res != 0 {
             let err = get_last_error();
@@ -454,6 +528,11 @@ fn connect_room_auto(
 }
 
 fn main() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+
     let mut ctx = ClipboardContext::new().unwrap();
 
     let _log_file = env::var("LOG_FILE").unwrap_or_default();
@@ -864,20 +943,26 @@ fn main() {
             let weak_bg = weak_disconnect.clone();
             let disc_done = disconnecting_disconnect.clone();
             std::thread::spawn(move || {
+                println!("[disconnect] calling KD_UnmountFilesystem...");
                 bindings::KD_UnmountFilesystem();
+                println!("[disconnect] KD_UnmountFilesystem done, calling KD_Disconnect...");
                 bindings::KD_Disconnect();
+                println!("[disconnect] KD_Disconnect done, scheduling UI update...");
                 let _ = slint::invoke_from_event_loop(move || {
                     disc_done.store(false, Ordering::Relaxed);
                     if let Some(app) = weak_bg.upgrade() {
-                        // Refresh fingerprint — session keys regenerated on disconnect
+                        println!("[disconnect] refreshing fingerprint...");
                         let ptr = bindings::KD_Fingerprint();
                         if !ptr.is_null() {
                             let new_fp = CStr::from_ptr(ptr).to_string_lossy().to_string();
-                            println!("New fingerprint after disconnect: {}", new_fp);
+                            println!("[disconnect] new fingerprint: {}", new_fp);
                             app.set_my_code(slint::SharedString::from(new_fp));
+                        } else {
+                            println!("[disconnect] KD_Fingerprint returned null");
                         }
                         app.set_room_action(0);
                         app.set_status_message(slint::SharedString::default());
+                        println!("[disconnect] UI update complete, back to screen 0");
                     }
                 });
             });

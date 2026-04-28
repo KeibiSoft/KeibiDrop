@@ -87,7 +87,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		logger.Info("Local mode: accepting peer fingerprint (TOFU)", "fingerprint", computed)
 		session.ExpectedPeerFingerprint = computed
 	} else if subtle.ConstantTimeCompare([]byte(computed), []byte(session.ExpectedPeerFingerprint)) != 1 {
-		logger.Error("Fingerprint missmatch")
+		logger.Error("Fingerprint mismatch")
 		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computed, session.ExpectedPeerFingerprint)
 	}
 

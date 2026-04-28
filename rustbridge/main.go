@@ -17,15 +17,21 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
+
+func init() {
+	signal.Ignore(syscall.SIGPIPE)
+}
 
 var disc *discovery.Service
 var discMu sync.Mutex

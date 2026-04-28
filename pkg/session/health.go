@@ -52,6 +52,7 @@ type HealthMonitor struct {
 	// Control
 	ctx    context.Context
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 // NewHealthMonitor creates a new health monitor with default settings.
@@ -70,17 +71,25 @@ func NewHealthMonitor(session *Session, client bindings.KeibiServiceClient, logg
 // Start begins the heartbeat monitoring loop in a goroutine.
 func (m *HealthMonitor) Start() {
 	m.ctx, m.cancel = context.WithCancel(context.Background())
+	m.done = make(chan struct{})
 	m.health.Store(int32(HealthHealthy))
 	go m.runLoop()
 	m.logger.Info("Health monitor started", "interval", m.Interval)
 }
 
-// Stop halts the health monitoring loop.
+// Stop halts the health monitoring loop and waits for it to exit.
 func (m *HealthMonitor) Stop() {
 	if m.cancel != nil {
 		m.cancel()
-		m.logger.Debug("Health monitor stopped")
 	}
+	if m.done != nil {
+		select {
+		case <-m.done:
+		case <-time.After(3 * time.Second):
+			m.logger.Warn("Health monitor stop timed out")
+		}
+	}
+	m.logger.Debug("Health monitor stopped")
 }
 
 // Health returns the current connection health state.
@@ -99,6 +108,7 @@ func (m *HealthMonitor) AvgRTT() time.Duration {
 }
 
 func (m *HealthMonitor) runLoop() {
+	defer close(m.done)
 	ticker := time.NewTicker(m.Interval)
 	defer ticker.Stop()
 

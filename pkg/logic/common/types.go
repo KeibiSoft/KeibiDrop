@@ -264,6 +264,7 @@ func (kd *KeibiDrop) Start() {
 // ready for the next CreateRoom/JoinRoom. Thread-safe.
 func (kd *KeibiDrop) Stop() {
 	logger := kd.logger.With("method", "stop")
+	logger.Info("Stop: entered", "running", kd.running.Load(), "isFUSE", kd.IsFUSE, "fsNil", kd.FS == nil)
 	kd.mu.Lock()
 	if !kd.running.Load() {
 		kd.mu.Unlock()
@@ -278,6 +279,7 @@ func (kd *KeibiDrop) Stop() {
 	if cancel != nil {
 		cancel()
 	}
+	logger.Info("Stop: waiting on stopDone channel...")
 	<-done
 	logger.Info("Stop: completed")
 }
@@ -311,23 +313,45 @@ func (kd *KeibiDrop) Run() {
 	for {
 		select {
 		case <-kd.ctx.Done():
-			logger.Info("Stopping KeibiDrop run instance (ctx cancelled)")
+			logger.Info("Stopping KeibiDrop run instance (ctx cancelled)", "running", kd.running.Load(), "fsNil", kd.FS == nil)
 			kd.StopConnectionResilience()
-			// Nil out managers so late health-monitor callbacks are no-ops.
 			kd.HealthMonitor = nil
 			kd.ReconnectManager = nil
 			kd.RelayKeepalive = nil
 			if kd.FS != nil {
+				logger.Info("Run loop: unmounting FS")
 				kd.FS.Unmount()
 				kd.FS = nil
+			} else {
+				logger.Info("Run loop: FS already nil, skipping unmount")
 			}
-			if kd.grpcServer != nil {
-				kd.grpcServer.Stop() // Force stop — GracefulStop blocks on open streams.
+			if srv := kd.grpcServer; srv != nil {
 				kd.grpcServer = nil
+				logger.Info("Run loop: stopping gRPC server")
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					srv.Stop()
+				}()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					logger.Warn("Run loop: gRPC server stop timed out")
+				}
 			}
-			if kd.grpcClientConn != nil {
-				kd.grpcClientConn.Close()
+			if conn := kd.grpcClientConn; conn != nil {
 				kd.grpcClientConn = nil
+				logger.Info("Run loop: closing gRPC client conn")
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					conn.Close()
+				}()
+				select {
+				case <-done:
+				case <-time.After(3 * time.Second):
+					logger.Warn("Run loop: gRPC client close timed out")
+				}
 			}
 			kd.KDClient = nil
 			kd.KDSvc = nil
@@ -337,6 +361,7 @@ func (kd *KeibiDrop) Run() {
 			// Permanent shutdown — close listener and exit.
 			select {
 			case <-kd.shutdown:
+				logger.Info("Run loop: shutdown channel closed, doing permanent shutdown")
 				if kd.listener != nil {
 					kd.listener.Close()
 					kd.listener = nil
@@ -417,14 +442,15 @@ func (kd *KeibiDrop) Run() {
 				// If we were asked to stop while Mount() was blocking,
 				// don't stay running — the ctx.Done handler will clean up.
 				if kd.FS == nil && kd.IsFUSE {
-					logger.Info("FS externally unmounted during mount")
+					logger.Info("FS externally unmounted during mount, looping back", "running", kd.running.Load())
 					continue
 				}
 				select {
 				case <-kd.ctx.Done():
-					logger.Info("Context cancelled during mount")
+					logger.Info("Context cancelled during mount, looping back", "running", kd.running.Load())
 					continue
 				default:
+					logger.Info("Mount returned, context still active, looping back", "running", kd.running.Load())
 				}
 			}
 		}

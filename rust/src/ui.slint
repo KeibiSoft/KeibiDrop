@@ -823,16 +823,25 @@ export component MainWindow inherits Window {
         if root.peer_code_added: Text {
             x: 357px;
             y: 390px;
-            text: "Code added";
+            text: "Peer code added";
             color: #22c55e;
             font-size: 13px;
         }
         if root.peer_code_error: Text {
             x: 357px;
             y: 390px;
-            text: "X invalid code";
+            text: "Invalid code. Check that you copied the full code from your peer.";
             color: #d97706;
-            font-size: 13px;
+            font-size: 12px;
+            width: 300px;
+            wrap: word-wrap;
+        }
+        if !root.peer_code_added && !root.peer_code_error && !root.local_mode: Text {
+            x: 357px;
+            y: 390px;
+            text: "Paste the code your peer sent you";
+            color: #555;
+            font-size: 12px;
         }
 
         // Card 2: Your Code
@@ -861,6 +870,17 @@ export component MainWindow inherits Window {
             active: root.room_action != 0;
             enabled: root.room_action == 0 && root.next_enabled && root.peer_code_added;
             clicked => { root.connect_pressed() }
+        }
+
+        // Connect explanation (only when idle)
+        if !root.local_mode && root.room_action == 0: Text {
+            x: 868px;
+            y: 495px;
+            width: 200px;
+            text: "Both peers press Connect.\nRoles are determined automatically.";
+            color: #555;
+            font-size: 11px;
+            wrap: word-wrap;
         }
 
         // Status text while connecting
@@ -953,6 +973,16 @@ export component MainWindow inherits Window {
                 wrap: word-wrap;
                 vertical-alignment: center;
             }
+
+            if !root.local_mode: Text {
+                x: 44px;
+                y: 28px;
+                width: 210px;
+                text: "Same WiFi? Toggle to find your peer automatically.";
+                color: #444;
+                font-size: 10px;
+                wrap: word-wrap;
+            }
         }
 
         // Discovery info (shown when local mode is on)
@@ -1020,23 +1050,25 @@ export component MainWindow inherits Window {
             font-size: 12px;
         }
         if root.error_message != "": Rectangle {
-            x: 868px;
-            y: root.room_action != 0 ? 590px : 636px;
-            width: 161px;
-            height: 40px;
+            x: 261px;
+            y: root.room_action != 0 ? 560px : 660px;
+            width: 580px;
+            height: 44px;
             border-radius: 7px;
-            background: rgba(239,68,68,0.10);
+            background: rgba(239,68,68,0.08);
             border-width: 0.5px;
-            border-color: rgba(239,68,68,0.30);
+            border-color: rgba(239,68,68,0.25);
 
             Text {
-                width: parent.width;
+                x: 12px;
+                width: parent.width - 24px;
                 height: parent.height;
                 text: root.error_message;
                 color: #ef4444;
                 font-size: 12px;
-                horizontal-alignment: center;
+                horizontal-alignment: left;
                 vertical-alignment: center;
+                wrap: word-wrap;
                 overflow: elide;
             }
         }
