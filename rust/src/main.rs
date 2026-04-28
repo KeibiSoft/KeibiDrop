@@ -943,26 +943,18 @@ fn main() {
             let weak_bg = weak_disconnect.clone();
             let disc_done = disconnecting_disconnect.clone();
             std::thread::spawn(move || {
-                println!("[disconnect] calling KD_UnmountFilesystem...");
                 bindings::KD_UnmountFilesystem();
-                println!("[disconnect] KD_UnmountFilesystem done, calling KD_Disconnect...");
                 bindings::KD_Disconnect();
-                println!("[disconnect] KD_Disconnect done, scheduling UI update...");
                 let _ = slint::invoke_from_event_loop(move || {
                     disc_done.store(false, Ordering::Relaxed);
                     if let Some(app) = weak_bg.upgrade() {
-                        println!("[disconnect] refreshing fingerprint...");
                         let ptr = bindings::KD_Fingerprint();
                         if !ptr.is_null() {
                             let new_fp = CStr::from_ptr(ptr).to_string_lossy().to_string();
-                            println!("[disconnect] new fingerprint: {}", new_fp);
                             app.set_my_code(slint::SharedString::from(new_fp));
-                        } else {
-                            println!("[disconnect] KD_Fingerprint returned null");
                         }
                         app.set_room_action(0);
                         app.set_status_message(slint::SharedString::default());
-                        println!("[disconnect] UI update complete, back to screen 0");
                     }
                 });
             });

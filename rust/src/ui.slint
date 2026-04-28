@@ -872,31 +872,30 @@ export component MainWindow inherits Window {
             clicked => { root.connect_pressed() }
         }
 
-        // Connect explanation (only when idle)
-        if !root.local_mode && root.room_action == 0: Text {
+        // Connect explanation (only when idle, not connecting, not local mode)
+        if !root.local_mode && root.room_action == 0 && root.peer_code_added: Text {
             x: 868px;
-            y: 495px;
+            y: 497px;
             width: 200px;
-            text: "Both peers press Connect.\nRoles are determined automatically.";
+            text: "Both peers press Connect.";
             color: #555;
             font-size: 11px;
-            wrap: word-wrap;
         }
 
-        // Status text while connecting
-        if root.room_action != 0 && root.connect_status != "": Text {
+        // Status text while connecting (countdown timer)
+        if root.room_action != 0: Text {
             x: 868px;
-            y: 500px;
+            y: 497px;
             width: 340px;
-            text: root.connect_status;
+            text: root.connect_status != "" ? root.connect_status : "Connecting...";
             color: #aaa;
             font-size: 12px;
         }
 
-        // Cancel button
+        // Cancel button (while connecting)
         if root.room_action != 0: PillButton {
             x: 868px;
-            y: 525px;
+            y: 520px;
             text: "Cancel";
             clicked => { root.cancel_connect_pressed() }
         }
@@ -974,7 +973,7 @@ export component MainWindow inherits Window {
                 vertical-alignment: center;
             }
 
-            if !root.local_mode: Text {
+            if !root.local_mode && root.room_action == 0: Text {
                 x: 44px;
                 y: 28px;
                 width: 210px;
@@ -985,8 +984,8 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Discovery info (shown when local mode is on)
-        if root.local_mode && root.discovery_name != "": Text {
+        // Discovery info (shown when local mode is on and not connecting)
+        if root.local_mode && root.discovery_name != "" && root.room_action == 0: Text {
             x: 868px;
             y: 636px;
             text: "You appear as: " + root.discovery_name;
@@ -994,7 +993,7 @@ export component MainWindow inherits Window {
             font-size: 12px;
         }
 
-        if root.local_mode && root.discovered_peers.length > 0: Text {
+        if root.local_mode && root.discovered_peers.length > 0 && root.room_action == 0: Text {
             x: 868px;
             y: 656px;
             text: "Nearby devices:";
@@ -1008,6 +1007,7 @@ export component MainWindow inherits Window {
             width: 250px;
             height: 28px;
             border-radius: 6px;
+            visible: root.room_action == 0;
             background: peer-touch.has-hover ? #333 : #2a2a2a;
 
             Text {
@@ -1033,7 +1033,7 @@ export component MainWindow inherits Window {
             }
         }
 
-        if root.local_mode && root.discovered_peers.length == 0: Text {
+        if root.local_mode && root.discovered_peers.length == 0 && root.room_action == 0: Text {
             x: 868px;
             y: 656px;
             text: "Searching for devices...";
@@ -1041,17 +1041,17 @@ export component MainWindow inherits Window {
             font-size: 12px;
         }
 
-        // Status / error message
-        if root.status_message != "" && root.error_message == "": Text {
+        // Status message (only when NOT connecting; connecting state uses connect_status above)
+        if root.status_message != "" && root.error_message == "" && root.room_action == 0: Text {
             x: 868px;
-            y: root.room_action != 0 ? 547px : 636px + (root.local_mode ? 80px : 0px);
+            y: 636px + (root.local_mode ? 80px : 0px);
             text: root.status_message;
             color: #94a3b8;
             font-size: 12px;
         }
         if root.error_message != "": Rectangle {
             x: 261px;
-            y: root.room_action != 0 ? 560px : 660px;
+            y: 660px;
             width: 580px;
             height: 44px;
             border-radius: 7px;
