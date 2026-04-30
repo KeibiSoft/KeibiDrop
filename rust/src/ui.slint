@@ -129,7 +129,7 @@ component DataRectangle inherits Rectangle {
         y: 120px;
         width: parent.width - 86px;
         text: root.helperText;
-        color: #6A6A6A;
+        color: #aaa;
         font-size: 12px;
         wrap: word-wrap;
     }
@@ -859,7 +859,7 @@ export component MainWindow inherits Window {
             x: 357px;
             y: 390px;
             text: "Paste the code your peer sent you";
-            color: #555;
+            color: #aaa;
             font-size: 12px;
         }
 
@@ -897,7 +897,7 @@ export component MainWindow inherits Window {
             y: 497px;
             width: 200px;
             text: "Both peers press Connect.";
-            color: #555;
+            color: #aaa;
             font-size: 11px;
         }
 
@@ -959,7 +959,7 @@ export component MainWindow inherits Window {
 
                 fuse-hint-text := Text {
                     text: root.fuse_install_hint;
-                    color: fuse-hint-touch.has-hover ? #888 : #555;
+                    color: fuse-hint-touch.has-hover ? #ccc : #aaa;
                     font-size: 11px;
                 }
                 fuse-hint-touch := TouchArea {
@@ -1003,11 +1003,11 @@ export component MainWindow inherits Window {
 
             if !root.local_mode && root.room_action == 0: Text {
                 x: 44px;
-                y: 28px;
+                y: 24px;
                 width: 210px;
                 text: "Same WiFi? Toggle to find your peer automatically.";
-                color: #444;
-                font-size: 10px;
+                color: #aaa;
+                font-size: 12px;
                 wrap: word-wrap;
             }
         }
@@ -1065,7 +1065,7 @@ export component MainWindow inherits Window {
             x: 868px;
             y: 656px;
             text: "Searching for devices...";
-            color: #666;
+            color: #aaa;
             font-size: 12px;
         }
 
@@ -1340,7 +1340,7 @@ export component MainWindow inherits Window {
 
             Text {
                 text: "Files stream on access. Open videos, documents, or code without waiting for the full download.";
-                color: #666;
+                color: #aaa;
                 font-size: 12px;
                 horizontal-alignment: center;
             }
@@ -1457,7 +1457,7 @@ export component MainWindow inherits Window {
             x: 20px;
             y: parent.height - 28px;
             text: "keibidrop.com";
-            color: #555;
+            color: #aaa;
             font-size: 11px;
         }
     }
@@ -1489,7 +1489,7 @@ export component MainWindow inherits Window {
         x: parent.width - self.width - 16px;
         y: parent.height - self.height - 12px;
         text: root.version_text;
-        color: #666666;
+        color: #aaa;
         font-size: 11px;
         font-family: "Inter";
     }
