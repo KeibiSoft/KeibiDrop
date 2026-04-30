@@ -320,8 +320,17 @@ func (kd *KeibiDrop) Run() {
 				kd.FS.Unmount()
 				kd.FS = nil
 			}
-			kd.grpcServer = nil
-			kd.grpcClientConn = nil
+			// Safe to Stop()/Close() here: handleNotifyDisconnect waits
+			// grpcDisconnectGraceDelay before cancelling the context, so the
+			// in-flight DISCONNECT RPC response has flushed. See #122.
+			if kd.grpcServer != nil {
+				kd.grpcServer.Stop()
+				kd.grpcServer = nil
+			}
+			if kd.grpcClientConn != nil {
+				kd.grpcClientConn.Close()
+				kd.grpcClientConn = nil
+			}
 			kd.KDClient = nil
 			kd.KDSvc = nil
 			kd.session = nil

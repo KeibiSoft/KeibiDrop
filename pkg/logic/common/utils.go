@@ -549,7 +549,31 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 	}
 }
 
+// grpcDisconnectGraceDelay is the wait between a peer's Notify(DISCONNECT)
+// arriving and our own context cancellation. The DISCONNECT handler returns
+// a response on the same gRPC server we then tear down; without this wait
+// the teardown races the response write and either crashes the server (the
+// original bug) or, post-#121, leaks the Serve() and ClientConn maintenance
+// goroutines once Stop()/Close() are restored on the cleanup path. See #122.
 //
+// Declared as var (not const) so tests can shrink it.
+var grpcDisconnectGraceDelay = 250 * time.Millisecond
+
+// handleNotifyDisconnect runs the post-DISCONNECT teardown: unmount FUSE
+// first (so Run()'s Start handler can return), then sleep the grace window
+// to let the in-flight DISCONNECT RPC response flush before we cancel the
+// context (which the Run() ctx.Done branch uses to call grpcServer.Stop()
+// and grpcClientConn.Close()).
+//
+// MUST be invoked in a goroutine separate from the gRPC handler — the
+// handler is still writing the response when this runs.
+func (kd *KeibiDrop) handleNotifyDisconnect() {
+	if kd.FS != nil {
+		kd.FS.Unmount()
+	}
+	time.Sleep(grpcDisconnectGraceDelay)
+	kd.cancelContext()
+}
 
 func (kd *KeibiDrop) startGRPCServer() error {
 	kd.session.GRPCListener = kd.session.Session.Inbound
@@ -567,15 +591,7 @@ func (kd *KeibiDrop) startGRPCServer() error {
 		Logger:      kd.logger.With("component", "keibidrop-server"),
 		SyncTracker: kd.SyncTracker,
 		OnEvent:     kd.OnEvent,
-		OnDisconnect: func() {
-			// Unmount first to unblock Mount() in Run()'s Start handler.
-			// Mount() blocks the select loop, so ctx.Done() can't fire
-			// until Mount() returns (which only happens on Unmount).
-			if kd.FS != nil {
-				kd.FS.Unmount()
-			}
-			kd.cancelContext()
-		},
+		OnDisconnect: kd.handleNotifyDisconnect,
 	}
 
 	kd.KDSvc = svc
