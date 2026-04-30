@@ -313,7 +313,6 @@ func (kd *KeibiDrop) Run() {
 		case <-kd.ctx.Done():
 			logger.Info("Stopping KeibiDrop run instance (ctx cancelled)")
 			kd.StopConnectionResilience()
-			// Nil out managers so late health-monitor callbacks are no-ops.
 			kd.HealthMonitor = nil
 			kd.ReconnectManager = nil
 			kd.RelayKeepalive = nil
@@ -321,14 +320,8 @@ func (kd *KeibiDrop) Run() {
 				kd.FS.Unmount()
 				kd.FS = nil
 			}
-			if kd.grpcServer != nil {
-				kd.grpcServer.Stop() // Force stop — GracefulStop blocks on open streams.
-				kd.grpcServer = nil
-			}
-			if kd.grpcClientConn != nil {
-				kd.grpcClientConn.Close()
-				kd.grpcClientConn = nil
-			}
+			kd.grpcServer = nil
+			kd.grpcClientConn = nil
 			kd.KDClient = nil
 			kd.KDSvc = nil
 			kd.session = nil

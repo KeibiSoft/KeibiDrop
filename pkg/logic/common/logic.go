@@ -521,6 +521,9 @@ func (kd *KeibiDrop) SetPeerDirectAddress(addr string) error {
 	}
 	kd.session.PeerPort = port
 	kd.session.ExpectedPeerFingerprint = "TOFU"
+	if kd.IsLocalMode {
+		kd.PeerLocalAddrs = []string{kd.PeerIPv6IP}
+	}
 	return nil
 }
 
@@ -938,9 +941,13 @@ func (kd *KeibiDrop) CreateRoom() error {
 			}
 		}
 		if !useBridge {
-			kd.ConnectionMode = "direct"
+			if kd.IsLocalMode {
+				kd.ConnectionMode = "lan"
+			} else {
+				kd.ConnectionMode = "direct"
+			}
 			if kd.OnEvent != nil {
-				kd.OnEvent("connection_mode:direct")
+				kd.OnEvent("connection_mode:" + kd.ConnectionMode)
 			}
 		}
 		if useBridge {

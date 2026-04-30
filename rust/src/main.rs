@@ -78,7 +78,7 @@ fn start_file_watcher(
     current_folder: Arc<Mutex<String>>,
 ) {
     std::thread::spawn(move || {
-        println!("[FileWatcher] Started");
+        // FileWatcher running
         while running.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(500));
 
@@ -279,7 +279,7 @@ fn start_file_watcher(
                 });
             }
         }
-        println!("[FileWatcher] Stopped");
+        // FileWatcher stopped
     });
 }
 
@@ -317,9 +317,76 @@ fn get_last_error() -> String {
         if ptr.is_null() {
             "Unknown error".to_string()
         } else {
-            CStr::from_ptr(ptr).to_string_lossy().to_string()
+            let raw = CStr::from_ptr(ptr).to_string_lossy().to_string();
+            humanize_error(&raw)
         }
     }
+}
+
+fn show_toast(weak: &slint::Weak<MainWindow>, msg: &str) {
+    let w = weak.clone();
+    let m = msg.to_string();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = w.upgrade() {
+            app.set_toast_message(slint::SharedString::from(&m));
+        }
+    });
+    let w2 = weak.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(app) = w2.upgrade() {
+                app.set_toast_message(slint::SharedString::default());
+            }
+        });
+    });
+}
+
+fn humanize_error(msg: &str) -> String {
+    let lower = msg.to_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") {
+        return "Peer didn't respond in time. Check that they pressed Connect.".into();
+    }
+    if lower.contains("relay at full capacity") || lower.contains("relay at maximum capacity") {
+        return "Relay is busy. Try again in a minute, or switch to Local Network mode.".into();
+    }
+    if lower.contains("rate limit") {
+        return "Too many attempts. Wait a few minutes and try again.".into();
+    }
+    if lower.contains("session not established") {
+        return "Not connected yet. Exchange codes and press Connect first.".into();
+    }
+    if lower.contains("not found") && lower.contains("relay") {
+        return "Peer not found on relay. Check the code and try again.".into();
+    }
+    if lower.contains("not found") {
+        return "Peer not found. Check that they are online and try again.".into();
+    }
+    if lower.contains("fingerprint mismatch") {
+        return "Security check failed. The peer's identity doesn't match. Try exchanging codes again.".into();
+    }
+    if lower.contains("identical fingerprint") {
+        return "You entered your own code. Paste your peer's code, not yours.".into();
+    }
+    if lower.contains("nil pointer") || lower.contains("nil filesystem") {
+        return "Something went wrong internally. Try restarting the app.".into();
+    }
+    if lower.contains("already running") || lower.contains("already mounted") {
+        return "Already connected. Disconnect first before starting a new session.".into();
+    }
+    if lower.contains("invalid session") {
+        return "Session expired. Reconnect to continue.".into();
+    }
+    if lower.contains("connection refused") || lower.contains("no route") {
+        return "Can't reach peer. Check your internet connection or try Local Network mode.".into();
+    }
+    if lower.contains("invalid fingerprint") || lower.contains("invalid length") {
+        return "Invalid code format. Check that you copied the full code.".into();
+    }
+    if lower.contains("context canceled") || lower.contains("canceled") {
+        return "Connection cancelled.".into();
+    }
+    msg.to_string()
 }
 
 /// Shared logic for Create Room / Join Room buttons.
@@ -332,9 +399,7 @@ fn connect_room(
     target_screen: i32,
     create: bool,
 ) {
-    let action = if create { "Creating" } else { "Joining" };
     let room_action_val = if create { 1 } else { 2 };
-    println!("{} room...", action);
 
     // Set button state immediately on UI thread
     let weak_pre = weak.clone();
@@ -418,8 +483,34 @@ fn connect_room_auto(
         }
     });
 
+    let countdown_weak = weak.clone();
+    let countdown_running = Arc::new(AtomicBool::new(true));
+    let countdown_flag = countdown_running.clone();
+    std::thread::spawn(move || {
+        let total_secs: u64 = 595;
+        for elapsed in 0..total_secs {
+            if !countdown_flag.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            let remaining = total_secs - elapsed;
+            let mins = remaining / 60;
+            let secs = remaining % 60;
+            let msg = format!("Waiting for peer... ({}:{:02} remaining)", mins, secs);
+            let w = countdown_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(app) = w.upgrade() {
+                    if app.get_room_action() != 0 {
+                        app.set_connect_status(slint::SharedString::from(msg));
+                    }
+                }
+            });
+        }
+    });
+
     std::thread::spawn(move || unsafe {
         let res = bindings::KD_Connect();
+        countdown_running.store(false, Ordering::Relaxed);
 
         if res != 0 {
             let err = get_last_error();
@@ -454,6 +545,11 @@ fn connect_room_auto(
 }
 
 fn main() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+
     let mut ctx = ClipboardContext::new().unwrap();
 
     let _log_file = env::var("LOG_FILE").unwrap_or_default();
@@ -469,7 +565,8 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(26002);
 
-    // Determine if FUSE should be used (mirrors Go CLI logic)
+    // Determine if FUSE should be used (mirrors Go CLI logic).
+    // ON by default if FUSE is present, OFF if NO_FUSE env is set.
     let no_fuse_env = env::var("NO_FUSE").map(|v| !v.is_empty()).unwrap_or(false);
     let fuse_present = is_fuse_present();
     let use_fuse = fuse_present && !no_fuse_env;
@@ -708,6 +805,7 @@ fn main() {
 
         // Handle Copy: copy fingerprint or local address to clipboard
         let weak_copy = app.as_weak();
+        let weak_toast_copy = app.as_weak();
         let local_addr_copy = local_addr.clone();
         app.on_copy_my_code(move || {
             let text = if let Some(app) = weak_copy.upgrade() {
@@ -719,9 +817,9 @@ fn main() {
             } else {
                 my_fp.clone()
             };
-            println!("Copy pressed: {}", text);
             ctx.set_contents(text)
                 .expect("My operating system hates me");
+            show_toast(&weak_toast_copy, "Copied to clipboard");
         });
 
         // Create/Join Room setup
@@ -796,7 +894,7 @@ fn main() {
         // Handle Cancel (abort room creation/join)
         let weak_cancel = app.as_weak();
         app.on_cancel_connect_pressed(move || {
-            println!("Cancel connect pressed");
+            
             bindings::KD_UnmountFilesystem();
             bindings::KD_Disconnect();
             if let Some(app) = weak_cancel.upgrade() {
@@ -811,7 +909,7 @@ fn main() {
         let disconnect_confirmed = Arc::new(AtomicBool::new(false));
         let disconnect_confirmed_inner = disconnect_confirmed.clone();
         app.on_export_logs_pressed(move || {
-            println!("Export logs pressed");
+            
             std::thread::spawn(move || {
                 if let Some(dest) = rfd::FileDialog::new()
                     .set_file_name("keibidrop-sanitized.log")
@@ -869,11 +967,9 @@ fn main() {
                 let _ = slint::invoke_from_event_loop(move || {
                     disc_done.store(false, Ordering::Relaxed);
                     if let Some(app) = weak_bg.upgrade() {
-                        // Refresh fingerprint — session keys regenerated on disconnect
                         let ptr = bindings::KD_Fingerprint();
                         if !ptr.is_null() {
                             let new_fp = CStr::from_ptr(ptr).to_string_lossy().to_string();
-                            println!("New fingerprint after disconnect: {}", new_fp);
                             app.set_my_code(slint::SharedString::from(new_fp));
                         }
                         app.set_room_action(0);
@@ -929,29 +1025,32 @@ fn main() {
 
         // Handle Add File: native file picker (multi-select) → copy to save folder → KD_AddFile
         let save_path_add = to_save.clone();
+        let weak_toast_add = app.as_weak();
         app.on_add_file_pressed(move || {
-            println!("Add file pressed");
             let save_path = save_path_add.clone();
+            let weak = weak_toast_add.clone();
             std::thread::spawn(move || {
                 if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                    let count = paths.len();
                     for path in paths {
                         let path_str = path.to_string_lossy().to_string();
-                        println!("Selected file: {}", path_str);
-                        // Copy to save folder for safekeeping
                         let _ = std::fs::create_dir_all(&save_path);
                         let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
                         let dest = format!("{}/{}", save_path, filename);
                         if let Err(e) = std::fs::copy(&path_str, &dest) {
                             eprintln!("Failed to copy file to save folder: {}", e);
                         }
-                        let c_path = CString::new(path_str.clone()).unwrap();
+                        let c_path = CString::new(path_str).unwrap();
                         let res = bindings::KD_AddFile(c_path.into_raw());
                         if res != 0 {
                             let err = get_last_error();
                             eprintln!("Failed to add file: {}", err);
-                        } else {
-                            println!("File added: {}", path_str);
                         }
+                    }
+                    if count == 1 {
+                        show_toast(&weak, "File shared with peer");
+                    } else if count > 1 {
+                        show_toast(&weak, &format!("{} files shared with peer", count));
                     }
                 }
             });
@@ -978,7 +1077,7 @@ fn main() {
                 }
             }
 
-            println!("Saving file {} -> {}", name, local_path);
+            
 
             // Mark as downloading
             {
@@ -1009,7 +1108,6 @@ fn main() {
                     info.downloading = false;
                     if res == 0 {
                         info.saved = true;
-                        println!("Download complete: {}", name);
                     } else {
                         let err = get_last_error();
                         eprintln!("Download failed for {}: {}", name, err);
@@ -1052,7 +1150,7 @@ fn main() {
                             info.paused = false;
                             if res == 0 {
                                 info.saved = true;
-                                println!("Download complete (resumed): {}", name_clone);
+                                
                             } else {
                                 let err = get_last_error();
                                 eprintln!("Download failed for {}: {}", name_clone, err);
@@ -1096,9 +1194,8 @@ fn main() {
         // Handle Save All: save every remote unsaved file
         let downloads_all = downloads.clone();
         let save_path_all = to_save.clone();
+        let weak_toast_all = app.as_weak();
         app.on_save_all_pressed(move || {
-            // Collect remote file names that haven't been saved yet
-            // Use same name format as file watcher: trim leading "/" but keep subdirs
             let file_count = bindings::KD_GetFileCount();
             let mut to_save_names: Vec<String> = Vec::new();
             for i in 0..file_count {
@@ -1108,7 +1205,6 @@ fn main() {
                 }
                 let raw = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
                 let name = raw.trim_start_matches('/').to_string();
-                // Skip already-saved or currently-downloading
                 let dl = downloads_all.lock().unwrap();
                 let dominated = dl.get(&name).map_or(false, |d| d.saved || d.downloading);
                 drop(dl);
@@ -1116,7 +1212,12 @@ fn main() {
                     to_save_names.push(name);
                 }
             }
-            println!("Save All: {} files to save", to_save_names.len());
+            let total = to_save_names.len();
+            if total == 0 {
+                show_toast(&weak_toast_all, "All files already saved");
+                return;
+            }
+            show_toast(&weak_toast_all, &format!("Downloading {} files...", total));
 
             let downloads = downloads_all.clone();
             let base = save_path_all.clone();
@@ -1155,7 +1256,7 @@ fn main() {
                         info.downloading = false;
                         if res == 0 {
                             info.saved = true;
-                            println!("Download complete: {}", n);
+                            
                         } else {
                             let err = get_last_error();
                             eprintln!("Download failed for {}: {}", n, err);
@@ -1175,6 +1276,15 @@ fn main() {
             if let Some(app) = weak_exit.upgrade() {
                 let _ = app.hide();
             }
+        });
+
+        app.on_open_fuse_install(|| {
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg("https://macfuse.github.io/").spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg("https://github.com/libfuse/libfuse").spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("explorer").arg("https://winfsp.dev/").spawn();
         });
 
         // Drag-and-drop: intercept winit events for OS file drops
