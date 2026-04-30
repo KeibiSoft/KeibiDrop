@@ -283,7 +283,7 @@ component PillButton inherits Rectangle {
     animate border-color { duration: 150ms; }
 }
 
-// Small outline button (Report problem, ?, X)
+// Small outline button (Save Log, ?, X)
 component SmallOutlineButton inherits Rectangle {
     in-out property <string> text: "?";
     callback clicked;
@@ -1392,7 +1392,7 @@ export component MainWindow inherits Window {
         x: 868px;
         y: 93px;
         width: 96px;
-        text: "Report problem";
+        text: "Save Log";
         clicked => { root.export_logs_pressed() }
     }
     SmallOutlineButton {
