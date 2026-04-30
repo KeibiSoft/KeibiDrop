@@ -587,10 +587,10 @@ func (kd *KeibiDrop) startGRPCServer() error {
 	ln := NewSingleConnListener(kd.session.Session.Inbound)
 
 	svc := &service.KeibidropServiceImpl{
-		Session:     kd.session,
-		Logger:      kd.logger.With("component", "keibidrop-server"),
-		SyncTracker: kd.SyncTracker,
-		OnEvent:     kd.OnEvent,
+		Session:      kd.session,
+		Logger:       kd.logger.With("component", "keibidrop-server"),
+		SyncTracker:  kd.SyncTracker,
+		OnEvent:      kd.OnEvent,
 		OnDisconnect: kd.handleNotifyDisconnect,
 	}
 
