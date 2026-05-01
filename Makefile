@@ -149,28 +149,22 @@ package-deb: $(DIST)
 	VERSION=$(VERSION) GOARCH=$(GOARCH) nfpm package -p deb -f nfpm.yaml -t $(DIST)/
 	@echo "Created .deb in $(DIST)/"
 
-# Windows .zip — contains kd.exe + keibidrop-cli.exe + README
-WINFSP_VERSION ?= 2.1.24292
-WINFSP_MSI_URL ?= https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-$(WINFSP_VERSION).msi
-
+# Windows .zip — contains kd.exe + keibidrop-cli.exe + keibidrop.exe + README + LICENSE
+# WinFsp is NOT bundled — it's a Chocolatey dependency and installed separately.
 package-windows: $(DIST)
-	@echo "Packaging Windows installer + zip for $(GOARCH)..."
+	@echo "Packaging Windows zip for $(GOARCH)..."
 	mkdir -p $(DIST)/win-staging
 	cp kd.exe $(DIST)/win-staging/ 2>/dev/null || cp kd $(DIST)/win-staging/kd.exe
 	cp keibidrop-cli.exe $(DIST)/win-staging/ 2>/dev/null || cp keibidrop-cli $(DIST)/win-staging/keibidrop-cli.exe
 	cp rust/target/release/keibidrop-rust.exe $(DIST)/win-staging/keibidrop.exe 2>/dev/null || true
-	cp README.md LICENSE $(DIST)/win-staging/
-	cp assets/icons/keibidrop.ico $(DIST)/win-staging/
-	@echo "Downloading WinFsp $(WINFSP_VERSION)..."
-	curl -sL -o $(DIST)/win-staging/winfsp.msi "$(WINFSP_MSI_URL)" || echo "Warning: WinFsp download failed"
-	# Generate Inno Setup script
-	VERSION=$(VERSION) envsubst < installer/windows/keibidrop.iss.tmpl > $(DIST)/win-staging/keibidrop.iss
-	# Build installer if iscc is available (Inno Setup), otherwise fall back to zip
-	cd $(DIST)/win-staging && (iscc keibidrop.iss 2>/dev/null && cp Output/*.exe ../  || \
-	  (echo "Inno Setup not found, creating zip instead" && \
-	   zip -r ../keibidrop-$(VERSION)-windows-$(GOARCH).zip *.exe *.msi README.md LICENSE))
+	cp README.md LICENSE DUAL-LICENSE.md $(DIST)/win-staging/
+ifeq ($(GOOS),windows)
+	powershell.exe -Command "Compress-Archive -Path '$(DIST)/win-staging/*' -DestinationPath '$(DIST)/keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip' -Force"
+else
+	cd $(DIST)/win-staging && zip -r ../keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip .
+endif
 	rm -rf $(DIST)/win-staging
-	@echo "Created Windows package in $(DIST)/"
+	@echo "Created $(DIST)/keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip"
 
 # Chocolatey .nupkg — requires choco pack + package-windows first
 # Choco requires semver without 'v' prefix (e.g. 0.1.1, not v0.1.1).
@@ -178,7 +172,7 @@ CHOCO_VERSION := $(patsubst v%,%,$(VERSION))
 
 package-choco: $(DIST)
 	@echo "Packaging Chocolatey .nupkg ($(CHOCO_VERSION))..."
-	$(eval WIN_ZIP := $(DIST)/keibidrop-$(VERSION)-windows-$(GOARCH).zip)
+	$(eval WIN_ZIP := $(DIST)/keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip)
 	$(eval SHA256 := $(shell shasum -a 256 $(WIN_ZIP) 2>/dev/null | cut -d' ' -f1))
 	@test -n "$(SHA256)" || (echo "ERROR: $(WIN_ZIP) not found — run 'make package-windows' first" && exit 1)
 	VERSION=$(CHOCO_VERSION) envsubst '$$VERSION' < choco/keibidrop.nuspec.tmpl > $(DIST)/keibidrop.nuspec
@@ -192,6 +186,20 @@ package-choco: $(DIST)
 checksums: $(DIST)
 	cd $(DIST) && shasum -a 256 keibidrop-* > SHA256SUMS
 	@echo "Created $(DIST)/SHA256SUMS"
+
+# Local choco install/uninstall test — validates the package before pushing.
+# Requires: make package-choco first. Runs elevated (UAC prompt).
+test-choco: package-choco
+	@echo "=== Testing Chocolatey package locally ==="
+	@echo "Installing keibidrop from local nupkg..."
+	powershell.exe -Command "Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList \
+	  '-NoProfile -Command \"choco install keibidrop -s C:\\Users\\milam\\Desktop\\code\\KeibiDrop\\dist -y --force 2>&1 | Tee-Object C:\\temp\\choco_test.log; \
+	  Write-Host \\\"--- Verifying binaries ---\\\"; \
+	  if (Get-Command keibidrop-cli.exe -ErrorAction SilentlyContinue) { keibidrop-cli.exe --version } else { Write-Host \\\"FAIL: keibidrop-cli.exe not in PATH\\\" }; \
+	  Write-Host \\\"--- Uninstalling ---\\\"; \
+	  choco uninstall keibidrop -y 2>&1 | Tee-Object -Append C:\\temp\\choco_test.log\"'"
+	@echo "=== Test log at C:\\temp\\choco_test.log ==="
+	@cat /c/temp/choco_test.log 2>/dev/null | tr -d '\0' || true
 
 clean-dist:
 	rm -rf $(DIST)

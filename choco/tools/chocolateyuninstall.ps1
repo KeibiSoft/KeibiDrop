@@ -2,9 +2,7 @@ $ErrorActionPreference = 'Stop'
 
 $toolsDir = "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)"
 
-# Remove from PATH
-Get-ChildItem $toolsDir -Directory -Filter "keibidrop-*" | ForEach-Object {
-  Uninstall-ChocolateyPath -PathToUninstall $_.FullName -PathType 'Machine'
-}
+# Remove from PATH (matches what Install-ChocolateyPath added in install script)
+Uninstall-ChocolateyPath -PathToUninstall $toolsDir -PathType 'Machine'
 
 Write-Host "KeibiDrop uninstalled."
