@@ -1134,78 +1134,82 @@ export component MainWindow inherits Window {
             x: 261px;
             y: 660px;
             width: 580px;
-            height: Math.min(root.contacts.length, 3) * 36px + 28px;
+            height: Math.min(root.contacts.length * 36 + 28, 136) * 1px;
             border-radius: 7px;
             background: #262626;
             border-width: 0.5px;
             border-color: rgba(255,255,255,0.10);
+            clip: true;
 
             Text {
                 x: 12px;
                 y: 6px;
-                text: "Contacts";
+                text: "Contacts (" + root.contacts.length + ")";
                 color: #888;
                 font-size: 11px;
                 font-weight: 600;
             }
 
-            for contact[idx] in root.contacts: Rectangle {
+            ScrollView {
                 x: 12px;
-                y: 24px + idx * 36px;
+                y: 24px;
                 width: parent.width - 24px;
-                height: 32px;
-                border-radius: 6px;
-                visible: idx < 3;
-                background: contact-row-touch.has-hover ? #333 : transparent;
+                height: parent.height - 28px;
+                viewport-height: root.contacts.length * 36px;
 
-                // Online dot
-                Rectangle {
+                for contact[idx] in root.contacts: Rectangle {
                     x: 0;
-                    y: (parent.height - 8px) / 2;
-                    width: 8px;
-                    height: 8px;
-                    border-radius: 4px;
-                    background: contact.online ? #22c55e : #555;
-                }
+                    y: idx * 36px;
+                    width: parent.width - 12px;
+                    height: 32px;
+                    border-radius: 6px;
+                    background: contact-row-touch.has-hover ? #333 : transparent;
 
-                // Name
-                Text {
-                    x: 16px;
-                    y: 0;
-                    height: parent.height;
-                    text: contact.name;
-                    color: white;
-                    font-size: 13px;
-                    vertical-alignment: center;
-                }
+                    Rectangle {
+                        x: 0;
+                        y: (parent.height - 8px) / 2;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: contact.online ? #22c55e : #555;
+                    }
 
-                // Truncated fingerprint
-                Text {
-                    x: 200px;
-                    y: 0;
-                    width: 200px;
-                    height: parent.height;
-                    text: contact.fingerprint;
-                    color: #555;
-                    font-size: 11px;
-                    font-family: "monospace";
-                    vertical-alignment: center;
-                    overflow: elide;
-                }
+                    Text {
+                        x: 16px;
+                        y: 0;
+                        height: parent.height;
+                        text: contact.name;
+                        color: white;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
 
-                // Connect button
-                Text {
-                    x: parent.width - 60px;
-                    y: 0;
-                    height: parent.height;
-                    text: "Connect";
-                    color: #3b82f6;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                }
+                    Text {
+                        x: 200px;
+                        y: 0;
+                        width: 200px;
+                        height: parent.height;
+                        text: contact.fingerprint;
+                        color: #555;
+                        font-size: 11px;
+                        font-family: "monospace";
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
 
-                contact-row-touch := TouchArea {
-                    clicked => { root.connect-to-contact(idx); }
+                    Text {
+                        x: parent.width - 60px;
+                        y: 0;
+                        height: parent.height;
+                        text: "Connect";
+                        color: #3b82f6;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+
+                    contact-row-touch := TouchArea {
+                        clicked => { root.connect-to-contact(idx); }
+                    }
                 }
             }
         }
@@ -1303,15 +1307,21 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
-        }
-
-        // Save Contact button (only if peer has persistent identity and not already saved)
-        if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: SmallOutlineButton {
-            x: 610px;
-            y: 93px;
-            width: 80px;
-            text: "Save Peer";
-            clicked => { root.save_contact_visible = true; }
+            if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: Rectangle {
+                width: save-peer-label.preferred-width;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+                save-peer-label := Text {
+                    text: "Save Peer";
+                    color: save-peer-touch.has-hover ? #60a5fa : #3b82f6;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                save-peer-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.save_contact_visible = true; }
+                }
+            }
         }
 
         // Save All button - aligned with global top-right buttons
