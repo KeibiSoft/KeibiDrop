@@ -143,6 +143,22 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	kd = instance
 	kd.Cancel = c
 	kd.OnEvent = pushEvent
+
+	if !cfg.Incognito {
+		if err := kd.EnablePersistentIdentity(config.ConfigDir()); err != nil {
+			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
+		}
+	} else {
+		kd.Incognito = true
+	}
+
+	if kd.BridgeAddr == "" && cfg.BridgeAddr != "" {
+		kd.BridgeAddr = cfg.BridgeAddr
+	}
+	if cfg.StrictMode {
+		kd.StrictMode = true
+	}
+
 	go kd.Run()
 	return 0
 }
@@ -773,6 +789,142 @@ func KD_SanitizeLogs(destPath *C.char) C.int {
 	}
 	dest := C.GoString(destPath)
 	if err := common.SanitizeLogsToFile(logPath, dest); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+// ========== IDENTITY & CONTACTS ==========
+
+//export KD_IsIncognito
+func KD_IsIncognito() C.int {
+	if kd == nil || kd.Incognito {
+		return 1
+	}
+	return 0
+}
+
+//export KD_SetIncognito
+func KD_SetIncognito(v C.int) {
+	if kd == nil {
+		return
+	}
+	kd.Incognito = v != 0
+}
+
+//export KD_IsPeerPersistent
+func KD_IsPeerPersistent() C.int {
+	if kd == nil || !kd.IsPeerPersistent() {
+		return 0
+	}
+	return 1
+}
+
+//export KD_GetContactCount
+func KD_GetContactCount() C.int {
+	if kd == nil || kd.AddressBook == nil {
+		return 0
+	}
+	return C.int(kd.AddressBook.Count())
+}
+
+//export KD_GetContactName
+func KD_GetContactName(index C.int) *C.char {
+	if kd == nil || kd.AddressBook == nil {
+		return C.CString("")
+	}
+	contacts := kd.AddressBook.List()
+	i := int(index)
+	if i < 0 || i >= len(contacts) {
+		return C.CString("")
+	}
+	return C.CString(contacts[i].Name)
+}
+
+//export KD_GetContactFingerprint
+func KD_GetContactFingerprint(index C.int) *C.char {
+	if kd == nil || kd.AddressBook == nil {
+		return C.CString("")
+	}
+	contacts := kd.AddressBook.List()
+	i := int(index)
+	if i < 0 || i >= len(contacts) {
+		return C.CString("")
+	}
+	return C.CString(contacts[i].Fingerprint)
+}
+
+//export KD_AddContact
+func KD_AddContact(name, fingerprint *C.char) C.int {
+	if kd == nil || kd.AddressBook == nil {
+		setLastError(fmt.Errorf("no address book"))
+		return -1
+	}
+	if err := kd.AddressBook.Add(C.GoString(name), C.GoString(fingerprint)); err != nil {
+		setLastError(err)
+		return -1
+	}
+	if err := kd.AddressBook.Save(); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+//export KD_RemoveContact
+func KD_RemoveContact(fingerprint *C.char) C.int {
+	if kd == nil || kd.AddressBook == nil {
+		setLastError(fmt.Errorf("no address book"))
+		return -1
+	}
+	if err := kd.AddressBook.Remove(C.GoString(fingerprint)); err != nil {
+		setLastError(err)
+		return -1
+	}
+	if err := kd.AddressBook.Save(); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+//export KD_ConnectToContact
+func KD_ConnectToContact(fingerprint *C.char) C.int {
+	if kd == nil {
+		setLastError(fmt.Errorf("not initialized"))
+		return -1
+	}
+	if err := kd.ConnectToContact(C.GoString(fingerprint)); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+//export KD_GetContactOnline
+func KD_GetContactOnline(index C.int) C.int {
+	if kd == nil || kd.AddressBook == nil {
+		return 0
+	}
+	contacts := kd.AddressBook.List()
+	i := int(index)
+	if i < 0 || i >= len(contacts) {
+		return 0
+	}
+	if kd.CheckContactPresence(contacts[i].Fingerprint) {
+		return 1
+	}
+	return 0
+}
+
+//export KD_SaveCurrentPeerAsContact
+func KD_SaveCurrentPeerAsContact(name *C.char) C.int {
+	if kd == nil {
+		setLastError(fmt.Errorf("not initialized"))
+		return -1
+	}
+	if err := kd.SaveCurrentPeerAsContact(C.GoString(name)); err != nil {
 		setLastError(err)
 		return -1
 	}

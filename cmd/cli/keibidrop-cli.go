@@ -66,6 +66,15 @@ func (c *cliContext) executor(in string) {
 			fmt.Printf("Bridge:      %s\n", cfg.BridgeAddr)
 			fmt.Printf("No FUSE:     %v\n", cfg.NoFUSE)
 			fmt.Printf("Strict:      %v\n", cfg.StrictMode)
+			fmt.Printf("Incognito:   %v\n", cfg.Incognito)
+			if c.kd.Identity != nil {
+				fmt.Printf("Identity:    persistent (%s...)\n", c.kd.Identity.Fingerprint[:12])
+			} else {
+				fmt.Printf("Identity:    ephemeral\n")
+			}
+			if c.kd.AddressBook != nil {
+				fmt.Printf("Contacts:    %d saved\n", c.kd.AddressBook.Count())
+			}
 			return
 		}
 		handleShow(c.kd, target)
@@ -118,6 +127,92 @@ func (c *cliContext) executor(in string) {
 
 	case "disconnect":
 		disconnectRoom(c.kd)
+
+	case "contacts":
+		if c.kd.AddressBook == nil {
+			fmt.Println("No address book (incognito mode)")
+			return
+		}
+		contacts := c.kd.AddressBook.List()
+		if len(contacts) == 0 {
+			fmt.Println("No saved contacts.")
+			return
+		}
+		for i, ct := range contacts {
+			status := "offline"
+			if !ct.LastSeen.IsZero() {
+				status = "last seen " + ct.LastSeen.Format("2006-01-02 15:04")
+			}
+			fp := ct.Fingerprint
+			if len(fp) > 12 {
+				fp = fp[:12] + "..."
+			}
+			fmt.Printf("  [%d] %s  %s  (%s)\n", i+1, ct.Name, fp, status)
+		}
+
+	case "add-contact":
+		if len(args) < 3 {
+			fmt.Println("Usage: add-contact <name> <fingerprint>")
+			return
+		}
+		if c.kd.AddressBook == nil {
+			fmt.Println("No address book (incognito mode)")
+			return
+		}
+		name := args[1]
+		fp := strings.Join(args[2:], " ")
+		if err := c.kd.AddressBook.Add(name, fp); err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		if err := c.kd.AddressBook.Save(); err != nil {
+			fmt.Println("Error saving:", err)
+			return
+		}
+		fmt.Printf("Contact '%s' added.\n", name)
+
+	case "remove-contact":
+		if len(args) != 2 {
+			fmt.Println("Usage: remove-contact <fingerprint>")
+			return
+		}
+		if c.kd.AddressBook == nil {
+			fmt.Println("No address book (incognito mode)")
+			return
+		}
+		if err := c.kd.AddressBook.Remove(args[1]); err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		if err := c.kd.AddressBook.Save(); err != nil {
+			fmt.Println("Error saving:", err)
+			return
+		}
+		fmt.Println("Contact removed.")
+
+	case "quick-connect":
+		if len(args) != 2 {
+			fmt.Println("Usage: quick-connect <fingerprint>")
+			return
+		}
+		go func() {
+			if err := c.kd.ConnectToContact(args[1]); err != nil {
+				fmt.Println("Error:", err)
+			} else {
+				fmt.Println("Connected to contact!")
+			}
+		}()
+
+	case "save-contact":
+		if len(args) != 2 {
+			fmt.Println("Usage: save-contact <name>")
+			return
+		}
+		if err := c.kd.SaveCurrentPeerAsContact(args[1]); err != nil {
+			fmt.Println("Error:", err)
+		} else {
+			fmt.Printf("Peer saved as '%s'.\n", args[1])
+		}
 
 	case "export-logs", "sanitize-logs":
 		dest := "keibidrop-sanitized.log"
@@ -183,6 +278,11 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 		{Text: "list", Description: "List shared files"},
 		{Text: "pull", Description: "Pull file/folder from peer"},
 		{Text: "delete", Description: "Stop sharing a file/folder"},
+		{Text: "contacts", Description: "List saved contacts"},
+		{Text: "add-contact", Description: "Add contact: add-contact <name> <fp>"},
+		{Text: "remove-contact", Description: "Remove contact by fingerprint"},
+		{Text: "quick-connect", Description: "Connect to saved contact by fingerprint"},
+		{Text: "save-contact", Description: "Save current peer as contact"},
 		{Text: "exit", Description: "Exit the CLI"},
 	}
 	return prompt.FilterHasPrefix(s, d.GetWordBeforeCursor(), true)
@@ -206,6 +306,11 @@ add <filepath>               Share a file or directory
 list                         List shared files and their locations
 pull <remote> <local>        Copy file/folder from peer to local path
 delete <filepath>            Unshare a file or folder
+contacts                     List saved contacts
+add-contact <name> <fp>      Save a contact
+remove-contact <fp>          Remove a saved contact
+quick-connect <fp>           Connect to a saved contact
+save-contact <name>          Save current peer as contact
 exit                         Quit the CLI`)
 }
 
@@ -449,6 +554,12 @@ func main() {
 		logger.Error("Failed to start keibidrop", "error", err)
 		color.Red("Fatal: %v", err)
 		os.Exit(1) //nolint:gocritic
+	}
+
+	if !cfg.Incognito {
+		if err := kd.EnablePersistentIdentity(config.ConfigDir()); err != nil {
+			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
+		}
 	}
 
 	go kd.Run()

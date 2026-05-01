@@ -263,6 +263,30 @@ func ParsePeerKeys(pubMap map[string][]byte) (*PeerKeys, error) {
 	}, nil
 }
 
+// ========== IDENTITY PERSISTENCE ==========
+
+// DeriveIdentityFileKey derives a 32-byte key for encrypting the identity file on disk.
+// Uses a distinct HKDF label for domain separation from relay and session keys.
+// The input is hashed first to guarantee the 32-byte minimum for HKDF.
+func DeriveIdentityFileKey(machineEntropy []byte) ([]byte, error) {
+	h := sha512.Sum512(machineEntropy)
+	return deriveKeyInternal(sha512.New, "keibidrop-identity-file-v1", KeySize, h[:])
+}
+
+// ========== PRESENCE ==========
+
+// DerivePresenceKey derives a shared presence token from two fingerprints.
+// Both peers compute the same key (fingerprints are sorted). The relay cannot
+// link presence tokens to registration tokens (different HKDF label).
+func DerivePresenceKey(ownFingerprint, peerFingerprint string) ([]byte, error) {
+	a, b := ownFingerprint, peerFingerprint
+	if a > b {
+		a, b = b, a
+	}
+	ikm := sha512.Sum512([]byte(a + ":" + b))
+	return deriveKeyInternal(sha512.New, "keibidrop-presence-v1", KeySize, ikm[:])
+}
+
 // ========== RELAY PRIVACY ==========
 
 const roomPasswordSize = 32

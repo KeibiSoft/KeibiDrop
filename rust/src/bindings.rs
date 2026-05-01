@@ -8434,6 +8434,42 @@ extern "C" {
 extern "C" {
     pub fn KD_SanitizeLogs(destPath: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
+extern "C" {
+    pub fn KD_IsIncognito() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SetIncognito(v: ::std::os::raw::c_int);
+}
+extern "C" {
+    pub fn KD_IsPeerPersistent() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetContactCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetContactName(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetContactFingerprint(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_AddContact(
+        name: *mut ::std::os::raw::c_char,
+        fingerprint: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_RemoveContact(fingerprint: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_ConnectToContact(fingerprint: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetContactOnline(index: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SaveCurrentPeerAsContact(name: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
 pub type __builtin_va_list = [__va_list_tag; 1usize];
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
