@@ -806,11 +806,31 @@ func KD_IsIncognito() C.int {
 }
 
 //export KD_SetIncognito
-func KD_SetIncognito(v C.int) {
+func KD_SetIncognito(v C.int) *C.char {
 	if kd == nil {
-		return
+		return C.CString("")
 	}
-	kd.Incognito = v != 0
+	newFP, err := kd.ToggleIncognito(v != 0, config.ConfigDir())
+	if err != nil {
+		setLastError(err)
+		return C.CString("")
+	}
+	return C.CString(newFP)
+}
+
+//export KD_IsPeerAlreadyContact
+func KD_IsPeerAlreadyContact() C.int {
+	if kd == nil || kd.AddressBook == nil {
+		return 0
+	}
+	fp, err := kd.GetPeerFingerprint()
+	if err != nil || fp == "" || fp == "TOFU" {
+		return 0
+	}
+	if kd.AddressBook.Lookup(fp) != nil {
+		return 1
+	}
+	return 0
 }
 
 //export KD_IsPeerPersistent
