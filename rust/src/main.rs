@@ -532,12 +532,14 @@ fn connect_room_auto(
         running.store(true, Ordering::Relaxed);
         start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder.clone());
 
+        let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(app) = weak.upgrade() {
                 app.set_room_action(0);
                 app.set_status_message(slint::SharedString::default());
                 app.set_connect_status(slint::SharedString::default());
                 app.set_error_message(slint::SharedString::default());
+                app.set_peer_is_persistent(peer_persistent);
                 app.set_current_screen(target_screen);
             }
         });
@@ -1298,6 +1300,148 @@ fn main() {
             bindings::KD_Stop();
             if let Some(app) = weak_exit.upgrade() {
                 let _ = app.hide();
+            }
+        });
+
+        // ---- Identity & Contacts ----
+
+        // Populate initial contact list and incognito state
+        {
+            let is_incognito = bindings::KD_IsIncognito() != 0;
+            app.set_incognito_mode(is_incognito);
+
+            let contact_count = bindings::KD_GetContactCount();
+            let mut contacts = Vec::new();
+            for i in 0..contact_count {
+                let name_ptr = bindings::KD_GetContactName(i);
+                let fp_ptr = bindings::KD_GetContactFingerprint(i);
+                let name = if name_ptr.is_null() { String::new() } else { CStr::from_ptr(name_ptr).to_string_lossy().to_string() };
+                let fp = if fp_ptr.is_null() { String::new() } else { CStr::from_ptr(fp_ptr).to_string_lossy().to_string() };
+                if !name.is_empty() {
+                    let truncated_fp = if fp.len() > 16 { format!("{}...", &fp[..16]) } else { fp.clone() };
+                    contacts.push(ContactInfo {
+                        name: slint::SharedString::from(name),
+                        fingerprint: slint::SharedString::from(truncated_fp),
+                        online: false,
+                    });
+                }
+            }
+            let model = std::rc::Rc::new(slint::VecModel::from(contacts));
+            app.set_contacts(slint::ModelRc::from(model));
+        }
+
+        let weak_incognito = app.as_weak();
+        app.on_incognito_mode_toggled(move |enabled| {
+            bindings::KD_SetIncognito(if enabled { 1 } else { 0 });
+            if let Some(app) = weak_incognito.upgrade() {
+                if enabled {
+                    // Clear contacts display in incognito mode
+                    app.set_contacts(slint::ModelRc::default());
+                } else {
+                    // Reload contacts when leaving incognito
+                    let count = bindings::KD_GetContactCount();
+                    let mut contacts = Vec::new();
+                    for i in 0..count {
+                        let name_ptr = bindings::KD_GetContactName(i);
+                        let fp_ptr = bindings::KD_GetContactFingerprint(i);
+                        let name = if name_ptr.is_null() { String::new() } else { CStr::from_ptr(name_ptr).to_string_lossy().to_string() };
+                        let fp = if fp_ptr.is_null() { String::new() } else { CStr::from_ptr(fp_ptr).to_string_lossy().to_string() };
+                        if !name.is_empty() {
+                            let truncated_fp = if fp.len() > 16 { format!("{}...", &fp[..16]) } else { fp.clone() };
+                            contacts.push(ContactInfo {
+                                name: slint::SharedString::from(name),
+                                fingerprint: slint::SharedString::from(truncated_fp),
+                                online: false,
+                            });
+                        }
+                    }
+                    let model = std::rc::Rc::new(slint::VecModel::from(contacts));
+                    app.set_contacts(slint::ModelRc::from(model));
+                }
+            }
+        });
+
+        let weak_connect_contact = app.as_weak();
+        let watcher_running_cc = watcher_running.clone();
+        let downloads_cc = downloads.clone();
+        let save_path_cc = to_save.clone();
+        let current_folder_cc = current_folder.clone();
+        app.on_connect_to_contact(move |idx| {
+            // Get the actual fingerprint (full, not truncated) from Go
+            let fp_ptr = bindings::KD_GetContactFingerprint(idx);
+            if fp_ptr.is_null() {
+                return;
+            }
+            let fp = CStr::from_ptr(fp_ptr).to_string_lossy().to_string();
+            if fp.is_empty() {
+                return;
+            }
+
+            // Set the peer code in the UI
+            if let Some(app) = weak_connect_contact.upgrade() {
+                app.set_peer_code(slint::SharedString::from(fp.clone()));
+                app.set_peer_code_added(true);
+            }
+
+            let screen = if let Some(app) = weak_connect_contact.upgrade() {
+                if app.get_fuse_mode() { 2 } else { 1 }
+            } else { 1 };
+
+            connect_room_auto(
+                weak_connect_contact.clone(),
+                watcher_running_cc.clone(),
+                downloads_cc.clone(),
+                save_path_cc.clone(),
+                current_folder_cc.clone(),
+                screen,
+            );
+        });
+
+        let weak_save_contact = app.as_weak();
+        app.on_save_peer_as_contact(move |name| {
+            let name_str = name.to_string();
+            if name_str.is_empty() {
+                return;
+            }
+            let c_name = CString::new(name_str.clone()).unwrap();
+            let res = bindings::KD_SaveCurrentPeerAsContact(c_name.into_raw());
+            if res == 0 {
+                show_toast(&weak_save_contact, &format!("Saved as '{}'", name_str));
+            } else {
+                let err = get_last_error();
+                show_toast(&weak_save_contact, &format!("Error: {}", err));
+            }
+        });
+
+        let weak_remove_contact = app.as_weak();
+        app.on_remove_contact(move |idx| {
+            let fp_ptr = bindings::KD_GetContactFingerprint(idx);
+            if fp_ptr.is_null() {
+                return;
+            }
+            let fp = CStr::from_ptr(fp_ptr).to_string_lossy().to_string();
+            let c_fp = CString::new(fp).unwrap();
+            bindings::KD_RemoveContact(c_fp.into_raw());
+            // Refresh contact list
+            if let Some(app) = weak_remove_contact.upgrade() {
+                let count = bindings::KD_GetContactCount();
+                let mut contacts = Vec::new();
+                for i in 0..count {
+                    let name_ptr = bindings::KD_GetContactName(i);
+                    let fp_ptr = bindings::KD_GetContactFingerprint(i);
+                    let name = if name_ptr.is_null() { String::new() } else { CStr::from_ptr(name_ptr).to_string_lossy().to_string() };
+                    let fp = if fp_ptr.is_null() { String::new() } else { CStr::from_ptr(fp_ptr).to_string_lossy().to_string() };
+                    if !name.is_empty() {
+                        let truncated_fp = if fp.len() > 16 { format!("{}...", &fp[..16]) } else { fp.clone() };
+                        contacts.push(ContactInfo {
+                            name: slint::SharedString::from(name),
+                            fingerprint: slint::SharedString::from(truncated_fp),
+                            online: false,
+                        });
+                    }
+                }
+                let model = std::rc::Rc::new(slint::VecModel::from(contacts));
+                app.set_contacts(slint::ModelRc::from(model));
             }
         });
 

@@ -28,6 +28,7 @@ type Config struct {
 	BridgeAddr     string `toml:"bridge_addr"` // TCP bridge relay address
 	StrictMode     bool   `toml:"strict_mode"` // Disable data relay fallback
 	NoFUSE         bool   `toml:"no_fuse"`
+	Incognito      bool   `toml:"incognito"`
 	PrefetchOnOpen bool   `toml:"prefetch_on_open"`
 	PushOnWrite    bool   `toml:"push_on_write"`
 }
@@ -194,9 +195,12 @@ no_fuse = %v
 
 # Set to true to disable data relay fallback (direct connections only).
 strict_mode = %v
+
+# Set to true to force ephemeral keys every session (no persistent identity).
+incognito = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
-		cfg.NoFUSE, cfg.StrictMode)
+		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito)
 
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }
@@ -232,6 +236,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := envFirst("NO_FUSE", "KD_NO_FUSE"); v != "" {
 		cfg.NoFUSE = true
+	}
+	if v := envFirst("KEIBIDROP_INCOGNITO", "KD_INCOGNITO"); v != "" {
+		cfg.Incognito = true
 	}
 	if v := envFirst("KEIBIDROP_PREFETCH_ON_OPEN", "PREFETCH_ON_OPEN_ENV"); v != "" {
 		cfg.PrefetchOnOpen = true

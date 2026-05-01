@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
+	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
@@ -31,6 +33,10 @@ type KeibiDrop struct {
 	logger       *slog.Logger
 	relayClient  *http.Client
 	RelayEndoint *url.URL
+
+	Identity    *identity.DeviceIdentity
+	AddressBook *identity.AddressBook
+	Incognito   bool
 
 	IsFUSE         bool
 	IsLocalMode    bool
@@ -181,6 +187,44 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 	}
 
 	return kd, nil
+}
+
+// EnablePersistentIdentity replaces ephemeral keys with a stable device identity.
+// Must be called before CreateRoom/JoinRoom. Loads or creates identity from configDir,
+// rebuilds the session with stable keys, and loads the address book.
+func (kd *KeibiDrop) EnablePersistentIdentity(configDir string) error {
+	id, err := identity.LoadOrCreate(configDir)
+	if err != nil {
+		return fmt.Errorf("load identity: %w", err)
+	}
+
+	ab, err := identity.LoadAddressBook(configDir)
+	if err != nil {
+		return fmt.Errorf("load address book: %w", err)
+	}
+
+	outPort := kd.session.DefaultOutboundPort
+	inPort := kd.session.DefaultInboundPort
+	sess, err := session.InitSessionWithKeys(kd.logger, id.Keys, outPort, inPort)
+	if err != nil {
+		return fmt.Errorf("init session with keys: %w", err)
+	}
+
+	kd.Identity = id
+	kd.AddressBook = ab
+	kd.session = sess
+
+	kd.refreshSession = func() *session.Session {
+		s, err := session.InitSessionWithKeys(kd.logger, id.Keys, outPort, inPort)
+		if err != nil {
+			kd.logger.Error("Failed to refresh persistent session", "error", err)
+			return nil
+		}
+		return s
+	}
+
+	kd.logger.Info("Persistent identity enabled", "fingerprint", id.Fingerprint)
+	return nil
 }
 
 type PeerRegistration struct {

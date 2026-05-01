@@ -125,6 +125,13 @@ func runDaemon() {
 	kd.IsLocalMode = isLocal
 	kd.BridgeAddr = cfg.BridgeAddr
 	kd.StrictMode = cfg.StrictMode
+
+	if !cfg.Incognito {
+		if err := kd.EnablePersistentIdentity(config.ConfigDir()); err != nil {
+			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
+		}
+	}
+
 	go kd.Run()
 
 	// Listen on Unix socket
@@ -291,6 +298,76 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		}
 		return okResponse(map[string]string{"path": dest})
 
+	case "contacts":
+		if kd.AddressBook == nil {
+			return errResponse("no address book (incognito mode)")
+		}
+		contacts := kd.AddressBook.List()
+		type contactInfo struct {
+			Name        string `json:"name"`
+			Fingerprint string `json:"fingerprint"`
+			LastSeen    string `json:"last_seen,omitempty"`
+		}
+		out := make([]contactInfo, len(contacts))
+		for i, c := range contacts {
+			ci := contactInfo{Name: c.Name, Fingerprint: c.Fingerprint}
+			if !c.LastSeen.IsZero() {
+				ci.LastSeen = c.LastSeen.Format(time.RFC3339)
+			}
+			out[i] = ci
+		}
+		return okResponse(out)
+
+	case "add-contact":
+		if len(req.Args) < 2 {
+			return errResponse("usage: kd add-contact <name> <fingerprint>")
+		}
+		if kd.AddressBook == nil {
+			return errResponse("no address book (incognito mode)")
+		}
+		name := req.Args[0]
+		fp := strings.Join(req.Args[1:], "")
+		if err := kd.AddressBook.Add(name, fp); err != nil {
+			return errResponse(err.Error())
+		}
+		if err := kd.AddressBook.Save(); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"added": name})
+
+	case "remove-contact":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd remove-contact <fingerprint>")
+		}
+		if kd.AddressBook == nil {
+			return errResponse("no address book (incognito mode)")
+		}
+		if err := kd.AddressBook.Remove(req.Args[0]); err != nil {
+			return errResponse(err.Error())
+		}
+		if err := kd.AddressBook.Save(); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"removed": req.Args[0]})
+
+	case "quick-connect":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd quick-connect <fingerprint>")
+		}
+		go func() {
+			_ = kd.ConnectToContact(req.Args[0])
+		}()
+		return okResponse(map[string]string{"status": "connecting"})
+
+	case "save-contact":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd save-contact <name>")
+		}
+		if err := kd.SaveCurrentPeerAsContact(req.Args[0]); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"saved": req.Args[0]})
+
 	case "stop", "quit":
 		kd.NotifyDisconnect()
 		_ = kd.UnmountFilesystem()
@@ -365,6 +442,12 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 		data["bridge_addr"] = cfg.BridgeAddr
 		data["no_fuse"] = fmt.Sprintf("%v", cfg.NoFUSE)
 		data["strict_mode"] = fmt.Sprintf("%v", cfg.StrictMode)
+		data["incognito"] = fmt.Sprintf("%v", cfg.Incognito)
+		if kd.Identity != nil {
+			data["identity_mode"] = "persistent"
+		} else {
+			data["identity_mode"] = "ephemeral"
+		}
 	}
 
 	if len(data) == 0 {
@@ -558,6 +641,11 @@ USAGE:
   kd pull <name> [local-path]    Download a remote file.
   kd status                      Connection status and session info.
   kd disconnect                  Disconnect (keys rotate, ready for new session).
+  kd contacts                    List saved contacts (JSON array).
+  kd add-contact <name> <fp>     Save a contact.
+  kd remove-contact <fp>         Remove a saved contact.
+  kd quick-connect <fp>          Connect to a saved contact.
+  kd save-contact <name>         Save current peer as contact.
   kd stop                        Shutdown daemon.
   kd help                        Show this help.
 
@@ -569,6 +657,7 @@ ENVIRONMENT (for "kd start"):
   KD_MOUNT_PATH      FUSE mount point
   KD_NO_FUSE         Set to disable FUSE (any value)
   KD_LOG_FILE        Log file path    (default: stderr)
+  KD_INCOGNITO       Set to force ephemeral mode (any value)
   KD_SOCKET          Unix socket path (default: /tmp/kd.sock)
 
 MODES:

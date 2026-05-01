@@ -6,6 +6,13 @@ export struct DiscoveredPeer {
     addr: string,
 }
 
+// Saved contact from address book
+export struct ContactInfo {
+    name: string,
+    fingerprint: string,
+    online: bool,
+}
+
 // File info model for dynamic file list
 export struct FileInfo {
     name: string,
@@ -774,6 +781,18 @@ export component MainWindow inherits Window {
     callback exit_pressed();
     callback open_fuse_install();
     callback save_settings(string, string, string); // relay, save_path, mount_path
+
+    // Contacts / Identity
+    in-out property<[ContactInfo]> contacts: [];
+    in-out property<bool> incognito_mode: false;
+    in-out property<bool> peer_is_persistent: false;
+    in-out property<bool> save_contact_visible: false;
+    in-out property<string> save_contact_name: "";
+    callback incognito_mode_toggled(bool);
+    callback connect_to_contact(int);
+    callback save_peer_as_contact(string);
+    callback remove_contact(int);
+
     in-out property<bool> help_visible: false;
     in-out property<bool> settings_visible: false;
     in property<string> cfg_relay: "";
@@ -1076,6 +1095,120 @@ export component MainWindow inherits Window {
             font-size: 12px;
         }
 
+        // Incognito toggle (below local mode toggle)
+        Rectangle {
+            x: 868px;
+            y: root.local_mode ? 636px : 624px;
+            width: 260px;
+            height: 24px;
+            visible: root.room_action == 0 && !root.local_mode;
+
+            ToggleSwitch {
+                x: 0;
+                y: 2px;
+                checked: root.incognito_mode;
+                enabled: root.room_action == 0;
+                toggled(val) => {
+                    root.incognito_mode = val;
+                    root.incognito-mode-toggled(val);
+                }
+            }
+
+            Text {
+                x: 44px;
+                y: 0;
+                height: 24px;
+                text: root.incognito_mode
+                    ? "Incognito (new keys each session)"
+                    : "Persistent identity (contacts work)";
+                color: root.incognito_mode ? #d97706 : #ccc;
+                font-size: 12px;
+                wrap: word-wrap;
+                vertical-alignment: center;
+            }
+        }
+
+        // Saved contacts panel (only when contacts exist, not connecting, not local mode)
+        if root.contacts.length > 0 && root.room_action == 0 && !root.local_mode: Rectangle {
+            x: 261px;
+            y: 660px;
+            width: 580px;
+            height: Math.min(root.contacts.length, 3) * 36px + 28px;
+            border-radius: 7px;
+            background: #262626;
+            border-width: 0.5px;
+            border-color: rgba(255,255,255,0.10);
+
+            Text {
+                x: 12px;
+                y: 6px;
+                text: "Contacts";
+                color: #888;
+                font-size: 11px;
+                font-weight: 600;
+            }
+
+            for contact[idx] in root.contacts: Rectangle {
+                x: 12px;
+                y: 24px + idx * 36px;
+                width: parent.width - 24px;
+                height: 32px;
+                border-radius: 6px;
+                visible: idx < 3;
+                background: contact-row-touch.has-hover ? #333 : transparent;
+
+                // Online dot
+                Rectangle {
+                    x: 0;
+                    y: (parent.height - 8px) / 2;
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: contact.online ? #22c55e : #555;
+                }
+
+                // Name
+                Text {
+                    x: 16px;
+                    y: 0;
+                    height: parent.height;
+                    text: contact.name;
+                    color: white;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                }
+
+                // Truncated fingerprint
+                Text {
+                    x: 200px;
+                    y: 0;
+                    width: 200px;
+                    height: parent.height;
+                    text: contact.fingerprint;
+                    color: #555;
+                    font-size: 11px;
+                    font-family: "monospace";
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                // Connect button
+                Text {
+                    x: parent.width - 60px;
+                    y: 0;
+                    height: parent.height;
+                    text: "Connect";
+                    color: #3b82f6;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+
+                contact-row-touch := TouchArea {
+                    clicked => { root.connect-to-contact(idx); }
+                }
+            }
+        }
+
         // Status message (only when NOT connecting; connecting state uses connect_status above)
         if root.status_message != "" && root.error_message == "" && root.room_action == 0: Text {
             x: 868px;
@@ -1169,6 +1302,15 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
+        }
+
+        // Save Contact button (only if peer has persistent identity)
+        if root.peer_is_persistent && !root.incognito_mode: SmallOutlineButton {
+            x: 610px;
+            y: 93px;
+            width: 80px;
+            text: "Save Peer";
+            clicked => { root.save_contact_visible = true; }
         }
 
         // Save All button - aligned with global top-right buttons
@@ -1376,9 +1518,14 @@ export component MainWindow inherits Window {
 
             HorizontalLayout {
                 alignment: center;
+                spacing: 12px;
                 OutlineButton {
                     text: "Open Folder";
                     clicked => { root.open_folder_pressed() }
+                }
+                if root.peer_is_persistent && !root.incognito_mode: OutlineButton {
+                    text: "Save Peer";
+                    clicked => { root.save_contact_visible = true; }
                 }
             }
         }
@@ -1551,6 +1698,87 @@ export component MainWindow inherits Window {
             text: "keibidrop.com";
             color: #555;
             font-size: 11px;
+        }
+    }
+
+    // Save Contact dialog overlay
+    if root.save_contact_visible: Rectangle {
+        x: (parent.width - 360px) / 2;
+        y: (parent.height - 160px) / 2;
+        width: 360px;
+        height: 160px;
+        border-radius: 10px;
+        background: #2a2a2a;
+        border-width: 1px;
+        border-color: rgba(255,255,255,0.12);
+
+        SmallOutlineButton {
+            x: parent.width - 36px;
+            y: 8px;
+            width: 24px;
+            text: "X";
+            clicked => { root.save_contact_visible = false; root.save_contact_name = ""; }
+        }
+
+        Text {
+            x: 20px;
+            y: 16px;
+            text: "Save Peer as Contact";
+            color: white;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        Text {
+            x: 20px;
+            y: 50px;
+            text: "Name";
+            color: #888;
+            font-size: 12px;
+        }
+
+        Rectangle {
+            x: 20px;
+            y: 68px;
+            width: parent.width - 40px;
+            height: 32px;
+            border-radius: 6px;
+            border-width: 0.5px;
+            border-color: rgba(255,255,255,0.3);
+            background: #333;
+
+            contact-name-input := TextInput {
+                x: 8px;
+                width: parent.width - 16px;
+                height: parent.height;
+                color: white;
+                font-size: 13px;
+                vertical-alignment: center;
+                single-line: true;
+                text <=> root.save_contact_name;
+                accepted => {
+                    if root.save_contact_name != "" {
+                        root.save-peer-as-contact(root.save_contact_name);
+                        root.save_contact_visible = false;
+                        root.save_contact_name = "";
+                    }
+                }
+            }
+        }
+
+        PillButton {
+            x: 20px;
+            y: 114px;
+            width: parent.width - 40px;
+            text: "Save";
+            enabled: root.save_contact_name != "";
+            clicked => {
+                if root.save_contact_name != "" {
+                    root.save-peer-as-contact(root.save_contact_name);
+                    root.save_contact_visible = false;
+                    root.save_contact_name = "";
+                }
+            }
         }
     }
 
