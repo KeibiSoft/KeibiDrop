@@ -8438,7 +8438,10 @@ extern "C" {
     pub fn KD_IsIncognito() -> ::std::os::raw::c_int;
 }
 extern "C" {
-    pub fn KD_SetIncognito(v: ::std::os::raw::c_int);
+    pub fn KD_SetIncognito(v: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_IsPeerAlreadyContact() -> ::std::os::raw::c_int;
 }
 extern "C" {
     pub fn KD_IsPeerPersistent() -> ::std::os::raw::c_int;

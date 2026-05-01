@@ -227,6 +227,38 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string) error {
 	return nil
 }
 
+// ToggleIncognito switches between persistent and ephemeral identity.
+// When enabling incognito: generates fresh ephemeral keys.
+// When disabling: restores persistent identity keys.
+// Returns the new fingerprint.
+func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, error) {
+	if incognito {
+		kd.Incognito = true
+		outPort := kd.session.DefaultOutboundPort
+		inPort := kd.session.DefaultInboundPort
+		sess, err := session.InitSession(kd.logger, outPort, inPort)
+		if err != nil {
+			return "", fmt.Errorf("init ephemeral session: %w", err)
+		}
+		kd.session = sess
+		kd.refreshSession = func() *session.Session {
+			s, err := session.InitSession(kd.logger, outPort, inPort)
+			if err != nil {
+				kd.logger.Error("Failed to refresh ephemeral session", "error", err)
+				return nil
+			}
+			return s
+		}
+		return sess.OwnFingerprint, nil
+	}
+
+	kd.Incognito = false
+	if err := kd.EnablePersistentIdentity(configDir); err != nil {
+		return "", err
+	}
+	return kd.Identity.Fingerprint, nil
+}
+
 type PeerRegistration struct {
 	Fingerprint string            `json:"fingerprint"`
 	PublicKeys  map[string]string `json:"public_keys"` // base64 encoded

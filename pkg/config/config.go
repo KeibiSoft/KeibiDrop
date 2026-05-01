@@ -55,7 +55,11 @@ func DefaultConfig() Config {
 }
 
 // ConfigDir returns the config directory path (~/.config/keibidrop/).
+// Override with KEIBIDROP_CONFIG_DIR for testing multiple instances on one machine.
 func ConfigDir() string {
+	if d := os.Getenv("KEIBIDROP_CONFIG_DIR"); d != "" {
+		return d
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "keibidrop")
 }
