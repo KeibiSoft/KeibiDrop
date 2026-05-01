@@ -786,6 +786,7 @@ export component MainWindow inherits Window {
     in-out property<[ContactInfo]> contacts: [];
     in-out property<bool> incognito_mode: false;
     in-out property<bool> peer_is_persistent: false;
+    in-out property<bool> peer_already_saved: false;
     in-out property<bool> save_contact_visible: false;
     in-out property<string> save_contact_name: "";
     callback incognito_mode_toggled(bool);
@@ -1304,8 +1305,8 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Save Contact button (only if peer has persistent identity)
-        if root.peer_is_persistent && !root.incognito_mode: SmallOutlineButton {
+        // Save Contact button (only if peer has persistent identity and not already saved)
+        if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: SmallOutlineButton {
             x: 610px;
             y: 93px;
             width: 80px;
@@ -1523,7 +1524,7 @@ export component MainWindow inherits Window {
                     text: "Open Folder";
                     clicked => { root.open_folder_pressed() }
                 }
-                if root.peer_is_persistent && !root.incognito_mode: OutlineButton {
+                if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: OutlineButton {
                     text: "Save Peer";
                     clicked => { root.save_contact_visible = true; }
                 }
@@ -1686,10 +1687,10 @@ export component MainWindow inherits Window {
             color: #bbb;
             font-size: 13px;
             text: root.current_screen == 0
-                ? "1. Copy your code and send it to your peer\n2. Paste their code and press Add\n3. Press Connect (both peers)\n4. Drag files to share, or toggle Virtual Folder\n\nLocal Network: Toggle to find devices on the same WiFi automatically.\n\nVirtual Folder (FUSE): Your peer's files appear as a folder on your machine. Requires macFUSE (macOS), fuse3 (Linux), or WinFsp (Windows).\n\nDirect Transfer: Drag files in and your peer saves what they need."
+                ? "1. Copy your code and send it to your peer\n2. Paste their code and press Add\n3. Press Connect (both peers)\n4. Drag files to share, or toggle Virtual Folder\n\nContacts: After connecting, press Save Peer to remember them. Next time, click their name in the contacts list to reconnect instantly.\n\nIncognito: Toggle to use fresh keys each session. Your peer cannot save you as a contact.\n\nLocal Network: Toggle to find devices on the same WiFi.\n\nVirtual Folder (FUSE): Requires macFUSE (macOS), fuse3 (Linux), or WinFsp (Windows)."
                 : root.current_screen == 1
-                ? "Connected in Direct Transfer mode.\n\nDrag files onto the window or press Add File.\nYour peer sees your files and can save them.\nClick Save to download a peer's file.\n\nFiles are encrypted end-to-end.\nThe connection badge shows how you're connected:\n  LAN = same network (fastest)\n  Direct P2P = over the internet\n  Via Relay = through an encrypted bridge"
-                : "Connected in Virtual Folder mode.\n\nYour peer's files appear in the mounted folder.\nOpen it with any app: Finder, Terminal, git, etc.\nFiles stream on access, you don't need to wait for the full download.\n\nChanges sync both ways.\nDrag files into the folder to share them with your peer.";
+                ? "Connected in Direct Transfer mode.\n\nDrag files onto the window or press Add File.\nYour peer sees your files and can save them.\nClick Save to download a peer's file.\n\nSave Peer: saves this peer to your contacts for one-click reconnect next time.\n\nFiles are encrypted end-to-end.\nThe connection badge shows how you're connected:\n  LAN = same network (fastest)\n  Direct P2P = over the internet\n  Via Relay = through an encrypted bridge"
+                : "Connected in Virtual Folder mode.\n\nYour peer's files appear in the mounted folder.\nOpen it with any app: Finder, Terminal, git, etc.\nFiles stream on access — no waiting for full download.\n\nSave Peer: saves this peer to your contacts for one-click reconnect next time.\n\nDrag files into the folder to share them with your peer.";
         }
 
         Text {

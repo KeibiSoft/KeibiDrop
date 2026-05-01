@@ -277,15 +277,15 @@ endif
 
 # Rust UI (FUSE toggle is in the UI, no need for NO_FUSE env)
 run-alice:
-	TO_MOUNT_PATH=$(ALICE_MOUNT) KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_rust_ui_nofuse.sh
+	KEIBIDROP_CONFIG_DIR=$(HOME)/.config/keibidrop-alice TO_MOUNT_PATH=$(ALICE_MOUNT) KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_rust_ui_nofuse.sh
 run-bob:
-	TO_MOUNT_PATH=$(BOB_MOUNT) KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_rust_ui.sh
+	KEIBIDROP_CONFIG_DIR=$(HOME)/.config/keibidrop-bob TO_MOUNT_PATH=$(BOB_MOUNT) KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_rust_ui.sh
 
 # Go CLI
 run-cli-alice:
-	KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_cli.sh
+	KEIBIDROP_CONFIG_DIR=$(HOME)/.config/keibidrop-alice KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26001 OUTBOUND_PORT=26002 bash $(SCRIPTS)/example_run_cli.sh
 run-cli-bob:
-	KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_peer_cli.sh
+	KEIBIDROP_CONFIG_DIR=$(HOME)/.config/keibidrop-bob KEIBIDROP_RELAY=$(RELAY) INBOUND_PORT=26003 OUTBOUND_PORT=26004 bash $(SCRIPTS)/example_run_peer_cli.sh
 
 # kd daemon (agent, always no-FUSE)
 run-kd-alice:
