@@ -8,11 +8,14 @@ package main
 
 /*
 #include <stdint.h>
+#ifndef _WIN32
 #include <signal.h>
-
 static void ignore_sigpipe(void) {
     signal(SIGPIPE, SIG_IGN);
 }
+#else
+static void ignore_sigpipe(void) {}
+#endif
 */
 import "C"
 
@@ -22,11 +25,9 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
@@ -36,7 +37,6 @@ import (
 
 func init() {
 	C.ignore_sigpipe()
-	signal.Ignore(syscall.SIGPIPE)
 }
 
 var disc *discovery.Service
