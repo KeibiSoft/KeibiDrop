@@ -20,8 +20,11 @@ static void ignore_sigpipe(void) {}
 import "C"
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -31,6 +34,7 @@ import (
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
+	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
@@ -145,7 +149,23 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	kd.OnEvent = pushEvent
 
 	if !cfg.Incognito {
-		if err := kd.EnablePersistentIdentity(config.ConfigDir()); err != nil {
+		opts := common.EnableOpts{
+			PassphraseProtect: cfg.PassphraseProtect,
+		}
+		if cfg.PassphraseProtect && os.Getenv("KD_PASSPHRASE_FROM_STDIN") == "1" {
+			opts.PassphraseProvider = readPassphraseFromStdin
+		} else if cfg.PassphraseProtect {
+			// Passphrase required but stdin sentinel not set; disable tier 2 for
+			// this session. Rust UI will provide a dedicated FFI in a later release.
+			opts.PassphraseProtect = false
+		}
+		if err := kd.EnablePersistentIdentity(config.ConfigDir(), opts); err != nil {
+			var corrupted *identity.IdentityCorruptedError
+			if errors.As(err, &corrupted) {
+				// Return the friendly message directly; Rust UI shows it in a dialog.
+				setLastError(corrupted)
+				return -3
+			}
 			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
 		}
 	} else {
@@ -795,6 +815,23 @@ func KD_SanitizeLogs(destPath *C.char) C.int {
 	return 0
 }
 
+// readPassphraseFromStdin reads a single line from stdin for use as a passphrase.
+// Only called when KD_PASSPHRASE_FROM_STDIN=1 is set. Uses a line reader so
+// passphrases containing spaces are preserved verbatim (fmt.Fscan would
+// truncate at the first whitespace).
+func readPassphraseFromStdin() (string, error) {
+	r := bufio.NewReader(os.Stdin)
+	line, err := r.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("read passphrase from stdin: %w", err)
+	}
+	pp := strings.TrimRight(line, "\r\n")
+	if pp == "" {
+		return "", fmt.Errorf("empty passphrase from stdin")
+	}
+	return pp, nil
+}
+
 // ========== IDENTITY & CONTACTS ==========
 
 //export KD_IsIncognito
@@ -816,6 +853,17 @@ func KD_SetIncognito(v C.int) *C.char {
 		return C.CString("")
 	}
 	return C.CString(newFP)
+}
+
+//export KD_SetPassphraseProtect
+func KD_SetPassphraseProtect(v C.int) *C.char {
+	cfg, _ := config.Load()
+	cfg.PassphraseProtect = (v != 0)
+	if err := config.Save(cfg); err != nil {
+		setLastError(err)
+		return C.CString("")
+	}
+	return C.CString("passphrase-protect toggled")
 }
 
 //export KD_IsPeerAlreadyContact

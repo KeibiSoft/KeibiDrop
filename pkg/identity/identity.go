@@ -3,6 +3,9 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// ABOUTME: Device identity load/save for the identity package.
+// ABOUTME: Manages the on-disk encrypted identity envelope and key lifecycle.
 
 package identity
 
@@ -10,9 +13,9 @@ import (
 	"crypto/ecdh"
 	"crypto/mlkem"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"time"
 
@@ -20,6 +23,9 @@ import (
 )
 
 const identityFile = "identity.enc"
+
+// CurrentIdentitySchemaVersion is the schema_version written by this build.
+const CurrentIdentitySchemaVersion = 1
 
 type DeviceIdentity struct {
 	Fingerprint string
@@ -30,15 +36,16 @@ type DeviceIdentity struct {
 // serializedIdentity is the JSON-serializable form of DeviceIdentity.
 // Private key seeds are stored; public keys are derived on load.
 type serializedIdentity struct {
-	X25519Seed []byte    `json:"x25519_seed"`
-	MLKEMSeed  []byte    `json:"mlkem_seed"`
-	CreatedAt  time.Time `json:"created_at"`
+	SchemaVersion int       `json:"schema_version"`
+	X25519Seed    []byte    `json:"x25519_seed"`
+	MLKEMSeed     []byte    `json:"mlkem_seed"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
-// LoadOrCreate loads an existing identity from configDir, or creates and
-// persists a new one if none exists.
-func LoadOrCreate(configDir string) (*DeviceIdentity, error) {
-	id, err := Load(configDir)
+// LoadOrCreate loads an existing identity from configDir using src, or
+// creates and persists a new one if none exists.
+func LoadOrCreate(configDir string, src MasterKeySource) (*DeviceIdentity, error) {
+	id, err := Load(configDir, src)
 	if err == nil {
 		return id, nil
 	}
@@ -49,67 +56,108 @@ func LoadOrCreate(configDir string) (*DeviceIdentity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create identity: %w", err)
 	}
-	if err := id.Save(configDir); err != nil {
+	if err := id.Save(configDir, src); err != nil {
 		return nil, fmt.Errorf("save identity: %w", err)
 	}
 	return id, nil
 }
 
-// Load reads and decrypts the identity file from configDir.
-func Load(configDir string) (*DeviceIdentity, error) {
+// Load reads and decrypts the identity file from configDir using src.
+func Load(configDir string, src MasterKeySource) (*DeviceIdentity, error) {
 	path := filepath.Join(configDir, identityFile)
-	ciphertext, err := os.ReadFile(path)
+
+	buf, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	fileKey, err := deriveFileKey()
-	if err != nil {
-		return nil, fmt.Errorf("derive file key: %w", err)
+	if !IsV1Envelope(buf) {
+		return nil, &IdentityCorruptedError{
+			Path:     path,
+			Original: errors.New("file is not a KDID envelope"),
+		}
 	}
 
-	plaintext, err := kbc.Decrypt(fileKey, ciphertext)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt identity: %w", err)
+	header, ctAndTag, perr := ParseEnvelope(buf)
+	if perr != nil {
+		return nil, &IdentityCorruptedError{Path: path, Original: perr}
+	}
+
+	perFileKey, kerr := derivePerFileKey(src, header, "keibidrop-identity-file-v1")
+	if kerr != nil {
+		return nil, fmt.Errorf("derive per-file key: %w", kerr)
+	}
+
+	blob := make([]byte, kbc.NonceSize+len(ctAndTag))
+	copy(blob[:kbc.NonceSize], header.Nonce[:])
+	copy(blob[kbc.NonceSize:], ctAndTag)
+
+	pt, decErr := kbc.DecryptWithAAD(perFileKey, blob, header.AAD())
+	if decErr != nil {
+		return nil, &IdentityCorruptedError{
+			Path:     path,
+			Original: fmt.Errorf("decrypt identity: %w", decErr),
+		}
 	}
 
 	var s serializedIdentity
-	if err := json.Unmarshal(plaintext, &s); err != nil {
-		return nil, fmt.Errorf("unmarshal identity: %w", err)
+	if jerr := json.Unmarshal(pt, &s); jerr != nil {
+		return nil, &IdentityCorruptedError{
+			Path:     path,
+			Original: fmt.Errorf("unmarshal identity: %w", jerr),
+		}
+	}
+
+	if s.SchemaVersion > CurrentIdentitySchemaVersion {
+		return nil, ErrIdentityNewerSchema
 	}
 
 	return fromSerialized(&s)
 }
 
-// Save encrypts and writes the identity to configDir.
-func (d *DeviceIdentity) Save(configDir string) error {
+// Save encrypts and writes the identity to configDir using src.
+func (d *DeviceIdentity) Save(configDir string, src MasterKeySource) error {
 	s := serializedIdentity{
-		X25519Seed: d.Keys.X25519Private.Bytes(),
-		MLKEMSeed:  d.Keys.MlKemPrivate.Bytes(),
-		CreatedAt:  d.CreatedAt,
+		SchemaVersion: CurrentIdentitySchemaVersion,
+		X25519Seed:    d.Keys.X25519Private.Bytes(),
+		MLKEMSeed:     d.Keys.MlKemPrivate.Bytes(),
+		CreatedAt:     d.CreatedAt,
 	}
 
-	plaintext, err := json.Marshal(&s)
+	jsonBytes, err := json.Marshal(&s)
 	if err != nil {
 		return fmt.Errorf("marshal identity: %w", err)
 	}
 
-	fileKey, err := deriveFileKey()
-	if err != nil {
-		return fmt.Errorf("derive file key: %w", err)
+	if err := os.MkdirAll(configDir, 0o750); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
 	}
 
-	ciphertext, err := kbc.Encrypt(fileKey, plaintext)
+	salt, err := kbc.RandomBytes(envelopeSaltSize)
+	if err != nil {
+		return fmt.Errorf("generate salt: %w", err)
+	}
+
+	header := EnvelopeHeader{KDFID: src.KDFID()}
+	copy(header.Salt[:], salt)
+
+	perFileKey, err := derivePerFileKey(src, header, "keibidrop-identity-file-v1")
+	if err != nil {
+		return fmt.Errorf("derive per-file key: %w", err)
+	}
+
+	blob, err := kbc.EncryptWithAAD(perFileKey, jsonBytes, header.AAD())
 	if err != nil {
 		return fmt.Errorf("encrypt identity: %w", err)
 	}
 
-	if err := os.MkdirAll(configDir, 0750); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
+	// Split [nonce | ct+tag], record nonce in header so it is part of the
+	// on-disk wire format (MarshalEnvelope writes it after the 24-byte prefix).
+	copy(header.Nonce[:], blob[:kbc.NonceSize])
+	ctAndTag := blob[kbc.NonceSize:]
 
 	path := filepath.Join(configDir, identityFile)
-	return os.WriteFile(path, ciphertext, 0600)
+	return WriteFileAtomic(path, MarshalEnvelope(header, ctAndTag), 0o600)
 }
 
 func create() (*DeviceIdentity, error) {
@@ -172,19 +220,24 @@ func fromSerialized(s *serializedIdentity) (*DeviceIdentity, error) {
 	}, nil
 }
 
-// deriveFileKey derives a 32-byte encryption key from machine-specific entropy.
-// Uses hostname + username + fixed label via HKDF.
-func deriveFileKey() ([]byte, error) {
-	hostname, _ := os.Hostname()
-	if hostname == "" {
-		hostname = "unknown-host"
-	}
-	u, _ := user.Current()
-	username := "unknown-user"
-	if u != nil {
-		username = u.Username
+// derivePerFileKey returns the per-file AEAD key for an envelope, using the
+// appropriate KDF for the envelope's kdf_id.
+func derivePerFileKey(
+	src MasterKeySource,
+	header EnvelopeHeader,
+	info string,
+) ([]byte, error) {
+	masterKey, err := src.Master()
+	if err != nil {
+		return nil, fmt.Errorf("master key: %w", err)
 	}
 
-	ikm := []byte(hostname + ":" + username)
-	return kbc.DeriveIdentityFileKey(ikm)
+	switch header.KDFID {
+	case KDFKeychain, KDFFile:
+		return kbc.DeriveFileEncryptionKey(masterKey, header.Salt[:], info)
+	case KDFPassphrase:
+		return DerivePassphraseKey(string(masterKey), header.Salt[:])
+	default:
+		return nil, fmt.Errorf("unknown kdf_id %d", header.KDFID)
+	}
 }

@@ -4,9 +4,12 @@ import (
 	"testing"
 )
 
+// ── Existing tests (updated to pass MasterKeySource) ─────────────────────────
+
 func TestAddAndLookup(t *testing.T) {
 	dir := t.TempDir()
-	ab, err := LoadAddressBook(dir)
+	src := newTestMasterKeySource(t)
+	ab, err := LoadAddressBook(dir, src)
 	if err != nil {
 		t.Fatalf("LoadAddressBook: %v", err)
 	}
@@ -26,7 +29,8 @@ func TestAddAndLookup(t *testing.T) {
 
 func TestAddDuplicate(t *testing.T) {
 	dir := t.TempDir()
-	ab, err := LoadAddressBook(dir)
+	src := newTestMasterKeySource(t)
+	ab, err := LoadAddressBook(dir, src)
 	if err != nil {
 		t.Fatalf("LoadAddressBook: %v", err)
 	}
@@ -41,7 +45,8 @@ func TestAddDuplicate(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	dir := t.TempDir()
-	ab, err := LoadAddressBook(dir)
+	src := newTestMasterKeySource(t)
+	ab, err := LoadAddressBook(dir, src)
 	if err != nil {
 		t.Fatalf("LoadAddressBook: %v", err)
 	}
@@ -66,7 +71,8 @@ func TestRemove(t *testing.T) {
 
 func TestRemoveNotFound(t *testing.T) {
 	dir := t.TempDir()
-	ab, err := LoadAddressBook(dir)
+	src := newTestMasterKeySource(t)
+	ab, err := LoadAddressBook(dir, src)
 	if err != nil {
 		t.Fatalf("LoadAddressBook: %v", err)
 	}
@@ -78,7 +84,8 @@ func TestRemoveNotFound(t *testing.T) {
 
 func TestList(t *testing.T) {
 	dir := t.TempDir()
-	ab, err := LoadAddressBook(dir)
+	src := newTestMasterKeySource(t)
+	ab, err := LoadAddressBook(dir, src)
 	if err != nil {
 		t.Fatalf("LoadAddressBook: %v", err)
 	}
@@ -101,9 +108,10 @@ func TestList(t *testing.T) {
 
 func TestPersistence(t *testing.T) {
 	dir := t.TempDir()
+	src := newTestMasterKeySource(t)
 
 	// Create and populate.
-	ab1, err := LoadAddressBook(dir)
+	ab1, err := LoadAddressBook(dir, src)
 	if err != nil {
 		t.Fatalf("LoadAddressBook: %v", err)
 	}
@@ -114,7 +122,7 @@ func TestPersistence(t *testing.T) {
 	}
 
 	// Reload from disk.
-	ab2, err := LoadAddressBook(dir)
+	ab2, err := LoadAddressBook(dir, src)
 	if err != nil {
 		t.Fatalf("second LoadAddressBook: %v", err)
 	}
@@ -131,7 +139,8 @@ func TestPersistence(t *testing.T) {
 
 func TestUpdateLastSeen(t *testing.T) {
 	dir := t.TempDir()
-	ab, err := LoadAddressBook(dir)
+	src := newTestMasterKeySource(t)
+	ab, err := LoadAddressBook(dir, src)
 	if err != nil {
 		t.Fatalf("LoadAddressBook: %v", err)
 	}
@@ -153,7 +162,8 @@ func TestUpdateLastSeen(t *testing.T) {
 
 func TestEmptyAddressBook(t *testing.T) {
 	dir := t.TempDir()
-	ab, err := LoadAddressBook(dir)
+	src := newTestMasterKeySource(t)
+	ab, err := LoadAddressBook(dir, src)
 	if err != nil {
 		t.Fatalf("LoadAddressBook: %v", err)
 	}
@@ -167,5 +177,30 @@ func TestEmptyAddressBook(t *testing.T) {
 	contacts := ab.List()
 	if len(contacts) != 0 {
 		t.Fatalf("expected empty list, got %d", len(contacts))
+	}
+}
+
+// ── New v2 tests ─────────────────────────────────────────────────────────────
+
+func TestContactsV2RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	src := newTestMasterKeySource(t)
+
+	ab, err := LoadAddressBook(dir, src)
+	if err != nil {
+		t.Fatalf("LoadAddressBook: %v", err)
+	}
+	_ = ab.Add("Charlie", "fp-charlie")
+	if err := ab.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	ab2, err := LoadAddressBook(dir, src)
+	if err != nil {
+		t.Fatalf("second LoadAddressBook: %v", err)
+	}
+	c := ab2.Lookup("fp-charlie")
+	if c == nil || c.Name != "Charlie" {
+		t.Fatal("contact not found after v2 round-trip")
 	}
 }

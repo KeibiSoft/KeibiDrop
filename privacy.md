@@ -45,7 +45,27 @@ If you don't like this, you're free to run your own relay or use a trusted one o
 
 ---
 
-## 4. Local Logging (Client)
+## 4. Local Identity Storage
+
+If you opt into the persistent-identity feature (the default 1-click connect mode), KeibiDrop stores a small set of files on your machine:
+
+- `~/.config/keibidrop/identity.enc` — your X25519 + ML-KEM private seeds, encrypted at rest with a per-install random master key.
+- `~/.config/keibidrop/contacts.enc` — your saved contacts (other peers' fingerprints + nicknames), encrypted with the same master key.
+- `~/.config/keibidrop/.master.key` — *only* on systems without an OS keychain (headless Linux, BSDs, WSL). 32 random bytes, file mode 0600.
+
+On macOS, Linux desktop (with a running Secret Service), and Windows, the master key is stored in the OS keychain (Keychain Services / libsecret / Credential Manager) — *not* in `~/.config/keibidrop/`. This means a cloud backup of `~/.config/` does not contain the key, and the encrypted files cannot be decrypted from a backup alone.
+
+If you back up `~/.config/keibidrop/` to a cloud service and would prefer not to rely on the OS keychain (for example, on a headless Linux server), enable passphrase protection with `KD_PASSPHRASE_PROTECT=1`. KeibiDrop will prompt for a passphrase at launch and use Argon2id to derive the per-file encryption keys.
+
+Incognito mode (`KD_INCOGNITO=1`) writes nothing to `~/.config/keibidrop/` and uses ephemeral session-only keys.
+
+If your identity file becomes unreadable (disk corruption, master key no longer accessible, etc.), KeibiDrop prints a clear error and exits without auto-recreating it — recreating would silently wipe your saved contacts. To start fresh, manually delete `~/.config/keibidrop/identity.enc` and `~/.config/keibidrop/contacts.enc` and re-launch.
+
+Configuration knobs (env vars, `config.toml`) are a desktop convenience. On iOS and Android the env vars are no-ops; mobile clients read settings from `config.toml` and from FFI calls into the Go core (handled by the closed-source mobile UIs). See `Security.md` for the full at-rest-encryption protocol.
+
+---
+
+## 5. Local Logging (Client)
 
 The client writes debug logs to a file on your machine. These logs stay on your device and are never sent to KeibiSoft automatically.
 
@@ -53,7 +73,7 @@ If you run into a crash or bug, we may ask you to send the log file to help us i
 
 ---
 
-## 4b. Diagnostic Logs (Mobile)
+## 5b. Diagnostic Logs (Mobile)
 
 The mobile app writes debug logs to a local file on your device. These logs are never sent automatically.
 
@@ -69,19 +89,19 @@ Log files are rotated automatically and kept under 5 MB.
 
 ---
 
-## 5. Third-Party Libraries
+## 6. Third-Party Libraries
 
 **KEIBI**DROP may include open source dependencies. Each may have its own license or policy.
 
 ---
 
-## 6. Community Contributions
+## 7. Community Contributions
 
 If you submit code to the **KEIBI**DROP project, your contributions will be public and attributed to your GitHub account (or whichever identity you use). See `CONTRIBUTING.md` for more info.
 
 ---
 
-## 7. Changes
+## 8. Changes
 
 This privacy policy may change. If it does, we’ll update this file. We will not send an email, a push notification, or a man with a clipboard.
 
