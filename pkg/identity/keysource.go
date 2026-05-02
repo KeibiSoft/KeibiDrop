@@ -131,7 +131,7 @@ func isObviouslyWeakKey(key []byte) bool {
 //  3. keychain available           → keychainSource   (Tier 1a)
 //  4. otherwise                    → fileSource       (Tier 1b)
 func NewMasterKeySource(opts KeySourceOpts) (MasterKeySource, error) {
-	logger := slog.With("fn", "NewMasterKeySource")
+	logger := slog.With("method", "new-master-key-source")
 
 	if opts.ExternalMaster != nil {
 		if len(opts.ExternalMaster) != 32 {
@@ -142,7 +142,7 @@ func NewMasterKeySource(opts KeySourceOpts) (MasterKeySource, error) {
 		}
 		out := make([]byte, 32)
 		copy(out, opts.ExternalMaster)
-		logger.Info("tier selected", "tier", TierExternal)
+		logger.Info("Tier selected", "tier", TierExternal)
 		return &externalKeySource{master: out}, nil
 	}
 
@@ -157,16 +157,16 @@ func NewMasterKeySource(opts KeySourceOpts) (MasterKeySource, error) {
 				"identity: PassphraseProtect requires a PassphraseProvider",
 			)
 		}
-		logger.Info("tier selected", "tier", TierPassphrase)
+		logger.Info("Tier selected", "tier", TierPassphrase)
 		return &passphraseSource{provider: opts.PassphraseProvider}, nil
 	}
 
 	if keychainAvail() {
-		logger.Info("tier selected", "tier", TierKeychain)
+		logger.Info("Tier selected", "tier", TierKeychain)
 		return &keychainSource{}, nil
 	}
 
-	logger.Info("tier selected", "tier", TierFile, "configDir", opts.ConfigDir)
+	logger.Info("Tier selected", "tier", TierFile, "configDir", opts.ConfigDir)
 	return &fileSource{configDir: opts.ConfigDir}, nil
 }
 
