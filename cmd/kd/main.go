@@ -666,71 +666,55 @@ func printHelp() {
 
 USAGE:
   kd start                       Start daemon (foreground). Configure via env vars.
-  kd stop                        Stop the daemon.
-  kd show [what]                 Show info (fingerprint, ip, peer, relay, status, or all).
+  kd stop                        Shutdown daemon.
+  kd show [what]                 Show info (fingerprint, ip, peer, relay, status, config, or all).
   kd register <fingerprint>      Register peer's fingerprint.
+  kd connect                     Connect (auto role via fingerprint tiebreak).
   kd create                      Create a room (you are the initiator).
   kd join                        Join a room (peer must have created first).
   kd add <filepath>              Share a file with the peer.
   kd list                        List all shared files (local + remote).
   kd pull <name> [local-path]    Download a remote file.
   kd status                      Connection status and session info.
-  kd disconnect                  Disconnect (keys rotate, ready for new session).
+  kd disconnect                  Disconnect and reset session.
   kd contacts                    List saved contacts (JSON array).
   kd add-contact <name> <fp>     Save a contact.
   kd remove-contact <fp>         Remove a saved contact.
-  kd quick-connect <fp>          Connect to a saved contact.
+  kd quick-connect <fp>          Connect to a saved contact (1-click).
   kd save-contact <name>         Save current peer as contact.
-  kd stop                        Shutdown daemon.
   kd help                        Show this help.
 
 ENVIRONMENT (for "kd start"):
-  KD_RELAY           Relay URL        (default: https://keibidroprelay.keibisoft.com)
-  KD_INBOUND_PORT    Listen port      (default: 26431)
-  KD_OUTBOUND_PORT   Outbound port    (default: 26432)
-  KD_SAVE_PATH       Where to save received files
-  KD_MOUNT_PATH      FUSE mount point
-  KD_NO_FUSE         Set to disable FUSE (any value)
-  KD_LOG_FILE        Log file path    (default: stderr)
-  KD_INCOGNITO       Set to force ephemeral mode (any value)
-  KD_SOCKET          Unix socket path (default: /tmp/kd.sock)
+  KD_RELAY                Relay URL        (default: https://keibidroprelay.keibisoft.com)
+  KD_INBOUND_PORT         Listen port      (default: 26431)
+  KD_OUTBOUND_PORT        Outbound port    (default: 26432)
+  KD_SAVE_PATH            Where to save received files
+  KD_MOUNT_PATH           FUSE mount point
+  KD_NO_FUSE              Set to disable FUSE (any value)
+  KD_LOG_FILE             Log file path    (default: stderr)
+  KD_INCOGNITO            Force ephemeral mode, no identity saved (any value)
+  KD_PASSPHRASE_PROTECT   Prompt for passphrase to encrypt identity (any value)
+  KD_SOCKET               Unix socket path (default: /tmp/kd.sock)
 
-MODES:
-  FUSE mode:    Files appear in KD_MOUNT_PATH as a virtual folder.
-                Read/write files directly from the mount (like a shared drive).
-                After connecting, "kd status" shows the mount_path.
-
-  no-FUSE mode: Use "kd add <file>" to share and "kd pull <name> [path]" to download.
-                Set KD_NO_FUSE=1 to use this mode.
-
-EXAMPLE (agent workflow, no-FUSE):
-  # Terminal 1: start daemon
+EXAMPLE (first connection):
   KD_SAVE_PATH=./received KD_NO_FUSE=1 kd start
-
-  # Terminal 2 (or from agent):
-  kd show fingerprint              # get your fingerprint, send to peer
-  kd register <peer-fingerprint>   # paste peer's fingerprint
-  kd create                        # or "kd join" if peer creates
+  kd show fingerprint              # send this to your peer
+  kd register <peer-fingerprint>   # paste theirs
+  kd connect                       # both peers run this
   kd add ./myfile.pdf              # share a file
   kd list                          # see remote files
-  kd pull somefile.txt ./local.txt # download from peer
-  kd disconnect                    # done, keys rotated
-  kd stop                          # shutdown daemon
+  kd pull somefile.txt ./local.txt # download
+  kd save-contact Alice            # save peer for next time
+  kd disconnect
+  kd stop
 
-EXAMPLE (agent workflow, FUSE):
-  # Terminal 1: start daemon with FUSE mount
-  KD_SAVE_PATH=./saved KD_MOUNT_PATH=./mount kd start
-
-  # Terminal 2 (or from agent):
-  kd show fingerprint              # get your fingerprint, send to peer
-  kd register <peer-fingerprint>   # paste peer's fingerprint
-  kd create                        # or "kd join" if peer creates
-  # After connecting, peer's files appear in ./mount/
-  ls ./mount/                      # see shared files from peer
-  cat ./mount/readme.txt           # read a remote file directly
-  cp ./myfile.pdf ./mount/         # share a file (copy into mount)
-  kd disconnect                    # done
-  kd stop                          # shutdown daemon
+EXAMPLE (reconnect with saved contact):
+  KD_SAVE_PATH=./received KD_NO_FUSE=1 kd start
+  kd contacts                      # list saved contacts
+  kd quick-connect <fingerprint>   # 1-click, no code exchange
+  kd list
+  kd disconnect
+  kd stop
 
 All output is JSON: {"ok":true,"data":{...}} or {"ok":false,"error":"..."}
 Use "kd status" after connecting to see mount_path, save_path, and peer info.`

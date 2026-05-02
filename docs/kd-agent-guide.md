@@ -24,18 +24,25 @@ KD_SAVE_PATH=./saved KD_MOUNT_PATH=./mount ./kd start
 
 The daemon runs in the foreground and prints its fingerprint as JSON on startup. All subsequent commands are run in a separate terminal/process.
 
-### Connect to a peer
+### Connect to a peer (first time)
 
 ```bash
-# 1. Get your fingerprint (send this to your peer via any channel)
-./kd show fingerprint
+./kd show fingerprint                # send this to your peer
+./kd register <peer-fingerprint>     # paste theirs
+./kd connect                         # both peers run this (auto role)
+```
 
-# 2. Register the peer's fingerprint
-./kd register <peer-fingerprint>
+### Reconnect with a saved contact
 
-# 3. One side creates, the other joins
-./kd create    # initiator
-./kd join      # joiner (in the other peer's terminal)
+```bash
+./kd contacts                        # list saved contacts
+./kd quick-connect <fingerprint>     # 1-click, no code exchange
+```
+
+### Save a peer as a contact (after connecting)
+
+```bash
+./kd save-contact Alice              # saves for quick-connect next time
 ```
 
 ### Share files
@@ -83,6 +90,8 @@ All set before `kd start`:
 | `KD_MOUNT_PATH` | FUSE mount point (directory) | |
 | `KD_NO_FUSE` | Set to any value to disable FUSE | |
 | `KD_LOG_FILE` | Log file path | stderr |
+| `KD_INCOGNITO` | Force ephemeral mode, no identity saved | |
+| `KD_PASSPHRASE_PROTECT` | Prompt for passphrase to encrypt identity | |
 | `KD_SOCKET` | Unix socket path | `/tmp/kd.sock` |
 
 ## Running Two Instances (same machine)
@@ -91,24 +100,26 @@ Use different ports and sockets:
 
 ```bash
 # Terminal 1: Alice
-KD_SAVE_PATH=./SaveAlice KD_NO_FUSE=1 \
+KEIBIDROP_CONFIG_DIR=~/.config/keibidrop-alice \
+  KD_SAVE_PATH=./SaveAlice KD_NO_FUSE=1 \
   KD_INBOUND_PORT=26001 KD_OUTBOUND_PORT=26002 \
   KD_SOCKET=/tmp/kd-alice.sock ./kd start
 
 # Terminal 2: Bob
-KD_SAVE_PATH=./SaveBob KD_NO_FUSE=1 \
+KEIBIDROP_CONFIG_DIR=~/.config/keibidrop-bob \
+  KD_SAVE_PATH=./SaveBob KD_NO_FUSE=1 \
   KD_INBOUND_PORT=26003 KD_OUTBOUND_PORT=26004 \
   KD_SOCKET=/tmp/kd-bob.sock ./kd start
 
 # Terminal 3: connect them
 KD_SOCKET=/tmp/kd-alice.sock ./kd show fingerprint
-KD_SOCKET=/tmp/kd-bob.sock ./kd show fingerprint
-
-KD_SOCKET=/tmp/kd-alice.sock ./kd register <bob-fp>
 KD_SOCKET=/tmp/kd-bob.sock ./kd register <alice-fp>
 
-KD_SOCKET=/tmp/kd-alice.sock ./kd create &
-KD_SOCKET=/tmp/kd-bob.sock ./kd join
+KD_SOCKET=/tmp/kd-bob.sock ./kd show fingerprint
+KD_SOCKET=/tmp/kd-alice.sock ./kd register <bob-fp>
+
+KD_SOCKET=/tmp/kd-alice.sock ./kd connect &
+KD_SOCKET=/tmp/kd-bob.sock ./kd connect
 ```
 
 ## JSON Output Format
@@ -138,15 +149,21 @@ Every command returns a single JSON line:
 | `kd list` | List all files | `{"ok":true,"data":{"files":[{"name":"...","size":123,"source":"remote"}]}}` |
 | `kd pull <name> [path]` | Download remote file | `{"ok":true,"data":{"pulled":"file.txt","to":"./file.txt"}}` |
 | `kd status` | Full status | `{"ok":true,"data":{"running":true,"connection_status":"healthy",...}}` |
-| `kd disconnect` | Disconnect, rotate keys | `{"ok":true,"data":{"status":"disconnected","new_fingerprint":"..."}}` |
+| `kd disconnect` | Disconnect | `{"ok":true,"data":{"status":"disconnected","new_fingerprint":"..."}}` |
+| `kd connect` | Connect (auto role) | `{"ok":true,"data":{"status":"connected","peer_ip":"..."}}` |
+| `kd contacts` | List saved contacts | `{"ok":true,"data":[{"name":"Alice","fingerprint":"..."}]}` |
+| `kd add-contact <name> <fp>` | Save a contact | `{"ok":true,"data":{"added":"Alice"}}` |
+| `kd remove-contact <fp>` | Remove a contact | `{"ok":true,"data":{"removed":"..."}}` |
+| `kd quick-connect <fp>` | Connect to saved contact | `{"ok":true,"data":{"status":"connecting"}}` |
+| `kd save-contact <name>` | Save current peer | `{"ok":true,"data":{"saved":"Alice"}}` |
 | `kd help` | Show help text | (plain text) |
 
 ## Security Notes
 
-- No login or accounts. Identity is an ephemeral cryptographic fingerprint (ML-KEM + X25519).
-- Keys are generated fresh on startup and rotated on every disconnect. Identity disappears after the session.
-- All traffic is encrypted end-to-end (ChaCha20-Poly1305).
-- The relay only sees encrypted blobs — it cannot read your files or metadata.
+- No login or accounts. Identity is a cryptographic fingerprint (ML-KEM-1024 + X25519).
+- By default, identity persists across sessions (saved contacts work). Set `KD_INCOGNITO=1` for ephemeral mode.
+- All traffic is encrypted end-to-end (AES-256-GCM or ChaCha20-Poly1305, auto-negotiated).
+- The relay only sees encrypted blobs. It cannot read your files or metadata.
 - Fingerprint exchange is the trust anchor. Send it via a secure channel (Signal, etc.).
 
 ## For Agent Developers
