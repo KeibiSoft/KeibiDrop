@@ -300,10 +300,10 @@ show peer fingerprint        Show peer's fingerprint
 show peer ip                 Show peer's IP
 show relay                   Show the currently connected relay URL
 register <fingerprint>       Register a peer's fingerprint
+connect                      Connect (auto role via fingerprint)
 create                       Create a room
 join                         Join a room
 disconnect                   Disconnect from peer and reset session
-reset                        Reset session and rotate keys
 add <filepath>               Share a file or directory
 list                         List shared files and their locations
 pull <remote> <local>        Copy file/folder from peer to local path
