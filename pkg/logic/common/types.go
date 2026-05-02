@@ -205,8 +205,8 @@ type EnableOpts struct {
 // Must be called before CreateRoom/JoinRoom. Loads or creates identity from configDir,
 // rebuilds the session with stable keys, and loads the address book.
 func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts) error {
-	logger := kd.logger.With("fn", "EnablePersistentIdentity", "configDir", configDir, "passphrase", opts.PassphraseProtect)
-	logger.Info("starting")
+	logger := kd.logger.With("method", "enable-persistent-identity", "configDir", configDir, "passphrase", opts.PassphraseProtect)
+	logger.Info("Starting")
 
 	src, err := identity.NewMasterKeySource(identity.KeySourceOpts{
 		ConfigDir:          configDir,
@@ -217,7 +217,7 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 		return fmt.Errorf("init key source: %w", err)
 	}
 
-	logger.Info("key source tier selected", "tier", src.Tier())
+	logger.Info("Key source tier selected", "tier", src.Tier())
 
 	id, err := identity.LoadOrCreate(configDir, src)
 	if err != nil {
@@ -257,7 +257,7 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 		return s
 	}
 
-	logger.Info("persistent identity enabled", "fingerprint", id.Fingerprint)
+	logger.Info("Persistent identity enabled", "fingerprint", id.Fingerprint)
 	return nil
 }
 

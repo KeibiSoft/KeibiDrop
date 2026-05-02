@@ -113,8 +113,8 @@ func deriveKeyInternal(hash func() hash.Hash, label string, size int, secrets ..
 	seed := make([]byte, total)
 	offset := 0
 	for _, s := range secrets {
-		copy(seed[offset:], s)
-		offset += len(s)
+		n := copy(seed[offset:], s)
+		offset += n
 	}
 
 	hkdfStream := hkdf.New(hash, seed, nil, []byte(label))
@@ -285,8 +285,8 @@ func deriveKeyInternalWithSalt(
 	ikm := make([]byte, total)
 	offset := 0
 	for _, s := range secrets {
-		copy(ikm[offset:], s)
-		offset += len(s)
+		n := copy(ikm[offset:], s)
+		offset += n
 	}
 
 	hkdfStream := hkdf.New(hash, ikm, salt, []byte(label))

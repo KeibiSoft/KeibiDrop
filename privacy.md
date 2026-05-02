@@ -47,21 +47,7 @@ If you don't like this, you're free to run your own relay or use a trusted one o
 
 ## 4. Local Identity Storage
 
-If you opt into the persistent-identity feature (the default 1-click connect mode), KeibiDrop stores a small set of files on your machine:
-
-- `~/.config/keibidrop/identity.enc` — your X25519 + ML-KEM private seeds, encrypted at rest with a per-install random master key.
-- `~/.config/keibidrop/contacts.enc` — your saved contacts (other peers' fingerprints + nicknames), encrypted with the same master key.
-- `~/.config/keibidrop/.master.key` — *only* on systems without an OS keychain (headless Linux, BSDs, WSL). 32 random bytes, file mode 0600.
-
-On macOS, Linux desktop (with a running Secret Service), and Windows, the master key is stored in the OS keychain (Keychain Services / libsecret / Credential Manager) — *not* in `~/.config/keibidrop/`. This means a cloud backup of `~/.config/` does not contain the key, and the encrypted files cannot be decrypted from a backup alone.
-
-If you back up `~/.config/keibidrop/` to a cloud service and would prefer not to rely on the OS keychain (for example, on a headless Linux server), enable passphrase protection with `KD_PASSPHRASE_PROTECT=1`. KeibiDrop will prompt for a passphrase at launch and use Argon2id to derive the per-file encryption keys.
-
-Incognito mode (`KD_INCOGNITO=1`) writes nothing to `~/.config/keibidrop/` and uses ephemeral session-only keys.
-
-If your identity file becomes unreadable (disk corruption, master key no longer accessible, etc.), KeibiDrop prints a clear error and exits without auto-recreating it — recreating would silently wipe your saved contacts. To start fresh, manually delete `~/.config/keibidrop/identity.enc` and `~/.config/keibidrop/contacts.enc` and re-launch.
-
-Configuration knobs (env vars, `config.toml`) are a desktop convenience. On iOS and Android the env vars are no-ops; mobile clients read settings from `config.toml` and from FFI calls into the Go core (handled by the closed-source mobile UIs). See `Security.md` for the full at-rest-encryption protocol.
+By default, KeibiDrop saves your identity and contacts encrypted on disk (`~/.config/keibidrop/`). The encryption key is stored in your OS keychain when available, or in a local file on headless systems. Incognito mode writes nothing to disk. See `Security.md` for details.
 
 ---
 
