@@ -794,6 +794,10 @@ export component MainWindow inherits Window {
     callback save_peer_as_contact(string);
     callback remove_contact(int);
 
+    // Identity hardening (passphrase protect)
+    in property<bool> passphrase_protect_enabled: false;
+    callback passphrase_protect_toggled(bool);
+
     in-out property<bool> help_visible: false;
     in-out property<bool> settings_visible: false;
     in property<string> cfg_relay: "";
@@ -1601,9 +1605,9 @@ export component MainWindow inherits Window {
     // Settings panel overlay
     if root.settings_visible: Rectangle {
         x: (parent.width - 500px) / 2;
-        y: (parent.height - 380px) / 2;
+        y: (parent.height - 480px) / 2;
         width: 500px;
-        height: 380px;
+        height: 480px;
         border-radius: 10px;
         background: #2a2a2a;
         border-width: 1px;
@@ -1649,6 +1653,33 @@ export component MainWindow inherits Window {
         // Version
         Text { x: 20px; y: 284px; text: "Version"; color: #888; font-size: 12px; }
         Text { x: 20px; y: 300px; text: root.version_text; color: #ccc; font-size: 13px; }
+
+        // Passphrase protect toggle
+        Rectangle {
+            x: 20px;
+            y: 334px;
+            width: parent.width - 40px;
+            height: 24px;
+
+            ToggleSwitch {
+                x: 0;
+                y: 2px;
+                checked: root.passphrase_protect_enabled;
+                toggled(val) => {
+                    root.passphrase-protect-toggled(val);
+                }
+            }
+
+            Text {
+                x: 44px;
+                y: 0;
+                height: 24px;
+                text: "Encrypt identity with a passphrase";
+                color: #ccc;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
 
         // Hint
         Text {

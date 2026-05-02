@@ -171,6 +171,8 @@ KeibiDrop reads `~/.config/keibidrop/config.toml`. Environment variables overrid
 
 Post-quantum hybrid key exchange prevents future quantum computers from decrypting recorded traffic. Forward secrecy via periodic re-keying limits exposure if a session key is ever compromised.
 
+Persistent identity is at-rest-encrypted with a per-install random master key stored in the OS keychain by default (macOS Keychain Services, Linux Secret Service, Windows Credential Manager). Headless setups fall back to a `~/.config/keibidrop/.master.key` file with mode 0600. Optional passphrase protection via Argon2id (or PBKDF2-SHA256 under `-tags fips`) is available for users who back up `~/.config/` to the cloud. See [Security.md](./Security.md#at-rest-identity-encryption).
+
 Full protocol description: [Security.md](./Security.md)
 
 ## Troubleshooting

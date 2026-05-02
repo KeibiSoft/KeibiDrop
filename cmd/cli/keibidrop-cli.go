@@ -20,9 +20,11 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
+	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/fatih/color"
+	"golang.org/x/term"
 )
 
 type cliContext struct {
@@ -502,6 +504,24 @@ func deleteFile(kd *common.KeibiDrop, path string) {
 	fmt.Println("[TODO] Unshared:", path)
 }
 
+// promptPassphraseFromTTY reads a passphrase from the controlling terminal
+// without echoing the input. Used for Tier 2 (passphrase-protect) key loading.
+//
+// Uses os.Stdin.Fd() rather than syscall.Stdin so the call is portable —
+// syscall.Stdin is an int on Unix but a Handle (uintptr) on Windows, and
+// would not compile or behave correctly across both. os.Stdin.Fd() returns
+// the platform-appropriate file descriptor / handle that term.ReadPassword
+// knows how to handle.
+func promptPassphraseFromTTY() (string, error) {
+	fmt.Fprint(os.Stderr, "Passphrase: ")
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", err
+	}
+	return string(pw), nil
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -557,7 +577,21 @@ func main() {
 	}
 
 	if !cfg.Incognito {
-		if err := kd.EnablePersistentIdentity(config.ConfigDir()); err != nil {
+		opts := common.EnableOpts{
+			PassphraseProtect: cfg.PassphraseProtect,
+		}
+		if cfg.PassphraseProtect {
+			opts.PassphraseProvider = promptPassphraseFromTTY
+		}
+		if err := kd.EnablePersistentIdentity(config.ConfigDir(), opts); err != nil {
+			var corrupted *identity.IdentityCorruptedError
+			if errors.As(err, &corrupted) {
+				// Error() already includes the path and recovery guidance.
+				// Exit 1 = program/runtime error (file unreadable on disk),
+				// not a user-input error (which would be exit 2).
+				fmt.Fprintln(os.Stderr, corrupted.Error())
+				os.Exit(1)
+			}
 			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
 		}
 	}

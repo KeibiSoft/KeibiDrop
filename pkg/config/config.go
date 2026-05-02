@@ -19,18 +19,19 @@ import (
 // Config holds all user-configurable settings.
 // Resolution order: built-in defaults → config file → environment variables.
 type Config struct {
-	Relay          string `toml:"relay"`
-	SavePath       string `toml:"save_path"`
-	MountPath      string `toml:"mount_path"`
-	LogFile        string `toml:"log_file"`
-	InboundPort    int    `toml:"inbound_port"`
-	OutboundPort   int    `toml:"outbound_port"`
-	BridgeAddr     string `toml:"bridge_addr"` // TCP bridge relay address
-	StrictMode     bool   `toml:"strict_mode"` // Disable data relay fallback
-	NoFUSE         bool   `toml:"no_fuse"`
-	Incognito      bool   `toml:"incognito"`
-	PrefetchOnOpen bool   `toml:"prefetch_on_open"`
-	PushOnWrite    bool   `toml:"push_on_write"`
+	Relay             string `toml:"relay"`
+	SavePath          string `toml:"save_path"`
+	MountPath         string `toml:"mount_path"`
+	LogFile           string `toml:"log_file"`
+	InboundPort       int    `toml:"inbound_port"`
+	OutboundPort      int    `toml:"outbound_port"`
+	BridgeAddr        string `toml:"bridge_addr"` // TCP bridge relay address
+	StrictMode        bool   `toml:"strict_mode"` // Disable data relay fallback
+	NoFUSE            bool   `toml:"no_fuse"`
+	Incognito         bool   `toml:"incognito"`
+	PrefetchOnOpen    bool   `toml:"prefetch_on_open"`
+	PushOnWrite       bool   `toml:"push_on_write"`
+	PassphraseProtect bool   `toml:"passphrase_protect"` // opt into Tier 2 (Argon2id passphrase) for identity at-rest encryption
 }
 
 const DefaultRelay = "https://keibidroprelay.keibisoft.com/"
@@ -243,6 +244,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := envFirst("KEIBIDROP_INCOGNITO", "KD_INCOGNITO"); v != "" {
 		cfg.Incognito = true
+	}
+	if v := envFirst("KEIBIDROP_PASSPHRASE_PROTECT", "KD_PASSPHRASE_PROTECT"); v != "" {
+		cfg.PassphraseProtect = true
 	}
 	if v := envFirst("KEIBIDROP_PREFETCH_ON_OPEN", "PREFETCH_ON_OPEN_ENV"); v != "" {
 		cfg.PrefetchOnOpen = true

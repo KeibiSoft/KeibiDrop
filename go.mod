@@ -7,8 +7,9 @@ require (
 	github.com/c-bata/go-prompt v0.2.6
 	github.com/fatih/color v1.18.0
 	github.com/pkg/xattr v0.4.12
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	github.com/winfsp/cgofuse v1.6.0
+	github.com/zalando/go-keyring v0.2.8
 	github.com/zeebo/xxh3 v1.0.2
 	golang.org/x/crypto v0.49.0
 	golang.org/x/sys v0.43.0
@@ -17,7 +18,9 @@ require (
 )
 
 require (
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
@@ -28,6 +31,7 @@ require (
 	github.com/pkg/term v1.2.0-beta.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
+	golang.org/x/term v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250218202821-56aae31c358a // indirect
 	gopkg.in/check.v1 v1.0.0-20200227125254-8fa46927fb4f // indirect

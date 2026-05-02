@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -189,17 +190,50 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 	return kd, nil
 }
 
+// EnableOpts controls how persistent identity is loaded:
+//   - PassphraseProtect: opt into Tier 2 (passphrase-derived key).
+//     Requires PassphraseProvider to be non-nil.
+//   - PassphraseProvider: called once when PassphraseProtect=true to obtain
+//     the user's passphrase. Typical sources: TTY prompt (CLI),
+//     stdin (rustbridge / FFI), test stub.
+type EnableOpts struct {
+	PassphraseProtect  bool
+	PassphraseProvider func() (string, error)
+}
+
 // EnablePersistentIdentity replaces ephemeral keys with a stable device identity.
 // Must be called before CreateRoom/JoinRoom. Loads or creates identity from configDir,
 // rebuilds the session with stable keys, and loads the address book.
-func (kd *KeibiDrop) EnablePersistentIdentity(configDir string) error {
-	id, err := identity.LoadOrCreate(configDir)
+func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts) error {
+	logger := kd.logger.With("fn", "EnablePersistentIdentity", "configDir", configDir, "passphrase", opts.PassphraseProtect)
+	logger.Info("starting")
+
+	src, err := identity.NewMasterKeySource(identity.KeySourceOpts{
+		ConfigDir:          configDir,
+		PassphraseProtect:  opts.PassphraseProtect,
+		PassphraseProvider: opts.PassphraseProvider,
+	})
 	if err != nil {
+		return fmt.Errorf("init key source: %w", err)
+	}
+
+	logger.Info("key source tier selected", "tier", src.Tier())
+
+	id, err := identity.LoadOrCreate(configDir, src)
+	if err != nil {
+		var ice *identity.IdentityCorruptedError
+		if errors.As(err, &ice) {
+			return ice
+		}
 		return fmt.Errorf("load identity: %w", err)
 	}
 
-	ab, err := identity.LoadAddressBook(configDir)
+	ab, err := identity.LoadAddressBook(configDir, src)
 	if err != nil {
+		var ice *identity.IdentityCorruptedError
+		if errors.As(err, &ice) {
+			return ice
+		}
 		return fmt.Errorf("load address book: %w", err)
 	}
 
@@ -217,14 +251,20 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string) error {
 	kd.refreshSession = func() *session.Session {
 		s, err := session.InitSessionWithKeys(kd.logger, id.Keys, outPort, inPort)
 		if err != nil {
-			kd.logger.Error("Failed to refresh persistent session", "error", err)
+			logger.Error("Failed to refresh persistent session", "error", err)
 			return nil
 		}
 		return s
 	}
 
-	kd.logger.Info("Persistent identity enabled", "fingerprint", id.Fingerprint)
+	logger.Info("persistent identity enabled", "fingerprint", id.Fingerprint)
 	return nil
+}
+
+// EnablePersistentIdentityDefault is a convenience wrapper that uses zero-value
+// EnableOpts (keychain or file tier, no passphrase).
+func (kd *KeibiDrop) EnablePersistentIdentityDefault(configDir string) error {
+	return kd.EnablePersistentIdentity(configDir, EnableOpts{})
 }
 
 // ToggleIncognito switches between persistent and ephemeral identity.
@@ -253,7 +293,7 @@ func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, 
 	}
 
 	kd.Incognito = false
-	if err := kd.EnablePersistentIdentity(configDir); err != nil {
+	if err := kd.EnablePersistentIdentity(configDir, EnableOpts{}); err != nil {
 		return "", err
 	}
 	return kd.Identity.Fingerprint, nil

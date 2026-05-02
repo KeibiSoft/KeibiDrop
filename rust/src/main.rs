@@ -1357,6 +1357,23 @@ fn main() {
             }
         });
 
+        // ---- Passphrase protect & Regenerate identity ----
+
+        {
+            // Read initial passphrase-protect state from FFI (0 = disabled)
+            // KD_SetPassphraseProtect with a read-side is not yet exposed;
+            // default to false until the Go side adds a getter.
+            app.set_passphrase_protect_enabled(false);
+        }
+
+        let weak_passphrase = app.as_weak();
+        app.on_passphrase_protect_toggled(move |enabled| {
+            let _ = bindings::KD_SetPassphraseProtect(if enabled { 1 } else { 0 });
+            if let Some(app) = weak_passphrase.upgrade() {
+                app.set_passphrase_protect_enabled(enabled);
+            }
+        });
+
         let weak_connect_contact = app.as_weak();
         let watcher_running_cc = watcher_running.clone();
         let downloads_cc = downloads.clone();

@@ -265,12 +265,51 @@ func ParsePeerKeys(pubMap map[string][]byte) (*PeerKeys, error) {
 
 // ========== IDENTITY PERSISTENCE ==========
 
-// DeriveIdentityFileKey derives a 32-byte key for encrypting the identity file on disk.
-// Uses a distinct HKDF label for domain separation from relay and session keys.
-// The input is hashed first to guarantee the 32-byte minimum for HKDF.
-func DeriveIdentityFileKey(machineEntropy []byte) ([]byte, error) {
-	h := sha512.Sum512(machineEntropy)
-	return deriveKeyInternal(sha512.New, "keibidrop-identity-file-v1", KeySize, h[:])
+// deriveKeyInternalWithSalt is like deriveKeyInternal but uses a random salt
+// in HKDF-Extract.
+func deriveKeyInternalWithSalt(
+	hash func() hash.Hash,
+	salt []byte,
+	label string,
+	size int,
+	secrets ...[]byte,
+) ([]byte, error) {
+	total := 0
+	for _, s := range secrets {
+		if err := ValidateSeed(s); err != nil {
+			return nil, err
+		}
+		total += len(s)
+	}
+
+	ikm := make([]byte, total)
+	offset := 0
+	for _, s := range secrets {
+		copy(ikm[offset:], s)
+		offset += len(s)
+	}
+
+	hkdfStream := hkdf.New(hash, ikm, salt, []byte(label))
+	key := make([]byte, size)
+	if _, err := io.ReadFull(hkdfStream, key); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+// DeriveFileEncryptionKey derives a 32-byte per-file AEAD key from a master
+// key (e.g. a random 32-byte secret from the OS keychain or a passphrase-
+// derived key) plus a per-file random salt, using HKDF-SHA512 with a
+// distinct info string per use case ("keibidrop-identity-file-v1",
+// "keibidrop-contacts-file-v1", etc.).
+func DeriveFileEncryptionKey(masterKey, salt []byte, info string) ([]byte, error) {
+	if len(masterKey) == 0 {
+		return nil, errors.New("master key empty")
+	}
+	if len(salt) < 16 {
+		return nil, errors.New("salt too short")
+	}
+	return deriveKeyInternalWithSalt(sha512.New, salt, info, KeySize, masterKey)
 }
 
 // ========== PRESENCE ==========

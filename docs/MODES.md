@@ -130,3 +130,20 @@ No daemons, no startup items, no browser extensions, no telemetry, no accounts.
 - Health monitoring with automatic reconnection
 - Pause and resume downloads across disconnections
 - Desktop UI, interactive CLI, or agent CLI (Unix socket JSON protocol)
+
+---
+
+## Identity persistence
+
+KeibiDrop has two persistence modes for the user's long-lived X25519 + ML-KEM identity:
+
+| Mode | Identity | Contacts | Triggered by |
+|------|----------|----------|--------------|
+| **Persistent** (default) | Saved to `~/.config/keibidrop/identity.enc`, encrypted at rest with a per-install random master key | Saved to `~/.config/keibidrop/contacts.enc` | First launch (default) |
+| **Incognito** | Ephemeral; new keys per session | Not stored | `KD_INCOGNITO=1` or the Settings-screen toggle |
+
+In persistent mode, the master key lives in the OS keychain by default (Tier 1a — macOS Keychain Services / Linux libsecret / Windows Credential Manager) and falls back to a 0600-mode `.master.key` file on systems without a keychain (Tier 1b — headless Linux, BSDs, WSL). Optional passphrase protection (Tier 2) is available via `KD_PASSPHRASE_PROTECT=1` and uses Argon2id for offline-attack resistance. On iOS and Android the master key comes from the platform-native secret store (Keychain Services / Android Keystore) and is injected into the Go core via the mobile bridge (closed-source).
+
+If an identity file becomes unreadable, KeibiDrop prints a clear error and exits without auto-recreating it — recreating would silently wipe your saved contacts. To start fresh, manually delete `identity.enc` and `contacts.enc` and re-launch.
+
+See [`Security.md`](../Security.md#at-rest-identity-encryption) for the full at-rest-encryption protocol, envelope format, and platform-coverage matrix.

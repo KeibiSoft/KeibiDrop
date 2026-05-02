@@ -3,6 +3,9 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// ABOUTME: Encrypted address book (contacts list) for the identity package.
+// ABOUTME: Loads, saves, and manages contacts using the same envelope format as identities.
 
 package identity
 
@@ -20,50 +23,78 @@ import (
 const contactsFile = "contacts.enc"
 
 type Contact struct {
-	Name        string    `json:"name"`
-	Fingerprint string    `json:"fingerprint"`
-	AddedAt     time.Time `json:"added_at"`
-	LastSeen    time.Time `json:"last_seen,omitempty"`
+	SchemaVersion int       `json:"schema_version,omitempty"`
+	Name          string    `json:"name"`
+	Fingerprint   string    `json:"fingerprint"`
+	AddedAt       time.Time `json:"added_at"`
+	LastSeen      time.Time `json:"last_seen,omitempty"`
 }
 
 type AddressBook struct {
 	mu        sync.RWMutex
 	contacts  []Contact
 	configDir string
+	src       MasterKeySource
 }
 
-// LoadAddressBook loads the encrypted address book from configDir.
-// Returns an empty address book if the file doesn't exist.
-func LoadAddressBook(configDir string) (*AddressBook, error) {
-	ab := &AddressBook{configDir: configDir}
+// LoadAddressBook loads the encrypted address book from configDir using src.
+// Returns an empty address book if the file does not exist.
+func LoadAddressBook(configDir string, src MasterKeySource) (*AddressBook, error) {
+	ab := &AddressBook{configDir: configDir, src: src}
 
 	path := filepath.Join(configDir, contactsFile)
-	ciphertext, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return ab, nil
+
+	buf, readErr := os.ReadFile(path)
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			return ab, nil // empty address book
 		}
-		return nil, fmt.Errorf("read contacts: %w", err)
+		return nil, fmt.Errorf("read contacts: %w", readErr)
 	}
 
-	fileKey, err := deriveFileKey()
-	if err != nil {
-		return nil, fmt.Errorf("derive file key: %w", err)
+	if !IsV1Envelope(buf) {
+		return nil, &IdentityCorruptedError{
+			Path:     path,
+			Original: fmt.Errorf("file is not a KDID envelope"),
+		}
 	}
 
-	plaintext, err := kbc.Decrypt(fileKey, ciphertext)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt contacts: %w", err)
+	header, ctAndTag, parseErr := ParseEnvelope(buf)
+	if parseErr != nil {
+		return nil, &IdentityCorruptedError{Path: path, Original: parseErr}
 	}
 
-	if err := json.Unmarshal(plaintext, &ab.contacts); err != nil {
-		return nil, fmt.Errorf("unmarshal contacts: %w", err)
+	perFileKey, keyErr := derivePerFileKey(
+		src, header, "keibidrop-contacts-file-v1",
+	)
+	if keyErr != nil {
+		return nil, fmt.Errorf("derive contacts per-file key: %w", keyErr)
+	}
+
+	blob := make([]byte, kbc.NonceSize+len(ctAndTag))
+	copy(blob[:kbc.NonceSize], header.Nonce[:])
+	copy(blob[kbc.NonceSize:], ctAndTag)
+
+	plaintext, decErr := kbc.DecryptWithAAD(perFileKey, blob, header.AAD())
+	if decErr != nil {
+		return nil, &IdentityCorruptedError{
+			Path:     path,
+			Original: fmt.Errorf("decrypt contacts: %w", decErr),
+		}
+	}
+
+	if jsonErr := json.Unmarshal(plaintext, &ab.contacts); jsonErr != nil {
+		return nil, &IdentityCorruptedError{
+			Path:     path,
+			Original: fmt.Errorf("unmarshal contacts: %w", jsonErr),
+		}
 	}
 
 	return ab, nil
 }
 
-// Save encrypts and persists the address book to disk.
+// Save encrypts and persists the address book to disk using the MasterKeySource
+// that was provided to LoadAddressBook.
 func (ab *AddressBook) Save() error {
 	ab.mu.RLock()
 	data, err := json.Marshal(ab.contacts)
@@ -72,22 +103,35 @@ func (ab *AddressBook) Save() error {
 		return fmt.Errorf("marshal contacts: %w", err)
 	}
 
-	fileKey, err := deriveFileKey()
-	if err != nil {
-		return fmt.Errorf("derive file key: %w", err)
+	if err := os.MkdirAll(ab.configDir, 0o750); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
 	}
 
-	ciphertext, err := kbc.Encrypt(fileKey, data)
+	salt, err := kbc.RandomBytes(envelopeSaltSize)
+	if err != nil {
+		return fmt.Errorf("generate salt: %w", err)
+	}
+
+	header := EnvelopeHeader{KDFID: ab.src.KDFID()}
+	copy(header.Salt[:], salt)
+
+	perFileKey, err := derivePerFileKey(
+		ab.src, header, "keibidrop-contacts-file-v1",
+	)
+	if err != nil {
+		return fmt.Errorf("derive per-file key: %w", err)
+	}
+
+	blob, err := kbc.EncryptWithAAD(perFileKey, data, header.AAD())
 	if err != nil {
 		return fmt.Errorf("encrypt contacts: %w", err)
 	}
 
-	if err := os.MkdirAll(ab.configDir, 0750); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
+	copy(header.Nonce[:], blob[:kbc.NonceSize])
+	ctAndTag := blob[kbc.NonceSize:]
 
 	path := filepath.Join(ab.configDir, contactsFile)
-	return os.WriteFile(path, ciphertext, 0600)
+	return WriteFileAtomic(path, MarshalEnvelope(header, ctAndTag), 0o600)
 }
 
 // Add adds a contact. Returns error if fingerprint already exists.
@@ -97,7 +141,9 @@ func (ab *AddressBook) Add(name, fingerprint string) error {
 
 	for _, c := range ab.contacts {
 		if c.Fingerprint == fingerprint {
-			return fmt.Errorf("contact with fingerprint %s already exists", fingerprint[:8])
+			return fmt.Errorf(
+				"contact with fingerprint %s already exists", fingerprint[:8],
+			)
 		}
 	}
 
@@ -165,3 +211,6 @@ func (ab *AddressBook) Count() int {
 	defer ab.mu.RUnlock()
 	return len(ab.contacts)
 }
+
+// ConfigDir returns the configDir the address book was loaded from.
+func (ab *AddressBook) ConfigDir() string { return ab.configDir }
