@@ -1,8 +1,6 @@
 // ABOUTME: Tests for FS.Mount error handling — verifies invalid mount points return error.
 // ABOUTME: The host.Mount failure branch is covered by integration tests, not here.
 
-//go:build !android
-
 package filesystem
 
 import (

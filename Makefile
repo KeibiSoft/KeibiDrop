@@ -218,7 +218,7 @@ ANDROID_NDK_HOME ?= $(ANDROID_HOME)/ndk/27.0.12077973
 
 build-android:
 	ANDROID_HOME=$(ANDROID_HOME) ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) \
-	GOFLAGS="-mod=mod" gomobile bind -target=android -androidapi 21 -o keibidrop.aar ./mobile
+	GOFLAGS="-mod=mod" gomobile bind -target=android -androidapi 28 -o keibidrop.aar ./mobile
 
 # Sync mobile app source + frameworks to the private KeibiDropMobile repo.
 # Edit in KeibiDrop/ios and KeibiDrop/android, run this, commit in KeibiDropMobile.

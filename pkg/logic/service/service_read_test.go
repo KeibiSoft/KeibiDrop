@@ -6,8 +6,6 @@
 // ABOUTME: Tests for Read handler fallback to SyncTracker.LocalFiles when FUSE is active.
 // ABOUTME: Regression test for drag-and-drop files not found by FUSE-mode Read handler.
 
-//go:build !android
-
 package service
 
 import (
