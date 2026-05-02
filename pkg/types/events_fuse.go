@@ -7,8 +7,6 @@
 // ABOUTME: FUSE-specific type conversions between fuse.Stat_t and protobuf Attr.
 // ABOUTME: Excluded on Android where FUSE is unavailable.
 
-//go:build !android
-
 package types
 
 import (
