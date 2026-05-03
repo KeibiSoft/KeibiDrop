@@ -7,21 +7,22 @@ KD="$ROOT/kd"
 SSH_KEY="${WAN_SSH_KEY:-$HOME/.ssh/id_rsa_rent}"
 SERVER="${WAN_SERVER:-root@185.104.181.40}"
 RELAY="${WAN_RELAY:-https://keibidroprelay.keibisoft.com/}"
+BRIDGE="${WAN_BRIDGE:-185.104.181.40:26600}"
 
 ssh_cmd() { ssh -i "$SSH_KEY" -o ConnectTimeout=10 "$SERVER" "$@"; }
 alice() { KD_SOCKET=/tmp/kd-alice.sock "$KD" "$@"; }
 
 echo "[start] Starting Bob on server..."
 ssh -f -i "$SSH_KEY" "$SERVER" "cd /root/KeibiDrop && \
-    KD_RELAY='$RELAY' KD_INBOUND_PORT=26431 KD_OUTBOUND_PORT=26432 \
+    KD_RELAY='$RELAY' KD_BRIDGE='$BRIDGE' KD_INBOUND_PORT=26431 KD_OUTBOUND_PORT=26432 \
     KD_NO_FUSE=1 KD_SAVE_PATH=/tmp/SaveBob KD_SOCKET=/tmp/kd-bob.sock \
-    ./kd start > /tmp/kd-bob.log 2>&1"
+    KD_INCOGNITO=1 ./kd start > /tmp/kd-bob.log 2>&1"
 sleep 3
 
 echo "[start] Starting Alice on Mac..."
-KD_RELAY="$RELAY" KD_INBOUND_PORT=26431 KD_OUTBOUND_PORT=26432 \
+KD_RELAY="$RELAY" KD_BRIDGE="$BRIDGE" KD_INBOUND_PORT=26431 KD_OUTBOUND_PORT=26432 \
     KD_NO_FUSE=1 KD_SAVE_PATH=/tmp/SaveAlice KD_SOCKET=/tmp/kd-alice.sock \
-    "$KD" start > /tmp/kd-alice.log 2>&1 &
+    KD_INCOGNITO=1 "$KD" start > /tmp/kd-alice.log 2>&1 &
 sleep 3
 
 echo "[start] Exchanging fingerprints..."
