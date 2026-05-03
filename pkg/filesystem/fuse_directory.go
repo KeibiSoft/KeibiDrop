@@ -61,20 +61,24 @@ func checkPath(path string) int {
 func (d *Dir) refreshDirStat(dirPath string) {
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, dirPath))
 	if st, err := platLstat(cleanPath); err == nil {
+		d.Adm.Lock()
 		if dir, ok := d.AllDirMap[dirPath]; ok && dir.stat != nil {
 			dir.stat.Ctim = st.Ctim
 			dir.stat.Mtim = st.Mtim
 		}
+		d.Adm.Unlock()
 	}
 }
 
 func (d *Dir) refreshFileStat(filePath string) {
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, filePath))
 	if st, err := platLstat(cleanPath); err == nil {
+		d.AfmLock.Lock()
 		if f, ok := d.AllFileMap[filePath]; ok && f.stat != nil {
 			f.stat.Ctim = st.Ctim
 			f.stat.Mtim = st.Mtim
 		}
+		d.AfmLock.Unlock()
 	}
 }
 
