@@ -1184,7 +1184,7 @@ export component MainWindow inherits Window {
 
         // Save All button - aligned with global top-right buttons
         SmallOutlineButton {
-            x: 700px;
+            x: 668px;
             y: 93px;
             width: 70px;
             text: "Save All";
@@ -1441,7 +1441,7 @@ export component MainWindow inherits Window {
         }
 
         SmallOutlineButton {
-            x: 700px;
+            x: 832px;
             y: 93px;
             width: 85px;
             text: "Open Folder";
@@ -1539,7 +1539,7 @@ export component MainWindow inherits Window {
 
     // Disconnect button (only when connected)
     if root.current_screen == 1 || root.current_screen == 2: SmallOutlineButton {
-        x: 780px;
+        x: 746px;
         y: 93px;
         width: 78px;
         text: "Disconnect";
@@ -1548,7 +1548,7 @@ export component MainWindow inherits Window {
 
     // Saved Files button (Screen 0 only, when files exist)
     if root.current_screen == 0 && root.saved_file_list.length > 0: SmallOutlineButton {
-        x: 762px;
+        x: 728px;
         y: 93px;
         width: 96px;
         text: "Saved Files";
@@ -1556,21 +1556,21 @@ export component MainWindow inherits Window {
     }
 
     SmallOutlineButton {
-        x: 868px;
+        x: 925px;
         y: 93px;
         width: 96px;
         text: "Save Log";
         clicked => { root.export_logs_pressed() }
     }
     SmallOutlineButton {
-        x: 973px;
+        x: 1029px;
         y: 93px;
         width: 24px;
         text: "?";
         clicked => { root.help_visible = !root.help_visible; }
     }
     SmallOutlineButton {
-        x: 1005px;
+        x: 1061px;
         y: 93px;
         width: 24px;
         text: "X";
