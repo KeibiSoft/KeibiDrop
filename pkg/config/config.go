@@ -35,6 +35,7 @@ type Config struct {
 }
 
 const DefaultRelay = "https://keibidroprelay.keibisoft.com/"
+const DefaultBridge = "bridge.keibisoft.com:26600"
 
 // DefaultConfig returns platform-aware defaults.
 func DefaultConfig() Config {
@@ -45,6 +46,7 @@ func DefaultConfig() Config {
 		MountPath:    filepath.Join(home, "KeibiDrop", "Mount"),
 		InboundPort:  InboundPort,
 		OutboundPort: OutboundPort,
+		BridgeAddr:   DefaultBridge,
 	}
 	switch runtime.GOOS {
 	case "darwin":
