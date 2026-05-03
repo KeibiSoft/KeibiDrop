@@ -1608,6 +1608,14 @@ fn main() {
                         libc::free(evt_ptr as *mut libc::c_void);
                         println!("[Event] {}", evt);
 
+                        // Identity error (failed to load, using ephemeral)
+                        if evt.starts_with("identity_error:") {
+                            let msg = evt.trim_start_matches("identity_error:");
+                            if let Some(app) = weak_evt.upgrade() {
+                                app.set_error_message(slint::SharedString::from(msg));
+                            }
+                        }
+
                         // Connection mode events
                         if evt.starts_with("connection_mode:") {
                             let mode = evt.trim_start_matches("connection_mode:");

@@ -159,6 +159,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		}
 		if err := kd.EnablePersistentIdentity(config.ConfigDir(), opts); err != nil {
 			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
+			pushEvent("identity_error:" + err.Error())
 		}
 	} else {
 		kd.Incognito = true
