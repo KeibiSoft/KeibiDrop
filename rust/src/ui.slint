@@ -912,7 +912,7 @@ export component MainWindow inherits Window {
             sectionNumber: 2;
         }
 
-        // Connect button (replaces separate Create/Join — role determined by fingerprint tiebreaker)
+        // Connect button (replaces separate Create/Join, role determined by fingerprint tiebreaker)
         if !root.local_mode: PillButton {
             x: 868px;
             y: 459px;
@@ -953,7 +953,7 @@ export component MainWindow inherits Window {
         // FUSE toggle
         Rectangle {
             x: 868px;
-            y: 560px;
+            y: 525px;
             width: 260px;
             height: root.fuse_available ? 24px : 40px;
             visible: root.room_action == 0;
@@ -1003,7 +1003,7 @@ export component MainWindow inherits Window {
         // Local mode toggle
         Rectangle {
             x: 868px;
-            y: 592px;
+            y: 557px;  // 525+32 = same 32px gap as original
             width: 260px;
             height: 24px;
             visible: root.room_action == 0;
@@ -1103,7 +1103,7 @@ export component MainWindow inherits Window {
         // Incognito toggle (below local mode toggle)
         Rectangle {
             x: 868px;
-            y: root.local_mode ? 636px : 624px;
+            y: 605px;
             width: 260px;
             height: 24px;
             visible: root.room_action == 0 && !root.local_mode;
@@ -1135,9 +1135,9 @@ export component MainWindow inherits Window {
 
         // Saved contacts panel (only when contacts exist, not connecting, not local mode)
         if root.contacts.length > 0 && root.room_action == 0 && !root.local_mode: Rectangle {
-            x: 261px;
-            y: 660px;
-            width: 580px;
+            x: 314px;
+            y: 680px;
+            width: 517px;
             height: Math.min(root.contacts.length * 36 + 28, 136) * 1px;
             border-radius: 7px;
             background: #262626;
@@ -1335,21 +1335,15 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
-            if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: Rectangle {
-                width: save-peer-label.preferred-width;
-                height: 20px;
-                y: (parent.height - self.height) / 2;
-                save-peer-label := Text {
-                    text: "Save Peer";
-                    color: save-peer-touch.has-hover ? #60a5fa : #3b82f6;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                }
-                save-peer-touch := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.save_contact_visible = true; }
-                }
-            }
+        }
+
+        // Save Peer button (no-FUSE, aligned under gear/?/X)
+        if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: SmallOutlineButton {
+            x: 973px;
+            y: 125px;
+            width: 88px;
+            text: "Save Peer";
+            clicked => { root.save_contact_visible = true; }
         }
 
         // Save All button - aligned with global top-right buttons
@@ -1495,21 +1489,6 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
-            if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: Rectangle {
-                width: fuse-save-peer-label.preferred-width;
-                height: 20px;
-                y: (parent.height - self.height) / 2;
-                fuse-save-peer-label := Text {
-                    text: "Save Peer";
-                    color: fuse-save-peer-touch.has-hover ? #60a5fa : #3b82f6;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                }
-                fuse-save-peer-touch := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.save_contact_visible = true; }
-                }
-            }
         }
 
         // ── Main content ─────────────────────────────────────────
@@ -1572,9 +1551,14 @@ export component MainWindow inherits Window {
 
             HorizontalLayout {
                 alignment: center;
+                spacing: 12px;
                 OutlineButton {
                     text: "Open Folder";
                     clicked => { root.open_folder_pressed() }
+                }
+                if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: OutlineButton {
+                    text: "Save Peer";
+                    clicked => { root.save_contact_visible = true; }
                 }
             }
         }
@@ -1762,10 +1746,10 @@ export component MainWindow inherits Window {
             color: #bbb;
             font-size: 13px;
             text: root.current_screen == 0
-                ? "1. Copy your code and send it to your peer\n2. Paste their code and press Add\n3. Press Connect (both peers)\n4. Drag files to share, or toggle Virtual Folder\n\nContacts: After connecting, press Save Peer to remember them. Next time, click their name in the contacts list to reconnect instantly.\n\nIncognito: Toggle to use fresh keys each session. Your peer cannot save you as a contact.\n\nLocal Network: Toggle to find devices on the same WiFi.\n\nVirtual Folder (FUSE): Requires macFUSE (macOS), fuse3 (Linux), or WinFsp (Windows)."
+                ? "1. Copy your code and send it to your peer\n2. Paste their code and press Add\n3. Press Connect (both peers)\n4. Drag files to share, or toggle Virtual Folder\n\nSaved contacts appear below. Click to reconnect.\n\nIncognito: new keys each session. Peer can't save you.\n\nLocal Network: find devices on the same WiFi.\n\nVirtual Folder: requires macFUSE, fuse3, or WinFsp."
                 : root.current_screen == 1
-                ? "Connected in Direct Transfer mode.\n\nDrag files onto the window or press Add File.\nYour peer sees your files and can save them.\nClick Save to download a peer's file.\n\nSave Peer: saves this peer to your contacts for one-click reconnect next time.\n\nFiles are encrypted end-to-end.\nThe connection badge shows how you're connected:\n  LAN = same network (fastest)\n  Direct P2P = over the internet\n  Via Relay = through an encrypted bridge"
-                : "Connected in Virtual Folder mode.\n\nYour peer's files appear in the mounted folder.\nOpen it with any app: Finder, Terminal, git, etc.\nFiles stream on access — no waiting for full download.\n\nSave Peer: saves this peer to your contacts for one-click reconnect next time.\n\nDrag files into the folder to share them with your peer.";
+                ? "Drag files onto the window or press Add File.\nYour peer sees your files and can save them.\nClick Save to download a peer's file.\n\nSave Peer adds them to your contacts.\n\nConnection badge:\n  LAN = same network\n  Direct P2P = over the internet\n  Via Relay = through encrypted bridge"
+                : "Your peer's files appear in the mounted folder.\nOpen with any app: Finder, Terminal, git, etc.\nFiles stream on access, no full download needed.\n\nDrop files into the folder to share.\nSave Peer adds them to your contacts.";
         }
 
         Text {
