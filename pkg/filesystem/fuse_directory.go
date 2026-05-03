@@ -1650,9 +1650,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	// Remove destination entry from AllFileMap if it existed (rename-over-existing).
 	// Do NOT remove from RemoteFiles — the peer still tracks this file.
 	d.AfmLock.Lock()
-	if _, existed := d.AllFileMap[newpath]; existed {
-		delete(d.AllFileMap, newpath)
-	}
+	delete(d.AllFileMap, newpath)
 	d.AfmLock.Unlock()
 
 	// Update internal maps to reflect the rename
