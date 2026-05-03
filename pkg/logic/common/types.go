@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
+	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
@@ -31,6 +33,10 @@ type KeibiDrop struct {
 	logger       *slog.Logger
 	relayClient  *http.Client
 	RelayEndoint *url.URL
+
+	Identity    *identity.DeviceIdentity
+	AddressBook *identity.AddressBook
+	Incognito   bool
 
 	IsFUSE         bool
 	IsLocalMode    bool
@@ -181,6 +187,112 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 	}
 
 	return kd, nil
+}
+
+// EnableOpts controls how persistent identity is loaded:
+//   - PassphraseProtect: opt into Tier 2 (passphrase-derived key).
+//     Requires PassphraseProvider to be non-nil.
+//   - PassphraseProvider: called once when PassphraseProtect=true to obtain
+//     the user's passphrase. Typical sources: TTY prompt (CLI),
+//     stdin (rustbridge / FFI), test stub.
+type EnableOpts struct {
+	PassphraseProtect  bool
+	PassphraseProvider func() (string, error)
+}
+
+// EnablePersistentIdentity replaces ephemeral keys with a stable device identity.
+// Must be called before CreateRoom/JoinRoom. Loads or creates identity from configDir,
+// rebuilds the session with stable keys, and loads the address book.
+func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts) error {
+	logger := kd.logger.With("method", "enable-persistent-identity", "configDir", configDir, "passphrase", opts.PassphraseProtect)
+	logger.Info("Starting")
+
+	src, err := identity.NewMasterKeySource(identity.KeySourceOpts{
+		ConfigDir:          configDir,
+		PassphraseProtect:  opts.PassphraseProtect,
+		PassphraseProvider: opts.PassphraseProvider,
+	})
+	if err != nil {
+		return fmt.Errorf("init key source: %w", err)
+	}
+
+	logger.Info("Key source tier selected", "tier", src.Tier())
+
+	id, err := identity.LoadOrCreate(configDir, src)
+	if err != nil {
+		return fmt.Errorf("load identity: %w", err)
+	}
+
+	ab, err := identity.LoadAddressBook(configDir, src)
+	if err != nil {
+		return fmt.Errorf("load address book: %w", err)
+	}
+
+	outPort := kd.session.DefaultOutboundPort
+	inPort := kd.session.DefaultInboundPort
+	sess, err := session.InitSessionWithKeys(kd.logger, id.Keys, outPort, inPort)
+	if err != nil {
+		return fmt.Errorf("init session with keys: %w", err)
+	}
+
+	kd.Identity = id
+	kd.AddressBook = ab
+	kd.session = sess
+
+	kd.refreshSession = func() *session.Session {
+		s, err := session.InitSessionWithKeys(kd.logger, id.Keys, outPort, inPort)
+		if err != nil {
+			logger.Error("Failed to refresh persistent session", "error", err)
+			return nil
+		}
+		return s
+	}
+
+	logger.Info("Persistent identity enabled", "fingerprint", id.Fingerprint)
+	return nil
+}
+
+// EnablePersistentIdentityDefault is a convenience wrapper that uses zero-value
+// EnableOpts (keychain or file tier, no passphrase).
+func (kd *KeibiDrop) EnablePersistentIdentityDefault(configDir string) error {
+	return kd.EnablePersistentIdentity(configDir, EnableOpts{})
+}
+
+// ToggleIncognito switches between persistent and ephemeral identity.
+// When enabling incognito: generates fresh ephemeral keys.
+// When disabling: restores persistent identity keys.
+// Returns the new fingerprint.
+func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, error) {
+	if incognito {
+		kd.Incognito = true
+		outPort := kd.session.DefaultOutboundPort
+		inPort := kd.session.DefaultInboundPort
+		sess, err := session.InitSession(kd.logger, outPort, inPort)
+		if err != nil {
+			return "", fmt.Errorf("init ephemeral session: %w", err)
+		}
+		kd.session = sess
+		kd.refreshSession = func() *session.Session {
+			s, err := session.InitSession(kd.logger, outPort, inPort)
+			if err != nil {
+				kd.logger.Error("Failed to refresh ephemeral session", "error", err)
+				return nil
+			}
+			return s
+		}
+		return sess.OwnFingerprint, nil
+	}
+
+	kd.Incognito = false
+	if err := kd.EnablePersistentIdentity(configDir, EnableOpts{}); err != nil {
+		kd.logger.Warn("Failed to restore persistent identity", "error", err)
+		fp := ""
+		if kd.session != nil {
+			fp = kd.session.OwnFingerprint
+		}
+		return fp, err
+	}
+	return kd.Identity.Fingerprint, nil
 }
 
 type PeerRegistration struct {

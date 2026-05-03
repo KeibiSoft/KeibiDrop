@@ -219,3 +219,18 @@ Each epoch uses fresh random seeds. Compromise of one epoch's key does not expos
 ---
 
 Cross-stream integrity is not yet implemented beyond message-level AEAD and gRPC guarantees. The system assumes trusted handling of the full stream at the application layer.
+
+---
+
+## At-Rest Identity Encryption
+
+Persistent identity files (`identity.enc`, `contacts.enc`) are encrypted with ChaCha20-Poly1305 using a per-install random master key.
+
+**Master key location** (in order of preference):
+1. OS keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
+2. File on disk (`~/.config/keibidrop/.master.key`, mode 0600), automatic fallback on headless systems
+3. User passphrase via Argon2id, opt-in with `KD_PASSPHRASE_PROTECT=1`
+
+Incognito mode uses ephemeral keys and writes nothing to disk.
+
+Per-file encryption keys are derived via HKDF-SHA512 from the master key with a random salt. The file header (magic, format version, KDF identifier, salt) is bound as AAD. Corrupted files produce a clear error, KeibiDrop does not auto-regenerate identity files because that would silently wipe saved contacts.

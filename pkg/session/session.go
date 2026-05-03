@@ -63,6 +63,10 @@ type Session struct {
 
 	Err error
 
+	// Persistent identity flags (learned during handshake).
+	OwnIsPersistent  bool
+	PeerIsPersistent bool
+
 	// Internal timeout deadline
 	Deadline time.Time
 
@@ -110,6 +114,31 @@ func InitSession(logger *slog.Logger, defaultOutboundPort int, defaultInboundPor
 		State:               SessionInit,
 		DefaultOutboundPort: defaultOutboundPort,
 		DefaultInboundPort:  defaultInboundPort,
+	}, nil
+}
+
+// InitSessionWithKeys creates a session using pre-existing keys (for persistent identity).
+// Same as InitSession but skips key generation.
+func InitSessionWithKeys(logger *slog.Logger, keys *kbc.OwnKeys, defaultOutboundPort int, defaultInboundPort int) (*Session, error) {
+	logger = logger.With("service", "session")
+	if err := keys.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid keys: %w", err)
+	}
+
+	ownFingerprint, err := keys.Fingerprint()
+	if err != nil {
+		logger.Error("Failed to compute fingerprint", "error", err)
+		return nil, err
+	}
+
+	return &Session{
+		logger:              logger,
+		OwnKeys:             keys,
+		OwnFingerprint:      ownFingerprint,
+		State:               SessionInit,
+		DefaultOutboundPort: defaultOutboundPort,
+		DefaultInboundPort:  defaultInboundPort,
+		OwnIsPersistent:     true,
 	}, nil
 }
 

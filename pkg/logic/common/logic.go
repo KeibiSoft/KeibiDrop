@@ -266,7 +266,7 @@ updateTracker:
 	kd.SyncTracker.RemoteFilesMu.Unlock()
 
 	kd.SyncTracker.LocalFilesMu.Lock()
-	kd.SyncTracker.LocalFiles[localPath] = &fileCopy
+	kd.SyncTracker.LocalFiles[remoteName] = &fileCopy
 	kd.SyncTracker.LocalFilesMu.Unlock()
 
 	if fi, statErr := os.Stat(localPath); statErr == nil {
@@ -409,7 +409,7 @@ updateTracker:
 	}
 	kd.SyncTracker.RemoteFilesMu.Unlock()
 	kd.SyncTracker.LocalFilesMu.Lock()
-	kd.SyncTracker.LocalFiles[localPath] = &fileCopy
+	kd.SyncTracker.LocalFiles[remoteName] = &fileCopy
 	kd.SyncTracker.LocalFilesMu.Unlock()
 	return nil
 }
@@ -1003,6 +1003,51 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 	logger.Info("Success")
 	return nil
+}
+
+// ConnectToContact looks up a contact by fingerprint, registers it, and connects.
+func (kd *KeibiDrop) ConnectToContact(fingerprint string) error {
+	if kd.AddressBook == nil {
+		return fmt.Errorf("no address book loaded")
+	}
+	c := kd.AddressBook.Lookup(fingerprint)
+	if c == nil {
+		return fmt.Errorf("contact not found in address book")
+	}
+	if err := kd.AddPeerFingerprint(c.Fingerprint); err != nil {
+		return err
+	}
+	return kd.Connect()
+}
+
+// SaveCurrentPeerAsContact saves the currently connected peer as a named contact.
+func (kd *KeibiDrop) SaveCurrentPeerAsContact(name string) error {
+	if kd.AddressBook == nil {
+		return fmt.Errorf("no address book loaded")
+	}
+	if kd.session == nil {
+		return ErrNilPointer
+	}
+	if !kd.session.PeerIsPersistent {
+		return fmt.Errorf("peer is in incognito mode and cannot be saved")
+	}
+	fp := kd.session.ExpectedPeerFingerprint
+	if fp == "" || fp == "TOFU" {
+		return fmt.Errorf("no verified peer fingerprint")
+	}
+	if err := kd.AddressBook.Add(name, fp); err != nil {
+		return err
+	}
+	kd.AddressBook.UpdateLastSeen(fp)
+	return kd.AddressBook.Save()
+}
+
+// IsPeerPersistent returns whether the currently connected peer has a stable identity.
+func (kd *KeibiDrop) IsPeerPersistent() bool {
+	if kd.session == nil {
+		return false
+	}
+	return kd.session.PeerIsPersistent
 }
 
 // NotifyDisconnect sends a best-effort DISCONNECT notification to the peer

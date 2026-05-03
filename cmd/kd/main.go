@@ -23,13 +23,13 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
+	"golang.org/x/term"
 )
 
 // socketPath returns the Unix socket path for daemon<->client communication.
@@ -60,6 +60,24 @@ func okResponse(data any) Response {
 
 func errResponse(msg string) Response {
 	return Response{OK: false, Error: msg}
+}
+
+// promptPassphraseFromTTY reads a passphrase from the controlling terminal
+// without echoing the input. Used for Tier 2 (passphrase-protect) key loading.
+//
+// Uses os.Stdin.Fd() rather than syscall.Stdin so the call is portable —
+// syscall.Stdin is an int on Unix but a Handle (uintptr) on Windows, and
+// would not compile or behave correctly across both. os.Stdin.Fd() returns
+// the platform-appropriate file descriptor / handle that term.ReadPassword
+// knows how to handle.
+func promptPassphraseFromTTY() (string, error) {
+	fmt.Fprint(os.Stderr, "Passphrase: ")
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", err
+	}
+	return string(pw), nil
 }
 
 // --- Daemon ---
@@ -125,6 +143,19 @@ func runDaemon() {
 	kd.IsLocalMode = isLocal
 	kd.BridgeAddr = cfg.BridgeAddr
 	kd.StrictMode = cfg.StrictMode
+
+	if !cfg.Incognito {
+		opts := common.EnableOpts{
+			PassphraseProtect: cfg.PassphraseProtect,
+		}
+		if cfg.PassphraseProtect {
+			opts.PassphraseProvider = promptPassphraseFromTTY
+		}
+		if err := kd.EnablePersistentIdentity(config.ConfigDir(), opts); err != nil {
+			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
+		}
+	}
+
 	go kd.Run()
 
 	// Listen on Unix socket
@@ -291,6 +322,76 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		}
 		return okResponse(map[string]string{"path": dest})
 
+	case "contacts":
+		if kd.AddressBook == nil {
+			return errResponse("no address book (incognito mode)")
+		}
+		contacts := kd.AddressBook.List()
+		type contactInfo struct {
+			Name        string `json:"name"`
+			Fingerprint string `json:"fingerprint"`
+			LastSeen    string `json:"last_seen,omitempty"`
+		}
+		out := make([]contactInfo, len(contacts))
+		for i, c := range contacts {
+			ci := contactInfo{Name: c.Name, Fingerprint: c.Fingerprint}
+			if !c.LastSeen.IsZero() {
+				ci.LastSeen = c.LastSeen.Format(time.RFC3339)
+			}
+			out[i] = ci
+		}
+		return okResponse(out)
+
+	case "add-contact":
+		if len(req.Args) < 2 {
+			return errResponse("usage: kd add-contact <name> <fingerprint>")
+		}
+		if kd.AddressBook == nil {
+			return errResponse("no address book (incognito mode)")
+		}
+		name := req.Args[0]
+		fp := strings.Join(req.Args[1:], "")
+		if err := kd.AddressBook.Add(name, fp); err != nil {
+			return errResponse(err.Error())
+		}
+		if err := kd.AddressBook.Save(); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"added": name})
+
+	case "remove-contact":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd remove-contact <fingerprint>")
+		}
+		if kd.AddressBook == nil {
+			return errResponse("no address book (incognito mode)")
+		}
+		if err := kd.AddressBook.Remove(req.Args[0]); err != nil {
+			return errResponse(err.Error())
+		}
+		if err := kd.AddressBook.Save(); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"removed": req.Args[0]})
+
+	case "quick-connect":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd quick-connect <fingerprint>")
+		}
+		go func() {
+			_ = kd.ConnectToContact(req.Args[0])
+		}()
+		return okResponse(map[string]string{"status": "connecting"})
+
+	case "save-contact":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd save-contact <name>")
+		}
+		if err := kd.SaveCurrentPeerAsContact(req.Args[0]); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"saved": req.Args[0]})
+
 	case "stop", "quit":
 		kd.NotifyDisconnect()
 		_ = kd.UnmountFilesystem()
@@ -352,6 +453,25 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 	if showAll || what == "status" {
 		data["connected"] = fmt.Sprintf("%v", kd.IsRunning())
 		data["connection_status"] = kd.ConnectionStatus()
+	}
+	if showAll || what == "config" {
+		cfg, _ := config.Load()
+		data["config_path"] = config.ConfigPath()
+		data["relay"] = cfg.Relay
+		data["save_path"] = cfg.SavePath
+		data["mount_path"] = cfg.MountPath
+		data["log_file"] = cfg.LogFile
+		data["inbound_port"] = fmt.Sprintf("%d", cfg.InboundPort)
+		data["outbound_port"] = fmt.Sprintf("%d", cfg.OutboundPort)
+		data["bridge_addr"] = cfg.BridgeAddr
+		data["no_fuse"] = fmt.Sprintf("%v", cfg.NoFUSE)
+		data["strict_mode"] = fmt.Sprintf("%v", cfg.StrictMode)
+		data["incognito"] = fmt.Sprintf("%v", cfg.Incognito)
+		if kd.Identity != nil {
+			data["identity_mode"] = "persistent"
+		} else {
+			data["identity_mode"] = "ephemeral"
+		}
 	}
 
 	if len(data) == 0 {
@@ -535,65 +655,55 @@ func printHelp() {
 
 USAGE:
   kd start                       Start daemon (foreground). Configure via env vars.
-  kd stop                        Stop the daemon.
-  kd show [what]                 Show info (fingerprint, ip, peer, relay, status, or all).
+  kd stop                        Shutdown daemon.
+  kd show [what]                 Show info (fingerprint, ip, peer, relay, status, config, or all).
   kd register <fingerprint>      Register peer's fingerprint.
+  kd connect                     Connect (auto role via fingerprint tiebreak).
   kd create                      Create a room (you are the initiator).
   kd join                        Join a room (peer must have created first).
   kd add <filepath>              Share a file with the peer.
   kd list                        List all shared files (local + remote).
   kd pull <name> [local-path]    Download a remote file.
   kd status                      Connection status and session info.
-  kd disconnect                  Disconnect (keys rotate, ready for new session).
-  kd stop                        Shutdown daemon.
+  kd disconnect                  Disconnect and reset session.
+  kd contacts                    List saved contacts (JSON array).
+  kd add-contact <name> <fp>     Save a contact.
+  kd remove-contact <fp>         Remove a saved contact.
+  kd quick-connect <fp>          Connect to a saved contact (1-click).
+  kd save-contact <name>         Save current peer as contact.
   kd help                        Show this help.
 
 ENVIRONMENT (for "kd start"):
-  KD_RELAY           Relay URL        (default: https://keibidroprelay.keibisoft.com)
-  KD_INBOUND_PORT    Listen port      (default: 26431)
-  KD_OUTBOUND_PORT   Outbound port    (default: 26432)
-  KD_SAVE_PATH       Where to save received files
-  KD_MOUNT_PATH      FUSE mount point
-  KD_NO_FUSE         Set to disable FUSE (any value)
-  KD_LOG_FILE        Log file path    (default: stderr)
-  KD_SOCKET          Unix socket path (default: /tmp/kd.sock)
+  KD_RELAY                Relay URL        (default: https://keibidroprelay.keibisoft.com)
+  KD_INBOUND_PORT         Listen port      (default: 26431)
+  KD_OUTBOUND_PORT        Outbound port    (default: 26432)
+  KD_SAVE_PATH            Where to save received files
+  KD_MOUNT_PATH           FUSE mount point
+  KD_NO_FUSE              Set to disable FUSE (any value)
+  KD_LOG_FILE             Log file path    (default: stderr)
+  KD_INCOGNITO            Force ephemeral mode, no identity saved (any value)
+  KD_PASSPHRASE_PROTECT   Prompt for passphrase to encrypt identity (any value)
+  KD_SOCKET               Unix socket path (default: /tmp/kd.sock)
 
-MODES:
-  FUSE mode:    Files appear in KD_MOUNT_PATH as a virtual folder.
-                Read/write files directly from the mount (like a shared drive).
-                After connecting, "kd status" shows the mount_path.
-
-  no-FUSE mode: Use "kd add <file>" to share and "kd pull <name> [path]" to download.
-                Set KD_NO_FUSE=1 to use this mode.
-
-EXAMPLE (agent workflow, no-FUSE):
-  # Terminal 1: start daemon
+EXAMPLE (first connection):
   KD_SAVE_PATH=./received KD_NO_FUSE=1 kd start
-
-  # Terminal 2 (or from agent):
-  kd show fingerprint              # get your fingerprint, send to peer
-  kd register <peer-fingerprint>   # paste peer's fingerprint
-  kd create                        # or "kd join" if peer creates
+  kd show fingerprint              # send this to your peer
+  kd register <peer-fingerprint>   # paste theirs
+  kd connect                       # both peers run this
   kd add ./myfile.pdf              # share a file
   kd list                          # see remote files
-  kd pull somefile.txt ./local.txt # download from peer
-  kd disconnect                    # done, keys rotated
-  kd stop                          # shutdown daemon
+  kd pull somefile.txt ./local.txt # download
+  kd save-contact Alice            # save peer for next time
+  kd disconnect
+  kd stop
 
-EXAMPLE (agent workflow, FUSE):
-  # Terminal 1: start daemon with FUSE mount
-  KD_SAVE_PATH=./saved KD_MOUNT_PATH=./mount kd start
-
-  # Terminal 2 (or from agent):
-  kd show fingerprint              # get your fingerprint, send to peer
-  kd register <peer-fingerprint>   # paste peer's fingerprint
-  kd create                        # or "kd join" if peer creates
-  # After connecting, peer's files appear in ./mount/
-  ls ./mount/                      # see shared files from peer
-  cat ./mount/readme.txt           # read a remote file directly
-  cp ./myfile.pdf ./mount/         # share a file (copy into mount)
-  kd disconnect                    # done
-  kd stop                          # shutdown daemon
+EXAMPLE (reconnect with saved contact):
+  KD_SAVE_PATH=./received KD_NO_FUSE=1 kd start
+  kd contacts                      # list saved contacts
+  kd quick-connect <fingerprint>   # 1-click, no code exchange
+  kd list
+  kd disconnect
+  kd stop
 
 All output is JSON: {"ok":true,"data":{...}} or {"ok":false,"error":"..."}
 Use "kd status" after connecting to see mount_path, save_path, and peer info.`

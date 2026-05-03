@@ -73,9 +73,11 @@ func EncryptWithNonce(kek, plainText []byte, nonce [NonceSize]byte) ([]byte, err
 	return result, nil
 }
 
-// Encrypt encrypts plainText using KEK with ChaCha20-Poly1305.
+// EncryptWithAAD encrypts plainText using KEK with ChaCha20-Poly1305 and
+// authenticated associated data (aad). The aad is authenticated but not
+// included in the ciphertext. Pass nil or empty slice for no AAD.
 // Returns [nonce | ciphertext+MAC], or error.
-func Encrypt(kek, plainText []byte) ([]byte, error) {
+func EncryptWithAAD(kek, plainText, aad []byte) ([]byte, error) {
 	if len(kek) != KeySize {
 		return nil, errors.New("invalid key size")
 	}
@@ -85,24 +87,27 @@ func Encrypt(kek, plainText []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	nonce := make([]byte, chacha20poly1305.NonceSize)
+	nonce := make([]byte, NonceSize)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
 
 	// The nonce is not hardcoded, I just generated it in the previous line.
-	cipherText := aead.Seal(nil, nonce, plainText, nil) // #nosec G407
+	cipherText := aead.Seal(nil, nonce, plainText, aad) // #nosec G407
 
 	result := make([]byte, len(nonce)+len(cipherText))
 	copy(result, nonce)
-	copy(result[chacha20poly1305.NonceSize:], cipherText)
+	copy(result[NonceSize:], cipherText)
 
 	return result, nil
 }
 
-// Decrypt decrypts [nonce | ciphertext+MAC] using KEK.
+// DecryptWithAAD decrypts [nonce | ciphertext+MAC] using KEK, verifying the
+// authenticated associated data (aad). The aad must match what was passed to
+// EncryptWithAAD; any mismatch causes authentication failure. Pass nil or
+// empty slice when no AAD was used during encryption.
 // Returns plainText or error if authentication fails.
-func Decrypt(kek, input []byte) ([]byte, error) {
+func DecryptWithAAD(kek, input, aad []byte) ([]byte, error) {
 	if len(kek) != KeySize {
 		return nil, errors.New("invalid key size")
 	}
@@ -119,12 +124,24 @@ func Decrypt(kek, input []byte) ([]byte, error) {
 	nonce := input[:chacha20poly1305.NonceSize]
 	cipherText := input[chacha20poly1305.NonceSize:]
 
-	plainText, err := aead.Open(nil, nonce, cipherText, nil)
+	plainText, err := aead.Open(nil, nonce, cipherText, aad)
 	if err != nil {
 		return nil, err
 	}
 
 	return plainText, nil
+}
+
+// Encrypt encrypts plainText using KEK with ChaCha20-Poly1305.
+// Returns [nonce | ciphertext+MAC], or error.
+func Encrypt(kek, plainText []byte) ([]byte, error) {
+	return EncryptWithAAD(kek, plainText, nil)
+}
+
+// Decrypt decrypts [nonce | ciphertext+MAC] using KEK.
+// Returns plainText or error if authentication fails.
+func Decrypt(kek, input []byte) ([]byte, error) {
+	return DecryptWithAAD(kek, input, nil)
 }
 
 func EncryptedSize(plainSize uint64) uint64 {
