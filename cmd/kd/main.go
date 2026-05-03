@@ -13,7 +13,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -24,13 +23,11 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
-	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"golang.org/x/term"
 )
@@ -155,14 +152,6 @@ func runDaemon() {
 			opts.PassphraseProvider = promptPassphraseFromTTY
 		}
 		if err := kd.EnablePersistentIdentity(config.ConfigDir(), opts); err != nil {
-			var corrupted *identity.IdentityCorruptedError
-			if errors.As(err, &corrupted) {
-				// Error() already includes the path and recovery guidance.
-				// Exit 1 = program/runtime error (file unreadable on disk),
-				// not a user-input error (which would be exit 2).
-				fmt.Fprintf(os.Stderr, `{"ok":false,"error":"%s"}`+"\n", corrupted.Error())
-				os.Exit(1)
-			}
 			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
 		}
 	}

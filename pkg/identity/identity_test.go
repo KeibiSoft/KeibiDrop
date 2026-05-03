@@ -358,11 +358,6 @@ func TestKeySubstitution_DifferentMasterKeyFails(t *testing.T) {
 		t.Fatal("expected error when loading with wrong master key, got nil")
 	}
 
-	var ice *IdentityCorruptedError
-	if !errors.As(err, &ice) {
-		t.Fatalf("expected *IdentityCorruptedError, got %T: %v", err, err)
-	}
-
 	// Original file must remain in place (no auto-rename).
 	if _, statErr := os.Stat(filepath.Join(dirA, identityFile)); os.IsNotExist(statErr) {
 		t.Fatal("original identity.enc must remain in place (no auto-rename)")

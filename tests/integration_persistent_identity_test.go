@@ -85,7 +85,7 @@ func TestPersistentIdentitySurvivesRestart(t *testing.T) {
 }
 
 // TestPassphraseTier_RoundTrip verifies save/load with a passphrase key source,
-// and that a wrong passphrase triggers an IdentityCorruptedError.
+// and that a wrong passphrase triggers an error.
 func TestPassphraseTier_RoundTrip(t *testing.T) {
 	const goodPassphrase = "test-passphrase-with-spaces and unicode é 🔐"
 	const badPassphrase = "completely-wrong-passphrase"
@@ -111,9 +111,9 @@ func TestPassphraseTier_RoundTrip(t *testing.T) {
 	srcBad2 := newPassphraseSource(t, badPassphrase)
 	_, err = identity.Load(tmp, srcBad2)
 	require.Error(t, err)
-	var ice *identity.IdentityCorruptedError
-	require.True(t, errors.As(err, &ice),
-		"wrong passphrase must produce *IdentityCorruptedError, got: %T %v", err, err)
+	
+	require.Error(t, err,
+		"wrong passphrase must produce *error, got: %T %v", err, err)
 
 	// Original file must remain in place (no auto-rename).
 	_, statErr := os.Stat(filepath.Join(tmp, identityFileName))
@@ -121,7 +121,7 @@ func TestPassphraseTier_RoundTrip(t *testing.T) {
 }
 
 // TestCorruptionReturnsTypedError writes a valid identity, corrupts the
-// AEAD tag, and verifies that Load returns IdentityCorruptedError without
+// AEAD tag, and verifies that Load returns error without
 // renaming the file.
 func TestCorruptionReturnsTypedError(t *testing.T) {
 	tmp := t.TempDir()
@@ -143,13 +143,13 @@ func TestCorruptionReturnsTypedError(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(path, corrupted, 0o600))
 
-	// Load must fail with IdentityCorruptedError.
+	// Load must fail with error.
 	srcFresh := newFileSource(t, tmp)
 	_, err = identity.Load(tmp, srcFresh)
 	require.Error(t, err)
-	var ice *identity.IdentityCorruptedError
-	require.True(t, errors.As(err, &ice),
-		"corrupted file must yield *IdentityCorruptedError, got: %T %v", err, err)
+	
+	require.Error(t, err,
+		"corrupted file must yield *error, got: %T %v", err, err)
 
 	// The original file must remain (no auto-rename).
 	_, statErr := os.Stat(path)
@@ -221,9 +221,9 @@ func TestEnablePersistentIdentity_FullStack(t *testing.T) {
 	kd3 := newKD()
 	err = kd3.EnablePersistentIdentity(tmp, common.EnableOpts{})
 	require.Error(t, err)
-	var ice *identity.IdentityCorruptedError
-	require.True(t, errors.As(err, &ice),
-		"corrupted file must yield *IdentityCorruptedError")
+	
+	require.Error(t, err,
+		"corrupted file must yield *error")
 
 	// Original file must remain in place (no auto-rename).
 	_, statErr := os.Stat(path)
@@ -233,7 +233,7 @@ func TestEnablePersistentIdentity_FullStack(t *testing.T) {
 // ── vulnerability tests ───────────────────────────────────────────────────────
 
 // TestVuln_NonEnvelopeFileRejected writes random bytes to identity.enc and
-// verifies that LoadOrCreate returns *IdentityCorruptedError (not a silent
+// verifies that LoadOrCreate returns *error (not a silent
 // success or a panic).
 func TestVuln_NonEnvelopeFileRejected(t *testing.T) {
 	tmp := t.TempDir()
@@ -249,14 +249,14 @@ func TestVuln_NonEnvelopeFileRejected(t *testing.T) {
 
 	_, err := identity.Load(tmp, src)
 	require.Error(t, err, "non-envelope file must be rejected")
-	var ice *identity.IdentityCorruptedError
-	require.True(t, errors.As(err, &ice),
-		"non-envelope file must produce *IdentityCorruptedError, got: %T %v", err, err)
+	
+	require.Error(t, err,
+		"non-envelope file must produce *error, got: %T %v", err, err)
 }
 
 // TestVuln_KeySubstitution_DifferentMasterKeyFails saves with master key A,
 // then overwrites .master.key with a different 32-byte key B and verifies
-// that loading produces IdentityCorruptedError.
+// that loading produces error.
 func TestVuln_KeySubstitution_DifferentMasterKeyFails(t *testing.T) {
 	tmp := t.TempDir()
 	src := newFileSource(t, tmp)
@@ -276,9 +276,9 @@ func TestVuln_KeySubstitution_DifferentMasterKeyFails(t *testing.T) {
 	srcB := newFileSource(t, tmp)
 	_, err = identity.Load(tmp, srcB)
 	require.Error(t, err)
-	var ice *identity.IdentityCorruptedError
-	require.True(t, errors.As(err, &ice),
-		"key substitution must produce *IdentityCorruptedError, got: %T %v", err, err)
+	
+	require.Error(t, err,
+		"key substitution must produce *error, got: %T %v", err, err)
 }
 
 // TestVuln_AADTampering_HeaderFlip flips a bit in the salt portion of the
@@ -303,9 +303,9 @@ func TestVuln_AADTampering_HeaderFlip(t *testing.T) {
 	srcFresh := newFileSource(t, tmp)
 	_, err = identity.Load(tmp, srcFresh)
 	require.Error(t, err, "tampered AAD must cause load failure")
-	var ice *identity.IdentityCorruptedError
-	require.True(t, errors.As(err, &ice),
-		"AAD tampering must produce *IdentityCorruptedError, got: %T %v", err, err)
+	
+	require.Error(t, err,
+		"AAD tampering must produce *error, got: %T %v", err, err)
 }
 
 // TestVuln_SchemaVersionForwardCompat manually re-encrypts the identity with

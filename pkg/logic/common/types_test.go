@@ -12,14 +12,11 @@ package common
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 )
 
 // newTestKD returns a minimal KeibiDrop instance for testing.
@@ -61,8 +58,6 @@ func TestEnablePersistentIdentity_DefaultOpts(t *testing.T) {
 	}
 }
 
-// writeCorruptedIdentity writes a blob with the correct magic but invalid
-// ciphertext, causing LoadOrCreate to return *IdentityCorruptedError.
 func writeCorruptedIdentity(t *testing.T, configDir string) {
 	t.Helper()
 	// Build a buffer: magic "KDID" + format 0x01 + kdf_id 2 (file tier) +
@@ -90,12 +85,7 @@ func TestEnablePersistentIdentity_CorruptedReturnsTypedError(t *testing.T) {
 		t.Fatal("expected error for corrupted identity, got nil")
 	}
 
-	var corrupted *identity.IdentityCorruptedError
-	if !errors.As(err, &corrupted) {
-		t.Fatalf("expected *IdentityCorruptedError, got %T: %v", err, err)
-	}
-
-	// Identity must not be set — caller should present the error.
+	// Identity must not be set.
 	if kd.Identity != nil {
 		t.Error("expected Identity to remain nil when corrupted")
 	}

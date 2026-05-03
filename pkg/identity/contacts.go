@@ -53,22 +53,17 @@ func LoadAddressBook(configDir string, src MasterKeySource) (*AddressBook, error
 	}
 
 	if !IsV1Envelope(buf) {
-		return nil, &IdentityCorruptedError{
-			Path:     path,
-			Original: fmt.Errorf("file is not a KDID envelope"),
-		}
+		return nil, fmt.Errorf("contacts %s: not a KDID envelope", path)
 	}
 
 	header, ctAndTag, parseErr := ParseEnvelope(buf)
 	if parseErr != nil {
-		return nil, &IdentityCorruptedError{Path: path, Original: parseErr}
+		return nil, fmt.Errorf("contacts %s: %w", path, parseErr)
 	}
 
-	perFileKey, keyErr := derivePerFileKey(
-		src, header, "keibidrop-contacts-file-v1",
-	)
+	perFileKey, keyErr := derivePerFileKey(src, header, "keibidrop-contacts-file-v1")
 	if keyErr != nil {
-		return nil, fmt.Errorf("derive contacts per-file key: %w", keyErr)
+		return nil, fmt.Errorf("contacts %s: derive key: %w", path, keyErr)
 	}
 
 	blob := make([]byte, kbc.NonceSize+len(ctAndTag))
@@ -77,17 +72,11 @@ func LoadAddressBook(configDir string, src MasterKeySource) (*AddressBook, error
 
 	plaintext, decErr := kbc.DecryptWithAAD(perFileKey, blob, header.AAD())
 	if decErr != nil {
-		return nil, &IdentityCorruptedError{
-			Path:     path,
-			Original: fmt.Errorf("decrypt contacts: %w", decErr),
-		}
+		return nil, fmt.Errorf("contacts %s: decrypt: %w", path, decErr)
 	}
 
 	if jsonErr := json.Unmarshal(plaintext, &ab.contacts); jsonErr != nil {
-		return nil, &IdentityCorruptedError{
-			Path:     path,
-			Original: fmt.Errorf("unmarshal contacts: %w", jsonErr),
-		}
+		return nil, fmt.Errorf("contacts %s: unmarshal: %w", path, jsonErr)
 	}
 
 	return ab, nil

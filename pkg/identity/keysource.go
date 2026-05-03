@@ -21,81 +21,29 @@ import (
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
-// Tier names the active master-key strategy. Each MasterKeySource returns
-// exactly one of the package-level Tier constants.
 type Tier string
 
 const (
-	TierKeychain   Tier = "keychain"   // OS keychain (Tier 1a, desktop default)
-	TierFile       Tier = "file"       // ~/.config/keibidrop/.master.key (Tier 1b, headless)
-	TierPassphrase Tier = "passphrase" // user passphrase (Tier 2, opt-in)
-	TierExternal   Tier = "external"   // FFI-injected master from mobile native
+	TierKeychain   Tier = "keychain"
+	TierFile       Tier = "file"
+	TierPassphrase Tier = "passphrase"
+	TierExternal   Tier = "external"
 )
 
-// MasterKeySource provides a stable 32-byte master key for this install or
-// session. Implementations cover three security tiers:
-//   - Tier 1a: OS keychain (most secure)
-//   - Tier 1b: file on disk (~/.config/keibidrop/.master.key)
-//   - Tier 2:  passphrase (user-supplied, portable across machines)
-//   - External: FFI-injected bytes from mobile (iOS/Android) bridge
 type MasterKeySource interface {
-	// Master returns a stable 32-byte master key for this install/session.
-	// Generated lazily on first call; subsequent calls return the same bytes.
 	Master() ([]byte, error)
-	// Tier identifies the key source for logging and diagnostics.
 	Tier() Tier
-	// KDFID returns the envelope kdf_id for files written with this source's
-	// derived per-file keys (KDFKeychain | KDFFile | KDFPassphrase).
 	KDFID() uint8
 }
 
-// KeySourceOpts configures NewMasterKeySource.
 type KeySourceOpts struct {
-	ConfigDir         string
-	PassphraseProtect bool
-	// PassphraseProvider is called at most once when PassphraseProtect is true.
+	ConfigDir          string
+	PassphraseProtect  bool
 	PassphraseProvider func() (string, error)
-	// KeychainAvailable overrides IsKeychainAvailable for testing.
-	// nil means use the real implementation.
-	KeychainAvailable func() bool
-
-	// ExternalMaster is a 32-byte master key supplied by the caller from
-	// outside the Go core — typically the mobile bridge reading it from
-	// iOS Keychain Services (Swift) or Android Keystore (Kotlin). When
-	// non-nil and 32 bytes, this overrides desktop tier selection entirely
-	// and the resulting MasterKeySource yields these bytes.
-	//
-	// SECURITY CONTRACT for whoever fills this field (mobile bridges):
-	//
-	//   1. The 32 bytes MUST come from a CSPRNG. Generate once at first
-	//      launch via crypto/rand (or call GenerateMasterKey() below for
-	//      a Go-side helper), persist into the platform's secure store,
-	//      and read it back from there on subsequent launches.
-	//   2. The 32 bytes MUST be unique per install AND persistent across
-	//      launches. Hardcoding bytes in the app binary, or deriving them
-	//      from device-public information (UUID, MAC, IMEI), would let any
-	//      attacker decrypt any user's identity.
-	//   3. The 32 bytes MUST live in a platform-secure secret store: iOS
-	//      Keychain Services with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`
-	//      + `kSecAttrSynchronizable=false` to keep them out of iCloud
-	//      Backup; Android Keystore with `setIsStrongBoxBacked(true)`
-	//      opportunistic. Never plaintext files, never SharedPreferences.
-	//
-	// Violating any of these makes the at-rest encryption useless.
-	//
-	// On desktop this stays nil; tier 1a (OS keychain via go-keyring),
-	// tier 1b (~/.config/keibidrop/.master.key), or tier 2 (passphrase)
-	// applies as before.
-	ExternalMaster []byte
+	KeychainAvailable  func() bool // nil = real check
+	ExternalMaster     []byte      // 32-byte key from mobile bridge (iOS Keychain / Android Keystore)
 }
 
-// GenerateMasterKey returns 32 freshly random bytes from crypto/rand.
-// Mobile bridges should call this on first launch (when the platform
-// secret store has no entry yet), persist the bytes via the platform
-// Keystore/Keychain, and pass them back via KeySourceOpts.ExternalMaster
-// on every subsequent NewMasterKeySource call. Doing the generation in
-// Go avoids the failure mode where a sloppy bridge hardcodes a key,
-// uses Java's Math.random(), or derives from device-public info.
 func GenerateMasterKey() ([]byte, error) {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
@@ -104,9 +52,6 @@ func GenerateMasterKey() ([]byte, error) {
 	return key, nil
 }
 
-// isObviouslyWeakKey rejects the most common bridge-implementation
-// footguns: all-zero, all-same-byte, sequential ascending. Not a substitute
-// for a CSPRNG — only blocks the trivially-broken cases.
 func isObviouslyWeakKey(key []byte) bool {
 	if len(key) != 32 {
 		return true
@@ -124,12 +69,6 @@ func isObviouslyWeakKey(key []byte) bool {
 	return allSame || sequential
 }
 
-// NewMasterKeySource selects the appropriate tier and returns a ready source.
-// Selection order:
-//  1. opts.ExternalMaster non-nil → externalKeySource (mobile bridge injection)
-//  2. PassphraseProtect == true   → passphraseSource (Tier 2)
-//  3. keychain available           → keychainSource   (Tier 1a)
-//  4. otherwise                    → fileSource       (Tier 1b)
 func NewMasterKeySource(opts KeySourceOpts) (MasterKeySource, error) {
 	logger := slog.With("method", "new-master-key-source")
 
@@ -170,7 +109,6 @@ func NewMasterKeySource(opts KeySourceOpts) (MasterKeySource, error) {
 	return &fileSource{configDir: opts.ConfigDir}, nil
 }
 
-// ── externalKeySource ─────────────────────────────────────────────────────────
 
 type externalKeySource struct {
 	master []byte
@@ -185,7 +123,6 @@ func (s *externalKeySource) Master() ([]byte, error) {
 	return out, nil
 }
 
-// ── keychainSource ────────────────────────────────────────────────────────────
 
 type keychainSource struct {
 	mu    sync.Mutex
@@ -205,7 +142,7 @@ func (s *keychainSource) Master() ([]byte, error) {
 
 	key, err := KeychainGet(keychainAccountIdentityMasterV1)
 	if err != nil {
-		// Not present — generate and store.
+		// Not present, generate and store.
 		newKey, genErr := kbc.RandomBytes(32)
 		if genErr != nil {
 			return nil, fmt.Errorf(
@@ -231,7 +168,6 @@ func (s *keychainSource) Master() ([]byte, error) {
 	return s.cache, nil
 }
 
-// ── fileSource ────────────────────────────────────────────────────────────────
 
 type fileSource struct {
 	configDir string
@@ -260,7 +196,7 @@ func (s *fileSource) Master() ([]byte, error) {
 		if !os.IsNotExist(err) {
 			return nil, fmt.Errorf("identity file source: read %q: %w", path, err)
 		}
-		// File not present — generate a new key and write it atomically.
+		// File not present, generate and write atomically.
 		newKey, genErr := kbc.RandomBytes(32)
 		if genErr != nil {
 			return nil, fmt.Errorf(
@@ -277,20 +213,13 @@ func (s *fileSource) Master() ([]byte, error) {
 	}
 
 	if len(data) != 32 {
-		return nil, &IdentityCorruptedError{
-			Path: path,
-			Original: fmt.Errorf(
-				"master key file has wrong length: got %d bytes, want 32",
-				len(data),
-			),
-		}
+		return nil, fmt.Errorf("master key %s: wrong length %d, want 32", path, len(data))
 	}
 
 	s.cache = data
 	return s.cache, nil
 }
 
-// ── passphraseSource ──────────────────────────────────────────────────────────
 
 type passphraseSource struct {
 	provider func() (string, error)

@@ -13,7 +13,6 @@ import (
 	"crypto/ecdh"
 	"crypto/mlkem"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -72,20 +71,17 @@ func Load(configDir string, src MasterKeySource) (*DeviceIdentity, error) {
 	}
 
 	if !IsV1Envelope(buf) {
-		return nil, &IdentityCorruptedError{
-			Path:     path,
-			Original: errors.New("file is not a KDID envelope"),
-		}
+		return nil, fmt.Errorf("identity %s: not a KDID envelope", path)
 	}
 
 	header, ctAndTag, perr := ParseEnvelope(buf)
 	if perr != nil {
-		return nil, &IdentityCorruptedError{Path: path, Original: perr}
+		return nil, fmt.Errorf("identity %s: %w", path, perr)
 	}
 
 	perFileKey, kerr := derivePerFileKey(src, header, "keibidrop-identity-file-v1")
 	if kerr != nil {
-		return nil, fmt.Errorf("derive per-file key: %w", kerr)
+		return nil, fmt.Errorf("identity %s: derive key: %w", path, kerr)
 	}
 
 	blob := make([]byte, kbc.NonceSize+len(ctAndTag))
@@ -94,18 +90,12 @@ func Load(configDir string, src MasterKeySource) (*DeviceIdentity, error) {
 
 	pt, decErr := kbc.DecryptWithAAD(perFileKey, blob, header.AAD())
 	if decErr != nil {
-		return nil, &IdentityCorruptedError{
-			Path:     path,
-			Original: fmt.Errorf("decrypt identity: %w", decErr),
-		}
+		return nil, fmt.Errorf("identity %s: decrypt: %w", path, decErr)
 	}
 
 	var s serializedIdentity
 	if jerr := json.Unmarshal(pt, &s); jerr != nil {
-		return nil, &IdentityCorruptedError{
-			Path:     path,
-			Original: fmt.Errorf("unmarshal identity: %w", jerr),
-		}
+		return nil, fmt.Errorf("identity %s: unmarshal: %w", path, jerr)
 	}
 
 	if s.SchemaVersion > CurrentIdentitySchemaVersion {

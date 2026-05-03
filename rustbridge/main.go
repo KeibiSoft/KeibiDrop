@@ -22,7 +22,6 @@ import "C"
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -34,7 +33,6 @@ import (
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
-	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
@@ -160,12 +158,6 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 			opts.PassphraseProtect = false
 		}
 		if err := kd.EnablePersistentIdentity(config.ConfigDir(), opts); err != nil {
-			var corrupted *identity.IdentityCorruptedError
-			if errors.As(err, &corrupted) {
-				// Return the friendly message directly; Rust UI shows it in a dialog.
-				setLastError(corrupted)
-				return -3
-			}
 			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
 		}
 	} else {

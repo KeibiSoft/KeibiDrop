@@ -8,7 +8,6 @@ package common
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -221,19 +220,11 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 
 	id, err := identity.LoadOrCreate(configDir, src)
 	if err != nil {
-		var ice *identity.IdentityCorruptedError
-		if errors.As(err, &ice) {
-			return ice
-		}
 		return fmt.Errorf("load identity: %w", err)
 	}
 
 	ab, err := identity.LoadAddressBook(configDir, src)
 	if err != nil {
-		var ice *identity.IdentityCorruptedError
-		if errors.As(err, &ice) {
-			return ice
-		}
 		return fmt.Errorf("load address book: %w", err)
 	}
 
