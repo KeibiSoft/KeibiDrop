@@ -455,7 +455,7 @@ func DialWithStableAddr(network, addr string, timeout time.Duration, logger *slo
 	destIP := net.ParseIP(host)
 	isIPv6Dest := destIP != nil && destIP.To4() == nil
 
-	if isIPv6Dest {
+	if isIPv6Dest && !destIP.IsLoopback() {
 		localIP := findStableIPv6()
 		if localIP != "" {
 			dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(localIP)}

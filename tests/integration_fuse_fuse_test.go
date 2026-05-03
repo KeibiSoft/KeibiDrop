@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -131,7 +132,11 @@ var (
 func getTestPeerBinary(t *testing.T) string {
 	t.Helper()
 	testPeerBuildOnce.Do(func() {
-		binPath := filepath.Join(t.TempDir(), "testpeer")
+		binName := "testpeer"
+		if runtime.GOOS == "windows" {
+			binName = "testpeer.exe"
+		}
+		binPath := filepath.Join(t.TempDir(), binName)
 		cmd := exec.Command("go", "build", "-o", binPath, "./tests/cmd/testpeer/") //#nosec G204
 		// Use the project root as working directory
 		// Find project root by looking for go.mod
