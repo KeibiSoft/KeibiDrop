@@ -8,6 +8,8 @@ package identity
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // ── Existing tests (updated to pass MasterKeySource) ─────────────────────────
@@ -25,12 +27,8 @@ func TestAddAndLookup(t *testing.T) {
 	}
 
 	c := ab.Lookup("fp-alice-1234")
-	if c == nil {
-		t.Fatal("Lookup returned nil")
-	}
-	if c.Name != "Alice" {
-		t.Fatalf("expected Alice, got %s", c.Name)
-	}
+	require.NotNil(t, c)
+	require.Equal(t, "Alice", c.Name)
 }
 
 func TestAddDuplicate(t *testing.T) {

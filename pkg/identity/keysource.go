@@ -109,7 +109,6 @@ func NewMasterKeySource(opts KeySourceOpts) (MasterKeySource, error) {
 	return &fileSource{configDir: opts.ConfigDir}, nil
 }
 
-
 type externalKeySource struct {
 	master []byte
 }
@@ -122,7 +121,6 @@ func (s *externalKeySource) Master() ([]byte, error) {
 	copy(out, s.master)
 	return out, nil
 }
-
 
 type keychainSource struct {
 	mu    sync.Mutex
@@ -167,7 +165,6 @@ func (s *keychainSource) Master() ([]byte, error) {
 	s.cache = key
 	return s.cache, nil
 }
-
 
 type fileSource struct {
 	configDir string
@@ -219,7 +216,6 @@ func (s *fileSource) Master() ([]byte, error) {
 	s.cache = data
 	return s.cache, nil
 }
-
 
 type passphraseSource struct {
 	provider func() (string, error)
