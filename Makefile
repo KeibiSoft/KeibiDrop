@@ -259,9 +259,9 @@ clean: clean-dist
 
 # ── Run (dev) ─────────────────────────────────────────────
 # Alice: ports 26001/26002    Bob: ports 26003/26004
-# Relay: http://localhost:54321 (start your own relay first)
+# Relay: override with RELAY=http://localhost:54321 for local testing
 
-RELAY   ?= http://localhost:54321
+RELAY   ?= https://keibidroprelay.keibisoft.com/
 BRIDGE  ?= bridge.keibisoft.com:26600
 SCRIPTS := scripts/dev
 

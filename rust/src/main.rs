@@ -925,6 +925,11 @@ fn main() {
         let downloads_connect = downloads.clone();
         let save_path_connect = to_save.clone();
         app.on_connect_pressed(move || {
+            if let Some(app) = weak_connect.upgrade() {
+                if app.get_room_action() != 0 {
+                    return;
+                }
+            }
             let screen = if let Some(app) = weak_connect.upgrade() {
                 if app.get_fuse_mode() { 2 } else { 1 }
             } else { 1 };
@@ -1380,6 +1385,11 @@ fn main() {
         let save_path_cc = to_save.clone();
         let current_folder_cc = current_folder.clone();
         app.on_connect_to_contact(move |idx| {
+            if let Some(app) = weak_connect_contact.upgrade() {
+                if app.get_room_action() != 0 {
+                    return;
+                }
+            }
             let fp_ptr = bindings::KD_GetContactFingerprint(idx);
             if fp_ptr.is_null() {
                 return;
@@ -1534,6 +1544,46 @@ fn main() {
                 _ => WinitWindowEventResult::Propagate,
             }
         });
+
+        // Contact presence polling timer — refreshes online dots every 10s.
+        let _contact_timer = {
+            let timer = slint::Timer::default();
+            let weak_ct = app.as_weak();
+            timer.start(
+                slint::TimerMode::Repeated,
+                std::time::Duration::from_secs(10),
+                move || {
+                    if let Some(app) = weak_ct.upgrade() {
+                        if app.get_incognito_mode() || app.get_current_screen() != 0 {
+                            return;
+                        }
+                        let count = bindings::KD_GetContactCount();
+                        if count == 0 {
+                            return;
+                        }
+                        let mut contacts = Vec::new();
+                        for i in 0..count {
+                            let name_ptr = bindings::KD_GetContactName(i);
+                            let fp_ptr = bindings::KD_GetContactFingerprint(i);
+                            let online = bindings::KD_GetContactOnline(i) != 0;
+                            let name = if name_ptr.is_null() { String::new() } else { CStr::from_ptr(name_ptr).to_string_lossy().to_string() };
+                            let fp = if fp_ptr.is_null() { String::new() } else { CStr::from_ptr(fp_ptr).to_string_lossy().to_string() };
+                            if !name.is_empty() {
+                                let truncated_fp = if fp.len() > 16 { format!("{}...", &fp[..16]) } else { fp.clone() };
+                                contacts.push(ContactInfo {
+                                    name: slint::SharedString::from(name),
+                                    fingerprint: slint::SharedString::from(truncated_fp),
+                                    online,
+                                });
+                            }
+                        }
+                        let model = std::rc::Rc::new(slint::VecModel::from(contacts));
+                        app.set_contacts(slint::ModelRc::from(model));
+                    }
+                },
+            );
+            timer
+        };
 
         // Event polling timer — runs on UI thread, independent of file watcher.
         // This ensures disconnect/health events are always processed even when

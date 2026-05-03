@@ -294,7 +294,12 @@ func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, 
 
 	kd.Incognito = false
 	if err := kd.EnablePersistentIdentity(configDir, EnableOpts{}); err != nil {
-		return "", err
+		kd.logger.Warn("Failed to restore persistent identity", "error", err)
+		fp := ""
+		if kd.session != nil {
+			fp = kd.session.OwnFingerprint
+		}
+		return fp, err
 	}
 	return kd.Identity.Fingerprint, nil
 }

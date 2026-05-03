@@ -179,6 +179,10 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		kd.StrictMode = true
 	}
 
+	if !kd.Incognito && kd.Identity != nil && kd.AddressBook != nil && kd.AddressBook.Count() > 0 {
+		go kd.StartPresenceHeartbeat(ctx)
+	}
+
 	go kd.Run()
 	return 0
 }
@@ -850,7 +854,10 @@ func KD_SetIncognito(v C.int) *C.char {
 	newFP, err := kd.ToggleIncognito(v != 0, config.ConfigDir())
 	if err != nil {
 		setLastError(err)
-		return C.CString("")
+	}
+	if newFP == "" {
+		ptr := KD_Fingerprint()
+		return ptr
 	}
 	return C.CString(newFP)
 }

@@ -266,7 +266,7 @@ updateTracker:
 	kd.SyncTracker.RemoteFilesMu.Unlock()
 
 	kd.SyncTracker.LocalFilesMu.Lock()
-	kd.SyncTracker.LocalFiles[localPath] = &fileCopy
+	kd.SyncTracker.LocalFiles[remoteName] = &fileCopy
 	kd.SyncTracker.LocalFilesMu.Unlock()
 
 	if fi, statErr := os.Stat(localPath); statErr == nil {
@@ -409,7 +409,7 @@ updateTracker:
 	}
 	kd.SyncTracker.RemoteFilesMu.Unlock()
 	kd.SyncTracker.LocalFilesMu.Lock()
-	kd.SyncTracker.LocalFiles[localPath] = &fileCopy
+	kd.SyncTracker.LocalFiles[remoteName] = &fileCopy
 	kd.SyncTracker.LocalFilesMu.Unlock()
 	return nil
 }

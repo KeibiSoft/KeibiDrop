@@ -1167,7 +1167,7 @@ export component MainWindow inherits Window {
                     width: parent.width - 12px;
                     height: 32px;
                     border-radius: 6px;
-                    background: contact-row-touch.has-hover ? #333 : transparent;
+                    background: connect-touch.has-hover ? #333 : transparent;
 
                     Rectangle {
                         x: 0;
@@ -1201,18 +1201,42 @@ export component MainWindow inherits Window {
                         overflow: elide;
                     }
 
-                    Text {
-                        x: parent.width - 60px;
+                    // Connect link
+                    Rectangle {
+                        x: parent.width - 100px;
                         y: 0;
+                        width: 50px;
                         height: parent.height;
-                        text: "Connect";
-                        color: #3b82f6;
-                        font-size: 12px;
-                        vertical-alignment: center;
+                        Text {
+                            text: "Connect";
+                            color: connect-touch.has-hover ? #60a5fa : #3b82f6;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        connect-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.connect-to-contact(idx); }
+                        }
                     }
 
-                    contact-row-touch := TouchArea {
-                        clicked => { root.connect-to-contact(idx); }
+                    // Delete link
+                    Rectangle {
+                        x: parent.width - 30px;
+                        y: 0;
+                        width: 24px;
+                        height: parent.height;
+                        Text {
+                            text: "X";
+                            color: delete-touch.has-hover ? #ef4444 : #666;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        delete-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.remove-contact(idx); }
+                        }
                     }
                 }
             }
@@ -1471,6 +1495,21 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
+            if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: Rectangle {
+                width: fuse-save-peer-label.preferred-width;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+                fuse-save-peer-label := Text {
+                    text: "Save Peer";
+                    color: fuse-save-peer-touch.has-hover ? #60a5fa : #3b82f6;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                fuse-save-peer-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.save_contact_visible = true; }
+                }
+            }
         }
 
         // ── Main content ─────────────────────────────────────────
@@ -1533,14 +1572,9 @@ export component MainWindow inherits Window {
 
             HorizontalLayout {
                 alignment: center;
-                spacing: 12px;
                 OutlineButton {
                     text: "Open Folder";
                     clicked => { root.open_folder_pressed() }
-                }
-                if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: OutlineButton {
-                    text: "Save Peer";
-                    clicked => { root.save_contact_visible = true; }
                 }
             }
         }
