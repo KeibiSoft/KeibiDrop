@@ -43,11 +43,50 @@ func (d *Dir) recoverPanic(funcName string, errCode *int) {
 	}
 }
 
-// Info about methods:
-// https://pkg.go.dev/github.com/winfsp/cgofuse/fuse#FileSystemInterface
+const maxPathLen = 1023
+const maxNameLen = 255
+
+func checkPath(path string) int {
+	if len(path) > maxPathLen {
+		return -int(syscall.ENAMETOOLONG)
+	}
+	for _, component := range strings.Split(path, "/") {
+		if len(component) > maxNameLen {
+			return -int(syscall.ENAMETOOLONG)
+		}
+	}
+	return 0
+}
+
+func (d *Dir) refreshDirStat(dirPath string) {
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, dirPath))
+	if st, err := platLstat(cleanPath); err == nil {
+		d.Adm.Lock()
+		if dir, ok := d.AllDirMap[dirPath]; ok && dir.stat != nil {
+			dir.stat.Ctim = st.Ctim
+			dir.stat.Mtim = st.Mtim
+		}
+		d.Adm.Unlock()
+	}
+}
+
+func (d *Dir) refreshFileStat(filePath string) {
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, filePath))
+	if st, err := platLstat(cleanPath); err == nil {
+		d.AfmLock.Lock()
+		if f, ok := d.AllFileMap[filePath]; ok && f.stat != nil {
+			f.stat.Ctim = st.Ctim
+			f.stat.Mtim = st.Mtim
+		}
+		d.AfmLock.Unlock()
+	}
+}
 
 func (d *Dir) Access(path string, _mask uint32) (errCode int) {
 	defer d.recoverPanic("Access", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	// logger := d.logger.With("method", "access", "path", path, "mask", _mask)
 	// logger.Debug("Access called")
 
@@ -73,6 +112,9 @@ func (d *Dir) Access(path string, _mask uint32) (errCode int) {
 
 func (d *Dir) Chmod(path string, mode uint32) (errCode int) {
 	defer d.recoverPanic("Chmod", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
@@ -131,6 +173,9 @@ func (d *Dir) Chmod(path string, mode uint32) (errCode int) {
 
 func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
 	defer d.recoverPanic("Chown", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
@@ -203,6 +248,9 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
 // Use winfuse.O_ACCMODE to extract access mode (portable across macOS/Linux/Windows).
 func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint64) {
 	defer d.recoverPanic("Create", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e, 0
+	}
 	logger := d.logger.With("method", "create", "path", path)
 	// accessMode := flags & winfuse.O_ACCMODE
 	// logger.Info("Create called", "flags", flags, "accessMode", accessMode, "mode", mode, "isRDWR", accessMode == winfuse.O_RDWR)
@@ -298,6 +346,9 @@ func shouldUseDirectIo(path string, flags int) bool {
 // CreateEx implements FileSystemOpenEx interface for per-file direct_io control.
 func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCode int) {
 	defer d.recoverPanic("CreateEx", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	// d.logger.Info("FUSE create", "path", path, "mode", mode)
 	logger := d.logger.With("method", "create-ex", "path", path)
 
@@ -374,22 +425,35 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 // OpenEx implements FileSystemOpenEx interface for per-file direct_io control.
 func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	defer d.recoverPanic("OpenEx", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	flags := fi.Flags
 	// d.logger.Info("FUSE open", "path", path, "flags", flags)
 	logger := d.logger.With("method", "open-ex", "path", path, "flags", flags)
 
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
-	// Check if O_CREAT is in flags - if so, we might need to create the file
 	hasCreate := flags&syscall.O_CREAT != 0
+	hasExcl := flags&syscall.O_EXCL != 0
 
 	d.AfmLock.Lock()
 	fh, ok := d.AllFileMap[path]
+
+	if hasCreate && hasExcl && ok {
+		d.AfmLock.Unlock()
+		return -winfuse.EEXIST
+	}
+
 	if !ok {
-		// File not in map - check if it exists on disk
 		fileExists := false
 		if _, statErr := os.Stat(localPath); statErr == nil {
 			fileExists = true
+		}
+
+		if hasCreate && hasExcl && fileExists {
+			d.AfmLock.Unlock()
+			return -winfuse.EEXIST
 		}
 
 		// Check if this is a remote file (don't mark as LocalNewer if so)
@@ -567,7 +631,9 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 
 		fi.Fh = handleID
 		fi.DirectIo = shouldUseDirectIo(path, flags)
-		// logger.Info("Created file via OpenEx", "fh", fd, "directIo", fi.DirectIo)
+		if flags&syscall.O_TRUNC != 0 {
+			d.refreshFileStat(path)
+		}
 		return 0
 	}
 
@@ -595,7 +661,14 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		return -winfuse.EIO
 	}
 
-	fd, err := platOpen(localPath, syscall.O_RDWR|syscall.O_CREAT, 0644)
+	cacheMode := uint32(0644)
+	if fh != nil && fh.stat != nil {
+		cacheMode = fh.stat.Mode & 0o777
+		if cacheMode == 0 {
+			cacheMode = 0644
+		}
+	}
+	fd, err := platOpen(localPath, syscall.O_RDWR|syscall.O_CREAT, cacheMode)
 	if err != nil {
 		logger.Error("Failed to create cache file", "error", err)
 		return int(convertOsErrToSyscallErrno("open", err))
@@ -727,6 +800,9 @@ func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) (errCode int) {
 
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int) {
 	defer d.recoverPanic("Getattr", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	// NOTE: Do NOT log getattr — called 200,000+ times during large clones.
 	// Synchronous logging on this hot path causes 30-second hangs.
 	logger := d.logger.With("method", "get-attr", "path", path, "fh", fh)
@@ -925,6 +1001,12 @@ func (d *Dir) Init() {
 
 func (d *Dir) Link(oldpath string, newpath string) (errCode int) {
 	defer d.recoverPanic("Link", &errCode)
+	if e := checkPath(oldpath); e != 0 {
+		return e
+	}
+	if e := checkPath(newpath); e != 0 {
+		return e
+	}
 	// d.logger.Debug("FUSE Link (stub - not supported)", "oldPath", oldpath, "newPath", newpath, "inode", d.Inode)
 	// Hard links not supported - return EPERM (more accurate than ENOSYS).
 	return -winfuse.EPERM
@@ -932,6 +1014,9 @@ func (d *Dir) Link(oldpath string, newpath string) (errCode int) {
 
 func (d *Dir) Mkdir(path string, mode uint32) (errCode int) {
 	defer d.recoverPanic("Mkdir", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	return d.mkdirInternal(path, mode, true)
 }
 
@@ -1006,11 +1091,15 @@ func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode 
 		}
 	}
 
+	d.refreshDirStat(filepath.Dir(path))
 	return 0
 }
 
 func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 	defer d.recoverPanic("Mknod", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	// d.logger.Info("Mknod", "path", path, "inode", d.Inode)
 
 	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -1025,6 +1114,9 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 
 func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	defer d.recoverPanic("Open", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e, 0
+	}
 	// d.logger.Info("FUSE open(legacy)", "path", path, "flags", flags)
 	logger := d.logger.With("method", "open", "path", path, "flags", flags)
 
@@ -1227,6 +1319,9 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 
 func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
 	defer d.recoverPanic("Opendir", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e, 0
+	}
 	// d.logger.Info("FUSE opendir", "path", path)
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
@@ -1245,6 +1340,9 @@ func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
 
 func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, offset int64) bool, offset int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Readdir", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "readdir", "path", cleanPath)
 
@@ -1289,6 +1387,9 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 
 func (d *Dir) Readlink(path string) (errCode int, target string) {
 	defer d.recoverPanic("Readlink", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e, ""
+	}
 	// d.logger.Debug("FUSE Readlink (stub)", "path", path, "inode", d.Inode)
 	// No symlinks in our filesystem - return EINVAL (not a symlink).
 	return -winfuse.EINVAL, ""
@@ -1499,17 +1600,27 @@ func (d *Dir) Releasedir(path string, fh uint64) (errCode int) {
 // When apps try atomic rename-swap, we fall back to basic rename.
 func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	defer d.recoverPanic("Rename", &errCode)
+	if e := checkPath(oldpath); e != 0 {
+		return e
+	}
+	if e := checkPath(newpath); e != 0 {
+		return e
+	}
 	// d.logger.Info("FUSE rename", "old", oldpath, "new", newpath)
 	// d.logger.Warn("FUSE Rename called",
 	// 	"oldpath", oldpath,
 	// 	"newpath", newpath,
 	// 	"note", "macOS apps may use RENAME_SWAP - not supported by cgofuse")
 
+	oldBase := filepath.Base(oldpath)
+	newBase := filepath.Base(newpath)
+	if oldBase == "." || oldBase == ".." || newBase == "." || newBase == ".." {
+		return -winfuse.EINVAL
+	}
+
 	cleanOldPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, oldpath))
 	cleanNewPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
 	logger := d.logger.With("method", "rename", "old-path", cleanOldPath, "new-path", cleanNewPath)
-
-	// d.logger.Warn("FUSE Rename resolved paths", "cleanOldPath", cleanOldPath, "cleanNewPath", cleanNewPath)
 
 	// Check if this is a remote-only file (don't notify peer about their own files).
 	d.RemoteFilesLock.RLock()
@@ -1532,10 +1643,15 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 
 	err := os.Rename(cleanOldPath, cleanNewPath)
 	if err != nil {
-		// d.logger.Warn("FUSE Rename FAILED", "oldpath", oldpath, "newpath", newpath, "error", err)
 		logger.Error("Failed to rename", "error", err)
 		return int(convertOsErrToSyscallErrno("rename", err))
 	}
+
+	// Remove destination entry from AllFileMap if it existed (rename-over-existing).
+	// Do NOT remove from RemoteFiles — the peer still tracks this file.
+	d.AfmLock.Lock()
+	delete(d.AllFileMap, newpath)
+	d.AfmLock.Unlock()
 
 	// Update internal maps to reflect the rename
 	d.AfmLock.Lock()
@@ -1545,9 +1661,28 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		f.Name = getNameFromPath(newpath)
 		f.RealPathOfFile = cleanNewPath
 		d.AllFileMap[newpath] = f
-		// logger.Info("Updated AllFileMap for rename", "oldpath", oldpath, "newpath", newpath)
 	}
 	d.AfmLock.Unlock()
+
+	// Update AllDirMap if a directory was renamed
+	d.Adm.Lock()
+	if dir, ok := d.AllDirMap[oldpath]; ok {
+		delete(d.AllDirMap, oldpath)
+		dir.RelativePath = newpath
+		dir.LocalDownloadFolder = cleanNewPath
+		d.AllDirMap[newpath] = dir
+	}
+	d.Adm.Unlock()
+
+	// Refresh stats after map update
+	oldParent := filepath.Dir(oldpath)
+	newParent := filepath.Dir(newpath)
+	d.refreshDirStat(oldParent)
+	if oldParent != newParent {
+		d.refreshDirStat(newParent)
+	}
+	d.refreshFileStat(newpath)
+	d.refreshDirStat(newpath)
 
 	// Also update RemoteFiles if the file was remote
 	d.RemoteFilesLock.Lock()
@@ -1584,6 +1719,9 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 
 func (d *Dir) Rmdir(path string) (errCode int) {
 	defer d.recoverPanic("Rmdir", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	return d.rmdirInternal(path, true)
 }
 
@@ -1596,26 +1734,19 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 	// d.logger.Info("FUSE rmdir", "path", path, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "rmdir", "path", path)
 
-	// Check if this is a remote-only directory (track if we removed it from map).
-	d.Adm.Lock()
+	d.Adm.RLock()
 	_, isRemoteDir := d.AllDirMap[path]
-	if isRemoteDir {
-		delete(d.AllDirMap, path)
-		// logger.Info("Removed directory from AllDirMap", "path", path)
-	}
-	d.Adm.Unlock()
+	d.Adm.RUnlock()
 
-	// Try to rmdir local directory (may not exist if remote-only).
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := syscall.Rmdir(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Directory doesn't exist locally.
 			if isRemoteDir {
-				// Remote-only dir - we already cleaned up the map, success.
-				// logger.Info("Remote-only directory removed (no local copy)", "path", path)
+				d.Adm.Lock()
+				delete(d.AllDirMap, path)
+				d.Adm.Unlock()
 			} else {
-				// No remote entry and no local dir - doesn't exist.
 				logger.Error("Failed to remove dir - not found", "error", err)
 				return int(convertOsErrToSyscallErrno("rmdir", err))
 			}
@@ -1626,7 +1757,11 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 		}
 	}
 
-	// Notify peer about the removed directory (only for local changes).
+	// Rmdir succeeded on disk, clean up the map entry.
+	d.Adm.Lock()
+	delete(d.AllDirMap, path)
+	d.Adm.Unlock()
+
 	if notifyPeer && d.OnLocalChange != nil && !isRemoteDir {
 		d.OnLocalChange(types.FileEvent{
 			Path:   path,
@@ -1636,13 +1771,15 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 		// logger.Info("Notified peer about removed directory", "path", path)
 	}
 
-	// TODO: Remove also sub-files and sub dirs from maps.
-
+	d.refreshDirStat(filepath.Dir(path))
 	return 0
 }
 
 func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) (errCode int) {
 	defer d.recoverPanic("Statfs", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	/*
 		var freeBytesAvailable uint64
 		var totalNumberOfBytes uint64
@@ -1671,6 +1808,9 @@ func (d *Dir) Statfs(path string, stat *winfuse.Statfs_t) (errCode int) {
 
 func (d *Dir) Symlink(target string, newpath string) (errCode int) {
 	defer d.recoverPanic("Symlink", &errCode)
+	if e := checkPath(newpath); e != 0 {
+		return e
+	}
 	// d.logger.Debug("FUSE Symlink (stub - not supported)", "target", target, "newpath", newpath, "inode", d.Inode)
 	// Symlinks not supported - return EPERM.
 	return -winfuse.EPERM
@@ -1680,22 +1820,32 @@ func (d *Dir) Symlink(target string, newpath string) (errCode int) {
 // thus Open is immediately followed by Truncate.
 func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Truncate", &errCode)
-	// d.logger.Info("FUSE truncate", "path", path, "size", size)
-
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	if e := checkPath(path); e != 0 {
+		return e
+	}
+	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "truncate", "path", path, "size", size, "fh", fh)
-	err := platTruncate(path, size)
+
+	if info, statErr := os.Stat(cleanPath); statErr == nil && info.IsDir() {
+		return -winfuse.EISDIR
+	}
+
+	err := platTruncate(cleanPath, size)
 	if err != nil {
-		logger.Error("Faile to truncate", "error", err)
+		logger.Error("Failed to truncate", "error", err)
 		return int(convertOsErrToSyscallErrno("truncate", err))
 	}
 
+	d.refreshFileStat(path)
 	return 0
 }
 
 // Unlink removes a file.
 func (d *Dir) Unlink(path string) (errCode int) {
 	defer d.recoverPanic("Unlink", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	return d.unlinkInternal(path, true)
 }
 
@@ -1759,10 +1909,10 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 		}
 	}
 
+	// Refresh parent directory stat (ctime/mtime change on unlink)
+	d.refreshDirStat(filepath.Dir(path))
+
 	// Notify peer about the removed file.
-	// Notify if: (a) it was our local file, OR (b) it was a remote file that we
-	// successfully deleted from disk (meaning we had a local copy and something
-	// like git checkout removed it from the working tree).
 	if notifyPeer && d.OnLocalChange != nil && (!isRemote || err == nil) {
 		d.OnLocalChange(types.FileEvent{
 			Path:   path,
@@ -1778,6 +1928,9 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 // We return success but don't persist the changes (timestamps come from underlying storage).
 func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) (errCode int) {
 	defer d.recoverPanic("Utimens", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	// d.logger.Debug("FUSE Utimens (stub)", "path", path, "inode", d.Inode)
 	return 0 // Return success - git and other tools call this frequently.
 }
@@ -2147,6 +2300,9 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 func (d *Dir) Removexattr(path string, name string) (errCode int) {
 	defer d.recoverPanic("Removexattr", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	// Don't log xattr operations - too frequent
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
@@ -2160,6 +2316,9 @@ func (d *Dir) Removexattr(path string, name string) (errCode int) {
 
 func (d *Dir) Listxattr(path string, fill func(name string) bool) (errCode int) {
 	defer d.recoverPanic("Listxattr", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	// Don't log xattr operations - too frequent
 	realPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
@@ -2181,6 +2340,9 @@ func (d *Dir) Listxattr(path string, fill func(name string) bool) (errCode int) 
 
 func (d *Dir) Getxattr(path string, name string) (errCode int, data []byte) {
 	defer d.recoverPanic("Getxattr", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e, nil
+	}
 	// logger := d.logger.With("method", "getxattr", "path", path, "name", name)
 	// logger.Debug("Getxattr called")
 
@@ -2207,6 +2369,9 @@ func (d *Dir) Getxattr(path string, name string) (errCode int, data []byte) {
 
 func (d *Dir) Setxattr(path string, name string, value []byte, flags int) (errCode int) {
 	defer d.recoverPanic("Setxattr", &errCode)
+	if e := checkPath(path); e != 0 {
+		return e
+	}
 	// Don't log xattr operations - too frequent
 	// I do not support flags for this version.
 	_ = flags
@@ -2358,7 +2523,14 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		logger.Warn("Prefetch: failed to create dirs", "path", realPath, "error", err)
 	}
 	if _, statErr := os.Stat(realPath); os.IsNotExist(statErr) { // #nosec G304
-		lf, createErr := os.Create(realPath)
+		fileMode := os.FileMode(0644)
+		if f.stat != nil {
+			fileMode = os.FileMode(f.stat.Mode & 0o777)
+			if fileMode == 0 {
+				fileMode = 0644
+			}
+		}
+		lf, createErr := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
 		if createErr != nil {
 			logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
 			return
@@ -2421,8 +2593,14 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		return
 	}
 
-	// Open local file for writing.
-	lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, 0600)
+	fileMode := os.FileMode(0644)
+	if f.stat != nil {
+		fileMode = os.FileMode(f.stat.Mode & 0o777)
+		if fileMode == 0 {
+			fileMode = 0644
+		}
+	}
+	lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
 	if err != nil {
 		logger.Warn("Prefetch: failed to open local file", "error", err)
 		return

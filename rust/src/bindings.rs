@@ -5,4 +5,8538 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-# [derive (PartialEq , Copy , Clone , Hash , Debug , Default)] # [repr (C)] pub struct __BindgenComplex < T > { pub re : T , pub im : T } pub type wchar_t = :: std :: os :: raw :: c_ushort ; # [repr (C)] # [derive (Debug , Copy , Clone)] pub struct max_align_t { pub __clang_max_align_nonce1 : :: std :: os :: raw :: c_longlong , pub __clang_max_align_nonce2 : f64 , } # [test] fn bindgen_test_layout_max_align_t () { const UNINIT : :: std :: mem :: MaybeUninit < max_align_t > = :: std :: mem :: MaybeUninit :: uninit () ; let ptr = UNINIT . as_ptr () ; assert_eq ! (:: std :: mem :: size_of :: < max_align_t > () , 16usize , concat ! ("Size of: " , stringify ! (max_align_t))) ; assert_eq ! (:: std :: mem :: align_of :: < max_align_t > () , 8usize , concat ! ("Alignment of " , stringify ! (max_align_t))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . __clang_max_align_nonce1) as usize - ptr as usize } , 0usize , concat ! ("Offset of field: " , stringify ! (max_align_t) , "::" , stringify ! (__clang_max_align_nonce1))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . __clang_max_align_nonce2) as usize - ptr as usize } , 8usize , concat ! ("Offset of field: " , stringify ! (max_align_t) , "::" , stringify ! (__clang_max_align_nonce2))) ; } # [repr (C)] # [derive (Debug , Copy , Clone)] pub struct _GoString_ { pub p : * const :: std :: os :: raw :: c_char , pub n : isize , } # [test] fn bindgen_test_layout__GoString_ () { const UNINIT : :: std :: mem :: MaybeUninit < _GoString_ > = :: std :: mem :: MaybeUninit :: uninit () ; let ptr = UNINIT . as_ptr () ; assert_eq ! (:: std :: mem :: size_of :: < _GoString_ > () , 16usize , concat ! ("Size of: " , stringify ! (_GoString_))) ; assert_eq ! (:: std :: mem :: align_of :: < _GoString_ > () , 8usize , concat ! ("Alignment of " , stringify ! (_GoString_))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . p) as usize - ptr as usize } , 0usize , concat ! ("Offset of field: " , stringify ! (_GoString_) , "::" , stringify ! (p))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . n) as usize - ptr as usize } , 8usize , concat ! ("Offset of field: " , stringify ! (_GoString_) , "::" , stringify ! (n))) ; } extern "C" { pub fn _GoStringLen (s : _GoString_) -> usize ; } extern "C" { pub fn _GoStringPtr (s : _GoString_) -> * const :: std :: os :: raw :: c_char ; } pub type int_least64_t = i64 ; pub type uint_least64_t = u64 ; pub type int_fast64_t = i64 ; pub type uint_fast64_t = u64 ; pub type int_least32_t = i32 ; pub type uint_least32_t = u32 ; pub type int_fast32_t = i32 ; pub type uint_fast32_t = u32 ; pub type int_least16_t = i16 ; pub type uint_least16_t = u16 ; pub type int_fast16_t = i16 ; pub type uint_fast16_t = u16 ; pub type int_least8_t = i8 ; pub type uint_least8_t = u8 ; pub type int_fast8_t = i8 ; pub type uint_fast8_t = u8 ; pub type intmax_t = :: std :: os :: raw :: c_longlong ; pub type uintmax_t = :: std :: os :: raw :: c_ulonglong ; pub type GoInt8 = :: std :: os :: raw :: c_schar ; pub type GoUint8 = :: std :: os :: raw :: c_uchar ; pub type GoInt16 = :: std :: os :: raw :: c_short ; pub type GoUint16 = :: std :: os :: raw :: c_ushort ; pub type GoInt32 = :: std :: os :: raw :: c_int ; pub type GoUint32 = :: std :: os :: raw :: c_uint ; pub type GoInt64 = :: std :: os :: raw :: c_longlong ; pub type GoUint64 = :: std :: os :: raw :: c_ulonglong ; pub type GoInt = GoInt64 ; pub type GoUint = GoUint64 ; pub type GoUintptr = usize ; pub type GoFloat32 = f32 ; pub type GoFloat64 = f64 ; pub type GoComplex64 = __BindgenComplex < f32 > ; pub type GoComplex128 = __BindgenComplex < f64 > ; pub type _check_for_64_bit_pointer_matching_GoInt = [:: std :: os :: raw :: c_char ; 1usize] ; pub type GoString = _GoString_ ; pub type GoMap = * mut :: std :: os :: raw :: c_void ; pub type GoChan = * mut :: std :: os :: raw :: c_void ; # [repr (C)] # [derive (Debug , Copy , Clone)] pub struct GoInterface { pub t : * mut :: std :: os :: raw :: c_void , pub v : * mut :: std :: os :: raw :: c_void , } # [test] fn bindgen_test_layout_GoInterface () { const UNINIT : :: std :: mem :: MaybeUninit < GoInterface > = :: std :: mem :: MaybeUninit :: uninit () ; let ptr = UNINIT . as_ptr () ; assert_eq ! (:: std :: mem :: size_of :: < GoInterface > () , 16usize , concat ! ("Size of: " , stringify ! (GoInterface))) ; assert_eq ! (:: std :: mem :: align_of :: < GoInterface > () , 8usize , concat ! ("Alignment of " , stringify ! (GoInterface))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . t) as usize - ptr as usize } , 0usize , concat ! ("Offset of field: " , stringify ! (GoInterface) , "::" , stringify ! (t))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . v) as usize - ptr as usize } , 8usize , concat ! ("Offset of field: " , stringify ! (GoInterface) , "::" , stringify ! (v))) ; } # [repr (C)] # [derive (Debug , Copy , Clone)] pub struct GoSlice { pub data : * mut :: std :: os :: raw :: c_void , pub len : GoInt , pub cap : GoInt , } # [test] fn bindgen_test_layout_GoSlice () { const UNINIT : :: std :: mem :: MaybeUninit < GoSlice > = :: std :: mem :: MaybeUninit :: uninit () ; let ptr = UNINIT . as_ptr () ; assert_eq ! (:: std :: mem :: size_of :: < GoSlice > () , 24usize , concat ! ("Size of: " , stringify ! (GoSlice))) ; assert_eq ! (:: std :: mem :: align_of :: < GoSlice > () , 8usize , concat ! ("Alignment of " , stringify ! (GoSlice))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . data) as usize - ptr as usize } , 0usize , concat ! ("Offset of field: " , stringify ! (GoSlice) , "::" , stringify ! (data))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . len) as usize - ptr as usize } , 8usize , concat ! ("Offset of field: " , stringify ! (GoSlice) , "::" , stringify ! (len))) ; assert_eq ! (unsafe { :: std :: ptr :: addr_of ! ((* ptr) . cap) as usize - ptr as usize } , 16usize , concat ! ("Offset of field: " , stringify ! (GoSlice) , "::" , stringify ! (cap))) ; } extern "C" { pub fn KD_Initialize (relayURL : * mut :: std :: os :: raw :: c_char , inbound : :: std :: os :: raw :: c_int , outbound : :: std :: os :: raw :: c_int , toMount : * mut :: std :: os :: raw :: c_char , toSave : * mut :: std :: os :: raw :: c_char , useFUSE : :: std :: os :: raw :: c_int , prefetchOnOpen : :: std :: os :: raw :: c_int , pushOnWrite : :: std :: os :: raw :: c_int) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_CreateRoom () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_JoinRoom () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_Connect () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_AddPeerFingerprint (fp : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetPeerFingerprint () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_AddFile (path : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_AddFileAs (localPath : * mut :: std :: os :: raw :: c_char , remoteName : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_ListFiles () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_PullFile (remote : * mut :: std :: os :: raw :: c_char , local : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_Fingerprint () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_UnmountFilesystem () ; } extern "C" { pub fn KD_Disconnect () ; } extern "C" { pub fn KD_Stop () ; } extern "C" { pub fn KD_CancelDownload (remoteName : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetDownloadProgress (remoteName : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_PrintBanner () ; } extern "C" { pub fn KD_GetFileCount () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetFileName (index : :: std :: os :: raw :: c_int) -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetLocalFileCount () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetLocalFileName (index : :: std :: os :: raw :: c_int) -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetFileSize (index : :: std :: os :: raw :: c_int) -> :: std :: os :: raw :: c_long ; } extern "C" { pub fn KD_GetFileSizeByName (name : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_long ; } extern "C" { pub fn KD_GetLocalFileRealPath (name : * mut :: std :: os :: raw :: c_char) -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetConnectionStatus () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_SaveFileAt (index : :: std :: os :: raw :: c_int , localPath : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_SaveFileByName (name : * mut :: std :: os :: raw :: c_char , localPath : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetLastError () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetLastErrorAndClear () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_PollEvent () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_SetupEventCallbacks () ; } extern "C" { pub fn KD_SetFUSEMode (useFUSE : :: std :: os :: raw :: c_int) ; } extern "C" { pub fn KD_GetFUSEMode () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_SetLocalMode (enabled : :: std :: os :: raw :: c_int) ; } extern "C" { pub fn KD_GetLocalMode () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetLinkLocalAddress () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_SetPeerDirectAddress (addr : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_StartDiscovery () ; } extern "C" { pub fn KD_StopDiscovery () ; } extern "C" { pub fn KD_GetDiscoveryName () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetDiscoveredPeerCount () -> :: std :: os :: raw :: c_int ; } extern "C" { pub fn KD_GetDiscoveredPeerName (i : :: std :: os :: raw :: c_int) -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetDiscoveredPeerAddr (i : :: std :: os :: raw :: c_int) -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetConnectionMode () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_SetStrictMode (enabled : :: std :: os :: raw :: c_int) ; } extern "C" { pub fn KD_GetVersion () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetLogPath () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_GetConfigPath () -> * mut :: std :: os :: raw :: c_char ; } extern "C" { pub fn KD_SanitizeLogs (destPath : * mut :: std :: os :: raw :: c_char) -> :: std :: os :: raw :: c_int ; }
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct __BindgenBitfieldUnit<Storage> {
+    storage: Storage,
+}
+impl<Storage> __BindgenBitfieldUnit<Storage> {
+    #[inline]
+    pub const fn new(storage: Storage) -> Self {
+        Self { storage }
+    }
+}
+impl<Storage> __BindgenBitfieldUnit<Storage>
+where
+    Storage: AsRef<[u8]> + AsMut<[u8]>,
+{
+    #[inline]
+    pub fn get_bit(&self, index: usize) -> bool {
+        debug_assert!(index / 8 < self.storage.as_ref().len());
+        let byte_index = index / 8;
+        let byte = self.storage.as_ref()[byte_index];
+        let bit_index = if cfg!(target_endian = "big") {
+            7 - (index % 8)
+        } else {
+            index % 8
+        };
+        let mask = 1 << bit_index;
+        byte & mask == mask
+    }
+    #[inline]
+    pub fn set_bit(&mut self, index: usize, val: bool) {
+        debug_assert!(index / 8 < self.storage.as_ref().len());
+        let byte_index = index / 8;
+        let byte = &mut self.storage.as_mut()[byte_index];
+        let bit_index = if cfg!(target_endian = "big") {
+            7 - (index % 8)
+        } else {
+            index % 8
+        };
+        let mask = 1 << bit_index;
+        if val {
+            *byte |= mask;
+        } else {
+            *byte &= !mask;
+        }
+    }
+    #[inline]
+    pub fn get(&self, bit_offset: usize, bit_width: u8) -> u64 {
+        debug_assert!(bit_width <= 64);
+        debug_assert!(bit_offset / 8 < self.storage.as_ref().len());
+        debug_assert!((bit_offset + (bit_width as usize)) / 8 <= self.storage.as_ref().len());
+        let mut val = 0;
+        for i in 0..(bit_width as usize) {
+            if self.get_bit(i + bit_offset) {
+                let index = if cfg!(target_endian = "big") {
+                    bit_width as usize - 1 - i
+                } else {
+                    i
+                };
+                val |= 1 << index;
+            }
+        }
+        val
+    }
+    #[inline]
+    pub fn set(&mut self, bit_offset: usize, bit_width: u8, val: u64) {
+        debug_assert!(bit_width <= 64);
+        debug_assert!(bit_offset / 8 < self.storage.as_ref().len());
+        debug_assert!((bit_offset + (bit_width as usize)) / 8 <= self.storage.as_ref().len());
+        for i in 0..(bit_width as usize) {
+            let mask = 1 << i;
+            let val_bit_is_set = val & mask == mask;
+            let index = if cfg!(target_endian = "big") {
+                bit_width as usize - 1 - i
+            } else {
+                i
+            };
+            self.set_bit(index + bit_offset, val_bit_is_set);
+        }
+    }
+}
+#[derive(PartialEq, Copy, Clone, Hash, Debug, Default)]
+#[repr(C)]
+pub struct __BindgenComplex<T> {
+    pub re: T,
+    pub im: T,
+}
+pub const __WORDSIZE: u32 = 64;
+pub const __has_safe_buffers: u32 = 1;
+pub const __DARWIN_ONLY_64_BIT_INO_T: u32 = 0;
+pub const __DARWIN_ONLY_UNIX_CONFORMANCE: u32 = 1;
+pub const __DARWIN_ONLY_VERS_1050: u32 = 0;
+pub const __DARWIN_UNIX03: u32 = 1;
+pub const __DARWIN_64_BIT_INO_T: u32 = 1;
+pub const __DARWIN_VERS_1050: u32 = 1;
+pub const __DARWIN_NON_CANCELABLE: u32 = 0;
+pub const __DARWIN_SUF_64_BIT_INO_T: &[u8; 9] = b"$INODE64\0";
+pub const __DARWIN_SUF_1050: &[u8; 6] = b"$1050\0";
+pub const __DARWIN_SUF_EXTSN: &[u8; 14] = b"$DARWIN_EXTSN\0";
+pub const __DARWIN_C_ANSI: u32 = 4096;
+pub const __DARWIN_C_FULL: u32 = 900000;
+pub const __DARWIN_C_LEVEL: u32 = 900000;
+pub const __STDC_WANT_LIB_EXT1__: u32 = 1;
+pub const __DARWIN_NO_LONG_LONG: u32 = 0;
+pub const _DARWIN_FEATURE_64_BIT_INODE: u32 = 1;
+pub const _DARWIN_FEATURE_ONLY_UNIX_CONFORMANCE: u32 = 1;
+pub const _DARWIN_FEATURE_UNIX_CONFORMANCE: u32 = 3;
+pub const __has_ptrcheck: u32 = 0;
+pub const __has_bounds_safety_attributes: u32 = 0;
+pub const USE_CLANG_TYPES: u32 = 0;
+pub const __PTHREAD_SIZE__: u32 = 8176;
+pub const __PTHREAD_ATTR_SIZE__: u32 = 56;
+pub const __PTHREAD_MUTEXATTR_SIZE__: u32 = 8;
+pub const __PTHREAD_MUTEX_SIZE__: u32 = 56;
+pub const __PTHREAD_CONDATTR_SIZE__: u32 = 8;
+pub const __PTHREAD_COND_SIZE__: u32 = 40;
+pub const __PTHREAD_ONCE_SIZE__: u32 = 8;
+pub const __PTHREAD_RWLOCK_SIZE__: u32 = 192;
+pub const __PTHREAD_RWLOCKATTR_SIZE__: u32 = 16;
+pub const INT8_MAX: u32 = 127;
+pub const INT16_MAX: u32 = 32767;
+pub const INT32_MAX: u32 = 2147483647;
+pub const INT64_MAX: u64 = 9223372036854775807;
+pub const INT8_MIN: i32 = -128;
+pub const INT16_MIN: i32 = -32768;
+pub const INT32_MIN: i32 = -2147483648;
+pub const INT64_MIN: i64 = -9223372036854775808;
+pub const UINT8_MAX: u32 = 255;
+pub const UINT16_MAX: u32 = 65535;
+pub const UINT32_MAX: u32 = 4294967295;
+pub const UINT64_MAX: i32 = -1;
+pub const INT_LEAST8_MIN: i32 = -128;
+pub const INT_LEAST16_MIN: i32 = -32768;
+pub const INT_LEAST32_MIN: i32 = -2147483648;
+pub const INT_LEAST64_MIN: i64 = -9223372036854775808;
+pub const INT_LEAST8_MAX: u32 = 127;
+pub const INT_LEAST16_MAX: u32 = 32767;
+pub const INT_LEAST32_MAX: u32 = 2147483647;
+pub const INT_LEAST64_MAX: u64 = 9223372036854775807;
+pub const UINT_LEAST8_MAX: u32 = 255;
+pub const UINT_LEAST16_MAX: u32 = 65535;
+pub const UINT_LEAST32_MAX: u32 = 4294967295;
+pub const UINT_LEAST64_MAX: i32 = -1;
+pub const INT_FAST8_MIN: i32 = -128;
+pub const INT_FAST16_MIN: i32 = -32768;
+pub const INT_FAST32_MIN: i32 = -2147483648;
+pub const INT_FAST64_MIN: i64 = -9223372036854775808;
+pub const INT_FAST8_MAX: u32 = 127;
+pub const INT_FAST16_MAX: u32 = 32767;
+pub const INT_FAST32_MAX: u32 = 2147483647;
+pub const INT_FAST64_MAX: u64 = 9223372036854775807;
+pub const UINT_FAST8_MAX: u32 = 255;
+pub const UINT_FAST16_MAX: u32 = 65535;
+pub const UINT_FAST32_MAX: u32 = 4294967295;
+pub const UINT_FAST64_MAX: i32 = -1;
+pub const INTPTR_MAX: u64 = 9223372036854775807;
+pub const INTPTR_MIN: i64 = -9223372036854775808;
+pub const UINTPTR_MAX: i32 = -1;
+pub const SIZE_MAX: i32 = -1;
+pub const RSIZE_MAX: i32 = -1;
+pub const WINT_MIN: i32 = -2147483648;
+pub const WINT_MAX: u32 = 2147483647;
+pub const SIG_ATOMIC_MIN: i32 = -2147483648;
+pub const SIG_ATOMIC_MAX: u32 = 2147483647;
+pub const __DARWIN_WCHAR_MIN: i32 = -2147483648;
+pub const _FORTIFY_SOURCE: u32 = 2;
+pub const __API_TO_BE_DEPRECATED: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_MACOS: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_MACOSAPPLICATIONEXTENSION: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_IOS: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_IOSAPPLICATIONEXTENSION: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_MACCATALYST: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_MACCATALYSTAPPLICATIONEXTENSION: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_WATCHOS: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_WATCHOSAPPLICATIONEXTENSION: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_TVOS: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_TVOSAPPLICATIONEXTENSION: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_DRIVERKIT: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_VISIONOS: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_VISIONOSAPPLICATIONEXTENSION: u32 = 100000;
+pub const __API_TO_BE_DEPRECATED_KERNELKIT: u32 = 100000;
+pub const __MAC_10_0: u32 = 1000;
+pub const __MAC_10_1: u32 = 1010;
+pub const __MAC_10_2: u32 = 1020;
+pub const __MAC_10_3: u32 = 1030;
+pub const __MAC_10_4: u32 = 1040;
+pub const __MAC_10_5: u32 = 1050;
+pub const __MAC_10_6: u32 = 1060;
+pub const __MAC_10_7: u32 = 1070;
+pub const __MAC_10_8: u32 = 1080;
+pub const __MAC_10_9: u32 = 1090;
+pub const __MAC_10_10: u32 = 101000;
+pub const __MAC_10_10_2: u32 = 101002;
+pub const __MAC_10_10_3: u32 = 101003;
+pub const __MAC_10_11: u32 = 101100;
+pub const __MAC_10_11_2: u32 = 101102;
+pub const __MAC_10_11_3: u32 = 101103;
+pub const __MAC_10_11_4: u32 = 101104;
+pub const __MAC_10_12: u32 = 101200;
+pub const __MAC_10_12_1: u32 = 101201;
+pub const __MAC_10_12_2: u32 = 101202;
+pub const __MAC_10_12_4: u32 = 101204;
+pub const __MAC_10_13: u32 = 101300;
+pub const __MAC_10_13_1: u32 = 101301;
+pub const __MAC_10_13_2: u32 = 101302;
+pub const __MAC_10_13_4: u32 = 101304;
+pub const __MAC_10_14: u32 = 101400;
+pub const __MAC_10_14_1: u32 = 101401;
+pub const __MAC_10_14_4: u32 = 101404;
+pub const __MAC_10_14_5: u32 = 101405;
+pub const __MAC_10_14_6: u32 = 101406;
+pub const __MAC_10_15: u32 = 101500;
+pub const __MAC_10_15_1: u32 = 101501;
+pub const __MAC_10_15_4: u32 = 101504;
+pub const __MAC_10_16: u32 = 101600;
+pub const __MAC_11_0: u32 = 110000;
+pub const __MAC_11_1: u32 = 110100;
+pub const __MAC_11_3: u32 = 110300;
+pub const __MAC_11_4: u32 = 110400;
+pub const __MAC_11_5: u32 = 110500;
+pub const __MAC_11_6: u32 = 110600;
+pub const __MAC_12_0: u32 = 120000;
+pub const __MAC_12_1: u32 = 120100;
+pub const __MAC_12_2: u32 = 120200;
+pub const __MAC_12_3: u32 = 120300;
+pub const __MAC_12_4: u32 = 120400;
+pub const __MAC_12_5: u32 = 120500;
+pub const __MAC_12_6: u32 = 120600;
+pub const __MAC_12_7: u32 = 120700;
+pub const __MAC_13_0: u32 = 130000;
+pub const __MAC_13_1: u32 = 130100;
+pub const __MAC_13_2: u32 = 130200;
+pub const __MAC_13_3: u32 = 130300;
+pub const __MAC_13_4: u32 = 130400;
+pub const __MAC_13_5: u32 = 130500;
+pub const __MAC_13_6: u32 = 130600;
+pub const __MAC_13_7: u32 = 130700;
+pub const __MAC_14_0: u32 = 140000;
+pub const __MAC_14_1: u32 = 140100;
+pub const __MAC_14_2: u32 = 140200;
+pub const __MAC_14_3: u32 = 140300;
+pub const __MAC_14_4: u32 = 140400;
+pub const __MAC_14_5: u32 = 140500;
+pub const __MAC_14_6: u32 = 140600;
+pub const __MAC_14_7: u32 = 140700;
+pub const __MAC_15_0: u32 = 150000;
+pub const __MAC_15_1: u32 = 150100;
+pub const __MAC_15_2: u32 = 150200;
+pub const __MAC_15_3: u32 = 150300;
+pub const __MAC_15_4: u32 = 150400;
+pub const __MAC_15_5: u32 = 150500;
+pub const __MAC_15_6: u32 = 150600;
+pub const __MAC_16_0: u32 = 160000;
+pub const __MAC_26_0: u32 = 260000;
+pub const __MAC_26_1: u32 = 260100;
+pub const __MAC_26_2: u32 = 260200;
+pub const __MAC_26_3: u32 = 260300;
+pub const __MAC_26_4: u32 = 260400;
+pub const __IPHONE_2_0: u32 = 20000;
+pub const __IPHONE_2_1: u32 = 20100;
+pub const __IPHONE_2_2: u32 = 20200;
+pub const __IPHONE_3_0: u32 = 30000;
+pub const __IPHONE_3_1: u32 = 30100;
+pub const __IPHONE_3_2: u32 = 30200;
+pub const __IPHONE_4_0: u32 = 40000;
+pub const __IPHONE_4_1: u32 = 40100;
+pub const __IPHONE_4_2: u32 = 40200;
+pub const __IPHONE_4_3: u32 = 40300;
+pub const __IPHONE_5_0: u32 = 50000;
+pub const __IPHONE_5_1: u32 = 50100;
+pub const __IPHONE_6_0: u32 = 60000;
+pub const __IPHONE_6_1: u32 = 60100;
+pub const __IPHONE_7_0: u32 = 70000;
+pub const __IPHONE_7_1: u32 = 70100;
+pub const __IPHONE_8_0: u32 = 80000;
+pub const __IPHONE_8_1: u32 = 80100;
+pub const __IPHONE_8_2: u32 = 80200;
+pub const __IPHONE_8_3: u32 = 80300;
+pub const __IPHONE_8_4: u32 = 80400;
+pub const __IPHONE_9_0: u32 = 90000;
+pub const __IPHONE_9_1: u32 = 90100;
+pub const __IPHONE_9_2: u32 = 90200;
+pub const __IPHONE_9_3: u32 = 90300;
+pub const __IPHONE_10_0: u32 = 100000;
+pub const __IPHONE_10_1: u32 = 100100;
+pub const __IPHONE_10_2: u32 = 100200;
+pub const __IPHONE_10_3: u32 = 100300;
+pub const __IPHONE_11_0: u32 = 110000;
+pub const __IPHONE_11_1: u32 = 110100;
+pub const __IPHONE_11_2: u32 = 110200;
+pub const __IPHONE_11_3: u32 = 110300;
+pub const __IPHONE_11_4: u32 = 110400;
+pub const __IPHONE_12_0: u32 = 120000;
+pub const __IPHONE_12_1: u32 = 120100;
+pub const __IPHONE_12_2: u32 = 120200;
+pub const __IPHONE_12_3: u32 = 120300;
+pub const __IPHONE_12_4: u32 = 120400;
+pub const __IPHONE_13_0: u32 = 130000;
+pub const __IPHONE_13_1: u32 = 130100;
+pub const __IPHONE_13_2: u32 = 130200;
+pub const __IPHONE_13_3: u32 = 130300;
+pub const __IPHONE_13_4: u32 = 130400;
+pub const __IPHONE_13_5: u32 = 130500;
+pub const __IPHONE_13_6: u32 = 130600;
+pub const __IPHONE_13_7: u32 = 130700;
+pub const __IPHONE_14_0: u32 = 140000;
+pub const __IPHONE_14_1: u32 = 140100;
+pub const __IPHONE_14_2: u32 = 140200;
+pub const __IPHONE_14_3: u32 = 140300;
+pub const __IPHONE_14_5: u32 = 140500;
+pub const __IPHONE_14_6: u32 = 140600;
+pub const __IPHONE_14_7: u32 = 140700;
+pub const __IPHONE_14_8: u32 = 140800;
+pub const __IPHONE_15_0: u32 = 150000;
+pub const __IPHONE_15_1: u32 = 150100;
+pub const __IPHONE_15_2: u32 = 150200;
+pub const __IPHONE_15_3: u32 = 150300;
+pub const __IPHONE_15_4: u32 = 150400;
+pub const __IPHONE_15_5: u32 = 150500;
+pub const __IPHONE_15_6: u32 = 150600;
+pub const __IPHONE_15_7: u32 = 150700;
+pub const __IPHONE_15_8: u32 = 150800;
+pub const __IPHONE_16_0: u32 = 160000;
+pub const __IPHONE_16_1: u32 = 160100;
+pub const __IPHONE_16_2: u32 = 160200;
+pub const __IPHONE_16_3: u32 = 160300;
+pub const __IPHONE_16_4: u32 = 160400;
+pub const __IPHONE_16_5: u32 = 160500;
+pub const __IPHONE_16_6: u32 = 160600;
+pub const __IPHONE_16_7: u32 = 160700;
+pub const __IPHONE_17_0: u32 = 170000;
+pub const __IPHONE_17_1: u32 = 170100;
+pub const __IPHONE_17_2: u32 = 170200;
+pub const __IPHONE_17_3: u32 = 170300;
+pub const __IPHONE_17_4: u32 = 170400;
+pub const __IPHONE_17_5: u32 = 170500;
+pub const __IPHONE_17_6: u32 = 170600;
+pub const __IPHONE_17_7: u32 = 170700;
+pub const __IPHONE_18_0: u32 = 180000;
+pub const __IPHONE_18_1: u32 = 180100;
+pub const __IPHONE_18_2: u32 = 180200;
+pub const __IPHONE_18_3: u32 = 180300;
+pub const __IPHONE_18_4: u32 = 180400;
+pub const __IPHONE_18_5: u32 = 180500;
+pub const __IPHONE_18_6: u32 = 180600;
+pub const __IPHONE_19_0: u32 = 190000;
+pub const __IPHONE_26_0: u32 = 260000;
+pub const __IPHONE_26_1: u32 = 260100;
+pub const __IPHONE_26_2: u32 = 260200;
+pub const __IPHONE_26_3: u32 = 260300;
+pub const __IPHONE_26_4: u32 = 260400;
+pub const __WATCHOS_1_0: u32 = 10000;
+pub const __WATCHOS_2_0: u32 = 20000;
+pub const __WATCHOS_2_1: u32 = 20100;
+pub const __WATCHOS_2_2: u32 = 20200;
+pub const __WATCHOS_3_0: u32 = 30000;
+pub const __WATCHOS_3_1: u32 = 30100;
+pub const __WATCHOS_3_1_1: u32 = 30101;
+pub const __WATCHOS_3_2: u32 = 30200;
+pub const __WATCHOS_4_0: u32 = 40000;
+pub const __WATCHOS_4_1: u32 = 40100;
+pub const __WATCHOS_4_2: u32 = 40200;
+pub const __WATCHOS_4_3: u32 = 40300;
+pub const __WATCHOS_5_0: u32 = 50000;
+pub const __WATCHOS_5_1: u32 = 50100;
+pub const __WATCHOS_5_2: u32 = 50200;
+pub const __WATCHOS_5_3: u32 = 50300;
+pub const __WATCHOS_6_0: u32 = 60000;
+pub const __WATCHOS_6_1: u32 = 60100;
+pub const __WATCHOS_6_2: u32 = 60200;
+pub const __WATCHOS_7_0: u32 = 70000;
+pub const __WATCHOS_7_1: u32 = 70100;
+pub const __WATCHOS_7_2: u32 = 70200;
+pub const __WATCHOS_7_3: u32 = 70300;
+pub const __WATCHOS_7_4: u32 = 70400;
+pub const __WATCHOS_7_5: u32 = 70500;
+pub const __WATCHOS_7_6: u32 = 70600;
+pub const __WATCHOS_8_0: u32 = 80000;
+pub const __WATCHOS_8_1: u32 = 80100;
+pub const __WATCHOS_8_3: u32 = 80300;
+pub const __WATCHOS_8_4: u32 = 80400;
+pub const __WATCHOS_8_5: u32 = 80500;
+pub const __WATCHOS_8_6: u32 = 80600;
+pub const __WATCHOS_8_7: u32 = 80700;
+pub const __WATCHOS_8_8: u32 = 80800;
+pub const __WATCHOS_9_0: u32 = 90000;
+pub const __WATCHOS_9_1: u32 = 90100;
+pub const __WATCHOS_9_2: u32 = 90200;
+pub const __WATCHOS_9_3: u32 = 90300;
+pub const __WATCHOS_9_4: u32 = 90400;
+pub const __WATCHOS_9_5: u32 = 90500;
+pub const __WATCHOS_9_6: u32 = 90600;
+pub const __WATCHOS_10_0: u32 = 100000;
+pub const __WATCHOS_10_1: u32 = 100100;
+pub const __WATCHOS_10_2: u32 = 100200;
+pub const __WATCHOS_10_3: u32 = 100300;
+pub const __WATCHOS_10_4: u32 = 100400;
+pub const __WATCHOS_10_5: u32 = 100500;
+pub const __WATCHOS_10_6: u32 = 100600;
+pub const __WATCHOS_10_7: u32 = 100700;
+pub const __WATCHOS_11_0: u32 = 110000;
+pub const __WATCHOS_11_1: u32 = 110100;
+pub const __WATCHOS_11_2: u32 = 110200;
+pub const __WATCHOS_11_3: u32 = 110300;
+pub const __WATCHOS_11_4: u32 = 110400;
+pub const __WATCHOS_11_5: u32 = 110500;
+pub const __WATCHOS_11_6: u32 = 110600;
+pub const __WATCHOS_12_0: u32 = 120000;
+pub const __WATCHOS_26_0: u32 = 260000;
+pub const __WATCHOS_26_1: u32 = 260100;
+pub const __WATCHOS_26_2: u32 = 260200;
+pub const __WATCHOS_26_3: u32 = 260300;
+pub const __WATCHOS_26_4: u32 = 260400;
+pub const __TVOS_9_0: u32 = 90000;
+pub const __TVOS_9_1: u32 = 90100;
+pub const __TVOS_9_2: u32 = 90200;
+pub const __TVOS_10_0: u32 = 100000;
+pub const __TVOS_10_0_1: u32 = 100001;
+pub const __TVOS_10_1: u32 = 100100;
+pub const __TVOS_10_2: u32 = 100200;
+pub const __TVOS_11_0: u32 = 110000;
+pub const __TVOS_11_1: u32 = 110100;
+pub const __TVOS_11_2: u32 = 110200;
+pub const __TVOS_11_3: u32 = 110300;
+pub const __TVOS_11_4: u32 = 110400;
+pub const __TVOS_12_0: u32 = 120000;
+pub const __TVOS_12_1: u32 = 120100;
+pub const __TVOS_12_2: u32 = 120200;
+pub const __TVOS_12_3: u32 = 120300;
+pub const __TVOS_12_4: u32 = 120400;
+pub const __TVOS_13_0: u32 = 130000;
+pub const __TVOS_13_2: u32 = 130200;
+pub const __TVOS_13_3: u32 = 130300;
+pub const __TVOS_13_4: u32 = 130400;
+pub const __TVOS_14_0: u32 = 140000;
+pub const __TVOS_14_1: u32 = 140100;
+pub const __TVOS_14_2: u32 = 140200;
+pub const __TVOS_14_3: u32 = 140300;
+pub const __TVOS_14_5: u32 = 140500;
+pub const __TVOS_14_6: u32 = 140600;
+pub const __TVOS_14_7: u32 = 140700;
+pub const __TVOS_15_0: u32 = 150000;
+pub const __TVOS_15_1: u32 = 150100;
+pub const __TVOS_15_2: u32 = 150200;
+pub const __TVOS_15_3: u32 = 150300;
+pub const __TVOS_15_4: u32 = 150400;
+pub const __TVOS_15_5: u32 = 150500;
+pub const __TVOS_15_6: u32 = 150600;
+pub const __TVOS_16_0: u32 = 160000;
+pub const __TVOS_16_1: u32 = 160100;
+pub const __TVOS_16_2: u32 = 160200;
+pub const __TVOS_16_3: u32 = 160300;
+pub const __TVOS_16_4: u32 = 160400;
+pub const __TVOS_16_5: u32 = 160500;
+pub const __TVOS_16_6: u32 = 160600;
+pub const __TVOS_17_0: u32 = 170000;
+pub const __TVOS_17_1: u32 = 170100;
+pub const __TVOS_17_2: u32 = 170200;
+pub const __TVOS_17_3: u32 = 170300;
+pub const __TVOS_17_4: u32 = 170400;
+pub const __TVOS_17_5: u32 = 170500;
+pub const __TVOS_17_6: u32 = 170600;
+pub const __TVOS_18_0: u32 = 180000;
+pub const __TVOS_18_1: u32 = 180100;
+pub const __TVOS_18_2: u32 = 180200;
+pub const __TVOS_18_3: u32 = 180300;
+pub const __TVOS_18_4: u32 = 180400;
+pub const __TVOS_18_5: u32 = 180500;
+pub const __TVOS_18_6: u32 = 180600;
+pub const __TVOS_19_0: u32 = 190000;
+pub const __TVOS_26_0: u32 = 260000;
+pub const __TVOS_26_1: u32 = 260100;
+pub const __TVOS_26_2: u32 = 260200;
+pub const __TVOS_26_3: u32 = 260300;
+pub const __TVOS_26_4: u32 = 260400;
+pub const __BRIDGEOS_2_0: u32 = 20000;
+pub const __BRIDGEOS_3_0: u32 = 30000;
+pub const __BRIDGEOS_3_1: u32 = 30100;
+pub const __BRIDGEOS_3_4: u32 = 30400;
+pub const __BRIDGEOS_4_0: u32 = 40000;
+pub const __BRIDGEOS_4_1: u32 = 40100;
+pub const __BRIDGEOS_5_0: u32 = 50000;
+pub const __BRIDGEOS_5_1: u32 = 50100;
+pub const __BRIDGEOS_5_3: u32 = 50300;
+pub const __BRIDGEOS_6_0: u32 = 60000;
+pub const __BRIDGEOS_6_2: u32 = 60200;
+pub const __BRIDGEOS_6_4: u32 = 60400;
+pub const __BRIDGEOS_6_5: u32 = 60500;
+pub const __BRIDGEOS_6_6: u32 = 60600;
+pub const __BRIDGEOS_7_0: u32 = 70000;
+pub const __BRIDGEOS_7_1: u32 = 70100;
+pub const __BRIDGEOS_7_2: u32 = 70200;
+pub const __BRIDGEOS_7_3: u32 = 70300;
+pub const __BRIDGEOS_7_4: u32 = 70400;
+pub const __BRIDGEOS_7_6: u32 = 70600;
+pub const __BRIDGEOS_8_0: u32 = 80000;
+pub const __BRIDGEOS_8_1: u32 = 80100;
+pub const __BRIDGEOS_8_2: u32 = 80200;
+pub const __BRIDGEOS_8_3: u32 = 80300;
+pub const __BRIDGEOS_8_4: u32 = 80400;
+pub const __BRIDGEOS_8_5: u32 = 80500;
+pub const __BRIDGEOS_8_6: u32 = 80600;
+pub const __BRIDGEOS_9_0: u32 = 90000;
+pub const __BRIDGEOS_9_1: u32 = 90100;
+pub const __BRIDGEOS_9_2: u32 = 90200;
+pub const __BRIDGEOS_9_3: u32 = 90300;
+pub const __BRIDGEOS_9_4: u32 = 90400;
+pub const __BRIDGEOS_9_5: u32 = 90500;
+pub const __BRIDGEOS_9_6: u32 = 90600;
+pub const __BRIDGEOS_10_0: u32 = 100000;
+pub const __BRIDGEOS_10_1: u32 = 100100;
+pub const __BRIDGEOS_10_2: u32 = 100200;
+pub const __BRIDGEOS_10_3: u32 = 100300;
+pub const __BRIDGEOS_10_4: u32 = 100400;
+pub const __DRIVERKIT_19_0: u32 = 190000;
+pub const __DRIVERKIT_20_0: u32 = 200000;
+pub const __DRIVERKIT_21_0: u32 = 210000;
+pub const __DRIVERKIT_22_0: u32 = 220000;
+pub const __DRIVERKIT_22_4: u32 = 220400;
+pub const __DRIVERKIT_22_5: u32 = 220500;
+pub const __DRIVERKIT_22_6: u32 = 220600;
+pub const __DRIVERKIT_23_0: u32 = 230000;
+pub const __DRIVERKIT_23_1: u32 = 230100;
+pub const __DRIVERKIT_23_2: u32 = 230200;
+pub const __DRIVERKIT_23_3: u32 = 230300;
+pub const __DRIVERKIT_23_4: u32 = 230400;
+pub const __DRIVERKIT_23_5: u32 = 230500;
+pub const __DRIVERKIT_23_6: u32 = 230600;
+pub const __DRIVERKIT_24_0: u32 = 240000;
+pub const __DRIVERKIT_24_1: u32 = 240100;
+pub const __DRIVERKIT_24_2: u32 = 240200;
+pub const __DRIVERKIT_24_3: u32 = 240300;
+pub const __DRIVERKIT_24_4: u32 = 240400;
+pub const __DRIVERKIT_24_5: u32 = 240500;
+pub const __DRIVERKIT_24_6: u32 = 240600;
+pub const __DRIVERKIT_25_0: u32 = 250000;
+pub const __DRIVERKIT_25_1: u32 = 250100;
+pub const __DRIVERKIT_25_2: u32 = 250200;
+pub const __DRIVERKIT_25_3: u32 = 250300;
+pub const __DRIVERKIT_25_4: u32 = 250400;
+pub const __VISIONOS_1_0: u32 = 10000;
+pub const __VISIONOS_1_1: u32 = 10100;
+pub const __VISIONOS_1_2: u32 = 10200;
+pub const __VISIONOS_1_3: u32 = 10300;
+pub const __VISIONOS_2_0: u32 = 20000;
+pub const __VISIONOS_2_1: u32 = 20100;
+pub const __VISIONOS_2_2: u32 = 20200;
+pub const __VISIONOS_2_3: u32 = 20300;
+pub const __VISIONOS_2_4: u32 = 20400;
+pub const __VISIONOS_2_5: u32 = 20500;
+pub const __VISIONOS_2_6: u32 = 20600;
+pub const __VISIONOS_3_0: u32 = 30000;
+pub const __VISIONOS_26_0: u32 = 260000;
+pub const __VISIONOS_26_1: u32 = 260100;
+pub const __VISIONOS_26_2: u32 = 260200;
+pub const __VISIONOS_26_3: u32 = 260300;
+pub const __VISIONOS_26_4: u32 = 260400;
+pub const MAC_OS_X_VERSION_10_0: u32 = 1000;
+pub const MAC_OS_X_VERSION_10_1: u32 = 1010;
+pub const MAC_OS_X_VERSION_10_2: u32 = 1020;
+pub const MAC_OS_X_VERSION_10_3: u32 = 1030;
+pub const MAC_OS_X_VERSION_10_4: u32 = 1040;
+pub const MAC_OS_X_VERSION_10_5: u32 = 1050;
+pub const MAC_OS_X_VERSION_10_6: u32 = 1060;
+pub const MAC_OS_X_VERSION_10_7: u32 = 1070;
+pub const MAC_OS_X_VERSION_10_8: u32 = 1080;
+pub const MAC_OS_X_VERSION_10_9: u32 = 1090;
+pub const MAC_OS_X_VERSION_10_10: u32 = 101000;
+pub const MAC_OS_X_VERSION_10_10_2: u32 = 101002;
+pub const MAC_OS_X_VERSION_10_10_3: u32 = 101003;
+pub const MAC_OS_X_VERSION_10_11: u32 = 101100;
+pub const MAC_OS_X_VERSION_10_11_2: u32 = 101102;
+pub const MAC_OS_X_VERSION_10_11_3: u32 = 101103;
+pub const MAC_OS_X_VERSION_10_11_4: u32 = 101104;
+pub const MAC_OS_X_VERSION_10_12: u32 = 101200;
+pub const MAC_OS_X_VERSION_10_12_1: u32 = 101201;
+pub const MAC_OS_X_VERSION_10_12_2: u32 = 101202;
+pub const MAC_OS_X_VERSION_10_12_4: u32 = 101204;
+pub const MAC_OS_X_VERSION_10_13: u32 = 101300;
+pub const MAC_OS_X_VERSION_10_13_1: u32 = 101301;
+pub const MAC_OS_X_VERSION_10_13_2: u32 = 101302;
+pub const MAC_OS_X_VERSION_10_13_4: u32 = 101304;
+pub const MAC_OS_X_VERSION_10_14: u32 = 101400;
+pub const MAC_OS_X_VERSION_10_14_1: u32 = 101401;
+pub const MAC_OS_X_VERSION_10_14_4: u32 = 101404;
+pub const MAC_OS_X_VERSION_10_14_5: u32 = 101405;
+pub const MAC_OS_X_VERSION_10_14_6: u32 = 101406;
+pub const MAC_OS_X_VERSION_10_15: u32 = 101500;
+pub const MAC_OS_X_VERSION_10_15_1: u32 = 101501;
+pub const MAC_OS_X_VERSION_10_15_4: u32 = 101504;
+pub const MAC_OS_X_VERSION_10_16: u32 = 101600;
+pub const MAC_OS_VERSION_11_0: u32 = 110000;
+pub const MAC_OS_VERSION_11_1: u32 = 110100;
+pub const MAC_OS_VERSION_11_3: u32 = 110300;
+pub const MAC_OS_VERSION_11_4: u32 = 110400;
+pub const MAC_OS_VERSION_11_5: u32 = 110500;
+pub const MAC_OS_VERSION_11_6: u32 = 110600;
+pub const MAC_OS_VERSION_12_0: u32 = 120000;
+pub const MAC_OS_VERSION_12_1: u32 = 120100;
+pub const MAC_OS_VERSION_12_2: u32 = 120200;
+pub const MAC_OS_VERSION_12_3: u32 = 120300;
+pub const MAC_OS_VERSION_12_4: u32 = 120400;
+pub const MAC_OS_VERSION_12_5: u32 = 120500;
+pub const MAC_OS_VERSION_12_6: u32 = 120600;
+pub const MAC_OS_VERSION_12_7: u32 = 120700;
+pub const MAC_OS_VERSION_13_0: u32 = 130000;
+pub const MAC_OS_VERSION_13_1: u32 = 130100;
+pub const MAC_OS_VERSION_13_2: u32 = 130200;
+pub const MAC_OS_VERSION_13_3: u32 = 130300;
+pub const MAC_OS_VERSION_13_4: u32 = 130400;
+pub const MAC_OS_VERSION_13_5: u32 = 130500;
+pub const MAC_OS_VERSION_13_6: u32 = 130600;
+pub const MAC_OS_VERSION_13_7: u32 = 130700;
+pub const MAC_OS_VERSION_14_0: u32 = 140000;
+pub const MAC_OS_VERSION_14_1: u32 = 140100;
+pub const MAC_OS_VERSION_14_2: u32 = 140200;
+pub const MAC_OS_VERSION_14_3: u32 = 140300;
+pub const MAC_OS_VERSION_14_4: u32 = 140400;
+pub const MAC_OS_VERSION_14_5: u32 = 140500;
+pub const MAC_OS_VERSION_14_6: u32 = 140600;
+pub const MAC_OS_VERSION_14_7: u32 = 140700;
+pub const MAC_OS_VERSION_15_0: u32 = 150000;
+pub const MAC_OS_VERSION_15_1: u32 = 150100;
+pub const MAC_OS_VERSION_15_2: u32 = 150200;
+pub const MAC_OS_VERSION_15_3: u32 = 150300;
+pub const MAC_OS_VERSION_15_4: u32 = 150400;
+pub const MAC_OS_VERSION_15_5: u32 = 150500;
+pub const MAC_OS_VERSION_15_6: u32 = 150600;
+pub const MAC_OS_VERSION_16_0: u32 = 160000;
+pub const MAC_OS_VERSION_26_0: u32 = 260000;
+pub const MAC_OS_VERSION_26_1: u32 = 260100;
+pub const MAC_OS_VERSION_26_2: u32 = 260200;
+pub const MAC_OS_VERSION_26_3: u32 = 260300;
+pub const MAC_OS_VERSION_26_4: u32 = 260400;
+pub const __AVAILABILITY_VERSIONS_VERSION_HASH: u32 = 93585900;
+pub const __AVAILABILITY_VERSIONS_VERSION_STRING: &[u8; 6] = b"Local\0";
+pub const __AVAILABILITY_FILE: &[u8; 23] = b"AvailabilityVersions.h\0";
+pub const __MAC_OS_X_VERSION_MAX_ALLOWED: u32 = 260400;
+pub const __ENABLE_LEGACY_MAC_AVAILABILITY: u32 = 1;
+pub const __DARWIN_NSIG: u32 = 32;
+pub const NSIG: u32 = 32;
+pub const _I386_SIGNAL_H_: u32 = 1;
+pub const SIGHUP: u32 = 1;
+pub const SIGINT: u32 = 2;
+pub const SIGQUIT: u32 = 3;
+pub const SIGILL: u32 = 4;
+pub const SIGTRAP: u32 = 5;
+pub const SIGABRT: u32 = 6;
+pub const SIGIOT: u32 = 6;
+pub const SIGEMT: u32 = 7;
+pub const SIGFPE: u32 = 8;
+pub const SIGKILL: u32 = 9;
+pub const SIGBUS: u32 = 10;
+pub const SIGSEGV: u32 = 11;
+pub const SIGSYS: u32 = 12;
+pub const SIGPIPE: u32 = 13;
+pub const SIGALRM: u32 = 14;
+pub const SIGTERM: u32 = 15;
+pub const SIGURG: u32 = 16;
+pub const SIGSTOP: u32 = 17;
+pub const SIGTSTP: u32 = 18;
+pub const SIGCONT: u32 = 19;
+pub const SIGCHLD: u32 = 20;
+pub const SIGTTIN: u32 = 21;
+pub const SIGTTOU: u32 = 22;
+pub const SIGIO: u32 = 23;
+pub const SIGXCPU: u32 = 24;
+pub const SIGXFSZ: u32 = 25;
+pub const SIGVTALRM: u32 = 26;
+pub const SIGPROF: u32 = 27;
+pub const SIGWINCH: u32 = 28;
+pub const SIGINFO: u32 = 29;
+pub const SIGUSR1: u32 = 30;
+pub const SIGUSR2: u32 = 31;
+pub const FP_PREC_24B: u32 = 0;
+pub const FP_PREC_53B: u32 = 2;
+pub const FP_PREC_64B: u32 = 3;
+pub const FP_RND_NEAR: u32 = 0;
+pub const FP_RND_DOWN: u32 = 1;
+pub const FP_RND_UP: u32 = 2;
+pub const FP_CHOP: u32 = 3;
+pub const FP_STATE_BYTES: u32 = 512;
+pub const _X86_INSTRUCTION_STATE_MAX_INSN_BYTES: u32 = 2380;
+pub const _X86_INSTRUCTION_STATE_CACHELINE_SIZE: u32 = 64;
+pub const __LASTBRANCH_MAX: u32 = 32;
+pub const USE_CLANG_STDDEF: u32 = 0;
+pub const SIGEV_NONE: u32 = 0;
+pub const SIGEV_SIGNAL: u32 = 1;
+pub const SIGEV_THREAD: u32 = 3;
+pub const SIGEV_KEVENT: u32 = 4;
+pub const ILL_NOOP: u32 = 0;
+pub const ILL_ILLOPC: u32 = 1;
+pub const ILL_ILLTRP: u32 = 2;
+pub const ILL_PRVOPC: u32 = 3;
+pub const ILL_ILLOPN: u32 = 4;
+pub const ILL_ILLADR: u32 = 5;
+pub const ILL_PRVREG: u32 = 6;
+pub const ILL_COPROC: u32 = 7;
+pub const ILL_BADSTK: u32 = 8;
+pub const FPE_NOOP: u32 = 0;
+pub const FPE_FLTDIV: u32 = 1;
+pub const FPE_FLTOVF: u32 = 2;
+pub const FPE_FLTUND: u32 = 3;
+pub const FPE_FLTRES: u32 = 4;
+pub const FPE_FLTINV: u32 = 5;
+pub const FPE_FLTSUB: u32 = 6;
+pub const FPE_INTDIV: u32 = 7;
+pub const FPE_INTOVF: u32 = 8;
+pub const SEGV_NOOP: u32 = 0;
+pub const SEGV_MAPERR: u32 = 1;
+pub const SEGV_ACCERR: u32 = 2;
+pub const BUS_NOOP: u32 = 0;
+pub const BUS_ADRALN: u32 = 1;
+pub const BUS_ADRERR: u32 = 2;
+pub const BUS_OBJERR: u32 = 3;
+pub const TRAP_BRKPT: u32 = 1;
+pub const TRAP_TRACE: u32 = 2;
+pub const CLD_NOOP: u32 = 0;
+pub const CLD_EXITED: u32 = 1;
+pub const CLD_KILLED: u32 = 2;
+pub const CLD_DUMPED: u32 = 3;
+pub const CLD_TRAPPED: u32 = 4;
+pub const CLD_STOPPED: u32 = 5;
+pub const CLD_CONTINUED: u32 = 6;
+pub const POLL_IN: u32 = 1;
+pub const POLL_OUT: u32 = 2;
+pub const POLL_MSG: u32 = 3;
+pub const POLL_ERR: u32 = 4;
+pub const POLL_PRI: u32 = 5;
+pub const POLL_HUP: u32 = 6;
+pub const SA_ONSTACK: u32 = 1;
+pub const SA_RESTART: u32 = 2;
+pub const SA_RESETHAND: u32 = 4;
+pub const SA_NOCLDSTOP: u32 = 8;
+pub const SA_NODEFER: u32 = 16;
+pub const SA_NOCLDWAIT: u32 = 32;
+pub const SA_SIGINFO: u32 = 64;
+pub const SA_USERTRAMP: u32 = 256;
+pub const SA_64REGSET: u32 = 512;
+pub const SA_USERSPACE_MASK: u32 = 127;
+pub const SIG_BLOCK: u32 = 1;
+pub const SIG_UNBLOCK: u32 = 2;
+pub const SIG_SETMASK: u32 = 3;
+pub const SI_USER: u32 = 65537;
+pub const SI_QUEUE: u32 = 65538;
+pub const SI_TIMER: u32 = 65539;
+pub const SI_ASYNCIO: u32 = 65540;
+pub const SI_MESGQ: u32 = 65541;
+pub const SS_ONSTACK: u32 = 1;
+pub const SS_DISABLE: u32 = 4;
+pub const MINSIGSTKSZ: u32 = 32768;
+pub const SIGSTKSZ: u32 = 131072;
+pub const SV_ONSTACK: u32 = 1;
+pub const SV_INTERRUPT: u32 = 2;
+pub const SV_RESETHAND: u32 = 4;
+pub const SV_NODEFER: u32 = 16;
+pub const SV_NOCLDSTOP: u32 = 8;
+pub const SV_SIGINFO: u32 = 64;
+pub type wchar_t = ::std::os::raw::c_int;
+pub type max_align_t = u128;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _GoString_ {
+    pub p: *const ::std::os::raw::c_char,
+    pub n: isize,
+}
+#[test]
+fn bindgen_test_layout__GoString_() {
+    const UNINIT: ::std::mem::MaybeUninit<_GoString_> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_GoString_>(),
+        16usize,
+        concat!("Size of: ", stringify!(_GoString_))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_GoString_>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_GoString_))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).p) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_GoString_),
+            "::",
+            stringify!(p)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).n) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_GoString_),
+            "::",
+            stringify!(n)
+        )
+    );
+}
+extern "C" {
+    pub fn _GoStringLen(s: _GoString_) -> usize;
+}
+extern "C" {
+    pub fn _GoStringPtr(s: _GoString_) -> *const ::std::os::raw::c_char;
+}
+pub type int_least8_t = i8;
+pub type int_least16_t = i16;
+pub type int_least32_t = i32;
+pub type int_least64_t = i64;
+pub type uint_least8_t = u8;
+pub type uint_least16_t = u16;
+pub type uint_least32_t = u32;
+pub type uint_least64_t = u64;
+pub type int_fast8_t = i8;
+pub type int_fast16_t = i16;
+pub type int_fast32_t = i32;
+pub type int_fast64_t = i64;
+pub type uint_fast8_t = u8;
+pub type uint_fast16_t = u16;
+pub type uint_fast32_t = u32;
+pub type uint_fast64_t = u64;
+pub type __int8_t = ::std::os::raw::c_schar;
+pub type __uint8_t = ::std::os::raw::c_uchar;
+pub type __int16_t = ::std::os::raw::c_short;
+pub type __uint16_t = ::std::os::raw::c_ushort;
+pub type __int32_t = ::std::os::raw::c_int;
+pub type __uint32_t = ::std::os::raw::c_uint;
+pub type __int64_t = ::std::os::raw::c_longlong;
+pub type __uint64_t = ::std::os::raw::c_ulonglong;
+pub type __darwin_intptr_t = ::std::os::raw::c_long;
+pub type __darwin_natural_t = ::std::os::raw::c_uint;
+pub type __darwin_ct_rune_t = ::std::os::raw::c_int;
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union __mbstate_t {
+    pub __mbstate8: [::std::os::raw::c_char; 128usize],
+    pub _mbstateL: ::std::os::raw::c_longlong,
+}
+#[test]
+fn bindgen_test_layout___mbstate_t() {
+    const UNINIT: ::std::mem::MaybeUninit<__mbstate_t> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__mbstate_t>(),
+        128usize,
+        concat!("Size of: ", stringify!(__mbstate_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__mbstate_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__mbstate_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__mbstate8) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__mbstate_t),
+            "::",
+            stringify!(__mbstate8)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr)._mbstateL) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__mbstate_t),
+            "::",
+            stringify!(_mbstateL)
+        )
+    );
+}
+pub type __darwin_mbstate_t = __mbstate_t;
+pub type __darwin_ptrdiff_t = ::std::os::raw::c_long;
+pub type __darwin_size_t = ::std::os::raw::c_ulong;
+pub type __darwin_va_list = __builtin_va_list;
+pub type __darwin_wchar_t = ::std::os::raw::c_int;
+pub type __darwin_rune_t = __darwin_wchar_t;
+pub type __darwin_wint_t = ::std::os::raw::c_int;
+pub type __darwin_clock_t = ::std::os::raw::c_ulong;
+pub type __darwin_socklen_t = __uint32_t;
+pub type __darwin_ssize_t = ::std::os::raw::c_long;
+pub type __darwin_time_t = ::std::os::raw::c_long;
+pub type __darwin_blkcnt_t = __int64_t;
+pub type __darwin_blksize_t = __int32_t;
+pub type __darwin_dev_t = __int32_t;
+pub type __darwin_fsblkcnt_t = ::std::os::raw::c_uint;
+pub type __darwin_fsfilcnt_t = ::std::os::raw::c_uint;
+pub type __darwin_gid_t = __uint32_t;
+pub type __darwin_id_t = __uint32_t;
+pub type __darwin_ino64_t = __uint64_t;
+pub type __darwin_ino_t = __darwin_ino64_t;
+pub type __darwin_mach_port_name_t = __darwin_natural_t;
+pub type __darwin_mach_port_t = __darwin_mach_port_name_t;
+pub type __darwin_mode_t = __uint16_t;
+pub type __darwin_off_t = __int64_t;
+pub type __darwin_pid_t = __int32_t;
+pub type __darwin_sigset_t = __uint32_t;
+pub type __darwin_suseconds_t = __int32_t;
+pub type __darwin_uid_t = __uint32_t;
+pub type __darwin_useconds_t = __uint32_t;
+pub type __darwin_uuid_t = [::std::os::raw::c_uchar; 16usize];
+pub type __darwin_uuid_string_t = [::std::os::raw::c_char; 37usize];
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_pthread_handler_rec {
+    pub __routine: ::std::option::Option<unsafe extern "C" fn(arg1: *mut ::std::os::raw::c_void)>,
+    pub __arg: *mut ::std::os::raw::c_void,
+    pub __next: *mut __darwin_pthread_handler_rec,
+}
+#[test]
+fn bindgen_test_layout___darwin_pthread_handler_rec() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_pthread_handler_rec> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_pthread_handler_rec>(),
+        24usize,
+        concat!("Size of: ", stringify!(__darwin_pthread_handler_rec))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_pthread_handler_rec>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_pthread_handler_rec))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__routine) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_pthread_handler_rec),
+            "::",
+            stringify!(__routine)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__arg) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_pthread_handler_rec),
+            "::",
+            stringify!(__arg)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__next) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_pthread_handler_rec),
+            "::",
+            stringify!(__next)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_attr_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 56usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_attr_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_attr_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_attr_t>(),
+        64usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_attr_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_attr_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_attr_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_attr_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_attr_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_cond_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 40usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_cond_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_cond_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_cond_t>(),
+        48usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_cond_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_cond_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_cond_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_cond_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_cond_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_condattr_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 8usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_condattr_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_condattr_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_condattr_t>(),
+        16usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_condattr_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_condattr_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_condattr_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_condattr_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_condattr_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_mutex_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 56usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_mutex_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_mutex_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_mutex_t>(),
+        64usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_mutex_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_mutex_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_mutex_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_mutex_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_mutex_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_mutexattr_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 8usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_mutexattr_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_mutexattr_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_mutexattr_t>(),
+        16usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_mutexattr_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_mutexattr_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_mutexattr_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_mutexattr_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_mutexattr_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_once_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 8usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_once_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_once_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_once_t>(),
+        16usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_once_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_once_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_once_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_once_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_once_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_rwlock_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 192usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_rwlock_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_rwlock_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_rwlock_t>(),
+        200usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_rwlock_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_rwlock_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_rwlock_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_rwlock_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_rwlock_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_rwlockattr_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __opaque: [::std::os::raw::c_char; 16usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_rwlockattr_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_rwlockattr_t> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_rwlockattr_t>(),
+        24usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_rwlockattr_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_rwlockattr_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_rwlockattr_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_rwlockattr_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_rwlockattr_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct _opaque_pthread_t {
+    pub __sig: ::std::os::raw::c_long,
+    pub __cleanup_stack: *mut __darwin_pthread_handler_rec,
+    pub __opaque: [::std::os::raw::c_char; 8176usize],
+}
+#[test]
+fn bindgen_test_layout__opaque_pthread_t() {
+    const UNINIT: ::std::mem::MaybeUninit<_opaque_pthread_t> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<_opaque_pthread_t>(),
+        8192usize,
+        concat!("Size of: ", stringify!(_opaque_pthread_t))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<_opaque_pthread_t>(),
+        8usize,
+        concat!("Alignment of ", stringify!(_opaque_pthread_t))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sig) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_t),
+            "::",
+            stringify!(__sig)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__cleanup_stack) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_t),
+            "::",
+            stringify!(__cleanup_stack)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opaque) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(_opaque_pthread_t),
+            "::",
+            stringify!(__opaque)
+        )
+    );
+}
+pub type __darwin_pthread_attr_t = _opaque_pthread_attr_t;
+pub type __darwin_pthread_cond_t = _opaque_pthread_cond_t;
+pub type __darwin_pthread_condattr_t = _opaque_pthread_condattr_t;
+pub type __darwin_pthread_key_t = ::std::os::raw::c_ulong;
+pub type __darwin_pthread_mutex_t = _opaque_pthread_mutex_t;
+pub type __darwin_pthread_mutexattr_t = _opaque_pthread_mutexattr_t;
+pub type __darwin_pthread_once_t = _opaque_pthread_once_t;
+pub type __darwin_pthread_rwlock_t = _opaque_pthread_rwlock_t;
+pub type __darwin_pthread_rwlockattr_t = _opaque_pthread_rwlockattr_t;
+pub type __darwin_pthread_t = *mut _opaque_pthread_t;
+pub type intmax_t = ::std::os::raw::c_long;
+pub type uintmax_t = ::std::os::raw::c_ulong;
+pub type __darwin_nl_item = ::std::os::raw::c_int;
+pub type __darwin_wctrans_t = ::std::os::raw::c_int;
+pub type __darwin_wctype_t = __uint32_t;
+pub type sig_atomic_t = ::std::os::raw::c_int;
+pub type u_int8_t = ::std::os::raw::c_uchar;
+pub type u_int16_t = ::std::os::raw::c_ushort;
+pub type u_int32_t = ::std::os::raw::c_uint;
+pub type u_int64_t = ::std::os::raw::c_ulonglong;
+pub type register_t = i64;
+pub type user_addr_t = u_int64_t;
+pub type user_size_t = u_int64_t;
+pub type user_ssize_t = i64;
+pub type user_long_t = i64;
+pub type user_ulong_t = u_int64_t;
+pub type user_time_t = i64;
+pub type user_off_t = i64;
+pub type syscall_arg_t = u_int64_t;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_i386_thread_state {
+    pub __eax: ::std::os::raw::c_uint,
+    pub __ebx: ::std::os::raw::c_uint,
+    pub __ecx: ::std::os::raw::c_uint,
+    pub __edx: ::std::os::raw::c_uint,
+    pub __edi: ::std::os::raw::c_uint,
+    pub __esi: ::std::os::raw::c_uint,
+    pub __ebp: ::std::os::raw::c_uint,
+    pub __esp: ::std::os::raw::c_uint,
+    pub __ss: ::std::os::raw::c_uint,
+    pub __eflags: ::std::os::raw::c_uint,
+    pub __eip: ::std::os::raw::c_uint,
+    pub __cs: ::std::os::raw::c_uint,
+    pub __ds: ::std::os::raw::c_uint,
+    pub __es: ::std::os::raw::c_uint,
+    pub __fs: ::std::os::raw::c_uint,
+    pub __gs: ::std::os::raw::c_uint,
+}
+#[test]
+fn bindgen_test_layout___darwin_i386_thread_state() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_i386_thread_state> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_i386_thread_state>(),
+        64usize,
+        concat!("Size of: ", stringify!(__darwin_i386_thread_state))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_i386_thread_state>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_i386_thread_state))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__eax) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__eax)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ebx) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__ebx)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ecx) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__ecx)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__edx) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__edx)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__edi) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__edi)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__esi) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__esi)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ebp) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__ebp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__esp) as usize - ptr as usize },
+        28usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__esp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__eflags) as usize - ptr as usize },
+        36usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__eflags)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__eip) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__eip)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__cs) as usize - ptr as usize },
+        44usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__cs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ds) as usize - ptr as usize },
+        48usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__ds)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        52usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        56usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__fs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__gs) as usize - ptr as usize },
+        60usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_thread_state),
+            "::",
+            stringify!(__gs)
+        )
+    );
+}
+#[repr(C)]
+#[repr(align(2))]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_fp_control {
+    pub _bitfield_align_1: [u8; 0],
+    pub _bitfield_1: __BindgenBitfieldUnit<[u8; 2usize]>,
+}
+#[test]
+fn bindgen_test_layout___darwin_fp_control() {
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_fp_control>(),
+        2usize,
+        concat!("Size of: ", stringify!(__darwin_fp_control))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_fp_control>(),
+        2usize,
+        concat!("Alignment of ", stringify!(__darwin_fp_control))
+    );
+}
+impl __darwin_fp_control {
+    #[inline]
+    pub fn __invalid(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(0usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___invalid(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(0usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __denorm(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(1usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___denorm(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(1usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __zdiv(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(2usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___zdiv(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(2usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __ovrfl(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(3usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___ovrfl(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(3usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __undfl(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(4usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___undfl(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(4usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __precis(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(5usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___precis(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(5usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __pc(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(8usize, 2u8) as u16) }
+    }
+    #[inline]
+    pub fn set___pc(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(8usize, 2u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __rc(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(10usize, 2u8) as u16) }
+    }
+    #[inline]
+    pub fn set___rc(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(10usize, 2u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn new_bitfield_1(
+        __invalid: ::std::os::raw::c_ushort,
+        __denorm: ::std::os::raw::c_ushort,
+        __zdiv: ::std::os::raw::c_ushort,
+        __ovrfl: ::std::os::raw::c_ushort,
+        __undfl: ::std::os::raw::c_ushort,
+        __precis: ::std::os::raw::c_ushort,
+        __pc: ::std::os::raw::c_ushort,
+        __rc: ::std::os::raw::c_ushort,
+    ) -> __BindgenBitfieldUnit<[u8; 2usize]> {
+        let mut __bindgen_bitfield_unit: __BindgenBitfieldUnit<[u8; 2usize]> = Default::default();
+        __bindgen_bitfield_unit.set(0usize, 1u8, {
+            let __invalid: u16 = unsafe { ::std::mem::transmute(__invalid) };
+            __invalid as u64
+        });
+        __bindgen_bitfield_unit.set(1usize, 1u8, {
+            let __denorm: u16 = unsafe { ::std::mem::transmute(__denorm) };
+            __denorm as u64
+        });
+        __bindgen_bitfield_unit.set(2usize, 1u8, {
+            let __zdiv: u16 = unsafe { ::std::mem::transmute(__zdiv) };
+            __zdiv as u64
+        });
+        __bindgen_bitfield_unit.set(3usize, 1u8, {
+            let __ovrfl: u16 = unsafe { ::std::mem::transmute(__ovrfl) };
+            __ovrfl as u64
+        });
+        __bindgen_bitfield_unit.set(4usize, 1u8, {
+            let __undfl: u16 = unsafe { ::std::mem::transmute(__undfl) };
+            __undfl as u64
+        });
+        __bindgen_bitfield_unit.set(5usize, 1u8, {
+            let __precis: u16 = unsafe { ::std::mem::transmute(__precis) };
+            __precis as u64
+        });
+        __bindgen_bitfield_unit.set(8usize, 2u8, {
+            let __pc: u16 = unsafe { ::std::mem::transmute(__pc) };
+            __pc as u64
+        });
+        __bindgen_bitfield_unit.set(10usize, 2u8, {
+            let __rc: u16 = unsafe { ::std::mem::transmute(__rc) };
+            __rc as u64
+        });
+        __bindgen_bitfield_unit
+    }
+}
+pub type __darwin_fp_control_t = __darwin_fp_control;
+#[repr(C)]
+#[repr(align(2))]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_fp_status {
+    pub _bitfield_align_1: [u8; 0],
+    pub _bitfield_1: __BindgenBitfieldUnit<[u8; 2usize]>,
+}
+#[test]
+fn bindgen_test_layout___darwin_fp_status() {
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_fp_status>(),
+        2usize,
+        concat!("Size of: ", stringify!(__darwin_fp_status))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_fp_status>(),
+        2usize,
+        concat!("Alignment of ", stringify!(__darwin_fp_status))
+    );
+}
+impl __darwin_fp_status {
+    #[inline]
+    pub fn __invalid(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(0usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___invalid(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(0usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __denorm(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(1usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___denorm(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(1usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __zdiv(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(2usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___zdiv(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(2usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __ovrfl(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(3usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___ovrfl(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(3usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __undfl(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(4usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___undfl(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(4usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __precis(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(5usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___precis(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(5usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __stkflt(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(6usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___stkflt(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(6usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __errsumm(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(7usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___errsumm(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(7usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __c0(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(8usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___c0(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(8usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __c1(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(9usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___c1(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(9usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __c2(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(10usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___c2(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(10usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __tos(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(11usize, 3u8) as u16) }
+    }
+    #[inline]
+    pub fn set___tos(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(11usize, 3u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __c3(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(14usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___c3(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(14usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __busy(&self) -> ::std::os::raw::c_ushort {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(15usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set___busy(&mut self, val: ::std::os::raw::c_ushort) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(15usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn new_bitfield_1(
+        __invalid: ::std::os::raw::c_ushort,
+        __denorm: ::std::os::raw::c_ushort,
+        __zdiv: ::std::os::raw::c_ushort,
+        __ovrfl: ::std::os::raw::c_ushort,
+        __undfl: ::std::os::raw::c_ushort,
+        __precis: ::std::os::raw::c_ushort,
+        __stkflt: ::std::os::raw::c_ushort,
+        __errsumm: ::std::os::raw::c_ushort,
+        __c0: ::std::os::raw::c_ushort,
+        __c1: ::std::os::raw::c_ushort,
+        __c2: ::std::os::raw::c_ushort,
+        __tos: ::std::os::raw::c_ushort,
+        __c3: ::std::os::raw::c_ushort,
+        __busy: ::std::os::raw::c_ushort,
+    ) -> __BindgenBitfieldUnit<[u8; 2usize]> {
+        let mut __bindgen_bitfield_unit: __BindgenBitfieldUnit<[u8; 2usize]> = Default::default();
+        __bindgen_bitfield_unit.set(0usize, 1u8, {
+            let __invalid: u16 = unsafe { ::std::mem::transmute(__invalid) };
+            __invalid as u64
+        });
+        __bindgen_bitfield_unit.set(1usize, 1u8, {
+            let __denorm: u16 = unsafe { ::std::mem::transmute(__denorm) };
+            __denorm as u64
+        });
+        __bindgen_bitfield_unit.set(2usize, 1u8, {
+            let __zdiv: u16 = unsafe { ::std::mem::transmute(__zdiv) };
+            __zdiv as u64
+        });
+        __bindgen_bitfield_unit.set(3usize, 1u8, {
+            let __ovrfl: u16 = unsafe { ::std::mem::transmute(__ovrfl) };
+            __ovrfl as u64
+        });
+        __bindgen_bitfield_unit.set(4usize, 1u8, {
+            let __undfl: u16 = unsafe { ::std::mem::transmute(__undfl) };
+            __undfl as u64
+        });
+        __bindgen_bitfield_unit.set(5usize, 1u8, {
+            let __precis: u16 = unsafe { ::std::mem::transmute(__precis) };
+            __precis as u64
+        });
+        __bindgen_bitfield_unit.set(6usize, 1u8, {
+            let __stkflt: u16 = unsafe { ::std::mem::transmute(__stkflt) };
+            __stkflt as u64
+        });
+        __bindgen_bitfield_unit.set(7usize, 1u8, {
+            let __errsumm: u16 = unsafe { ::std::mem::transmute(__errsumm) };
+            __errsumm as u64
+        });
+        __bindgen_bitfield_unit.set(8usize, 1u8, {
+            let __c0: u16 = unsafe { ::std::mem::transmute(__c0) };
+            __c0 as u64
+        });
+        __bindgen_bitfield_unit.set(9usize, 1u8, {
+            let __c1: u16 = unsafe { ::std::mem::transmute(__c1) };
+            __c1 as u64
+        });
+        __bindgen_bitfield_unit.set(10usize, 1u8, {
+            let __c2: u16 = unsafe { ::std::mem::transmute(__c2) };
+            __c2 as u64
+        });
+        __bindgen_bitfield_unit.set(11usize, 3u8, {
+            let __tos: u16 = unsafe { ::std::mem::transmute(__tos) };
+            __tos as u64
+        });
+        __bindgen_bitfield_unit.set(14usize, 1u8, {
+            let __c3: u16 = unsafe { ::std::mem::transmute(__c3) };
+            __c3 as u64
+        });
+        __bindgen_bitfield_unit.set(15usize, 1u8, {
+            let __busy: u16 = unsafe { ::std::mem::transmute(__busy) };
+            __busy as u64
+        });
+        __bindgen_bitfield_unit
+    }
+}
+pub type __darwin_fp_status_t = __darwin_fp_status;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mmst_reg {
+    pub __mmst_reg: [::std::os::raw::c_char; 10usize],
+    pub __mmst_rsrv: [::std::os::raw::c_char; 6usize],
+}
+#[test]
+fn bindgen_test_layout___darwin_mmst_reg() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mmst_reg> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mmst_reg>(),
+        16usize,
+        concat!("Size of: ", stringify!(__darwin_mmst_reg))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mmst_reg>(),
+        1usize,
+        concat!("Alignment of ", stringify!(__darwin_mmst_reg))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__mmst_reg) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mmst_reg),
+            "::",
+            stringify!(__mmst_reg)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__mmst_rsrv) as usize - ptr as usize },
+        10usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mmst_reg),
+            "::",
+            stringify!(__mmst_rsrv)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_xmm_reg {
+    pub __xmm_reg: [::std::os::raw::c_char; 16usize],
+}
+#[test]
+fn bindgen_test_layout___darwin_xmm_reg() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_xmm_reg> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_xmm_reg>(),
+        16usize,
+        concat!("Size of: ", stringify!(__darwin_xmm_reg))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_xmm_reg>(),
+        1usize,
+        concat!("Alignment of ", stringify!(__darwin_xmm_reg))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__xmm_reg) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_xmm_reg),
+            "::",
+            stringify!(__xmm_reg)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_ymm_reg {
+    pub __ymm_reg: [::std::os::raw::c_char; 32usize],
+}
+#[test]
+fn bindgen_test_layout___darwin_ymm_reg() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_ymm_reg> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_ymm_reg>(),
+        32usize,
+        concat!("Size of: ", stringify!(__darwin_ymm_reg))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_ymm_reg>(),
+        1usize,
+        concat!("Alignment of ", stringify!(__darwin_ymm_reg))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ymm_reg) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_ymm_reg),
+            "::",
+            stringify!(__ymm_reg)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_zmm_reg {
+    pub __zmm_reg: [::std::os::raw::c_char; 64usize],
+}
+#[test]
+fn bindgen_test_layout___darwin_zmm_reg() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_zmm_reg> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_zmm_reg>(),
+        64usize,
+        concat!("Size of: ", stringify!(__darwin_zmm_reg))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_zmm_reg>(),
+        1usize,
+        concat!("Alignment of ", stringify!(__darwin_zmm_reg))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__zmm_reg) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_zmm_reg),
+            "::",
+            stringify!(__zmm_reg)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_opmask_reg {
+    pub __opmask_reg: [::std::os::raw::c_char; 8usize],
+}
+#[test]
+fn bindgen_test_layout___darwin_opmask_reg() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_opmask_reg> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_opmask_reg>(),
+        8usize,
+        concat!("Size of: ", stringify!(__darwin_opmask_reg))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_opmask_reg>(),
+        1usize,
+        concat!("Alignment of ", stringify!(__darwin_opmask_reg))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__opmask_reg) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_opmask_reg),
+            "::",
+            stringify!(__opmask_reg)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_i386_float_state {
+    pub __fpu_reserved: [::std::os::raw::c_int; 2usize],
+    pub __fpu_fcw: __darwin_fp_control,
+    pub __fpu_fsw: __darwin_fp_status,
+    pub __fpu_ftw: __uint8_t,
+    pub __fpu_rsrv1: __uint8_t,
+    pub __fpu_fop: __uint16_t,
+    pub __fpu_ip: __uint32_t,
+    pub __fpu_cs: __uint16_t,
+    pub __fpu_rsrv2: __uint16_t,
+    pub __fpu_dp: __uint32_t,
+    pub __fpu_ds: __uint16_t,
+    pub __fpu_rsrv3: __uint16_t,
+    pub __fpu_mxcsr: __uint32_t,
+    pub __fpu_mxcsrmask: __uint32_t,
+    pub __fpu_stmm0: __darwin_mmst_reg,
+    pub __fpu_stmm1: __darwin_mmst_reg,
+    pub __fpu_stmm2: __darwin_mmst_reg,
+    pub __fpu_stmm3: __darwin_mmst_reg,
+    pub __fpu_stmm4: __darwin_mmst_reg,
+    pub __fpu_stmm5: __darwin_mmst_reg,
+    pub __fpu_stmm6: __darwin_mmst_reg,
+    pub __fpu_stmm7: __darwin_mmst_reg,
+    pub __fpu_xmm0: __darwin_xmm_reg,
+    pub __fpu_xmm1: __darwin_xmm_reg,
+    pub __fpu_xmm2: __darwin_xmm_reg,
+    pub __fpu_xmm3: __darwin_xmm_reg,
+    pub __fpu_xmm4: __darwin_xmm_reg,
+    pub __fpu_xmm5: __darwin_xmm_reg,
+    pub __fpu_xmm6: __darwin_xmm_reg,
+    pub __fpu_xmm7: __darwin_xmm_reg,
+    pub __fpu_rsrv4: [::std::os::raw::c_char; 224usize],
+    pub __fpu_reserved1: ::std::os::raw::c_int,
+}
+#[test]
+fn bindgen_test_layout___darwin_i386_float_state() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_i386_float_state> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_i386_float_state>(),
+        524usize,
+        concat!("Size of: ", stringify!(__darwin_i386_float_state))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_i386_float_state>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_i386_float_state))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_reserved)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fcw) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_fcw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fsw) as usize - ptr as usize },
+        10usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_fsw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ftw) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_ftw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv1) as usize - ptr as usize },
+        13usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_rsrv1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fop) as usize - ptr as usize },
+        14usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_fop)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ip) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_ip)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_cs) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_cs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv2) as usize - ptr as usize },
+        22usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_rsrv2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_dp) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_dp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ds) as usize - ptr as usize },
+        28usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_ds)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv3) as usize - ptr as usize },
+        30usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_rsrv3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsr) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_mxcsr)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsrmask) as usize - ptr as usize },
+        36usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_mxcsrmask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm0) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_stmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm1) as usize - ptr as usize },
+        56usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_stmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm2) as usize - ptr as usize },
+        72usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_stmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm3) as usize - ptr as usize },
+        88usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_stmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm4) as usize - ptr as usize },
+        104usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_stmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm5) as usize - ptr as usize },
+        120usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_stmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm6) as usize - ptr as usize },
+        136usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_stmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm7) as usize - ptr as usize },
+        152usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_stmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm0) as usize - ptr as usize },
+        168usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_xmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm1) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_xmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm2) as usize - ptr as usize },
+        200usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_xmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm3) as usize - ptr as usize },
+        216usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_xmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm4) as usize - ptr as usize },
+        232usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_xmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm5) as usize - ptr as usize },
+        248usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_xmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm6) as usize - ptr as usize },
+        264usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_xmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm7) as usize - ptr as usize },
+        280usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_xmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv4) as usize - ptr as usize },
+        296usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_rsrv4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved1) as usize - ptr as usize },
+        520usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_float_state),
+            "::",
+            stringify!(__fpu_reserved1)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_i386_avx_state {
+    pub __fpu_reserved: [::std::os::raw::c_int; 2usize],
+    pub __fpu_fcw: __darwin_fp_control,
+    pub __fpu_fsw: __darwin_fp_status,
+    pub __fpu_ftw: __uint8_t,
+    pub __fpu_rsrv1: __uint8_t,
+    pub __fpu_fop: __uint16_t,
+    pub __fpu_ip: __uint32_t,
+    pub __fpu_cs: __uint16_t,
+    pub __fpu_rsrv2: __uint16_t,
+    pub __fpu_dp: __uint32_t,
+    pub __fpu_ds: __uint16_t,
+    pub __fpu_rsrv3: __uint16_t,
+    pub __fpu_mxcsr: __uint32_t,
+    pub __fpu_mxcsrmask: __uint32_t,
+    pub __fpu_stmm0: __darwin_mmst_reg,
+    pub __fpu_stmm1: __darwin_mmst_reg,
+    pub __fpu_stmm2: __darwin_mmst_reg,
+    pub __fpu_stmm3: __darwin_mmst_reg,
+    pub __fpu_stmm4: __darwin_mmst_reg,
+    pub __fpu_stmm5: __darwin_mmst_reg,
+    pub __fpu_stmm6: __darwin_mmst_reg,
+    pub __fpu_stmm7: __darwin_mmst_reg,
+    pub __fpu_xmm0: __darwin_xmm_reg,
+    pub __fpu_xmm1: __darwin_xmm_reg,
+    pub __fpu_xmm2: __darwin_xmm_reg,
+    pub __fpu_xmm3: __darwin_xmm_reg,
+    pub __fpu_xmm4: __darwin_xmm_reg,
+    pub __fpu_xmm5: __darwin_xmm_reg,
+    pub __fpu_xmm6: __darwin_xmm_reg,
+    pub __fpu_xmm7: __darwin_xmm_reg,
+    pub __fpu_rsrv4: [::std::os::raw::c_char; 224usize],
+    pub __fpu_reserved1: ::std::os::raw::c_int,
+    pub __avx_reserved1: [::std::os::raw::c_char; 64usize],
+    pub __fpu_ymmh0: __darwin_xmm_reg,
+    pub __fpu_ymmh1: __darwin_xmm_reg,
+    pub __fpu_ymmh2: __darwin_xmm_reg,
+    pub __fpu_ymmh3: __darwin_xmm_reg,
+    pub __fpu_ymmh4: __darwin_xmm_reg,
+    pub __fpu_ymmh5: __darwin_xmm_reg,
+    pub __fpu_ymmh6: __darwin_xmm_reg,
+    pub __fpu_ymmh7: __darwin_xmm_reg,
+}
+#[test]
+fn bindgen_test_layout___darwin_i386_avx_state() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_i386_avx_state> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_i386_avx_state>(),
+        716usize,
+        concat!("Size of: ", stringify!(__darwin_i386_avx_state))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_i386_avx_state>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_i386_avx_state))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_reserved)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fcw) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_fcw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fsw) as usize - ptr as usize },
+        10usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_fsw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ftw) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ftw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv1) as usize - ptr as usize },
+        13usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_rsrv1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fop) as usize - ptr as usize },
+        14usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_fop)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ip) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ip)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_cs) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_cs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv2) as usize - ptr as usize },
+        22usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_rsrv2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_dp) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_dp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ds) as usize - ptr as usize },
+        28usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ds)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv3) as usize - ptr as usize },
+        30usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_rsrv3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsr) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_mxcsr)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsrmask) as usize - ptr as usize },
+        36usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_mxcsrmask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm0) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_stmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm1) as usize - ptr as usize },
+        56usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_stmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm2) as usize - ptr as usize },
+        72usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_stmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm3) as usize - ptr as usize },
+        88usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_stmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm4) as usize - ptr as usize },
+        104usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_stmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm5) as usize - ptr as usize },
+        120usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_stmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm6) as usize - ptr as usize },
+        136usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_stmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm7) as usize - ptr as usize },
+        152usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_stmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm0) as usize - ptr as usize },
+        168usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_xmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm1) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_xmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm2) as usize - ptr as usize },
+        200usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_xmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm3) as usize - ptr as usize },
+        216usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_xmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm4) as usize - ptr as usize },
+        232usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_xmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm5) as usize - ptr as usize },
+        248usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_xmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm6) as usize - ptr as usize },
+        264usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_xmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm7) as usize - ptr as usize },
+        280usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_xmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv4) as usize - ptr as usize },
+        296usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_rsrv4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved1) as usize - ptr as usize },
+        520usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_reserved1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__avx_reserved1) as usize - ptr as usize },
+        524usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__avx_reserved1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh0) as usize - ptr as usize },
+        588usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ymmh0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh1) as usize - ptr as usize },
+        604usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ymmh1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh2) as usize - ptr as usize },
+        620usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ymmh2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh3) as usize - ptr as usize },
+        636usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ymmh3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh4) as usize - ptr as usize },
+        652usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ymmh4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh5) as usize - ptr as usize },
+        668usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ymmh5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh6) as usize - ptr as usize },
+        684usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ymmh6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh7) as usize - ptr as usize },
+        700usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx_state),
+            "::",
+            stringify!(__fpu_ymmh7)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_i386_avx512_state {
+    pub __fpu_reserved: [::std::os::raw::c_int; 2usize],
+    pub __fpu_fcw: __darwin_fp_control,
+    pub __fpu_fsw: __darwin_fp_status,
+    pub __fpu_ftw: __uint8_t,
+    pub __fpu_rsrv1: __uint8_t,
+    pub __fpu_fop: __uint16_t,
+    pub __fpu_ip: __uint32_t,
+    pub __fpu_cs: __uint16_t,
+    pub __fpu_rsrv2: __uint16_t,
+    pub __fpu_dp: __uint32_t,
+    pub __fpu_ds: __uint16_t,
+    pub __fpu_rsrv3: __uint16_t,
+    pub __fpu_mxcsr: __uint32_t,
+    pub __fpu_mxcsrmask: __uint32_t,
+    pub __fpu_stmm0: __darwin_mmst_reg,
+    pub __fpu_stmm1: __darwin_mmst_reg,
+    pub __fpu_stmm2: __darwin_mmst_reg,
+    pub __fpu_stmm3: __darwin_mmst_reg,
+    pub __fpu_stmm4: __darwin_mmst_reg,
+    pub __fpu_stmm5: __darwin_mmst_reg,
+    pub __fpu_stmm6: __darwin_mmst_reg,
+    pub __fpu_stmm7: __darwin_mmst_reg,
+    pub __fpu_xmm0: __darwin_xmm_reg,
+    pub __fpu_xmm1: __darwin_xmm_reg,
+    pub __fpu_xmm2: __darwin_xmm_reg,
+    pub __fpu_xmm3: __darwin_xmm_reg,
+    pub __fpu_xmm4: __darwin_xmm_reg,
+    pub __fpu_xmm5: __darwin_xmm_reg,
+    pub __fpu_xmm6: __darwin_xmm_reg,
+    pub __fpu_xmm7: __darwin_xmm_reg,
+    pub __fpu_rsrv4: [::std::os::raw::c_char; 224usize],
+    pub __fpu_reserved1: ::std::os::raw::c_int,
+    pub __avx_reserved1: [::std::os::raw::c_char; 64usize],
+    pub __fpu_ymmh0: __darwin_xmm_reg,
+    pub __fpu_ymmh1: __darwin_xmm_reg,
+    pub __fpu_ymmh2: __darwin_xmm_reg,
+    pub __fpu_ymmh3: __darwin_xmm_reg,
+    pub __fpu_ymmh4: __darwin_xmm_reg,
+    pub __fpu_ymmh5: __darwin_xmm_reg,
+    pub __fpu_ymmh6: __darwin_xmm_reg,
+    pub __fpu_ymmh7: __darwin_xmm_reg,
+    pub __fpu_k0: __darwin_opmask_reg,
+    pub __fpu_k1: __darwin_opmask_reg,
+    pub __fpu_k2: __darwin_opmask_reg,
+    pub __fpu_k3: __darwin_opmask_reg,
+    pub __fpu_k4: __darwin_opmask_reg,
+    pub __fpu_k5: __darwin_opmask_reg,
+    pub __fpu_k6: __darwin_opmask_reg,
+    pub __fpu_k7: __darwin_opmask_reg,
+    pub __fpu_zmmh0: __darwin_ymm_reg,
+    pub __fpu_zmmh1: __darwin_ymm_reg,
+    pub __fpu_zmmh2: __darwin_ymm_reg,
+    pub __fpu_zmmh3: __darwin_ymm_reg,
+    pub __fpu_zmmh4: __darwin_ymm_reg,
+    pub __fpu_zmmh5: __darwin_ymm_reg,
+    pub __fpu_zmmh6: __darwin_ymm_reg,
+    pub __fpu_zmmh7: __darwin_ymm_reg,
+}
+#[test]
+fn bindgen_test_layout___darwin_i386_avx512_state() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_i386_avx512_state> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_i386_avx512_state>(),
+        1036usize,
+        concat!("Size of: ", stringify!(__darwin_i386_avx512_state))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_i386_avx512_state>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_i386_avx512_state))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_reserved)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fcw) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_fcw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fsw) as usize - ptr as usize },
+        10usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_fsw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ftw) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ftw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv1) as usize - ptr as usize },
+        13usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_rsrv1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fop) as usize - ptr as usize },
+        14usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_fop)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ip) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ip)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_cs) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_cs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv2) as usize - ptr as usize },
+        22usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_rsrv2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_dp) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_dp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ds) as usize - ptr as usize },
+        28usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ds)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv3) as usize - ptr as usize },
+        30usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_rsrv3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsr) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_mxcsr)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsrmask) as usize - ptr as usize },
+        36usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_mxcsrmask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm0) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_stmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm1) as usize - ptr as usize },
+        56usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_stmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm2) as usize - ptr as usize },
+        72usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_stmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm3) as usize - ptr as usize },
+        88usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_stmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm4) as usize - ptr as usize },
+        104usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_stmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm5) as usize - ptr as usize },
+        120usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_stmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm6) as usize - ptr as usize },
+        136usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_stmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm7) as usize - ptr as usize },
+        152usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_stmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm0) as usize - ptr as usize },
+        168usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_xmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm1) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_xmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm2) as usize - ptr as usize },
+        200usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_xmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm3) as usize - ptr as usize },
+        216usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_xmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm4) as usize - ptr as usize },
+        232usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_xmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm5) as usize - ptr as usize },
+        248usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_xmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm6) as usize - ptr as usize },
+        264usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_xmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm7) as usize - ptr as usize },
+        280usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_xmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv4) as usize - ptr as usize },
+        296usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_rsrv4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved1) as usize - ptr as usize },
+        520usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_reserved1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__avx_reserved1) as usize - ptr as usize },
+        524usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__avx_reserved1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh0) as usize - ptr as usize },
+        588usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ymmh0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh1) as usize - ptr as usize },
+        604usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ymmh1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh2) as usize - ptr as usize },
+        620usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ymmh2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh3) as usize - ptr as usize },
+        636usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ymmh3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh4) as usize - ptr as usize },
+        652usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ymmh4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh5) as usize - ptr as usize },
+        668usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ymmh5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh6) as usize - ptr as usize },
+        684usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ymmh6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh7) as usize - ptr as usize },
+        700usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_ymmh7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k0) as usize - ptr as usize },
+        716usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_k0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k1) as usize - ptr as usize },
+        724usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_k1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k2) as usize - ptr as usize },
+        732usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_k2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k3) as usize - ptr as usize },
+        740usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_k3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k4) as usize - ptr as usize },
+        748usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_k4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k5) as usize - ptr as usize },
+        756usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_k5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k6) as usize - ptr as usize },
+        764usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_k6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k7) as usize - ptr as usize },
+        772usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_k7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh0) as usize - ptr as usize },
+        780usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_zmmh0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh1) as usize - ptr as usize },
+        812usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_zmmh1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh2) as usize - ptr as usize },
+        844usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_zmmh2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh3) as usize - ptr as usize },
+        876usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_zmmh3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh4) as usize - ptr as usize },
+        908usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_zmmh4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh5) as usize - ptr as usize },
+        940usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_zmmh5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh6) as usize - ptr as usize },
+        972usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_zmmh6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh7) as usize - ptr as usize },
+        1004usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_avx512_state),
+            "::",
+            stringify!(__fpu_zmmh7)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_i386_exception_state {
+    pub __trapno: __uint16_t,
+    pub __cpu: __uint16_t,
+    pub __err: __uint32_t,
+    pub __faultvaddr: __uint32_t,
+}
+#[test]
+fn bindgen_test_layout___darwin_i386_exception_state() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_i386_exception_state> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_i386_exception_state>(),
+        12usize,
+        concat!("Size of: ", stringify!(__darwin_i386_exception_state))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_i386_exception_state>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_i386_exception_state))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__trapno) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_exception_state),
+            "::",
+            stringify!(__trapno)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__cpu) as usize - ptr as usize },
+        2usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_exception_state),
+            "::",
+            stringify!(__cpu)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__err) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_exception_state),
+            "::",
+            stringify!(__err)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__faultvaddr) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_i386_exception_state),
+            "::",
+            stringify!(__faultvaddr)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_x86_debug_state32 {
+    pub __dr0: ::std::os::raw::c_uint,
+    pub __dr1: ::std::os::raw::c_uint,
+    pub __dr2: ::std::os::raw::c_uint,
+    pub __dr3: ::std::os::raw::c_uint,
+    pub __dr4: ::std::os::raw::c_uint,
+    pub __dr5: ::std::os::raw::c_uint,
+    pub __dr6: ::std::os::raw::c_uint,
+    pub __dr7: ::std::os::raw::c_uint,
+}
+#[test]
+fn bindgen_test_layout___darwin_x86_debug_state32() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_x86_debug_state32> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_x86_debug_state32>(),
+        32usize,
+        concat!("Size of: ", stringify!(__darwin_x86_debug_state32))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_x86_debug_state32>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_x86_debug_state32))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr0) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state32),
+            "::",
+            stringify!(__dr0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr1) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state32),
+            "::",
+            stringify!(__dr1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr2) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state32),
+            "::",
+            stringify!(__dr2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr3) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state32),
+            "::",
+            stringify!(__dr3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr4) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state32),
+            "::",
+            stringify!(__dr4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr5) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state32),
+            "::",
+            stringify!(__dr5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr6) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state32),
+            "::",
+            stringify!(__dr6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr7) as usize - ptr as usize },
+        28usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state32),
+            "::",
+            stringify!(__dr7)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __x86_instruction_state {
+    pub __insn_stream_valid_bytes: ::std::os::raw::c_int,
+    pub __insn_offset: ::std::os::raw::c_int,
+    pub __out_of_synch: ::std::os::raw::c_int,
+    pub __insn_bytes: [__uint8_t; 2380usize],
+    pub __insn_cacheline: [__uint8_t; 64usize],
+}
+#[test]
+fn bindgen_test_layout___x86_instruction_state() {
+    const UNINIT: ::std::mem::MaybeUninit<__x86_instruction_state> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__x86_instruction_state>(),
+        2456usize,
+        concat!("Size of: ", stringify!(__x86_instruction_state))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__x86_instruction_state>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__x86_instruction_state))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__insn_stream_valid_bytes) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__x86_instruction_state),
+            "::",
+            stringify!(__insn_stream_valid_bytes)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__insn_offset) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__x86_instruction_state),
+            "::",
+            stringify!(__insn_offset)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__out_of_synch) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__x86_instruction_state),
+            "::",
+            stringify!(__out_of_synch)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__insn_bytes) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__x86_instruction_state),
+            "::",
+            stringify!(__insn_bytes)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__insn_cacheline) as usize - ptr as usize },
+        2392usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__x86_instruction_state),
+            "::",
+            stringify!(__insn_cacheline)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __last_branch_record {
+    pub __from_ip: __uint64_t,
+    pub __to_ip: __uint64_t,
+    pub _bitfield_align_1: [u16; 0],
+    pub _bitfield_1: __BindgenBitfieldUnit<[u8; 4usize]>,
+    pub __bindgen_padding_0: u32,
+}
+#[test]
+fn bindgen_test_layout___last_branch_record() {
+    const UNINIT: ::std::mem::MaybeUninit<__last_branch_record> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__last_branch_record>(),
+        24usize,
+        concat!("Size of: ", stringify!(__last_branch_record))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__last_branch_record>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__last_branch_record))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__from_ip) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__last_branch_record),
+            "::",
+            stringify!(__from_ip)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__to_ip) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__last_branch_record),
+            "::",
+            stringify!(__to_ip)
+        )
+    );
+}
+impl __last_branch_record {
+    #[inline]
+    pub fn __mispredict(&self) -> __uint32_t {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(0usize, 1u8) as u32) }
+    }
+    #[inline]
+    pub fn set___mispredict(&mut self, val: __uint32_t) {
+        unsafe {
+            let val: u32 = ::std::mem::transmute(val);
+            self._bitfield_1.set(0usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __tsx_abort(&self) -> __uint32_t {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(1usize, 1u8) as u32) }
+    }
+    #[inline]
+    pub fn set___tsx_abort(&mut self, val: __uint32_t) {
+        unsafe {
+            let val: u32 = ::std::mem::transmute(val);
+            self._bitfield_1.set(1usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __in_tsx(&self) -> __uint32_t {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(2usize, 1u8) as u32) }
+    }
+    #[inline]
+    pub fn set___in_tsx(&mut self, val: __uint32_t) {
+        unsafe {
+            let val: u32 = ::std::mem::transmute(val);
+            self._bitfield_1.set(2usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __cycle_count(&self) -> __uint32_t {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(3usize, 16u8) as u32) }
+    }
+    #[inline]
+    pub fn set___cycle_count(&mut self, val: __uint32_t) {
+        unsafe {
+            let val: u32 = ::std::mem::transmute(val);
+            self._bitfield_1.set(3usize, 16u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __reserved(&self) -> __uint32_t {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(19usize, 13u8) as u32) }
+    }
+    #[inline]
+    pub fn set___reserved(&mut self, val: __uint32_t) {
+        unsafe {
+            let val: u32 = ::std::mem::transmute(val);
+            self._bitfield_1.set(19usize, 13u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn new_bitfield_1(
+        __mispredict: __uint32_t,
+        __tsx_abort: __uint32_t,
+        __in_tsx: __uint32_t,
+        __cycle_count: __uint32_t,
+        __reserved: __uint32_t,
+    ) -> __BindgenBitfieldUnit<[u8; 4usize]> {
+        let mut __bindgen_bitfield_unit: __BindgenBitfieldUnit<[u8; 4usize]> = Default::default();
+        __bindgen_bitfield_unit.set(0usize, 1u8, {
+            let __mispredict: u32 = unsafe { ::std::mem::transmute(__mispredict) };
+            __mispredict as u64
+        });
+        __bindgen_bitfield_unit.set(1usize, 1u8, {
+            let __tsx_abort: u32 = unsafe { ::std::mem::transmute(__tsx_abort) };
+            __tsx_abort as u64
+        });
+        __bindgen_bitfield_unit.set(2usize, 1u8, {
+            let __in_tsx: u32 = unsafe { ::std::mem::transmute(__in_tsx) };
+            __in_tsx as u64
+        });
+        __bindgen_bitfield_unit.set(3usize, 16u8, {
+            let __cycle_count: u32 = unsafe { ::std::mem::transmute(__cycle_count) };
+            __cycle_count as u64
+        });
+        __bindgen_bitfield_unit.set(19usize, 13u8, {
+            let __reserved: u32 = unsafe { ::std::mem::transmute(__reserved) };
+            __reserved as u64
+        });
+        __bindgen_bitfield_unit
+    }
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __last_branch_state {
+    pub __lbr_count: ::std::os::raw::c_int,
+    pub _bitfield_align_1: [u32; 0],
+    pub _bitfield_1: __BindgenBitfieldUnit<[u8; 4usize]>,
+    pub __lbrs: [__last_branch_record; 32usize],
+}
+#[test]
+fn bindgen_test_layout___last_branch_state() {
+    const UNINIT: ::std::mem::MaybeUninit<__last_branch_state> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__last_branch_state>(),
+        776usize,
+        concat!("Size of: ", stringify!(__last_branch_state))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__last_branch_state>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__last_branch_state))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__lbr_count) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__last_branch_state),
+            "::",
+            stringify!(__lbr_count)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__lbrs) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__last_branch_state),
+            "::",
+            stringify!(__lbrs)
+        )
+    );
+}
+impl __last_branch_state {
+    #[inline]
+    pub fn __lbr_supported_tsx(&self) -> __uint32_t {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(0usize, 1u8) as u32) }
+    }
+    #[inline]
+    pub fn set___lbr_supported_tsx(&mut self, val: __uint32_t) {
+        unsafe {
+            let val: u32 = ::std::mem::transmute(val);
+            self._bitfield_1.set(0usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __lbr_supported_cycle_count(&self) -> __uint32_t {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(1usize, 1u8) as u32) }
+    }
+    #[inline]
+    pub fn set___lbr_supported_cycle_count(&mut self, val: __uint32_t) {
+        unsafe {
+            let val: u32 = ::std::mem::transmute(val);
+            self._bitfield_1.set(1usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn __reserved(&self) -> __uint32_t {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(2usize, 30u8) as u32) }
+    }
+    #[inline]
+    pub fn set___reserved(&mut self, val: __uint32_t) {
+        unsafe {
+            let val: u32 = ::std::mem::transmute(val);
+            self._bitfield_1.set(2usize, 30u8, val as u64)
+        }
+    }
+    #[inline]
+    pub fn new_bitfield_1(
+        __lbr_supported_tsx: __uint32_t,
+        __lbr_supported_cycle_count: __uint32_t,
+        __reserved: __uint32_t,
+    ) -> __BindgenBitfieldUnit<[u8; 4usize]> {
+        let mut __bindgen_bitfield_unit: __BindgenBitfieldUnit<[u8; 4usize]> = Default::default();
+        __bindgen_bitfield_unit.set(0usize, 1u8, {
+            let __lbr_supported_tsx: u32 = unsafe { ::std::mem::transmute(__lbr_supported_tsx) };
+            __lbr_supported_tsx as u64
+        });
+        __bindgen_bitfield_unit.set(1usize, 1u8, {
+            let __lbr_supported_cycle_count: u32 =
+                unsafe { ::std::mem::transmute(__lbr_supported_cycle_count) };
+            __lbr_supported_cycle_count as u64
+        });
+        __bindgen_bitfield_unit.set(2usize, 30u8, {
+            let __reserved: u32 = unsafe { ::std::mem::transmute(__reserved) };
+            __reserved as u64
+        });
+        __bindgen_bitfield_unit
+    }
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __x86_pagein_state {
+    pub __pagein_error: ::std::os::raw::c_int,
+}
+#[test]
+fn bindgen_test_layout___x86_pagein_state() {
+    const UNINIT: ::std::mem::MaybeUninit<__x86_pagein_state> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__x86_pagein_state>(),
+        4usize,
+        concat!("Size of: ", stringify!(__x86_pagein_state))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__x86_pagein_state>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__x86_pagein_state))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__pagein_error) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__x86_pagein_state),
+            "::",
+            stringify!(__pagein_error)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_x86_thread_state64 {
+    pub __rax: __uint64_t,
+    pub __rbx: __uint64_t,
+    pub __rcx: __uint64_t,
+    pub __rdx: __uint64_t,
+    pub __rdi: __uint64_t,
+    pub __rsi: __uint64_t,
+    pub __rbp: __uint64_t,
+    pub __rsp: __uint64_t,
+    pub __r8: __uint64_t,
+    pub __r9: __uint64_t,
+    pub __r10: __uint64_t,
+    pub __r11: __uint64_t,
+    pub __r12: __uint64_t,
+    pub __r13: __uint64_t,
+    pub __r14: __uint64_t,
+    pub __r15: __uint64_t,
+    pub __rip: __uint64_t,
+    pub __rflags: __uint64_t,
+    pub __cs: __uint64_t,
+    pub __fs: __uint64_t,
+    pub __gs: __uint64_t,
+}
+#[test]
+fn bindgen_test_layout___darwin_x86_thread_state64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_x86_thread_state64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_x86_thread_state64>(),
+        168usize,
+        concat!("Size of: ", stringify!(__darwin_x86_thread_state64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_x86_thread_state64>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_x86_thread_state64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rax) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rax)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rbx) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rbx)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rcx) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rcx)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rdx) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rdx)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rdi) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rdi)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rsi) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rsi)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rbp) as usize - ptr as usize },
+        48usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rbp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rsp) as usize - ptr as usize },
+        56usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rsp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__r8) as usize - ptr as usize },
+        64usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__r8)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__r9) as usize - ptr as usize },
+        72usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__r9)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__r10) as usize - ptr as usize },
+        80usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__r10)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__r11) as usize - ptr as usize },
+        88usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__r11)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__r12) as usize - ptr as usize },
+        96usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__r12)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__r13) as usize - ptr as usize },
+        104usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__r13)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__r14) as usize - ptr as usize },
+        112usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__r14)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__r15) as usize - ptr as usize },
+        120usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__r15)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rip) as usize - ptr as usize },
+        128usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rip)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__rflags) as usize - ptr as usize },
+        136usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__rflags)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__cs) as usize - ptr as usize },
+        144usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__cs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        152usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__fs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__gs) as usize - ptr as usize },
+        160usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_state64),
+            "::",
+            stringify!(__gs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_x86_thread_full_state64 {
+    pub __ss64: __darwin_x86_thread_state64,
+    pub __ds: __uint64_t,
+    pub __es: __uint64_t,
+    pub __ss: __uint64_t,
+    pub __gsbase: __uint64_t,
+}
+#[test]
+fn bindgen_test_layout___darwin_x86_thread_full_state64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_x86_thread_full_state64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_x86_thread_full_state64>(),
+        200usize,
+        concat!("Size of: ", stringify!(__darwin_x86_thread_full_state64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_x86_thread_full_state64>(),
+        8usize,
+        concat!(
+            "Alignment of ",
+            stringify!(__darwin_x86_thread_full_state64)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss64) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_full_state64),
+            "::",
+            stringify!(__ss64)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ds) as usize - ptr as usize },
+        168usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_full_state64),
+            "::",
+            stringify!(__ds)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        176usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_full_state64),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_full_state64),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__gsbase) as usize - ptr as usize },
+        192usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_thread_full_state64),
+            "::",
+            stringify!(__gsbase)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_x86_float_state64 {
+    pub __fpu_reserved: [::std::os::raw::c_int; 2usize],
+    pub __fpu_fcw: __darwin_fp_control,
+    pub __fpu_fsw: __darwin_fp_status,
+    pub __fpu_ftw: __uint8_t,
+    pub __fpu_rsrv1: __uint8_t,
+    pub __fpu_fop: __uint16_t,
+    pub __fpu_ip: __uint32_t,
+    pub __fpu_cs: __uint16_t,
+    pub __fpu_rsrv2: __uint16_t,
+    pub __fpu_dp: __uint32_t,
+    pub __fpu_ds: __uint16_t,
+    pub __fpu_rsrv3: __uint16_t,
+    pub __fpu_mxcsr: __uint32_t,
+    pub __fpu_mxcsrmask: __uint32_t,
+    pub __fpu_stmm0: __darwin_mmst_reg,
+    pub __fpu_stmm1: __darwin_mmst_reg,
+    pub __fpu_stmm2: __darwin_mmst_reg,
+    pub __fpu_stmm3: __darwin_mmst_reg,
+    pub __fpu_stmm4: __darwin_mmst_reg,
+    pub __fpu_stmm5: __darwin_mmst_reg,
+    pub __fpu_stmm6: __darwin_mmst_reg,
+    pub __fpu_stmm7: __darwin_mmst_reg,
+    pub __fpu_xmm0: __darwin_xmm_reg,
+    pub __fpu_xmm1: __darwin_xmm_reg,
+    pub __fpu_xmm2: __darwin_xmm_reg,
+    pub __fpu_xmm3: __darwin_xmm_reg,
+    pub __fpu_xmm4: __darwin_xmm_reg,
+    pub __fpu_xmm5: __darwin_xmm_reg,
+    pub __fpu_xmm6: __darwin_xmm_reg,
+    pub __fpu_xmm7: __darwin_xmm_reg,
+    pub __fpu_xmm8: __darwin_xmm_reg,
+    pub __fpu_xmm9: __darwin_xmm_reg,
+    pub __fpu_xmm10: __darwin_xmm_reg,
+    pub __fpu_xmm11: __darwin_xmm_reg,
+    pub __fpu_xmm12: __darwin_xmm_reg,
+    pub __fpu_xmm13: __darwin_xmm_reg,
+    pub __fpu_xmm14: __darwin_xmm_reg,
+    pub __fpu_xmm15: __darwin_xmm_reg,
+    pub __fpu_rsrv4: [::std::os::raw::c_char; 96usize],
+    pub __fpu_reserved1: ::std::os::raw::c_int,
+}
+#[test]
+fn bindgen_test_layout___darwin_x86_float_state64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_x86_float_state64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_x86_float_state64>(),
+        524usize,
+        concat!("Size of: ", stringify!(__darwin_x86_float_state64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_x86_float_state64>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_x86_float_state64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_reserved)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fcw) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_fcw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fsw) as usize - ptr as usize },
+        10usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_fsw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ftw) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_ftw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv1) as usize - ptr as usize },
+        13usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_rsrv1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fop) as usize - ptr as usize },
+        14usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_fop)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ip) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_ip)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_cs) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_cs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv2) as usize - ptr as usize },
+        22usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_rsrv2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_dp) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_dp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ds) as usize - ptr as usize },
+        28usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_ds)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv3) as usize - ptr as usize },
+        30usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_rsrv3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsr) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_mxcsr)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsrmask) as usize - ptr as usize },
+        36usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_mxcsrmask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm0) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_stmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm1) as usize - ptr as usize },
+        56usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_stmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm2) as usize - ptr as usize },
+        72usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_stmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm3) as usize - ptr as usize },
+        88usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_stmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm4) as usize - ptr as usize },
+        104usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_stmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm5) as usize - ptr as usize },
+        120usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_stmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm6) as usize - ptr as usize },
+        136usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_stmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm7) as usize - ptr as usize },
+        152usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_stmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm0) as usize - ptr as usize },
+        168usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm1) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm2) as usize - ptr as usize },
+        200usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm3) as usize - ptr as usize },
+        216usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm4) as usize - ptr as usize },
+        232usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm5) as usize - ptr as usize },
+        248usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm6) as usize - ptr as usize },
+        264usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm7) as usize - ptr as usize },
+        280usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm8) as usize - ptr as usize },
+        296usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm8)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm9) as usize - ptr as usize },
+        312usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm9)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm10) as usize - ptr as usize },
+        328usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm10)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm11) as usize - ptr as usize },
+        344usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm11)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm12) as usize - ptr as usize },
+        360usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm12)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm13) as usize - ptr as usize },
+        376usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm13)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm14) as usize - ptr as usize },
+        392usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm14)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm15) as usize - ptr as usize },
+        408usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_xmm15)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv4) as usize - ptr as usize },
+        424usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_rsrv4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved1) as usize - ptr as usize },
+        520usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_float_state64),
+            "::",
+            stringify!(__fpu_reserved1)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_x86_avx_state64 {
+    pub __fpu_reserved: [::std::os::raw::c_int; 2usize],
+    pub __fpu_fcw: __darwin_fp_control,
+    pub __fpu_fsw: __darwin_fp_status,
+    pub __fpu_ftw: __uint8_t,
+    pub __fpu_rsrv1: __uint8_t,
+    pub __fpu_fop: __uint16_t,
+    pub __fpu_ip: __uint32_t,
+    pub __fpu_cs: __uint16_t,
+    pub __fpu_rsrv2: __uint16_t,
+    pub __fpu_dp: __uint32_t,
+    pub __fpu_ds: __uint16_t,
+    pub __fpu_rsrv3: __uint16_t,
+    pub __fpu_mxcsr: __uint32_t,
+    pub __fpu_mxcsrmask: __uint32_t,
+    pub __fpu_stmm0: __darwin_mmst_reg,
+    pub __fpu_stmm1: __darwin_mmst_reg,
+    pub __fpu_stmm2: __darwin_mmst_reg,
+    pub __fpu_stmm3: __darwin_mmst_reg,
+    pub __fpu_stmm4: __darwin_mmst_reg,
+    pub __fpu_stmm5: __darwin_mmst_reg,
+    pub __fpu_stmm6: __darwin_mmst_reg,
+    pub __fpu_stmm7: __darwin_mmst_reg,
+    pub __fpu_xmm0: __darwin_xmm_reg,
+    pub __fpu_xmm1: __darwin_xmm_reg,
+    pub __fpu_xmm2: __darwin_xmm_reg,
+    pub __fpu_xmm3: __darwin_xmm_reg,
+    pub __fpu_xmm4: __darwin_xmm_reg,
+    pub __fpu_xmm5: __darwin_xmm_reg,
+    pub __fpu_xmm6: __darwin_xmm_reg,
+    pub __fpu_xmm7: __darwin_xmm_reg,
+    pub __fpu_xmm8: __darwin_xmm_reg,
+    pub __fpu_xmm9: __darwin_xmm_reg,
+    pub __fpu_xmm10: __darwin_xmm_reg,
+    pub __fpu_xmm11: __darwin_xmm_reg,
+    pub __fpu_xmm12: __darwin_xmm_reg,
+    pub __fpu_xmm13: __darwin_xmm_reg,
+    pub __fpu_xmm14: __darwin_xmm_reg,
+    pub __fpu_xmm15: __darwin_xmm_reg,
+    pub __fpu_rsrv4: [::std::os::raw::c_char; 96usize],
+    pub __fpu_reserved1: ::std::os::raw::c_int,
+    pub __avx_reserved1: [::std::os::raw::c_char; 64usize],
+    pub __fpu_ymmh0: __darwin_xmm_reg,
+    pub __fpu_ymmh1: __darwin_xmm_reg,
+    pub __fpu_ymmh2: __darwin_xmm_reg,
+    pub __fpu_ymmh3: __darwin_xmm_reg,
+    pub __fpu_ymmh4: __darwin_xmm_reg,
+    pub __fpu_ymmh5: __darwin_xmm_reg,
+    pub __fpu_ymmh6: __darwin_xmm_reg,
+    pub __fpu_ymmh7: __darwin_xmm_reg,
+    pub __fpu_ymmh8: __darwin_xmm_reg,
+    pub __fpu_ymmh9: __darwin_xmm_reg,
+    pub __fpu_ymmh10: __darwin_xmm_reg,
+    pub __fpu_ymmh11: __darwin_xmm_reg,
+    pub __fpu_ymmh12: __darwin_xmm_reg,
+    pub __fpu_ymmh13: __darwin_xmm_reg,
+    pub __fpu_ymmh14: __darwin_xmm_reg,
+    pub __fpu_ymmh15: __darwin_xmm_reg,
+}
+#[test]
+fn bindgen_test_layout___darwin_x86_avx_state64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_x86_avx_state64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_x86_avx_state64>(),
+        844usize,
+        concat!("Size of: ", stringify!(__darwin_x86_avx_state64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_x86_avx_state64>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_x86_avx_state64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_reserved)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fcw) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_fcw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fsw) as usize - ptr as usize },
+        10usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_fsw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ftw) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ftw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv1) as usize - ptr as usize },
+        13usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_rsrv1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fop) as usize - ptr as usize },
+        14usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_fop)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ip) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ip)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_cs) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_cs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv2) as usize - ptr as usize },
+        22usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_rsrv2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_dp) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_dp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ds) as usize - ptr as usize },
+        28usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ds)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv3) as usize - ptr as usize },
+        30usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_rsrv3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsr) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_mxcsr)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsrmask) as usize - ptr as usize },
+        36usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_mxcsrmask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm0) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_stmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm1) as usize - ptr as usize },
+        56usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_stmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm2) as usize - ptr as usize },
+        72usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_stmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm3) as usize - ptr as usize },
+        88usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_stmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm4) as usize - ptr as usize },
+        104usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_stmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm5) as usize - ptr as usize },
+        120usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_stmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm6) as usize - ptr as usize },
+        136usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_stmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm7) as usize - ptr as usize },
+        152usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_stmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm0) as usize - ptr as usize },
+        168usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm1) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm2) as usize - ptr as usize },
+        200usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm3) as usize - ptr as usize },
+        216usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm4) as usize - ptr as usize },
+        232usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm5) as usize - ptr as usize },
+        248usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm6) as usize - ptr as usize },
+        264usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm7) as usize - ptr as usize },
+        280usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm8) as usize - ptr as usize },
+        296usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm8)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm9) as usize - ptr as usize },
+        312usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm9)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm10) as usize - ptr as usize },
+        328usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm10)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm11) as usize - ptr as usize },
+        344usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm11)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm12) as usize - ptr as usize },
+        360usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm12)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm13) as usize - ptr as usize },
+        376usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm13)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm14) as usize - ptr as usize },
+        392usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm14)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm15) as usize - ptr as usize },
+        408usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_xmm15)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv4) as usize - ptr as usize },
+        424usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_rsrv4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved1) as usize - ptr as usize },
+        520usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_reserved1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__avx_reserved1) as usize - ptr as usize },
+        524usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__avx_reserved1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh0) as usize - ptr as usize },
+        588usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh1) as usize - ptr as usize },
+        604usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh2) as usize - ptr as usize },
+        620usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh3) as usize - ptr as usize },
+        636usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh4) as usize - ptr as usize },
+        652usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh5) as usize - ptr as usize },
+        668usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh6) as usize - ptr as usize },
+        684usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh7) as usize - ptr as usize },
+        700usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh8) as usize - ptr as usize },
+        716usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh8)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh9) as usize - ptr as usize },
+        732usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh9)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh10) as usize - ptr as usize },
+        748usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh10)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh11) as usize - ptr as usize },
+        764usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh11)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh12) as usize - ptr as usize },
+        780usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh12)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh13) as usize - ptr as usize },
+        796usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh13)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh14) as usize - ptr as usize },
+        812usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh14)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh15) as usize - ptr as usize },
+        828usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx_state64),
+            "::",
+            stringify!(__fpu_ymmh15)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_x86_avx512_state64 {
+    pub __fpu_reserved: [::std::os::raw::c_int; 2usize],
+    pub __fpu_fcw: __darwin_fp_control,
+    pub __fpu_fsw: __darwin_fp_status,
+    pub __fpu_ftw: __uint8_t,
+    pub __fpu_rsrv1: __uint8_t,
+    pub __fpu_fop: __uint16_t,
+    pub __fpu_ip: __uint32_t,
+    pub __fpu_cs: __uint16_t,
+    pub __fpu_rsrv2: __uint16_t,
+    pub __fpu_dp: __uint32_t,
+    pub __fpu_ds: __uint16_t,
+    pub __fpu_rsrv3: __uint16_t,
+    pub __fpu_mxcsr: __uint32_t,
+    pub __fpu_mxcsrmask: __uint32_t,
+    pub __fpu_stmm0: __darwin_mmst_reg,
+    pub __fpu_stmm1: __darwin_mmst_reg,
+    pub __fpu_stmm2: __darwin_mmst_reg,
+    pub __fpu_stmm3: __darwin_mmst_reg,
+    pub __fpu_stmm4: __darwin_mmst_reg,
+    pub __fpu_stmm5: __darwin_mmst_reg,
+    pub __fpu_stmm6: __darwin_mmst_reg,
+    pub __fpu_stmm7: __darwin_mmst_reg,
+    pub __fpu_xmm0: __darwin_xmm_reg,
+    pub __fpu_xmm1: __darwin_xmm_reg,
+    pub __fpu_xmm2: __darwin_xmm_reg,
+    pub __fpu_xmm3: __darwin_xmm_reg,
+    pub __fpu_xmm4: __darwin_xmm_reg,
+    pub __fpu_xmm5: __darwin_xmm_reg,
+    pub __fpu_xmm6: __darwin_xmm_reg,
+    pub __fpu_xmm7: __darwin_xmm_reg,
+    pub __fpu_xmm8: __darwin_xmm_reg,
+    pub __fpu_xmm9: __darwin_xmm_reg,
+    pub __fpu_xmm10: __darwin_xmm_reg,
+    pub __fpu_xmm11: __darwin_xmm_reg,
+    pub __fpu_xmm12: __darwin_xmm_reg,
+    pub __fpu_xmm13: __darwin_xmm_reg,
+    pub __fpu_xmm14: __darwin_xmm_reg,
+    pub __fpu_xmm15: __darwin_xmm_reg,
+    pub __fpu_rsrv4: [::std::os::raw::c_char; 96usize],
+    pub __fpu_reserved1: ::std::os::raw::c_int,
+    pub __avx_reserved1: [::std::os::raw::c_char; 64usize],
+    pub __fpu_ymmh0: __darwin_xmm_reg,
+    pub __fpu_ymmh1: __darwin_xmm_reg,
+    pub __fpu_ymmh2: __darwin_xmm_reg,
+    pub __fpu_ymmh3: __darwin_xmm_reg,
+    pub __fpu_ymmh4: __darwin_xmm_reg,
+    pub __fpu_ymmh5: __darwin_xmm_reg,
+    pub __fpu_ymmh6: __darwin_xmm_reg,
+    pub __fpu_ymmh7: __darwin_xmm_reg,
+    pub __fpu_ymmh8: __darwin_xmm_reg,
+    pub __fpu_ymmh9: __darwin_xmm_reg,
+    pub __fpu_ymmh10: __darwin_xmm_reg,
+    pub __fpu_ymmh11: __darwin_xmm_reg,
+    pub __fpu_ymmh12: __darwin_xmm_reg,
+    pub __fpu_ymmh13: __darwin_xmm_reg,
+    pub __fpu_ymmh14: __darwin_xmm_reg,
+    pub __fpu_ymmh15: __darwin_xmm_reg,
+    pub __fpu_k0: __darwin_opmask_reg,
+    pub __fpu_k1: __darwin_opmask_reg,
+    pub __fpu_k2: __darwin_opmask_reg,
+    pub __fpu_k3: __darwin_opmask_reg,
+    pub __fpu_k4: __darwin_opmask_reg,
+    pub __fpu_k5: __darwin_opmask_reg,
+    pub __fpu_k6: __darwin_opmask_reg,
+    pub __fpu_k7: __darwin_opmask_reg,
+    pub __fpu_zmmh0: __darwin_ymm_reg,
+    pub __fpu_zmmh1: __darwin_ymm_reg,
+    pub __fpu_zmmh2: __darwin_ymm_reg,
+    pub __fpu_zmmh3: __darwin_ymm_reg,
+    pub __fpu_zmmh4: __darwin_ymm_reg,
+    pub __fpu_zmmh5: __darwin_ymm_reg,
+    pub __fpu_zmmh6: __darwin_ymm_reg,
+    pub __fpu_zmmh7: __darwin_ymm_reg,
+    pub __fpu_zmmh8: __darwin_ymm_reg,
+    pub __fpu_zmmh9: __darwin_ymm_reg,
+    pub __fpu_zmmh10: __darwin_ymm_reg,
+    pub __fpu_zmmh11: __darwin_ymm_reg,
+    pub __fpu_zmmh12: __darwin_ymm_reg,
+    pub __fpu_zmmh13: __darwin_ymm_reg,
+    pub __fpu_zmmh14: __darwin_ymm_reg,
+    pub __fpu_zmmh15: __darwin_ymm_reg,
+    pub __fpu_zmm16: __darwin_zmm_reg,
+    pub __fpu_zmm17: __darwin_zmm_reg,
+    pub __fpu_zmm18: __darwin_zmm_reg,
+    pub __fpu_zmm19: __darwin_zmm_reg,
+    pub __fpu_zmm20: __darwin_zmm_reg,
+    pub __fpu_zmm21: __darwin_zmm_reg,
+    pub __fpu_zmm22: __darwin_zmm_reg,
+    pub __fpu_zmm23: __darwin_zmm_reg,
+    pub __fpu_zmm24: __darwin_zmm_reg,
+    pub __fpu_zmm25: __darwin_zmm_reg,
+    pub __fpu_zmm26: __darwin_zmm_reg,
+    pub __fpu_zmm27: __darwin_zmm_reg,
+    pub __fpu_zmm28: __darwin_zmm_reg,
+    pub __fpu_zmm29: __darwin_zmm_reg,
+    pub __fpu_zmm30: __darwin_zmm_reg,
+    pub __fpu_zmm31: __darwin_zmm_reg,
+}
+#[test]
+fn bindgen_test_layout___darwin_x86_avx512_state64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_x86_avx512_state64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_x86_avx512_state64>(),
+        2444usize,
+        concat!("Size of: ", stringify!(__darwin_x86_avx512_state64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_x86_avx512_state64>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_x86_avx512_state64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_reserved)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fcw) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_fcw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fsw) as usize - ptr as usize },
+        10usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_fsw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ftw) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ftw)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv1) as usize - ptr as usize },
+        13usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_rsrv1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_fop) as usize - ptr as usize },
+        14usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_fop)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ip) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ip)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_cs) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_cs)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv2) as usize - ptr as usize },
+        22usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_rsrv2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_dp) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_dp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ds) as usize - ptr as usize },
+        28usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ds)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv3) as usize - ptr as usize },
+        30usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_rsrv3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsr) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_mxcsr)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_mxcsrmask) as usize - ptr as usize },
+        36usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_mxcsrmask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm0) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_stmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm1) as usize - ptr as usize },
+        56usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_stmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm2) as usize - ptr as usize },
+        72usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_stmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm3) as usize - ptr as usize },
+        88usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_stmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm4) as usize - ptr as usize },
+        104usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_stmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm5) as usize - ptr as usize },
+        120usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_stmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm6) as usize - ptr as usize },
+        136usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_stmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_stmm7) as usize - ptr as usize },
+        152usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_stmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm0) as usize - ptr as usize },
+        168usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm1) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm2) as usize - ptr as usize },
+        200usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm3) as usize - ptr as usize },
+        216usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm4) as usize - ptr as usize },
+        232usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm5) as usize - ptr as usize },
+        248usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm6) as usize - ptr as usize },
+        264usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm7) as usize - ptr as usize },
+        280usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm8) as usize - ptr as usize },
+        296usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm8)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm9) as usize - ptr as usize },
+        312usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm9)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm10) as usize - ptr as usize },
+        328usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm10)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm11) as usize - ptr as usize },
+        344usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm11)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm12) as usize - ptr as usize },
+        360usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm12)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm13) as usize - ptr as usize },
+        376usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm13)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm14) as usize - ptr as usize },
+        392usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm14)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_xmm15) as usize - ptr as usize },
+        408usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_xmm15)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_rsrv4) as usize - ptr as usize },
+        424usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_rsrv4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_reserved1) as usize - ptr as usize },
+        520usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_reserved1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__avx_reserved1) as usize - ptr as usize },
+        524usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__avx_reserved1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh0) as usize - ptr as usize },
+        588usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh1) as usize - ptr as usize },
+        604usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh2) as usize - ptr as usize },
+        620usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh3) as usize - ptr as usize },
+        636usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh4) as usize - ptr as usize },
+        652usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh5) as usize - ptr as usize },
+        668usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh6) as usize - ptr as usize },
+        684usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh7) as usize - ptr as usize },
+        700usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh8) as usize - ptr as usize },
+        716usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh8)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh9) as usize - ptr as usize },
+        732usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh9)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh10) as usize - ptr as usize },
+        748usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh10)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh11) as usize - ptr as usize },
+        764usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh11)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh12) as usize - ptr as usize },
+        780usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh12)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh13) as usize - ptr as usize },
+        796usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh13)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh14) as usize - ptr as usize },
+        812usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh14)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_ymmh15) as usize - ptr as usize },
+        828usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_ymmh15)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k0) as usize - ptr as usize },
+        844usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_k0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k1) as usize - ptr as usize },
+        852usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_k1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k2) as usize - ptr as usize },
+        860usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_k2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k3) as usize - ptr as usize },
+        868usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_k3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k4) as usize - ptr as usize },
+        876usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_k4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k5) as usize - ptr as usize },
+        884usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_k5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k6) as usize - ptr as usize },
+        892usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_k6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_k7) as usize - ptr as usize },
+        900usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_k7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh0) as usize - ptr as usize },
+        908usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh1) as usize - ptr as usize },
+        940usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh2) as usize - ptr as usize },
+        972usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh3) as usize - ptr as usize },
+        1004usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh4) as usize - ptr as usize },
+        1036usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh5) as usize - ptr as usize },
+        1068usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh6) as usize - ptr as usize },
+        1100usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh7) as usize - ptr as usize },
+        1132usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh7)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh8) as usize - ptr as usize },
+        1164usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh8)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh9) as usize - ptr as usize },
+        1196usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh9)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh10) as usize - ptr as usize },
+        1228usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh10)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh11) as usize - ptr as usize },
+        1260usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh11)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh12) as usize - ptr as usize },
+        1292usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh12)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh13) as usize - ptr as usize },
+        1324usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh13)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh14) as usize - ptr as usize },
+        1356usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh14)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmmh15) as usize - ptr as usize },
+        1388usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmmh15)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm16) as usize - ptr as usize },
+        1420usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm16)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm17) as usize - ptr as usize },
+        1484usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm17)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm18) as usize - ptr as usize },
+        1548usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm18)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm19) as usize - ptr as usize },
+        1612usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm19)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm20) as usize - ptr as usize },
+        1676usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm20)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm21) as usize - ptr as usize },
+        1740usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm21)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm22) as usize - ptr as usize },
+        1804usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm22)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm23) as usize - ptr as usize },
+        1868usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm23)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm24) as usize - ptr as usize },
+        1932usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm24)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm25) as usize - ptr as usize },
+        1996usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm25)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm26) as usize - ptr as usize },
+        2060usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm26)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm27) as usize - ptr as usize },
+        2124usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm27)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm28) as usize - ptr as usize },
+        2188usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm28)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm29) as usize - ptr as usize },
+        2252usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm29)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm30) as usize - ptr as usize },
+        2316usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm30)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fpu_zmm31) as usize - ptr as usize },
+        2380usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_avx512_state64),
+            "::",
+            stringify!(__fpu_zmm31)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_x86_exception_state64 {
+    pub __trapno: __uint16_t,
+    pub __cpu: __uint16_t,
+    pub __err: __uint32_t,
+    pub __faultvaddr: __uint64_t,
+}
+#[test]
+fn bindgen_test_layout___darwin_x86_exception_state64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_x86_exception_state64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_x86_exception_state64>(),
+        16usize,
+        concat!("Size of: ", stringify!(__darwin_x86_exception_state64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_x86_exception_state64>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_x86_exception_state64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__trapno) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_exception_state64),
+            "::",
+            stringify!(__trapno)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__cpu) as usize - ptr as usize },
+        2usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_exception_state64),
+            "::",
+            stringify!(__cpu)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__err) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_exception_state64),
+            "::",
+            stringify!(__err)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__faultvaddr) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_exception_state64),
+            "::",
+            stringify!(__faultvaddr)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_x86_debug_state64 {
+    pub __dr0: __uint64_t,
+    pub __dr1: __uint64_t,
+    pub __dr2: __uint64_t,
+    pub __dr3: __uint64_t,
+    pub __dr4: __uint64_t,
+    pub __dr5: __uint64_t,
+    pub __dr6: __uint64_t,
+    pub __dr7: __uint64_t,
+}
+#[test]
+fn bindgen_test_layout___darwin_x86_debug_state64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_x86_debug_state64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_x86_debug_state64>(),
+        64usize,
+        concat!("Size of: ", stringify!(__darwin_x86_debug_state64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_x86_debug_state64>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_x86_debug_state64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr0) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state64),
+            "::",
+            stringify!(__dr0)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr1) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state64),
+            "::",
+            stringify!(__dr1)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr2) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state64),
+            "::",
+            stringify!(__dr2)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr3) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state64),
+            "::",
+            stringify!(__dr3)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr4) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state64),
+            "::",
+            stringify!(__dr4)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr5) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state64),
+            "::",
+            stringify!(__dr5)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr6) as usize - ptr as usize },
+        48usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state64),
+            "::",
+            stringify!(__dr6)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__dr7) as usize - ptr as usize },
+        56usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_debug_state64),
+            "::",
+            stringify!(__dr7)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_x86_cpmu_state64 {
+    pub __ctrs: [__uint64_t; 16usize],
+}
+#[test]
+fn bindgen_test_layout___darwin_x86_cpmu_state64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_x86_cpmu_state64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_x86_cpmu_state64>(),
+        128usize,
+        concat!("Size of: ", stringify!(__darwin_x86_cpmu_state64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_x86_cpmu_state64>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_x86_cpmu_state64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ctrs) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_x86_cpmu_state64),
+            "::",
+            stringify!(__ctrs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mcontext32 {
+    pub __es: __darwin_i386_exception_state,
+    pub __ss: __darwin_i386_thread_state,
+    pub __fs: __darwin_i386_float_state,
+}
+#[test]
+fn bindgen_test_layout___darwin_mcontext32() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mcontext32> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mcontext32>(),
+        600usize,
+        concat!("Size of: ", stringify!(__darwin_mcontext32))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mcontext32>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_mcontext32))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext32),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext32),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        76usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext32),
+            "::",
+            stringify!(__fs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mcontext_avx32 {
+    pub __es: __darwin_i386_exception_state,
+    pub __ss: __darwin_i386_thread_state,
+    pub __fs: __darwin_i386_avx_state,
+}
+#[test]
+fn bindgen_test_layout___darwin_mcontext_avx32() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mcontext_avx32> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mcontext_avx32>(),
+        792usize,
+        concat!("Size of: ", stringify!(__darwin_mcontext_avx32))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mcontext_avx32>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_mcontext_avx32))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx32),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx32),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        76usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx32),
+            "::",
+            stringify!(__fs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mcontext_avx512_32 {
+    pub __es: __darwin_i386_exception_state,
+    pub __ss: __darwin_i386_thread_state,
+    pub __fs: __darwin_i386_avx512_state,
+}
+#[test]
+fn bindgen_test_layout___darwin_mcontext_avx512_32() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mcontext_avx512_32> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mcontext_avx512_32>(),
+        1112usize,
+        concat!("Size of: ", stringify!(__darwin_mcontext_avx512_32))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mcontext_avx512_32>(),
+        4usize,
+        concat!("Alignment of ", stringify!(__darwin_mcontext_avx512_32))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx512_32),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx512_32),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        76usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx512_32),
+            "::",
+            stringify!(__fs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mcontext64 {
+    pub __es: __darwin_x86_exception_state64,
+    pub __ss: __darwin_x86_thread_state64,
+    pub __fs: __darwin_x86_float_state64,
+}
+#[test]
+fn bindgen_test_layout___darwin_mcontext64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mcontext64> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mcontext64>(),
+        712usize,
+        concat!("Size of: ", stringify!(__darwin_mcontext64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mcontext64>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_mcontext64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext64),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext64),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext64),
+            "::",
+            stringify!(__fs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mcontext64_full {
+    pub __es: __darwin_x86_exception_state64,
+    pub __ss: __darwin_x86_thread_full_state64,
+    pub __fs: __darwin_x86_float_state64,
+}
+#[test]
+fn bindgen_test_layout___darwin_mcontext64_full() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mcontext64_full> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mcontext64_full>(),
+        744usize,
+        concat!("Size of: ", stringify!(__darwin_mcontext64_full))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mcontext64_full>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_mcontext64_full))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext64_full),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext64_full),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        216usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext64_full),
+            "::",
+            stringify!(__fs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mcontext_avx64 {
+    pub __es: __darwin_x86_exception_state64,
+    pub __ss: __darwin_x86_thread_state64,
+    pub __fs: __darwin_x86_avx_state64,
+}
+#[test]
+fn bindgen_test_layout___darwin_mcontext_avx64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mcontext_avx64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mcontext_avx64>(),
+        1032usize,
+        concat!("Size of: ", stringify!(__darwin_mcontext_avx64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mcontext_avx64>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_mcontext_avx64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx64),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx64),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx64),
+            "::",
+            stringify!(__fs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mcontext_avx64_full {
+    pub __es: __darwin_x86_exception_state64,
+    pub __ss: __darwin_x86_thread_full_state64,
+    pub __fs: __darwin_x86_avx_state64,
+}
+#[test]
+fn bindgen_test_layout___darwin_mcontext_avx64_full() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mcontext_avx64_full> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mcontext_avx64_full>(),
+        1064usize,
+        concat!("Size of: ", stringify!(__darwin_mcontext_avx64_full))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mcontext_avx64_full>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_mcontext_avx64_full))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx64_full),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx64_full),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        216usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx64_full),
+            "::",
+            stringify!(__fs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mcontext_avx512_64 {
+    pub __es: __darwin_x86_exception_state64,
+    pub __ss: __darwin_x86_thread_state64,
+    pub __fs: __darwin_x86_avx512_state64,
+}
+#[test]
+fn bindgen_test_layout___darwin_mcontext_avx512_64() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mcontext_avx512_64> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mcontext_avx512_64>(),
+        2632usize,
+        concat!("Size of: ", stringify!(__darwin_mcontext_avx512_64))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mcontext_avx512_64>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_mcontext_avx512_64))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx512_64),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx512_64),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        184usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx512_64),
+            "::",
+            stringify!(__fs)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_mcontext_avx512_64_full {
+    pub __es: __darwin_x86_exception_state64,
+    pub __ss: __darwin_x86_thread_full_state64,
+    pub __fs: __darwin_x86_avx512_state64,
+}
+#[test]
+fn bindgen_test_layout___darwin_mcontext_avx512_64_full() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_mcontext_avx512_64_full> =
+        ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_mcontext_avx512_64_full>(),
+        2664usize,
+        concat!("Size of: ", stringify!(__darwin_mcontext_avx512_64_full))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_mcontext_avx512_64_full>(),
+        8usize,
+        concat!(
+            "Alignment of ",
+            stringify!(__darwin_mcontext_avx512_64_full)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__es) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx512_64_full),
+            "::",
+            stringify!(__es)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__ss) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx512_64_full),
+            "::",
+            stringify!(__ss)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__fs) as usize - ptr as usize },
+        216usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_mcontext_avx512_64_full),
+            "::",
+            stringify!(__fs)
+        )
+    );
+}
+pub type mcontext_t = *mut __darwin_mcontext64;
+pub type pthread_attr_t = __darwin_pthread_attr_t;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_sigaltstack {
+    pub ss_sp: *mut ::std::os::raw::c_void,
+    pub ss_size: __darwin_size_t,
+    pub ss_flags: ::std::os::raw::c_int,
+}
+#[test]
+fn bindgen_test_layout___darwin_sigaltstack() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_sigaltstack> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_sigaltstack>(),
+        24usize,
+        concat!("Size of: ", stringify!(__darwin_sigaltstack))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_sigaltstack>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_sigaltstack))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).ss_sp) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_sigaltstack),
+            "::",
+            stringify!(ss_sp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).ss_size) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_sigaltstack),
+            "::",
+            stringify!(ss_size)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).ss_flags) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_sigaltstack),
+            "::",
+            stringify!(ss_flags)
+        )
+    );
+}
+pub type stack_t = __darwin_sigaltstack;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __darwin_ucontext {
+    pub uc_onstack: ::std::os::raw::c_int,
+    pub uc_sigmask: __darwin_sigset_t,
+    pub uc_stack: __darwin_sigaltstack,
+    pub uc_link: *mut __darwin_ucontext,
+    pub uc_mcsize: __darwin_size_t,
+    pub uc_mcontext: *mut __darwin_mcontext64,
+}
+#[test]
+fn bindgen_test_layout___darwin_ucontext() {
+    const UNINIT: ::std::mem::MaybeUninit<__darwin_ucontext> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__darwin_ucontext>(),
+        56usize,
+        concat!("Size of: ", stringify!(__darwin_ucontext))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__darwin_ucontext>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__darwin_ucontext))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).uc_onstack) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_ucontext),
+            "::",
+            stringify!(uc_onstack)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).uc_sigmask) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_ucontext),
+            "::",
+            stringify!(uc_sigmask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).uc_stack) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_ucontext),
+            "::",
+            stringify!(uc_stack)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).uc_link) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_ucontext),
+            "::",
+            stringify!(uc_link)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).uc_mcsize) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_ucontext),
+            "::",
+            stringify!(uc_mcsize)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).uc_mcontext) as usize - ptr as usize },
+        48usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__darwin_ucontext),
+            "::",
+            stringify!(uc_mcontext)
+        )
+    );
+}
+pub type ucontext_t = __darwin_ucontext;
+pub type pid_t = __darwin_pid_t;
+pub type sigset_t = __darwin_sigset_t;
+pub type uid_t = __darwin_uid_t;
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union sigval {
+    pub sival_int: ::std::os::raw::c_int,
+    pub sival_ptr: *mut ::std::os::raw::c_void,
+}
+#[test]
+fn bindgen_test_layout_sigval() {
+    const UNINIT: ::std::mem::MaybeUninit<sigval> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<sigval>(),
+        8usize,
+        concat!("Size of: ", stringify!(sigval))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<sigval>(),
+        8usize,
+        concat!("Alignment of ", stringify!(sigval))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sival_int) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigval),
+            "::",
+            stringify!(sival_int)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sival_ptr) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigval),
+            "::",
+            stringify!(sival_ptr)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct sigevent {
+    pub sigev_notify: ::std::os::raw::c_int,
+    pub sigev_signo: ::std::os::raw::c_int,
+    pub sigev_value: sigval,
+    pub sigev_notify_function: ::std::option::Option<unsafe extern "C" fn(arg1: sigval)>,
+    pub sigev_notify_attributes: *mut pthread_attr_t,
+}
+#[test]
+fn bindgen_test_layout_sigevent() {
+    const UNINIT: ::std::mem::MaybeUninit<sigevent> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<sigevent>(),
+        32usize,
+        concat!("Size of: ", stringify!(sigevent))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<sigevent>(),
+        8usize,
+        concat!("Alignment of ", stringify!(sigevent))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sigev_notify) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigevent),
+            "::",
+            stringify!(sigev_notify)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sigev_signo) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigevent),
+            "::",
+            stringify!(sigev_signo)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sigev_value) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigevent),
+            "::",
+            stringify!(sigev_value)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sigev_notify_function) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigevent),
+            "::",
+            stringify!(sigev_notify_function)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sigev_notify_attributes) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigevent),
+            "::",
+            stringify!(sigev_notify_attributes)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct __siginfo {
+    pub si_signo: ::std::os::raw::c_int,
+    pub si_errno: ::std::os::raw::c_int,
+    pub si_code: ::std::os::raw::c_int,
+    pub si_pid: pid_t,
+    pub si_uid: uid_t,
+    pub si_status: ::std::os::raw::c_int,
+    pub si_addr: *mut ::std::os::raw::c_void,
+    pub si_value: sigval,
+    pub si_band: ::std::os::raw::c_long,
+    pub __pad: [::std::os::raw::c_ulong; 7usize],
+}
+#[test]
+fn bindgen_test_layout___siginfo() {
+    const UNINIT: ::std::mem::MaybeUninit<__siginfo> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__siginfo>(),
+        104usize,
+        concat!("Size of: ", stringify!(__siginfo))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__siginfo>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__siginfo))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).si_signo) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(si_signo)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).si_errno) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(si_errno)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).si_code) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(si_code)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).si_pid) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(si_pid)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).si_uid) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(si_uid)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).si_status) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(si_status)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).si_addr) as usize - ptr as usize },
+        24usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(si_addr)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).si_value) as usize - ptr as usize },
+        32usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(si_value)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).si_band) as usize - ptr as usize },
+        40usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(si_band)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__pad) as usize - ptr as usize },
+        48usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__siginfo),
+            "::",
+            stringify!(__pad)
+        )
+    );
+}
+pub type siginfo_t = __siginfo;
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union __sigaction_u {
+    pub __sa_handler: ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>,
+    pub __sa_sigaction: ::std::option::Option<
+        unsafe extern "C" fn(
+            arg1: ::std::os::raw::c_int,
+            arg2: *mut __siginfo,
+            arg3: *mut ::std::os::raw::c_void,
+        ),
+    >,
+}
+#[test]
+fn bindgen_test_layout___sigaction_u() {
+    const UNINIT: ::std::mem::MaybeUninit<__sigaction_u> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__sigaction_u>(),
+        8usize,
+        concat!("Size of: ", stringify!(__sigaction_u))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__sigaction_u>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__sigaction_u))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sa_handler) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__sigaction_u),
+            "::",
+            stringify!(__sa_handler)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sa_sigaction) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__sigaction_u),
+            "::",
+            stringify!(__sa_sigaction)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct __sigaction {
+    pub __sigaction_u: __sigaction_u,
+    pub sa_tramp: ::std::option::Option<
+        unsafe extern "C" fn(
+            arg1: *mut ::std::os::raw::c_void,
+            arg2: ::std::os::raw::c_int,
+            arg3: ::std::os::raw::c_int,
+            arg4: *mut siginfo_t,
+            arg5: *mut ::std::os::raw::c_void,
+        ),
+    >,
+    pub sa_mask: sigset_t,
+    pub sa_flags: ::std::os::raw::c_int,
+}
+#[test]
+fn bindgen_test_layout___sigaction() {
+    const UNINIT: ::std::mem::MaybeUninit<__sigaction> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__sigaction>(),
+        24usize,
+        concat!("Size of: ", stringify!(__sigaction))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__sigaction>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__sigaction))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sigaction_u) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__sigaction),
+            "::",
+            stringify!(__sigaction_u)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sa_tramp) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__sigaction),
+            "::",
+            stringify!(sa_tramp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sa_mask) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__sigaction),
+            "::",
+            stringify!(sa_mask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sa_flags) as usize - ptr as usize },
+        20usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__sigaction),
+            "::",
+            stringify!(sa_flags)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct sigaction {
+    pub __sigaction_u: __sigaction_u,
+    pub sa_mask: sigset_t,
+    pub sa_flags: ::std::os::raw::c_int,
+}
+#[test]
+fn bindgen_test_layout_sigaction() {
+    const UNINIT: ::std::mem::MaybeUninit<sigaction> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<sigaction>(),
+        16usize,
+        concat!("Size of: ", stringify!(sigaction))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<sigaction>(),
+        8usize,
+        concat!("Alignment of ", stringify!(sigaction))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).__sigaction_u) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigaction),
+            "::",
+            stringify!(__sigaction_u)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sa_mask) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigaction),
+            "::",
+            stringify!(sa_mask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sa_flags) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigaction),
+            "::",
+            stringify!(sa_flags)
+        )
+    );
+}
+pub type sig_t = ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct sigvec {
+    pub sv_handler: ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>,
+    pub sv_mask: ::std::os::raw::c_int,
+    pub sv_flags: ::std::os::raw::c_int,
+}
+#[test]
+fn bindgen_test_layout_sigvec() {
+    const UNINIT: ::std::mem::MaybeUninit<sigvec> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<sigvec>(),
+        16usize,
+        concat!("Size of: ", stringify!(sigvec))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<sigvec>(),
+        8usize,
+        concat!("Alignment of ", stringify!(sigvec))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sv_handler) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigvec),
+            "::",
+            stringify!(sv_handler)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sv_mask) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigvec),
+            "::",
+            stringify!(sv_mask)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).sv_flags) as usize - ptr as usize },
+        12usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigvec),
+            "::",
+            stringify!(sv_flags)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct sigstack {
+    pub ss_sp: *mut ::std::os::raw::c_char,
+    pub ss_onstack: ::std::os::raw::c_int,
+}
+#[test]
+fn bindgen_test_layout_sigstack() {
+    const UNINIT: ::std::mem::MaybeUninit<sigstack> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<sigstack>(),
+        16usize,
+        concat!("Size of: ", stringify!(sigstack))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<sigstack>(),
+        8usize,
+        concat!("Alignment of ", stringify!(sigstack))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).ss_sp) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigstack),
+            "::",
+            stringify!(ss_sp)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).ss_onstack) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(sigstack),
+            "::",
+            stringify!(ss_onstack)
+        )
+    );
+}
+extern "C" {
+    pub fn signal(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>,
+    ) -> ::std::option::Option<
+        unsafe extern "C" fn(
+            arg1: ::std::os::raw::c_int,
+            arg2: ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>,
+        ),
+    >;
+}
+pub type pthread_t = __darwin_pthread_t;
+extern "C" {
+    pub static sys_signame: [*const ::std::os::raw::c_char; 32usize];
+}
+extern "C" {
+    pub static sys_siglist: [*const ::std::os::raw::c_char; 32usize];
+}
+extern "C" {
+    pub fn raise(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn bsd_signal(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>,
+    ) -> ::std::option::Option<
+        unsafe extern "C" fn(
+            arg1: ::std::os::raw::c_int,
+            arg2: ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>,
+        ),
+    >;
+}
+extern "C" {
+    pub fn kill(arg1: pid_t, arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn killpg(arg1: pid_t, arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn pthread_kill(arg1: pthread_t, arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn pthread_sigmask(
+        arg1: ::std::os::raw::c_int,
+        arg2: *const sigset_t,
+        arg3: *mut sigset_t,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigaction(
+        arg1: ::std::os::raw::c_int,
+        arg2: *const sigaction,
+        arg3: *mut sigaction,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigaddset(arg1: *mut sigset_t, arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigaltstack(arg1: *const stack_t, arg2: *mut stack_t) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigdelset(arg1: *mut sigset_t, arg2: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigemptyset(arg1: *mut sigset_t) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigfillset(arg1: *mut sigset_t) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sighold(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigignore(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn siginterrupt(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigismember(arg1: *const sigset_t, arg2: ::std::os::raw::c_int)
+        -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigpause(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigpending(arg1: *mut sigset_t) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigprocmask(
+        arg1: ::std::os::raw::c_int,
+        arg2: *const sigset_t,
+        arg3: *mut sigset_t,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigrelse(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigset(
+        arg1: ::std::os::raw::c_int,
+        arg2: ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>,
+    ) -> ::std::option::Option<
+        unsafe extern "C" fn(
+            arg1: ::std::os::raw::c_int,
+            arg2: ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>,
+        ),
+    >;
+}
+extern "C" {
+    pub fn sigsuspend(arg1: *const sigset_t) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigwait(
+        arg1: *const sigset_t,
+        arg2: *mut ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn psignal(arg1: ::std::os::raw::c_int, arg2: *const ::std::os::raw::c_char);
+}
+extern "C" {
+    pub fn sigblock(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigsetmask(arg1: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn sigvec(
+        arg1: ::std::os::raw::c_int,
+        arg2: *mut sigvec,
+        arg3: *mut sigvec,
+    ) -> ::std::os::raw::c_int;
+}
+pub type GoInt8 = ::std::os::raw::c_schar;
+pub type GoUint8 = ::std::os::raw::c_uchar;
+pub type GoInt16 = ::std::os::raw::c_short;
+pub type GoUint16 = ::std::os::raw::c_ushort;
+pub type GoInt32 = ::std::os::raw::c_int;
+pub type GoUint32 = ::std::os::raw::c_uint;
+pub type GoInt64 = ::std::os::raw::c_longlong;
+pub type GoUint64 = ::std::os::raw::c_ulonglong;
+pub type GoInt = GoInt64;
+pub type GoUint = GoUint64;
+pub type GoUintptr = usize;
+pub type GoFloat32 = f32;
+pub type GoFloat64 = f64;
+pub type GoComplex64 = __BindgenComplex<f32>;
+pub type GoComplex128 = __BindgenComplex<f64>;
+pub type _check_for_64_bit_pointer_matching_GoInt = [::std::os::raw::c_char; 1usize];
+pub type GoString = _GoString_;
+pub type GoMap = *mut ::std::os::raw::c_void;
+pub type GoChan = *mut ::std::os::raw::c_void;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GoInterface {
+    pub t: *mut ::std::os::raw::c_void,
+    pub v: *mut ::std::os::raw::c_void,
+}
+#[test]
+fn bindgen_test_layout_GoInterface() {
+    const UNINIT: ::std::mem::MaybeUninit<GoInterface> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<GoInterface>(),
+        16usize,
+        concat!("Size of: ", stringify!(GoInterface))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<GoInterface>(),
+        8usize,
+        concat!("Alignment of ", stringify!(GoInterface))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).t) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoInterface),
+            "::",
+            stringify!(t)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).v) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoInterface),
+            "::",
+            stringify!(v)
+        )
+    );
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GoSlice {
+    pub data: *mut ::std::os::raw::c_void,
+    pub len: GoInt,
+    pub cap: GoInt,
+}
+#[test]
+fn bindgen_test_layout_GoSlice() {
+    const UNINIT: ::std::mem::MaybeUninit<GoSlice> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<GoSlice>(),
+        24usize,
+        concat!("Size of: ", stringify!(GoSlice))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<GoSlice>(),
+        8usize,
+        concat!("Alignment of ", stringify!(GoSlice))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).data) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoSlice),
+            "::",
+            stringify!(data)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).len) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoSlice),
+            "::",
+            stringify!(len)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).cap) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(GoSlice),
+            "::",
+            stringify!(cap)
+        )
+    );
+}
+extern "C" {
+    pub fn KD_Initialize(
+        relayURL: *mut ::std::os::raw::c_char,
+        inbound: ::std::os::raw::c_int,
+        outbound: ::std::os::raw::c_int,
+        toMount: *mut ::std::os::raw::c_char,
+        toSave: *mut ::std::os::raw::c_char,
+        useFUSE: ::std::os::raw::c_int,
+        prefetchOnOpen: ::std::os::raw::c_int,
+        pushOnWrite: ::std::os::raw::c_int,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_CreateRoom() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_JoinRoom() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_Connect() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_AddPeerFingerprint(fp: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetPeerFingerprint() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_AddFile(path: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_AddFileAs(
+        localPath: *mut ::std::os::raw::c_char,
+        remoteName: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_ListFiles() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_PullFile(
+        remote: *mut ::std::os::raw::c_char,
+        local: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_Fingerprint() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_UnmountFilesystem();
+}
+extern "C" {
+    pub fn KD_Disconnect();
+}
+extern "C" {
+    pub fn KD_Stop();
+}
+extern "C" {
+    pub fn KD_CancelDownload(remoteName: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetDownloadProgress(remoteName: *mut ::std::os::raw::c_char)
+        -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_PrintBanner();
+}
+extern "C" {
+    pub fn KD_GetFileCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetFileName(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetLocalFileCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetLocalFileName(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetFileSize(index: ::std::os::raw::c_int) -> ::std::os::raw::c_long;
+}
+extern "C" {
+    pub fn KD_GetFileSizeByName(name: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_long;
+}
+extern "C" {
+    pub fn KD_GetLocalFileRealPath(
+        name: *mut ::std::os::raw::c_char,
+    ) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetConnectionStatus() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SaveFileAt(
+        index: ::std::os::raw::c_int,
+        localPath: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SaveFileByName(
+        name: *mut ::std::os::raw::c_char,
+        localPath: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetLastError() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetLastErrorAndClear() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_PollEvent() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SetupEventCallbacks();
+}
+extern "C" {
+    pub fn KD_SetFUSEMode(useFUSE: ::std::os::raw::c_int);
+}
+extern "C" {
+    pub fn KD_GetFUSEMode() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SetLocalMode(enabled: ::std::os::raw::c_int);
+}
+extern "C" {
+    pub fn KD_GetLocalMode() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetLinkLocalAddress() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SetPeerDirectAddress(addr: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_StartDiscovery();
+}
+extern "C" {
+    pub fn KD_StopDiscovery();
+}
+extern "C" {
+    pub fn KD_GetDiscoveryName() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetDiscoveredPeerCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetDiscoveredPeerName(i: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetDiscoveredPeerAddr(i: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetConnectionMode() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SetStrictMode(enabled: ::std::os::raw::c_int);
+}
+extern "C" {
+    pub fn KD_GetVersion() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetLogPath() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetConfigPath() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetConfig() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SaveConfig(
+        relay: *mut ::std::os::raw::c_char,
+        savePath: *mut ::std::os::raw::c_char,
+        mountPath: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SanitizeLogs(destPath: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_IsIncognito() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SetIncognito(v: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SetPassphraseProtect(v: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_IsPeerAlreadyContact() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_IsPeerPersistent() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetContactCount() -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetContactName(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_GetContactFingerprint(index: ::std::os::raw::c_int) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_AddContact(
+        name: *mut ::std::os::raw::c_char,
+        fingerprint: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_RemoveContact(fingerprint: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_ConnectToContact(fingerprint: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_GetContactOnline(index: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SaveCurrentPeerAsContact(name: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+pub type __builtin_va_list = [__va_list_tag; 1usize];
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct __va_list_tag {
+    pub gp_offset: ::std::os::raw::c_uint,
+    pub fp_offset: ::std::os::raw::c_uint,
+    pub overflow_arg_area: *mut ::std::os::raw::c_void,
+    pub reg_save_area: *mut ::std::os::raw::c_void,
+}
+#[test]
+fn bindgen_test_layout___va_list_tag() {
+    const UNINIT: ::std::mem::MaybeUninit<__va_list_tag> = ::std::mem::MaybeUninit::uninit();
+    let ptr = UNINIT.as_ptr();
+    assert_eq!(
+        ::std::mem::size_of::<__va_list_tag>(),
+        24usize,
+        concat!("Size of: ", stringify!(__va_list_tag))
+    );
+    assert_eq!(
+        ::std::mem::align_of::<__va_list_tag>(),
+        8usize,
+        concat!("Alignment of ", stringify!(__va_list_tag))
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).gp_offset) as usize - ptr as usize },
+        0usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(gp_offset)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).fp_offset) as usize - ptr as usize },
+        4usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(fp_offset)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).overflow_arg_area) as usize - ptr as usize },
+        8usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(overflow_arg_area)
+        )
+    );
+    assert_eq!(
+        unsafe { ::std::ptr::addr_of!((*ptr).reg_save_area) as usize - ptr as usize },
+        16usize,
+        concat!(
+            "Offset of field: ",
+            stringify!(__va_list_tag),
+            "::",
+            stringify!(reg_save_area)
+        )
+    );
+}

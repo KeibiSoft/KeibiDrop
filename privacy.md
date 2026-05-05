@@ -45,7 +45,13 @@ If you don't like this, you're free to run your own relay or use a trusted one o
 
 ---
 
-## 4. Local Logging (Client)
+## 4. Local Identity Storage
+
+By default, KeibiDrop saves your identity and contacts encrypted on disk (`~/.config/keibidrop/`). The encryption key is stored in your OS keychain when available, or in a local file on headless systems. Incognito mode writes nothing to disk. See `Security.md` for details.
+
+---
+
+## 5. Local Logging (Client)
 
 The client writes debug logs to a file on your machine. These logs stay on your device and are never sent to KeibiSoft automatically.
 
@@ -53,7 +59,7 @@ If you run into a crash or bug, we may ask you to send the log file to help us i
 
 ---
 
-## 4b. Diagnostic Logs (Mobile)
+## 5b. Diagnostic Logs (Mobile)
 
 The mobile app writes debug logs to a local file on your device. These logs are never sent automatically.
 
@@ -69,19 +75,19 @@ Log files are rotated automatically and kept under 5 MB.
 
 ---
 
-## 5. Third-Party Libraries
+## 6. Third-Party Libraries
 
 **KEIBI**DROP may include open source dependencies. Each may have its own license or policy.
 
 ---
 
-## 6. Community Contributions
+## 7. Community Contributions
 
 If you submit code to the **KEIBI**DROP project, your contributions will be public and attributed to your GitHub account (or whichever identity you use). See `CONTRIBUTING.md` for more info.
 
 ---
 
-## 7. Changes
+## 8. Changes
 
 This privacy policy may change. If it does, we’ll update this file. We will not send an email, a push notification, or a man with a clipboard.
 

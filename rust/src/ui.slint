@@ -6,6 +6,13 @@ export struct DiscoveredPeer {
     addr: string,
 }
 
+// Saved contact from address book
+export struct ContactInfo {
+    name: string,
+    fingerprint: string,
+    online: bool,
+}
+
 // File info model for dynamic file list
 export struct FileInfo {
     name: string,
@@ -781,7 +788,31 @@ export component MainWindow inherits Window {
     callback save_all_pressed();
     callback exit_pressed();
     callback open_fuse_install();
+    callback save_settings(string, string, string); // relay, save_path, mount_path
+
+    // Contacts / Identity
+    in-out property<[ContactInfo]> contacts: [];
+    in-out property<bool> incognito_mode: false;
+    in-out property<bool> peer_is_persistent: false;
+    in-out property<bool> peer_already_saved: false;
+    in-out property<bool> save_contact_visible: false;
+    in-out property<string> save_contact_name: "";
+    callback incognito_mode_toggled(bool);
+    callback connect_to_contact(int);
+    callback save_peer_as_contact(string);
+    callback remove_contact(int);
+
+    // Identity hardening (passphrase protect)
+    in property<bool> passphrase_protect_enabled: false;
+    callback passphrase_protect_toggled(bool);
+
     in-out property<bool> help_visible: false;
+    in-out property<bool> settings_visible: false;
+    in property<string> cfg_relay: "";
+    in property<string> cfg_save_path: "";
+    in property<string> cfg_mount_path: "";
+    in property<string> cfg_log_file: "";
+    in property<string> cfg_config_path: "";
 
     // Saved files browser (Screen 3)
     in-out property<[FileInfo]> saved_file_list: [];
@@ -899,7 +930,7 @@ export component MainWindow inherits Window {
             sectionNumber: 2;
         }
 
-        // Connect button (replaces separate Create/Join — role determined by fingerprint tiebreaker)
+        // Connect button (replaces separate Create/Join, role determined by fingerprint tiebreaker)
         if !root.local_mode: PillButton {
             x: 868px;
             y: 459px;
@@ -940,7 +971,7 @@ export component MainWindow inherits Window {
         // FUSE toggle
         Rectangle {
             x: 868px;
-            y: 560px;
+            y: 525px;
             width: 260px;
             height: root.fuse_available ? 24px : 40px;
             visible: root.room_action == 0;
@@ -990,7 +1021,7 @@ export component MainWindow inherits Window {
         // Local mode toggle
         Rectangle {
             x: 868px;
-            y: 592px;
+            y: 557px;  // 525+32 = same 32px gap as original
             width: 260px;
             height: 24px;
             visible: root.room_action == 0;
@@ -1085,6 +1116,148 @@ export component MainWindow inherits Window {
             text: "Searching for devices...";
             color: #666;
             font-size: 12px;
+        }
+
+        // Incognito toggle (below local mode toggle)
+        Rectangle {
+            x: 868px;
+            y: 605px;
+            width: 260px;
+            height: 24px;
+            visible: root.room_action == 0 && !root.local_mode;
+
+            ToggleSwitch {
+                x: 0;
+                y: 2px;
+                checked: root.incognito_mode;
+                enabled: root.room_action == 0;
+                toggled(val) => {
+                    root.incognito_mode = val;
+                    root.incognito-mode-toggled(val);
+                }
+            }
+
+            Text {
+                x: 44px;
+                y: 0;
+                height: 24px;
+                text: root.incognito_mode
+                    ? "Incognito (new keys each session)"
+                    : "Persistent identity (contacts work)";
+                color: root.incognito_mode ? #d97706 : #ccc;
+                font-size: 12px;
+                wrap: word-wrap;
+                vertical-alignment: center;
+            }
+        }
+
+        // Saved contacts panel (only when contacts exist, not connecting, not local mode)
+        if root.contacts.length > 0 && root.room_action == 0 && !root.local_mode: Rectangle {
+            x: 314px;
+            y: 656px;
+            width: 517px;
+            height: Math.min(root.contacts.length * 36 + 28, 136) * 1px;
+            border-radius: 7px;
+            background: #262626;
+            border-width: 0.5px;
+            border-color: rgba(255,255,255,0.10);
+            clip: true;
+
+            Text {
+                x: 12px;
+                y: 6px;
+                text: "Contacts (" + root.contacts.length + ")";
+                color: #888;
+                font-size: 11px;
+                font-weight: 600;
+            }
+
+            ScrollView {
+                x: 12px;
+                y: 24px;
+                width: parent.width - 24px;
+                height: parent.height - 28px;
+                viewport-height: root.contacts.length * 36px;
+
+                for contact[idx] in root.contacts: Rectangle {
+                    x: 0;
+                    y: idx * 36px;
+                    width: parent.width - 12px;
+                    height: 32px;
+                    border-radius: 6px;
+                    background: connect-touch.has-hover ? #333 : transparent;
+
+                    Rectangle {
+                        x: 0;
+                        y: (parent.height - 8px) / 2;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: contact.online ? #22c55e : #555;
+                    }
+
+                    Text {
+                        x: 16px;
+                        y: 0;
+                        height: parent.height;
+                        text: contact.name;
+                        color: white;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        x: 200px;
+                        y: 0;
+                        width: 200px;
+                        height: parent.height;
+                        text: contact.fingerprint;
+                        color: #555;
+                        font-size: 11px;
+                        font-family: "monospace";
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    // Connect link
+                    Rectangle {
+                        x: parent.width - 100px;
+                        y: 0;
+                        width: 50px;
+                        height: parent.height;
+                        Text {
+                            text: "Connect";
+                            color: connect-touch.has-hover ? #60a5fa : #3b82f6;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        connect-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.connect-to-contact(idx); }
+                        }
+                    }
+
+                    // Delete link
+                    Rectangle {
+                        x: parent.width - 30px;
+                        y: 0;
+                        width: 24px;
+                        height: parent.height;
+                        Text {
+                            text: "X";
+                            color: delete-touch.has-hover ? #ef4444 : #666;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        delete-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.remove-contact(idx); }
+                        }
+                    }
+                }
+            }
         }
 
         // Status message (only when NOT connecting; connecting state uses connect_status above)
@@ -1182,9 +1355,18 @@ export component MainWindow inherits Window {
             }
         }
 
+        // Save Peer button (no-FUSE, aligned under gear/?/X)
+        if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: SmallOutlineButton {
+            x: 973px;
+            y: 125px;
+            width: 88px;
+            text: "Save Peer";
+            clicked => { root.save_contact_visible = true; }
+        }
+
         // Save All button - aligned with global top-right buttons
         SmallOutlineButton {
-            x: 668px;
+            x: 700px;
             y: 93px;
             width: 70px;
             text: "Save All";
@@ -1387,9 +1569,14 @@ export component MainWindow inherits Window {
 
             HorizontalLayout {
                 alignment: center;
+                spacing: 12px;
                 OutlineButton {
                     text: "Open Folder";
                     clicked => { root.open_folder_pressed() }
+                }
+                if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: OutlineButton {
+                    text: "Save Peer";
+                    clicked => { root.save_contact_visible = true; }
                 }
             }
         }
@@ -1537,9 +1724,9 @@ export component MainWindow inherits Window {
 
     // ============ GLOBAL: Top-right buttons (all screens) ============
 
-    // Disconnect button (only when connected)
+    // Disconnect button (only when connected, not on Screen 3)
     if root.current_screen == 1 || root.current_screen == 2: SmallOutlineButton {
-        x: 746px;
+        x: 780px;
         y: 93px;
         width: 78px;
         text: "Disconnect";
@@ -1548,33 +1735,145 @@ export component MainWindow inherits Window {
 
     // Saved Files button (Screen 0 only, when files exist)
     if root.current_screen == 0 && root.saved_file_list.length > 0: SmallOutlineButton {
-        x: 728px;
+        x: 780px;
         y: 93px;
-        width: 96px;
+        width: 80px;
         text: "Saved Files";
         clicked => { root.view_saved_files() }
     }
 
     SmallOutlineButton {
-        x: 925px;
+        x: 868px;
         y: 93px;
         width: 96px;
         text: "Save Log";
         clicked => { root.export_logs_pressed() }
     }
+    Rectangle {
+        x: 973px;
+        y: 93px;
+        width: 24px;
+        height: 24px;
+        border-radius: 7px;
+        border-width: 0.5px;
+        border-color: gear-touch.pressed ? #ccc : gear-touch.has-hover ? #bbb : white;
+        background: transparent;
+        animate border-color { duration: 150ms; }
+
+        Text {
+            text: "\u{2699}";
+            color: gear-touch.pressed ? #bbb : gear-touch.has-hover ? #aaa : #888;
+            font-size: 14px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            y: 4.5px;
+        }
+        gear-touch := TouchArea {
+            clicked => { root.settings_visible = !root.settings_visible; }
+        }
+    }
     SmallOutlineButton {
-        x: 1029px;
+        x: 1005px;
         y: 93px;
         width: 24px;
         text: "?";
         clicked => { root.help_visible = !root.help_visible; }
     }
     SmallOutlineButton {
-        x: 1061px;
+        x: 1037px;
         y: 93px;
         width: 24px;
         text: "X";
         clicked => { root.exit_pressed() }
+    }
+
+    // Settings panel overlay
+    if root.settings_visible: Rectangle {
+        x: (parent.width - 500px) / 2;
+        y: (parent.height - 480px) / 2;
+        width: 500px;
+        height: 480px;
+        border-radius: 10px;
+        background: #2a2a2a;
+        border-width: 1px;
+        border-color: rgba(255,255,255,0.12);
+
+        SmallOutlineButton {
+            x: parent.width - 36px;
+            y: 8px;
+            width: 24px;
+            text: "X";
+            clicked => { root.settings_visible = false; }
+        }
+
+        Text {
+            x: 20px;
+            y: 16px;
+            text: "Settings";
+            color: white;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        // Relay
+        Text { x: 20px; y: 56px; text: "Relay server"; color: #888; font-size: 12px; }
+        Text { x: 20px; y: 72px; text: root.cfg_relay; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+
+        // Save path
+        Text { x: 20px; y: 100px; text: "Save path (received files)"; color: #888; font-size: 12px; }
+        Text { x: 20px; y: 116px; text: root.cfg_save_path; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+
+        // Mount path
+        Text { x: 20px; y: 144px; text: "Mount path (FUSE virtual folder)"; color: #888; font-size: 12px; }
+        Text { x: 20px; y: 160px; text: root.cfg_mount_path; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+
+        // Log file
+        Text { x: 20px; y: 188px; text: "Log file"; color: #888; font-size: 12px; }
+        Text { x: 20px; y: 204px; text: root.cfg_log_file; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+
+        // Config file
+        Text { x: 20px; y: 232px; text: "Config file"; color: #888; font-size: 12px; }
+        Text { x: 20px; y: 248px; text: root.cfg_config_path; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+
+        // Version
+        Text { x: 20px; y: 284px; text: "Version"; color: #888; font-size: 12px; }
+        Text { x: 20px; y: 300px; text: root.version_text; color: #ccc; font-size: 13px; }
+
+        // Passphrase protect toggle
+        Rectangle {
+            x: 20px;
+            y: 334px;
+            width: parent.width - 40px;
+            height: 24px;
+
+            ToggleSwitch {
+                x: 0;
+                y: 2px;
+                checked: root.passphrase_protect_enabled;
+                toggled(val) => {
+                    root.passphrase-protect-toggled(val);
+                }
+            }
+
+            Text {
+                x: 44px;
+                y: 0;
+                height: 24px;
+                text: "Encrypt identity with a passphrase";
+                color: #ccc;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+
+        // Hint
+        Text {
+            x: 20px;
+            y: parent.height - 32px;
+            text: "Edit ~/.config/keibidrop/config.toml to change settings. Restart to apply.";
+            color: #555;
+            font-size: 11px;
+        }
     }
 
     // Help panel overlay
@@ -1614,10 +1913,10 @@ export component MainWindow inherits Window {
             color: #bbb;
             font-size: 13px;
             text: root.current_screen == 0
-                ? "1. Copy your code and send it to your peer\n2. Paste their code and press Add\n3. Press Connect (both peers)\n4. Drag files to share, or toggle Virtual Folder\n\nLocal Network: Toggle to find devices on the same WiFi automatically.\n\nVirtual Folder (FUSE): Your peer's files appear as a folder on your machine. Requires macFUSE (macOS), fuse3 (Linux), or WinFsp (Windows).\n\nDirect Transfer: Drag files in and your peer saves what they need."
+                ? "1. Copy your code and send it to your peer\n2. Paste their code and press Add\n3. Press Connect (both peers)\n4. Drag files to share, or toggle Virtual Folder\n\nSaved contacts appear below. Click to reconnect.\n\nIncognito: new keys each session. Peer can't save you.\n\nLocal Network: find devices on the same WiFi.\n\nVirtual Folder: requires macFUSE, fuse3, or WinFsp."
                 : root.current_screen == 1
-                ? "Connected in Direct Transfer mode.\n\nDrag files onto the window or press Add File.\nYour peer sees your files and can save them.\nClick Save to download a peer's file.\n\nFiles are encrypted end-to-end.\nThe connection badge shows how you're connected:\n  LAN = same network (fastest)\n  Direct P2P = over the internet\n  Via Relay = through an encrypted bridge"
-                : "Connected in Virtual Folder mode.\n\nYour peer's files appear in the mounted folder.\nOpen it with any app: Finder, Terminal, git, etc.\nFiles stream on access, you don't need to wait for the full download.\n\nChanges sync both ways.\nDrag files into the folder to share them with your peer.";
+                ? "Drag files onto the window or press Add File.\nYour peer sees your files and can save them.\nClick Save to download a peer's file.\n\nSave Peer adds them to your contacts.\n\nConnection badge:\n  LAN = same network\n  Direct P2P = over the internet\n  Via Relay = through encrypted bridge"
+                : "Your peer's files appear in the mounted folder.\nOpen with any app: Finder, Terminal, git, etc.\nFiles stream on access, no full download needed.\n\nDrop files into the folder to share.\nSave Peer adds them to your contacts.";
         }
 
         Text {
@@ -1626,6 +1925,87 @@ export component MainWindow inherits Window {
             text: "keibidrop.com";
             color: #555;
             font-size: 11px;
+        }
+    }
+
+    // Save Contact dialog overlay
+    if root.save_contact_visible: Rectangle {
+        x: (parent.width - 360px) / 2;
+        y: (parent.height - 160px) / 2;
+        width: 360px;
+        height: 160px;
+        border-radius: 10px;
+        background: #2a2a2a;
+        border-width: 1px;
+        border-color: rgba(255,255,255,0.12);
+
+        SmallOutlineButton {
+            x: parent.width - 36px;
+            y: 8px;
+            width: 24px;
+            text: "X";
+            clicked => { root.save_contact_visible = false; root.save_contact_name = ""; }
+        }
+
+        Text {
+            x: 20px;
+            y: 16px;
+            text: "Save Peer as Contact";
+            color: white;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        Text {
+            x: 20px;
+            y: 50px;
+            text: "Name";
+            color: #888;
+            font-size: 12px;
+        }
+
+        Rectangle {
+            x: 20px;
+            y: 68px;
+            width: parent.width - 40px;
+            height: 32px;
+            border-radius: 6px;
+            border-width: 0.5px;
+            border-color: rgba(255,255,255,0.3);
+            background: #333;
+
+            contact-name-input := TextInput {
+                x: 8px;
+                width: parent.width - 16px;
+                height: parent.height;
+                color: white;
+                font-size: 13px;
+                vertical-alignment: center;
+                single-line: true;
+                text <=> root.save_contact_name;
+                accepted => {
+                    if root.save_contact_name != "" {
+                        root.save-peer-as-contact(root.save_contact_name);
+                        root.save_contact_visible = false;
+                        root.save_contact_name = "";
+                    }
+                }
+            }
+        }
+
+        PillButton {
+            x: 20px;
+            y: 114px;
+            width: parent.width - 40px;
+            text: "Save";
+            enabled: root.save_contact_name != "";
+            clicked => {
+                if root.save_contact_name != "" {
+                    root.save-peer-as-contact(root.save_contact_name);
+                    root.save_contact_visible = false;
+                    root.save_contact_name = "";
+                }
+            }
         }
     }
 

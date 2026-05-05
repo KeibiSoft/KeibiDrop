@@ -28,6 +28,7 @@ type PeerHandshakeMessage struct {
 	EncSeeds         map[string]string `json:"enc_seeds"`   // optional for key encapsulation
 	OutboundPort     int               `json:"port"`
 	SupportedCiphers []string          `json:"supported_ciphers"` // cipher negotiation
+	Persistent       bool              `json:"persistent,omitempty"`
 }
 
 // PerformInboundHandshake handles the first plaintext connection from Bob to Alice.
@@ -98,6 +99,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 
 	session.PeerPubKeys = peerKeys
 	session.PeerPort = msg.OutboundPort
+	session.PeerIsPersistent = msg.Persistent
 
 	seed1tr, ok := msg.EncSeeds["x25519"]
 	if !ok {
@@ -317,6 +319,7 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 		EncSeeds:         encSeeds,
 		OutboundPort:     session.DefaultInboundPort,
 		SupportedCiphers: supportedStr,
+		Persistent:       session.OwnIsPersistent,
 	}
 
 	// Write handshake: 4-byte big-endian length prefix, then JSON payload.
@@ -452,7 +455,7 @@ func DialWithStableAddr(network, addr string, timeout time.Duration, logger *slo
 	destIP := net.ParseIP(host)
 	isIPv6Dest := destIP != nil && destIP.To4() == nil
 
-	if isIPv6Dest {
+	if isIPv6Dest && !destIP.IsLoopback() {
 		localIP := findStableIPv6()
 		if localIP != "" {
 			dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(localIP)}

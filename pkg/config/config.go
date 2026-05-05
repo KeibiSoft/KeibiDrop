@@ -19,20 +19,23 @@ import (
 // Config holds all user-configurable settings.
 // Resolution order: built-in defaults → config file → environment variables.
 type Config struct {
-	Relay          string `toml:"relay"`
-	SavePath       string `toml:"save_path"`
-	MountPath      string `toml:"mount_path"`
-	LogFile        string `toml:"log_file"`
-	InboundPort    int    `toml:"inbound_port"`
-	OutboundPort   int    `toml:"outbound_port"`
-	BridgeAddr     string `toml:"bridge_addr"` // TCP bridge relay address
-	StrictMode     bool   `toml:"strict_mode"` // Disable data relay fallback
-	NoFUSE         bool   `toml:"no_fuse"`
-	PrefetchOnOpen bool   `toml:"prefetch_on_open"`
-	PushOnWrite    bool   `toml:"push_on_write"`
+	Relay             string `toml:"relay"`
+	SavePath          string `toml:"save_path"`
+	MountPath         string `toml:"mount_path"`
+	LogFile           string `toml:"log_file"`
+	InboundPort       int    `toml:"inbound_port"`
+	OutboundPort      int    `toml:"outbound_port"`
+	BridgeAddr        string `toml:"bridge_addr"` // TCP bridge relay address
+	StrictMode        bool   `toml:"strict_mode"` // Disable data relay fallback
+	NoFUSE            bool   `toml:"no_fuse"`
+	Incognito         bool   `toml:"incognito"`
+	PrefetchOnOpen    bool   `toml:"prefetch_on_open"`
+	PushOnWrite       bool   `toml:"push_on_write"`
+	PassphraseProtect bool   `toml:"passphrase_protect"` // opt into Tier 2 (Argon2id passphrase) for identity at-rest encryption
 }
 
 const DefaultRelay = "https://keibidroprelay.keibisoft.com/"
+const DefaultBridge = "bridge.keibisoft.com:26600"
 
 // DefaultConfig returns platform-aware defaults.
 func DefaultConfig() Config {
@@ -43,6 +46,7 @@ func DefaultConfig() Config {
 		MountPath:    filepath.Join(home, "KeibiDrop", "Mount"),
 		InboundPort:  InboundPort,
 		OutboundPort: OutboundPort,
+		BridgeAddr:   DefaultBridge,
 	}
 	switch runtime.GOOS {
 	case "darwin":
@@ -54,7 +58,11 @@ func DefaultConfig() Config {
 }
 
 // ConfigDir returns the config directory path (~/.config/keibidrop/).
+// Override with KEIBIDROP_CONFIG_DIR for testing multiple instances on one machine.
 func ConfigDir() string {
+	if d := os.Getenv("KEIBIDROP_CONFIG_DIR"); d != "" {
+		return d
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "keibidrop")
 }
@@ -80,6 +88,23 @@ func Load() (Config, error) {
 	// Environment variables override config file.
 	// Support both KEIBIDROP_ prefix (Rust UI / CLI) and KD_ prefix (kd daemon).
 	applyEnvOverrides(&cfg)
+
+	// Resolve relative paths to absolute.
+	if cfg.SavePath != "" {
+		if abs, err := filepath.Abs(cfg.SavePath); err == nil {
+			cfg.SavePath = abs
+		}
+	}
+	if cfg.MountPath != "" {
+		if abs, err := filepath.Abs(cfg.MountPath); err == nil {
+			cfg.MountPath = abs
+		}
+	}
+	if cfg.LogFile != "" {
+		if abs, err := filepath.Abs(cfg.LogFile); err == nil {
+			cfg.LogFile = abs
+		}
+	}
 
 	return cfg, nil
 }
@@ -144,6 +169,49 @@ no_fuse = %v
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }
 
+// Save writes the config to the standard path (~/.config/keibidrop/config.toml).
+func Save(cfg Config) error {
+	path := ConfigPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil { // #nosec G301
+		return err
+	}
+	content := fmt.Sprintf(`# KeibiDrop configuration
+# https://keibidrop.com
+
+# Relay server for peer discovery.
+relay = %q
+
+# Where received files are saved.
+save_path = %q
+
+# FUSE mount point (if FUSE is enabled).
+mount_path = %q
+
+# Log file path.
+log_file = %q
+
+# TCP ports for peer connections (must be in 26000-27000 range).
+inbound_port = %d
+outbound_port = %d
+
+# Bridge relay address for fallback when direct P2P fails.
+bridge_addr = %q
+
+# Set to true to disable FUSE.
+no_fuse = %v
+
+# Set to true to disable data relay fallback (direct connections only).
+strict_mode = %v
+
+# Set to true to force ephemeral keys every session (no persistent identity).
+incognito = %v
+`, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
+		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
+		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito)
+
+	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
+}
+
 func applyEnvOverrides(cfg *Config) {
 	if v := envFirst("KEIBIDROP_RELAY", "KD_RELAY"); v != "" {
 		cfg.Relay = v
@@ -175,6 +243,12 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := envFirst("NO_FUSE", "KD_NO_FUSE"); v != "" {
 		cfg.NoFUSE = true
+	}
+	if v := envFirst("KEIBIDROP_INCOGNITO", "KD_INCOGNITO"); v != "" {
+		cfg.Incognito = true
+	}
+	if v := envFirst("KEIBIDROP_PASSPHRASE_PROTECT", "KD_PASSPHRASE_PROTECT"); v != "" {
+		cfg.PassphraseProtect = true
 	}
 	if v := envFirst("KEIBIDROP_PREFETCH_ON_OPEN", "PREFETCH_ON_OPEN_ENV"); v != "" {
 		cfg.PrefetchOnOpen = true

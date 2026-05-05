@@ -20,8 +20,10 @@ static void ignore_sigpipe(void) {}
 import "C"
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -143,6 +145,37 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	kd = instance
 	kd.Cancel = c
 	kd.OnEvent = pushEvent
+
+	if !cfg.Incognito {
+		opts := common.EnableOpts{
+			PassphraseProtect: cfg.PassphraseProtect,
+		}
+		if cfg.PassphraseProtect && os.Getenv("KD_PASSPHRASE_FROM_STDIN") == "1" {
+			opts.PassphraseProvider = readPassphraseFromStdin
+		} else if cfg.PassphraseProtect {
+			// Passphrase required but stdin sentinel not set; disable tier 2 for
+			// this session. Rust UI will provide a dedicated FFI in a later release.
+			opts.PassphraseProtect = false
+		}
+		if err := kd.EnablePersistentIdentity(config.ConfigDir(), opts); err != nil {
+			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
+			pushEvent("identity_error:" + err.Error())
+		}
+	} else {
+		kd.Incognito = true
+	}
+
+	if kd.BridgeAddr == "" && cfg.BridgeAddr != "" {
+		kd.BridgeAddr = cfg.BridgeAddr
+	}
+	if cfg.StrictMode {
+		kd.StrictMode = true
+	}
+
+	if !kd.Incognito && kd.Identity != nil && kd.AddressBook != nil && kd.AddressBook.Count() > 0 {
+		go kd.StartPresenceHeartbeat(ctx)
+	}
+
 	go kd.Run()
 	return 0
 }
@@ -733,6 +766,36 @@ func KD_GetConfigPath() *C.char {
 	return C.CString(config.ConfigPath())
 }
 
+//export KD_GetConfig
+func KD_GetConfig() *C.char {
+	cfg, _ := config.Load()
+	return C.CString(fmt.Sprintf(
+		"relay=%s\nsave_path=%s\nmount_path=%s\nlog_file=%s\ninbound_port=%d\noutbound_port=%d\nbridge_addr=%s\nno_fuse=%v\nstrict_mode=%v",
+		cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
+		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
+		cfg.NoFUSE, cfg.StrictMode,
+	))
+}
+
+//export KD_SaveConfig
+func KD_SaveConfig(relay, savePath, mountPath *C.char) C.int {
+	cfg, _ := config.Load()
+	if r := C.GoString(relay); r != "" {
+		cfg.Relay = r
+	}
+	if s := C.GoString(savePath); s != "" {
+		cfg.SavePath = s
+	}
+	if m := C.GoString(mountPath); m != "" {
+		cfg.MountPath = m
+	}
+	if err := config.Save(cfg); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
 //export KD_SanitizeLogs
 func KD_SanitizeLogs(destPath *C.char) C.int {
 	cfg, _ := config.Load()
@@ -743,6 +806,193 @@ func KD_SanitizeLogs(destPath *C.char) C.int {
 	}
 	dest := C.GoString(destPath)
 	if err := common.SanitizeLogsToFile(logPath, dest); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+// readPassphraseFromStdin reads a single line from stdin for use as a passphrase.
+// Only called when KD_PASSPHRASE_FROM_STDIN=1 is set. Uses a line reader so
+// passphrases containing spaces are preserved verbatim (fmt.Fscan would
+// truncate at the first whitespace).
+func readPassphraseFromStdin() (string, error) {
+	r := bufio.NewReader(os.Stdin)
+	line, err := r.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("read passphrase from stdin: %w", err)
+	}
+	pp := strings.TrimRight(line, "\r\n")
+	if pp == "" {
+		return "", fmt.Errorf("empty passphrase from stdin")
+	}
+	return pp, nil
+}
+
+// ========== IDENTITY & CONTACTS ==========
+
+//export KD_IsIncognito
+func KD_IsIncognito() C.int {
+	if kd == nil || kd.Incognito {
+		return 1
+	}
+	return 0
+}
+
+//export KD_SetIncognito
+func KD_SetIncognito(v C.int) *C.char {
+	if kd == nil {
+		return C.CString("")
+	}
+	newFP, err := kd.ToggleIncognito(v != 0, config.ConfigDir())
+	if err != nil {
+		setLastError(err)
+	}
+	if newFP == "" {
+		ptr := KD_Fingerprint()
+		return ptr
+	}
+	return C.CString(newFP)
+}
+
+//export KD_SetPassphraseProtect
+func KD_SetPassphraseProtect(v C.int) *C.char {
+	cfg, _ := config.Load()
+	cfg.PassphraseProtect = (v != 0)
+	if err := config.Save(cfg); err != nil {
+		setLastError(err)
+		return C.CString("")
+	}
+	return C.CString("passphrase-protect toggled")
+}
+
+//export KD_IsPeerAlreadyContact
+func KD_IsPeerAlreadyContact() C.int {
+	if kd == nil || kd.AddressBook == nil {
+		return 0
+	}
+	fp, err := kd.GetPeerFingerprint()
+	if err != nil || fp == "" || fp == "TOFU" {
+		return 0
+	}
+	if kd.AddressBook.Lookup(fp) != nil {
+		return 1
+	}
+	return 0
+}
+
+//export KD_IsPeerPersistent
+func KD_IsPeerPersistent() C.int {
+	if kd == nil || !kd.IsPeerPersistent() {
+		return 0
+	}
+	return 1
+}
+
+//export KD_GetContactCount
+func KD_GetContactCount() C.int {
+	if kd == nil || kd.AddressBook == nil {
+		return 0
+	}
+	return C.int(kd.AddressBook.Count())
+}
+
+//export KD_GetContactName
+func KD_GetContactName(index C.int) *C.char {
+	if kd == nil || kd.AddressBook == nil {
+		return C.CString("")
+	}
+	contacts := kd.AddressBook.List()
+	i := int(index)
+	if i < 0 || i >= len(contacts) {
+		return C.CString("")
+	}
+	return C.CString(contacts[i].Name)
+}
+
+//export KD_GetContactFingerprint
+func KD_GetContactFingerprint(index C.int) *C.char {
+	if kd == nil || kd.AddressBook == nil {
+		return C.CString("")
+	}
+	contacts := kd.AddressBook.List()
+	i := int(index)
+	if i < 0 || i >= len(contacts) {
+		return C.CString("")
+	}
+	return C.CString(contacts[i].Fingerprint)
+}
+
+//export KD_AddContact
+func KD_AddContact(name, fingerprint *C.char) C.int {
+	if kd == nil || kd.AddressBook == nil {
+		setLastError(fmt.Errorf("no address book"))
+		return -1
+	}
+	if err := kd.AddressBook.Add(C.GoString(name), C.GoString(fingerprint)); err != nil {
+		setLastError(err)
+		return -1
+	}
+	if err := kd.AddressBook.Save(); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+//export KD_RemoveContact
+func KD_RemoveContact(fingerprint *C.char) C.int {
+	if kd == nil || kd.AddressBook == nil {
+		setLastError(fmt.Errorf("no address book"))
+		return -1
+	}
+	if err := kd.AddressBook.Remove(C.GoString(fingerprint)); err != nil {
+		setLastError(err)
+		return -1
+	}
+	if err := kd.AddressBook.Save(); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+//export KD_ConnectToContact
+func KD_ConnectToContact(fingerprint *C.char) C.int {
+	if kd == nil {
+		setLastError(fmt.Errorf("not initialized"))
+		return -1
+	}
+	if err := kd.ConnectToContact(C.GoString(fingerprint)); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+//export KD_GetContactOnline
+func KD_GetContactOnline(index C.int) C.int {
+	if kd == nil || kd.AddressBook == nil {
+		return 0
+	}
+	contacts := kd.AddressBook.List()
+	i := int(index)
+	if i < 0 || i >= len(contacts) {
+		return 0
+	}
+	if kd.CheckContactPresence(contacts[i].Fingerprint) {
+		return 1
+	}
+	return 0
+}
+
+//export KD_SaveCurrentPeerAsContact
+func KD_SaveCurrentPeerAsContact(name *C.char) C.int {
+	if kd == nil {
+		setLastError(fmt.Errorf("not initialized"))
+		return -1
+	}
+	if err := kd.SaveCurrentPeerAsContact(C.GoString(name)); err != nil {
 		setLastError(err)
 		return -1
 	}
