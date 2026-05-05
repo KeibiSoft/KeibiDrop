@@ -549,10 +549,12 @@ component FileCard inherits Rectangle {
     in property <bool> saved: false;
     in property <bool> is-local: false;
     in property <bool> paused: false;
+    in property <bool> browse-mode: false;
 
     callback save-clicked;
     callback open-clicked;
     callback pause-clicked;
+    callback delete-clicked;
 
     width: 250px;
     height: 180px;
@@ -646,15 +648,15 @@ component FileCard inherits Rectangle {
         height: 28px;
         spacing: 8px;
 
-        // Checkbox - shows progress spinner while downloading
-        if root.downloading: SmallSpinner {
+        // Checkbox - shows progress spinner while downloading (hidden in browse mode)
+        if root.downloading && !root.browse-mode: SmallSpinner {
             width: 20px;
             height: 20px;
             active: true;
             accent: #22c55e;
             progress: root.progress;
         }
-        if !root.downloading: Rectangle {
+        if !root.downloading && !root.browse-mode: Rectangle {
             width: 20px;
             height: 20px;
             border-width: 1px;
@@ -697,6 +699,12 @@ component FileCard inherits Rectangle {
                 else if (root.is-local || root.saved) { root.open-clicked(); }
                 else { root.save-clicked(); }
             }
+        }
+
+        if root.browse-mode: SmallOutlineButton {
+            width: 24px;
+            text: "X";
+            clicked => { root.delete-clicked(); }
         }
     }
 }
@@ -805,6 +813,16 @@ export component MainWindow inherits Window {
     in property<string> cfg_mount_path: "";
     in property<string> cfg_log_file: "";
     in property<string> cfg_config_path: "";
+
+    // Saved files browser (Screen 3)
+    in-out property<[FileInfo]> saved_file_list: [];
+    in-out property<string> saved_current_folder: "";
+    callback view_saved_files();
+    callback back_to_connect();
+    callback delete_file(string);
+    callback open_save_folder();
+    callback navigate_saved_folder(string);
+    callback back_saved_folder();
 
     // Opaque backdrop - ensures full coverage on Wayland where
     // Window.background alone may not fill the compositor surface.
@@ -1564,15 +1582,164 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ============ SCREEN 3: Saved Files Browser ============
+    if current_screen == 3: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #1f1f1f;
+        property <float> alpha: 0.0;
+        opacity: alpha;
+        animate opacity { duration: 300ms; easing: ease-out; }
+        init => { alpha = 1.0; }
+
+        // Logo top-left
+        KeibiDropLogo {
+            x: 115px;
+            y: 24px;
+        }
+
+        // Header row: back + title + count left, utilities right
+        OutlineButton {
+            x: 40px;
+            y: 88px;
+            width: 90px;
+            accent: true;
+            text: "\u{2190} Back";
+            clicked => { root.back_to_connect() }
+        }
+
+        Text {
+            x: 140px;
+            y: 91px;
+            text: "Saved Files";
+            color: white;
+            font-size: 23px;
+            font-weight: 700;
+        }
+
+        Text {
+            x: 305px;
+            y: 99px;
+            text: root.saved_file_list.length == 1
+                ? "1 file"
+                : root.saved_file_list.length + " files";
+            color: #9ca3af;
+            font-size: 13px;
+        }
+
+        SmallOutlineButton {
+            x: 832px;
+            y: 93px;
+            width: 85px;
+            text: "Open Folder";
+            clicked => { root.open_save_folder() }
+        }
+
+        // Folder navigation (inside saved files)
+        if root.saved_current_folder != "": Rectangle {
+            y: 130px;
+            x: 40px;
+            width: 200px;
+            height: 30px;
+
+            Text {
+                text: "< Back";
+                color: #60a5fa;
+                font-size: 14px;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.back_saved_folder() }
+            }
+        }
+
+        if root.saved_current_folder != "": Text {
+            y: 132px;
+            x: 250px;
+            width: parent.width - 260px;
+            text: root.saved_current_folder;
+            color: #9ca3af;
+            font-size: 13px;
+            overflow: elide;
+        }
+
+        // Empty state
+        if root.saved_file_list.length == 0: VerticalLayout {
+            alignment: center;
+            spacing: 8px;
+
+            Text {
+                text: "No saved files";
+                color: #9ca3af;
+                font-size: 16px;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: "Files you download will appear here";
+                color: #555;
+                font-size: 13px;
+                horizontal-alignment: center;
+            }
+        }
+
+        // File grid (same column layout as Screen 1)
+        if root.saved_file_list.length > 0: ScrollView {
+            y: root.saved_current_folder != "" ? 165px : 130px;
+            width: parent.width;
+            height: parent.height - (root.saved_current_folder != "" ? 165px : 130px);
+            viewport-height: Math.ceil(root.saved_file_list.length / 4) * 200px;
+
+            for file[idx] in root.saved_file_list: FileCard {
+                x: 40px + mod(idx, 4) * 265px;
+                y: floor(idx / 4) * 200px;
+                filename: file.name;
+                file-type: file.file-type;
+                size-bytes: file.size-bytes;
+                downloading: false;
+                uploading: false;
+                progress: 1.0;
+                saved: true;
+                is-local: true;
+                paused: false;
+                browse-mode: true;
+                open-clicked => {
+                    if file.file-type == "folder" {
+                        root.navigate_saved_folder(file.name)
+                    } else {
+                        root.open_file(file.name)
+                    }
+                }
+                save-clicked => {
+                    if file.file-type == "folder" {
+                        root.navigate_saved_folder(file.name)
+                    }
+                }
+                delete-clicked => { root.delete_file(file.name) }
+            }
+        }
+    }
+
     // ============ GLOBAL: Top-right buttons (all screens) ============
 
-    // Disconnect button (only when connected)
-    if root.current_screen != 0: SmallOutlineButton {
+    // Disconnect button (only when connected, not on Screen 3)
+    if root.current_screen == 1 || root.current_screen == 2: SmallOutlineButton {
         x: 780px;
         y: 93px;
         width: 78px;
         text: "Disconnect";
         clicked => { root.disconnect_pressed() }
+    }
+
+    // Saved Files button (Screen 0 only, when files exist)
+    if root.current_screen == 0 && root.saved_file_list.length > 0: SmallOutlineButton {
+        x: 780px;
+        y: 93px;
+        width: 80px;
+        text: "Saved Files";
+        clicked => { root.view_saved_files() }
     }
 
     SmallOutlineButton {

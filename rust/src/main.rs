@@ -69,6 +69,101 @@ fn file_type_from_name(name: &str) -> &'static str {
     }
 }
 
+/// Scan the save folder and return a list of FileInfo for the saved files browser.
+fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
+    let base = Path::new(save_path);
+    if !base.exists() {
+        return Vec::new();
+    }
+
+    let all_files = walkdir(base);
+    let mut files: Vec<FileInfo> = Vec::new();
+    let mut seen_folders: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
+    for path in &all_files {
+        let rel = match path.strip_prefix(base) {
+            Ok(r) => r.to_string_lossy().to_string(),
+            Err(_) => continue,
+        };
+
+        if is_hidden_file(&rel) {
+            continue;
+        }
+
+        let relative = if current_folder.is_empty() {
+            rel.clone()
+        } else if let Some(stripped) = rel.strip_prefix(&format!("{}/", current_folder)) {
+            stripped.to_string()
+        } else {
+            continue;
+        };
+
+        if let Some(slash_pos) = relative.find('/') {
+            let subfolder = &relative[..slash_pos];
+            let full_folder = if current_folder.is_empty() {
+                subfolder.to_string()
+            } else {
+                format!("{}/{}", current_folder, subfolder)
+            };
+            if seen_folders.insert(full_folder.clone()) {
+                let child_count = all_files
+                    .iter()
+                    .filter(|p| {
+                        p.strip_prefix(base)
+                            .map(|r| {
+                                r.to_string_lossy()
+                                    .starts_with(&format!("{}/", full_folder))
+                            })
+                            .unwrap_or(false)
+                    })
+                    .count();
+                files.push(FileInfo {
+                    name: slint::SharedString::from(subfolder),
+                    size_bytes: child_count as i32,
+                    downloading: false,
+                    uploading: false,
+                    progress: 1.0,
+                    saved: true,
+                    paused: false,
+                    file_type: slint::SharedString::from("folder"),
+                    is_local: true,
+                });
+            }
+            continue;
+        }
+
+        let size = std::fs::metadata(path)
+            .map(|m| m.len() as i32)
+            .unwrap_or(0);
+        let ftype = file_type_from_name(&relative);
+
+        files.push(FileInfo {
+            name: slint::SharedString::from(rel.as_str()),
+            size_bytes: size,
+            downloading: false,
+            uploading: false,
+            progress: 1.0,
+            saved: true,
+            paused: false,
+            file_type: slint::SharedString::from(ftype),
+            is_local: true,
+        });
+    }
+
+    files
+}
+
+/// Push a scanned file list to the saved_file_list UI property.
+/// Called from Slint callbacks (already on the event loop).
+fn refresh_saved_files(weak: &slint::Weak<MainWindow>, save_path: &str, folder: &str) {
+    let files = scan_save_folder(save_path, folder);
+    if let Some(app) = weak.upgrade() {
+        let model = std::rc::Rc::new(slint::VecModel::from(files));
+        app.set_saved_file_list(slint::ModelRc::from(model));
+    }
+}
+
 /// Start a background thread that polls Go for file list updates and pushes to Slint model.
 fn start_file_watcher(
     running: Arc<AtomicBool>,
@@ -1469,6 +1564,113 @@ fn main() {
             let _ = Command::new("xdg-open").arg("https://github.com/libfuse/libfuse").spawn();
             #[cfg(target_os = "windows")]
             let _ = Command::new("explorer").arg("https://winfsp.dev/").spawn();
+        });
+
+        // ── Saved Files Browser (Screen 3) ───────────────────────
+        let saved_current_folder: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+
+        // Scan on startup to show "Saved Files" button if files exist
+        {
+            let files = scan_save_folder(&to_save, "");
+            let model = std::rc::Rc::new(slint::VecModel::from(files));
+            app.set_saved_file_list(slint::ModelRc::from(model));
+        }
+
+        // Navigate to Screen 3
+        let weak_view = app.as_weak();
+        let save_path_view = to_save.clone();
+        let saved_folder_view = saved_current_folder.clone();
+        app.on_view_saved_files(move || {
+            saved_folder_view.lock().unwrap().clear();
+            if let Some(app) = weak_view.upgrade() {
+                app.set_saved_current_folder(slint::SharedString::default());
+                let files = scan_save_folder(&save_path_view, "");
+                let model = std::rc::Rc::new(slint::VecModel::from(files));
+                app.set_saved_file_list(slint::ModelRc::from(model));
+                app.set_current_screen(3);
+            }
+        });
+
+        // Back to connect screen
+        let weak_back = app.as_weak();
+        app.on_back_to_connect(move || {
+            if let Some(app) = weak_back.upgrade() {
+                app.set_current_screen(0);
+            }
+        });
+
+        // Delete a saved file
+        let weak_del = app.as_weak();
+        let save_path_del = to_save.clone();
+        let saved_folder_del = saved_current_folder.clone();
+        let weak_toast_del = app.as_weak();
+        app.on_delete_file(move |filename| {
+            let name = filename.to_string();
+            let folder = saved_folder_del.lock().unwrap().clone();
+            let full_path = format!("{}/{}", save_path_del, name);
+
+            let ok = if Path::new(&full_path).is_dir() {
+                std::fs::remove_dir_all(&full_path).is_ok()
+            } else {
+                std::fs::remove_file(&full_path).is_ok()
+            };
+
+            if !ok {
+                eprintln!("Failed to delete: {}", full_path);
+                show_toast(&weak_toast_del, "Could not delete file");
+            }
+
+            refresh_saved_files(&weak_del, &save_path_del, &folder);
+        });
+
+        // Open save folder in system file manager
+        let save_path_open_sf = to_save.clone();
+        app.on_open_save_folder(move || {
+            let _ = std::fs::create_dir_all(&save_path_open_sf);
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg(&save_path_open_sf).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(&save_path_open_sf).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("explorer").arg(&save_path_open_sf).spawn();
+        });
+
+        // Navigate into a subfolder in saved files
+        let weak_nav = app.as_weak();
+        let save_path_nav = to_save.clone();
+        let saved_folder_nav = saved_current_folder.clone();
+        app.on_navigate_saved_folder(move |name| {
+            let mut f = saved_folder_nav.lock().unwrap();
+            if f.is_empty() {
+                *f = name.to_string();
+            } else {
+                *f = format!("{}/{}", *f, name);
+            }
+            let folder = f.clone();
+            drop(f);
+            if let Some(app) = weak_nav.upgrade() {
+                app.set_saved_current_folder(slint::SharedString::from(folder.as_str()));
+            }
+            refresh_saved_files(&weak_nav, &save_path_nav, &folder);
+        });
+
+        // Navigate back one level in saved files
+        let weak_back_sf = app.as_weak();
+        let save_path_back_sf = to_save.clone();
+        let saved_folder_back = saved_current_folder.clone();
+        app.on_back_saved_folder(move || {
+            let mut f = saved_folder_back.lock().unwrap();
+            if let Some(pos) = f.rfind('/') {
+                *f = f[..pos].to_string();
+            } else {
+                *f = String::new();
+            }
+            let folder = f.clone();
+            drop(f);
+            if let Some(app) = weak_back_sf.upgrade() {
+                app.set_saved_current_folder(slint::SharedString::from(folder.as_str()));
+            }
+            refresh_saved_files(&weak_back_sf, &save_path_back_sf, &folder);
         });
 
         // Drag-and-drop: intercept winit events for OS file drops
