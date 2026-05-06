@@ -743,7 +743,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 		}
 
 		if needBridge {
-			outConn, err := kd.dialBridge(logger)
+			outConn, err := kd.dialBridge(logger, 0)
 			if err != nil {
 				return fmt.Errorf("bridge dial (outbound): %w", err)
 			}
@@ -752,7 +752,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 				return fmt.Errorf("bridge outbound handshake: %w", err)
 			}
 
-			inConn, err := kd.dialBridge(logger)
+			inConn, err := kd.dialBridge(logger, 1)
 			if err != nil {
 				return fmt.Errorf("bridge dial (inbound): %w", err)
 			}
@@ -958,7 +958,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 			// Bridge fallback.
 			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
 
-			inConn, err := kd.dialBridge(logger)
+			inConn, err := kd.dialBridge(logger, 0)
 			if err != nil {
 				return fmt.Errorf("bridge dial (inbound): %w", err)
 			}
@@ -967,7 +967,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
 
-			outConn, err := kd.dialBridge(logger)
+			outConn, err := kd.dialBridge(logger, 1)
 			if err != nil {
 				return fmt.Errorf("bridge dial (outbound): %w", err)
 			}

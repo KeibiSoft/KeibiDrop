@@ -111,15 +111,6 @@ func (api *API) Initialize(logFilePath string, relayURL string, inboundPort int,
 	return nil
 }
 
-// SetBridgeAddr overrides the default bridge relay address.
-func (api *API) SetBridgeAddr(addr string) {
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if api.kd != nil {
-		api.kd.BridgeAddr = addr
-	}
-}
-
 // Start runs the KeibiDrop event loop. Blocks until Stop is called.
 // Call this from a background thread on mobile.
 func (api *API) Start() error {
@@ -702,6 +693,17 @@ func (api *API) SetStrictMode(enabled bool) {
 	if api.kd != nil {
 		api.kd.StrictMode = enabled
 	}
+}
+
+// SetBridgeAddr sets a TCP bridge relay address for NAT traversal fallback.
+func (api *API) SetBridgeAddr(addr string) error {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	api.kd.BridgeAddr = addr
+	return nil
 }
 
 // RelayEndpoint returns the relay URL string.
