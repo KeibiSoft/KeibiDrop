@@ -1,51 +1,37 @@
-```
-██╗  ██╗███████╗██╗██████╗ ██╗██████╗ ██████╗  ██████╗ ██████╗
-██║ ██╔╝██╔════╝██║██╔══██╗██║██╔══██╗██╔══██╗██╔═══██╗██╔══██╗
-█████╔╝ █████╗  ██║██████╔╝██║██║  ██║██████╔╝██║   ██║██████╔╝
-██╔═██╗ ██╔══╝  ██║██╔══██╗██║██║  ██║██╔══██╗██║   ██║██╔═══╝
-██║  ██╗███████╗██║██████╔╝██║██████╔╝██║  ██║╚██████╔╝██║
-╚═╝  ╚═╝╚══════╝╚═╝╚═════╝ ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="logo.svg">
+    <source media="(prefers-color-scheme: light)" srcset="logo-dark.svg">
+    <img alt="KeibiDrop" src="logo-dark.svg" width="400">
+  </picture>
+</p>
 
-[**KEIBI**DROP](https://keibidrop.com) Peer-to-peer encrypted file sharing. Post-quantum. Open source.
+<p align="center">
+  <a href="https://keibidrop.com">Website</a> · <a href="https://github.com/KeibiSoft/KeibiDrop/releases">Download</a> · <a href="https://keibisoft.com/blog.html">Blog</a>
+</p>
 
-**Your relay can't read your files.**
+Share files between devices. They show up as a folder on your computer.
 
-Files transfer directly between machines when possible, or through an encrypted relay when firewalls block direct connections. Either way, only you and your peer can read the data. The relay sees only encrypted bytes it can't decrypt.
-
-45 MB/s through relay. 442 MB/s on LAN. Zero configuration for end users.
+- End-to-end encrypted (post-quantum). The relay cannot read your files.
+- On the same network, devices find each other automatically. One click to connect.
+- Over the internet, exchange fingerprints once. Save contacts for future sessions.
+- Peer files appear as a native folder (FUSE). Open, edit, git clone, anything.
+- Works through firewalls. Automatic fallback to an encrypted relay.
+- macOS, Linux, Windows. iOS and Android coming soon.
+- Open source (MPL-2.0).
 
 <p align="center">
   <img src="demo-photos/initial-screen.png" alt="KeibiDrop connection screen" width="700">
 </p>
-
-### Two modes in action
 
 | Direct Transfer | Virtual Folder (FUSE) |
 |:---:|:---:|
 | <img src="demo-photos/connected-in-direct-transfer-mode.png" alt="Direct transfer mode" width="450"> | <img src="demo-photos/connected-as-virtual-filesystem.png" alt="Virtual filesystem mode" width="450"> |
 | Drag files in. Your peer saves what they need. | Peer files appear as a folder. Open in any app. |
 
-### It behaves like a real folder
-
 | Finder | Terminal (git) |
 |:---:|:---:|
 | <img src="demo-photos/as-filesystem-accessible-from-finder.png" alt="Shared files in Finder" width="450"> | <img src="demo-photos/as-filesystem-git-ops-work.png" alt="Git on FUSE mount" width="450"> |
-
-<p align="center">
-  <img src="demo-photos/direct-peer-browse-git-folder.png" alt="Browsing peer folders" width="700">
-  <br>
-  <em>Browsing a git repository received from a peer</em>
-</p>
-
-| | KeibiDrop | SCP | Blip | AirDrop |
-|--|--|--|--|--|
-| E2E encryption | Post-quantum (ML-KEM + X25519) | SSH | TLS only (relay can read) | TLS |
-| Cross-platform | macOS, Linux, Windows | All | All | Apple only |
-| No accounts | Yes | N/A | Email required | Apple ID |
-| Virtual filesystem | FUSE mount | No | No | No |
-| Open source | MPL-2.0 | Yes | No | No |
-| Works through firewalls | Encrypted relay fallback | Port forwarding | Relay (can read data) | Local only |
 
 ---
 
@@ -71,7 +57,7 @@ sudo dpkg -i keibidrop_amd64.deb
 choco install keibidrop
 ```
 
-Or download the `.zip` from [GitHub Releases](https://github.com/KeibiSoft/KeibiDrop/releases).
+Or download from [GitHub Releases](https://github.com/KeibiSoft/KeibiDrop/releases).
 
 ### Build from source
 
@@ -87,13 +73,21 @@ make build-rust     # Desktop UI (needs Rust + Slint)
 
 ## Quick start
 
+**Same network (LAN):**
+1. Both peers launch KeibiDrop
+2. Devices discover each other automatically
+3. One click to connect
+4. Share files
+
+**Over the internet:**
 1. Both peers launch KeibiDrop
 2. Copy your fingerprint and send it to your peer (Signal, Telegram, anything)
-3. Paste each other's fingerprints
-4. One peer creates a room, the other joins
-5. Share files
+3. Paste each other's fingerprints and connect
+4. Share files
 
-It works through firewalls automatically. If direct IPv6 fails, KeibiDrop falls back to an encrypted relay. No port forwarding, no router configuration.
+Save a peer as a contact to skip the fingerprint exchange next time. On the same network, saved contacts connect with one click using pseudonyms.
+
+It works through firewalls automatically. If direct connection fails, KeibiDrop falls back to an encrypted relay. No port forwarding, no router configuration.
 
 ---
 
@@ -106,11 +100,21 @@ It works through firewalls automatically. If direct IPv6 fails, KeibiDrop falls 
 | Setup | Nothing extra | Install [macFUSE](https://macfuse.github.io/), [fuse3](https://github.com/libfuse/libfuse), or [WinFsp](https://winfsp.dev/) |
 | Best for | Sending large files | Working on shared files, git repos |
 
-FUSE lets you `cp`, `cat`, or even `git clone` files directly from your peer's machine.
+---
+
+## How it works
+
+1. Peers exchange fingerprints (or discover each other on LAN)
+2. KeibiDrop finds the fastest path: LAN, direct IPv6, or encrypted relay
+3. Files transfer over an encrypted channel the relay cannot read
+4. Keys rotate automatically for forward secrecy
+
+The encryption is post-quantum (ML-KEM-1024 + X25519) with AES-256-GCM or ChaCha20-Poly1305. Full protocol details in [Security.md](./Security.md).
 
 ---
 
-## Three interfaces
+<details>
+<summary><strong>Three interfaces</strong></summary>
 
 **Desktop UI** (Rust/Slint)
 ```bash
@@ -122,7 +126,7 @@ FUSE lets you `cp`, `cat`, or even `git clone` files directly from your peer's m
 ./keibidrop-cli
 ```
 
-**Agent CLI** (for scripts and AI agents)
+**Agent CLI** (for scripts and AI agents, all output is JSON)
 ```bash
 ./kd start                           # Start daemon
 ./kd show fingerprint                # Get your fingerprint
@@ -133,47 +137,38 @@ FUSE lets you `cp`, `cat`, or even `git clone` files directly from your peer's m
 ./kd pull file.zip ~/Downloads/      # Download a file
 ```
 
-All output is JSON for programmatic use. See [docs/kd-agent-guide.md](./docs/kd-agent-guide.md).
+See [docs/kd-agent-guide.md](./docs/kd-agent-guide.md).
 
----
+</details>
 
-## How it works
-
-1. Peers exchange fingerprints out-of-band (the fingerprint IS the security)
-2. KeibiDrop registers encrypted connection info to a signaling relay
-3. Both peers try direct IPv6 connection first
-4. If direct fails (firewall, NAT), both connect outbound to an encrypted relay
-5. Post-quantum handshake: ML-KEM-1024 + X25519 hybrid key exchange
-6. Authenticated encryption: AES-256-GCM or ChaCha20-Poly1305
-7. gRPC streams files over the encrypted channel
-8. Re-keying after 1M messages or 1 GB for forward secrecy
-
-The relay is a blind pipe. It forwards encrypted bytes between peers using `io.Copy`. It cannot decrypt, inspect, or modify the data. If the relay is compromised, the attacker gets an encrypted byte stream they can't read.
-
----
-
-## Configuration
+<details>
+<summary><strong>Configuration</strong></summary>
 
 KeibiDrop reads `~/.config/keibidrop/config.toml`. Environment variables override the config.
 
 | Setting | Env var | Default |
 |--|--|--|
 | Relay server | `KD_RELAY` | `https://keibidroprelay.keibisoft.com/` |
-| Bridge relay | `KD_BRIDGE` | (auto-fallback when direct fails) |
+| Bridge relay | `KD_BRIDGE` | `bridge.keibisoft.com:26600` |
 | Save folder | `KD_SAVE_PATH` | `~/KeibiDrop/Received/` |
 | FUSE mount | `KD_MOUNT_PATH` | `~/KeibiDrop/Mount/` |
 | Inbound port | `KD_INBOUND_PORT` | 26431 |
 | Disable FUSE | `KD_NO_FUSE` | false |
 
----
+</details>
 
-## Security
+<details>
+<summary><strong>Security</strong></summary>
 
 Post-quantum hybrid key exchange prevents future quantum computers from decrypting recorded traffic. Forward secrecy via periodic re-keying limits exposure if a session key is ever compromised.
 
-Persistent identity is at-rest-encrypted with a per-install random master key stored in the OS keychain by default (macOS Keychain Services, Linux Secret Service, Windows Credential Manager). Headless setups fall back to a `~/.config/keibidrop/.master.key` file with mode 0600. Optional passphrase protection via Argon2id (or PBKDF2-SHA256 under `-tags fips`) is available for users who back up `~/.config/` to the cloud. See [Security.md](./Security.md#at-rest-identity-encryption).
+By default, identity is ephemeral: a fresh keypair each session, anonymous, unlinkable. For ease of use, you can save persistent identities encrypted with a per-install master key stored in the OS keychain (macOS Keychain Services, Linux Secret Service, Windows Credential Manager). Headless setups fall back to `~/.config/keibidrop/.master.key` (mode 0600). Optional passphrase protection via Argon2id for users who back up config to the cloud.
 
 Full protocol description: [Security.md](./Security.md)
+
+</details>
+
+---
 
 ## Troubleshooting
 
@@ -197,8 +192,8 @@ Built by [KeibiSoft SRL](https://keibisoft.com).
 
 ## Links
 
-- [**KEIBI**DROP website](https://keibidrop.com) - screenshots, download, overview
-- [Technical deep dive](https://keibisoft.com/tools/keibidrop.html) - architecture, blog series, CLI reference
-- [Blog posts](https://keibisoft.com/blog.html) - 22 posts covering FUSE, crypto, performance, testing
+- [Website](https://keibidrop.com)
+- [Technical deep dive](https://keibisoft.com/tools/keibidrop.html)
+- [Blog posts](https://keibisoft.com/blog.html) (22 posts on FUSE, crypto, performance)
 - [FAQ](https://keibisoft.com/tools/keibidrop-faq.html)
 - [Comparison with alternatives](https://keibisoft.com/tools/keibidrop-vs-alternatives.html)

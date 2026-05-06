@@ -15,6 +15,7 @@ package mobile
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -26,6 +27,8 @@ import (
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
+	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
+
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
 
@@ -39,19 +42,27 @@ type API struct {
 	op               *opState
 	opTimeoutSeconds int
 	savePath         string
+	configDir        string
 
 	// Event channel for health/connection events.
 	eventCh   chan string
 	eventOnce sync.Once
 
 	// File list snapshots (taken by RefreshFileList, read by getters).
-	remoteSnap fileSnapshot
-	localSnap  fileSnapshot
+	remoteSnap  fileSnapshot
+	localSnap   fileSnapshot
+	contactSnap contactSnapshot
 
 	// LAN discovery
 	disc *discovery.Service
 
 	mu sync.Mutex
+}
+
+type contactSnapshot struct {
+	names        []string
+	fingerprints []string
+	online       []bool
 }
 
 // Initialize sets up the KeibiDrop engine. Call once before Start.
@@ -794,6 +805,196 @@ func (api *API) GetDiscoveredPeerAddr(i int) string {
 		return ""
 	}
 	return peers[i].Addr
+}
+
+// --- Identity ---
+
+// GenerateMasterKeyHex generates a random 32-byte master key and returns it
+// as a hex string. The native app should persist this in iOS Keychain or
+// Android Keystore, then pass it back on every launch via EnablePersistentIdentity.
+func GenerateMasterKeyHex() (string, error) {
+	key, err := identity.GenerateMasterKey()
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(key), nil
+}
+
+// EnablePersistentIdentity loads or creates a stable device identity.
+// masterKeyHex is a 64-char hex string (32 bytes) from the platform keychain.
+// Call once after Initialize, before Start.
+func (api *API) EnablePersistentIdentity(configDir string, masterKeyHex string) error {
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	keyBytes, err := hex.DecodeString(masterKeyHex)
+	if err != nil {
+		return fmt.Errorf("invalid master key hex: %w", err)
+	}
+	if len(keyBytes) != 32 {
+		return fmt.Errorf("master key must be 32 bytes, got %d", len(keyBytes))
+	}
+	api.mu.Lock()
+	api.configDir = configDir
+	api.mu.Unlock()
+	return api.kd.EnablePersistentIdentity(configDir, common.EnableOpts{
+		ExternalMaster: keyBytes,
+	})
+}
+
+// ToggleIncognito switches between persistent and ephemeral identity.
+// Returns the new fingerprint string.
+func (api *API) ToggleIncognito(incognito bool) (string, error) {
+	if api.kd == nil {
+		return "", fmt.Errorf("not initialized")
+	}
+	api.mu.Lock()
+	configDir := api.configDir
+	api.mu.Unlock()
+	return api.kd.ToggleIncognito(incognito, configDir)
+}
+
+// IsIncognito returns whether the engine is in incognito mode.
+func (api *API) IsIncognito() bool {
+	if api.kd == nil {
+		return false
+	}
+	return api.kd.Incognito
+}
+
+// IsPeerPersistent returns whether the connected peer has a stable identity.
+func (api *API) IsPeerPersistent() bool {
+	if api.kd == nil {
+		return false
+	}
+	return api.kd.IsPeerPersistent()
+}
+
+// --- Contacts (index-based snapshot, like files) ---
+
+// RefreshContacts takes a snapshot of the address book for index-based access.
+func (api *API) RefreshContacts() {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if api.kd == nil || api.kd.AddressBook == nil {
+		api.contactSnap = contactSnapshot{}
+		return
+	}
+	contacts := api.kd.AddressBook.List()
+	snap := contactSnapshot{
+		names:        make([]string, len(contacts)),
+		fingerprints: make([]string, len(contacts)),
+		online:       make([]bool, len(contacts)),
+	}
+	for i, c := range contacts {
+		snap.names[i] = c.Name
+		snap.fingerprints[i] = c.Fingerprint
+		snap.online[i] = api.kd.CheckContactPresence(c.Fingerprint)
+	}
+	api.contactSnap = snap
+}
+
+// GetContactCount returns the number of contacts in the last snapshot.
+func (api *API) GetContactCount() int {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	return len(api.contactSnap.names)
+}
+
+// GetContactName returns the name of the contact at index i.
+func (api *API) GetContactName(i int) string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if i < 0 || i >= len(api.contactSnap.names) {
+		return ""
+	}
+	return api.contactSnap.names[i]
+}
+
+// GetContactFingerprint returns the fingerprint of the contact at index i.
+func (api *API) GetContactFingerprint(i int) string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if i < 0 || i >= len(api.contactSnap.fingerprints) {
+		return ""
+	}
+	return api.contactSnap.fingerprints[i]
+}
+
+// IsContactOnline returns whether the contact at index i is online.
+func (api *API) IsContactOnline(i int) bool {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if i < 0 || i >= len(api.contactSnap.online) {
+		return false
+	}
+	return api.contactSnap.online[i]
+}
+
+// AddContact adds a new contact by name and fingerprint.
+func (api *API) AddContact(name string, fingerprint string) error {
+	if api.kd == nil || api.kd.AddressBook == nil {
+		return fmt.Errorf("no address book loaded")
+	}
+	if err := api.kd.AddressBook.Add(name, fingerprint); err != nil {
+		return err
+	}
+	return api.kd.AddressBook.Save()
+}
+
+// RemoveContact removes a contact by fingerprint.
+func (api *API) RemoveContact(fingerprint string) error {
+	if api.kd == nil || api.kd.AddressBook == nil {
+		return fmt.Errorf("no address book loaded")
+	}
+	if err := api.kd.AddressBook.Remove(fingerprint); err != nil {
+		return err
+	}
+	return api.kd.AddressBook.Save()
+}
+
+// ConnectToContactAsync starts connecting to a saved contact in the background.
+// Poll GetOpStatus() to check progress.
+func (api *API) ConnectToContactAsync(fingerprint string) error {
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	if api.op == nil {
+		api.op = newOpState()
+	}
+	status, _ := api.op.get()
+	if status == OpStatusRunning {
+		return fmt.Errorf("operation already in progress")
+	}
+	api.op.set(OpStatusRunning, "connecting to contact")
+	go func() {
+		if err := api.kd.ConnectToContact(fingerprint); err != nil {
+			api.op.set(OpStatusFailed, err.Error())
+			return
+		}
+		api.op.set(OpStatusSucceeded, "connected")
+	}()
+	return nil
+}
+
+// SaveCurrentPeerAsContact saves the connected peer as a named contact.
+func (api *API) SaveCurrentPeerAsContact(name string) error {
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	return api.kd.SaveCurrentPeerAsContact(name)
+}
+
+// IsPeerAlreadyContact returns whether the connected peer is already in the address book.
+func (api *API) IsPeerAlreadyContact() bool {
+	if api.kd == nil || api.kd.AddressBook == nil {
+		return false
+	}
+	fp, err := api.kd.GetPeerFingerprint()
+	if err != nil || fp == "" {
+		return false
+	}
+	return api.kd.AddressBook.Lookup(fp) != nil
 }
 
 // FormatFileSize returns a human-readable file size string.
