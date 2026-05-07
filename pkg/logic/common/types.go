@@ -34,9 +34,11 @@ type KeibiDrop struct {
 	relayClient  *http.Client
 	RelayEndoint *url.URL
 
-	Identity    *identity.DeviceIdentity
-	AddressBook *identity.AddressBook
-	Incognito   bool
+	Identity       *identity.DeviceIdentity
+	AddressBook    *identity.AddressBook
+	Incognito      bool
+	identityOpts   EnableOpts
+	identityConfig string
 
 	IsFUSE         bool
 	IsLocalMode    bool
@@ -198,6 +200,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 type EnableOpts struct {
 	PassphraseProtect  bool
 	PassphraseProvider func() (string, error)
+	ExternalMaster     []byte // 32-byte key from mobile bridge (iOS Keychain / Android Keystore)
 }
 
 // EnablePersistentIdentity replaces ephemeral keys with a stable device identity.
@@ -211,6 +214,7 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 		ConfigDir:          configDir,
 		PassphraseProtect:  opts.PassphraseProtect,
 		PassphraseProvider: opts.PassphraseProvider,
+		ExternalMaster:     opts.ExternalMaster,
 	})
 	if err != nil {
 		return fmt.Errorf("init key source: %w", err)
@@ -238,6 +242,8 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 	kd.Identity = id
 	kd.AddressBook = ab
 	kd.session = sess
+	kd.identityOpts = opts
+	kd.identityConfig = configDir
 
 	kd.refreshSession = func() *session.Session {
 		s, err := session.InitSessionWithKeys(kd.logger, id.Keys, outPort, inPort)
@@ -284,7 +290,7 @@ func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, 
 	}
 
 	kd.Incognito = false
-	if err := kd.EnablePersistentIdentity(configDir, EnableOpts{}); err != nil {
+	if err := kd.EnablePersistentIdentity(configDir, kd.identityOpts); err != nil {
 		kd.logger.Warn("Failed to restore persistent identity", "error", err)
 		fp := ""
 		if kd.session != nil {

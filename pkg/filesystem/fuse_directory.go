@@ -1,3 +1,5 @@
+//go:build !android
+
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 //

@@ -247,10 +247,17 @@ run-ios-sim: build-ios
 	xcrun simctl install $(SIM_ID) ios/build/Build/Products/Debug-iphonesimulator/KeibiDrop.app
 	xcrun simctl launch $(SIM_ID) com.keibisoft.keibidrop
 
-# Build + run on Android emulator (requires Android SDK + emulator running)
-run-android-emu: build-android
-	cd android && ./gradlew assembleDebug
+restart-ios:
+	xcrun simctl launch --terminate-running-process booted com.keibisoft.keibidrop
+
+# Build + run on Android device/emulator (requires Android SDK + device connected)
+run-android: build-android
+	cd android && JAVA_HOME="$(shell /usr/libexec/java_home -v 21 2>/dev/null || echo '/Applications/Android Studio.app/Contents/jbr/Contents/Home')" ./gradlew assembleDebug
 	adb install android/app/build/outputs/apk/debug/app-debug.apk
+	adb shell am start -n com.keibisoft.keibidrop/.MainActivity
+
+restart-android:
+	adb shell am force-stop com.keibisoft.keibidrop
 	adb shell am start -n com.keibisoft.keibidrop/.MainActivity
 
 clean: clean-dist
