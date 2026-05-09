@@ -48,11 +48,10 @@ type Service struct {
 	port   int
 	logger *slog.Logger
 
-	mu       sync.RWMutex
-	peers    map[string]*Peer // keyed by addr
-	cancel   context.CancelFunc
-	running  bool
-	mdnsConn *net.UDPConn
+	mu      sync.RWMutex
+	peers   map[string]*Peer // keyed by addr
+	cancel  context.CancelFunc
+	running bool
 }
 
 // New creates a discovery service with a random two-word name.

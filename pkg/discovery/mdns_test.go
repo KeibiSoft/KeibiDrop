@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package discovery
 
@@ -237,7 +240,9 @@ func TestMDNSProcessResponse_ExtractPeer(t *testing.T) {
 	}
 
 	candidates := make(map[string]*mdnsCandidate)
-	allRecords := append(parsed.Answers, parsed.Additional...)
+	var allRecords []dnsRecord
+	allRecords = append(allRecords, parsed.Answers...)
+	allRecords = append(allRecords, parsed.Additional...)
 	for _, r := range allRecords {
 		switch r.Type {
 		case dnsTypePTR:

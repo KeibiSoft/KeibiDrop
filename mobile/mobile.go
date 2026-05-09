@@ -462,7 +462,10 @@ func isInternalFile(name string) bool {
 		strings.Contains(name, ".fseventsd") ||
 		strings.Contains(name, ".fseventuuid") ||
 		strings.Contains(name, ".DS_Store") ||
-		strings.Contains(name, ".kdbitmap")
+		strings.Contains(name, ".kdbitmap") ||
+		strings.Contains(name, ".Trash") ||
+		strings.Contains(name, ".trash") ||
+		strings.Contains(name, ".Trashes")
 }
 
 // --- File lists (index-based for gomobile compatibility) ---

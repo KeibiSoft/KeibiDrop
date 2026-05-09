@@ -61,7 +61,8 @@ type ReconnectManager struct {
 	// Control
 	ctx     context.Context
 	cancel  context.CancelFunc
-	stopped atomic.Bool // prevents new loops after Stop()
+	stopped atomic.Bool
+	done    chan struct{}
 }
 
 // NewReconnectManager creates a new reconnection manager with default settings.
@@ -123,7 +124,11 @@ func (r *ReconnectManager) OnDisconnect() {
 	}
 
 	r.ctx, r.cancel = context.WithCancel(context.Background())
-	go r.reconnectLoop()
+	r.done = make(chan struct{})
+	go func() {
+		defer close(r.done)
+		r.reconnectLoop()
+	}()
 }
 
 // Stop halts any ongoing reconnection attempts and prevents new ones.
@@ -134,6 +139,12 @@ func (r *ReconnectManager) Stop() {
 	r.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if r.done != nil {
+		select {
+		case <-r.done:
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 
@@ -183,6 +194,9 @@ func (r *ReconnectManager) reconnectLoop() {
 		case <-time.After(delay):
 		}
 
+		if r.stopped.Load() {
+			return
+		}
 		if err := r.attemptReconnect(); err == nil {
 			r.state.Store(int32(ReconnectStateConnected))
 			r.attempts.Store(0)

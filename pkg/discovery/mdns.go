@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package discovery
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -26,46 +28,36 @@ type mdnsCandidate struct {
 }
 
 func (s *Service) mdnsRun(ctx context.Context) {
+	go s.mdnsRespond(ctx)
+	s.mdnsBrowsePlatform(ctx)
+}
+
+func (s *Service) mdnsRespond(ctx context.Context) {
 	groupAddr, err := net.ResolveUDPAddr("udp4", mdnsAddr)
 	if err != nil {
-		s.logger.Warn("mDNS: failed to resolve multicast addr", "error", err)
 		return
 	}
 
 	listenConn, err := net.ListenMulticastUDP("udp4", nil, groupAddr)
 	if err != nil {
-		s.logger.Warn("mDNS: failed to join multicast group", "error", err)
+		s.logger.Warn("mDNS: respond: failed to join multicast", "error", err)
 		return
 	}
-
-	s.mu.Lock()
-	s.mdnsConn = listenConn
-	s.mu.Unlock()
-
+	defer listenConn.Close()
 	_ = listenConn.SetReadBuffer(mdnsMaxPacket * 4)
 
 	sendConn, err := net.DialUDP("udp4", nil, groupAddr)
 	if err != nil {
-		s.logger.Warn("mDNS: failed to open send socket", "error", err)
 		listenConn.Close()
 		return
 	}
 	defer sendConn.Close()
-	defer listenConn.Close()
 
 	hostname := mdnsHostname()
 	ourIPs := mdnsOurIPs()
-	candidates := make(map[string]*mdnsCandidate)
-
 	responsePacket, _ := buildServiceResponse(s.name, hostname, uint16(s.port), firstIPv4(ourIPs), mdnsTTL)
 
-	queryPacket, _ := buildPTRQuery(mdnsService)
-	_, _ = sendConn.Write(queryPacket)
-
-	ticker := time.NewTicker(mdnsQueryInterval)
-	defer ticker.Stop()
-
-	s.logger.Info("mDNS started", "hostname", hostname, "ips", fmt.Sprint(ourIPs))
+	s.logger.Info("mDNS responder started", "hostname", hostname)
 
 	buf := make([]byte, mdnsMaxPacket)
 	for {
@@ -76,17 +68,12 @@ func (s *Service) mdnsRun(ctx context.Context) {
 				_, _ = sendConn.Write(goodbyePacket)
 			}
 			return
-		case <-ticker.C:
-			_, _ = sendConn.Write(queryPacket)
 		default:
 		}
 
-		_ = listenConn.SetReadDeadline(time.Now().Add(1 * time.Second))
+		_ = listenConn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		n, src, readErr := listenConn.ReadFromUDP(buf)
 		if readErr != nil {
-			if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
-				continue
-			}
 			continue
 		}
 
@@ -95,69 +82,8 @@ func (s *Service) mdnsRun(ctx context.Context) {
 			continue
 		}
 
-		isQuery := msg.Header.Flags&dnsFlagQR == 0
-
-		if isQuery {
-			if !isFromSelf(src, ourIPs) && hasKeibidropQuestion(msg) && responsePacket != nil {
-				_, _ = sendConn.Write(responsePacket)
-			}
-			continue
-		}
-
-		allRecords := append(msg.Answers, msg.Additional...)
-		for _, r := range allRecords {
-			switch r.Type {
-			case dnsTypePTR:
-				if !strings.HasSuffix(r.PtrName, mdnsService) {
-					continue
-				}
-				instanceName := strings.TrimSuffix(r.PtrName, "."+mdnsService)
-				if instanceName == s.name {
-					continue
-				}
-				if r.TTL == 0 {
-					s.removePeerByName(instanceName)
-					delete(candidates, instanceName)
-					continue
-				}
-				if _, ok := candidates[instanceName]; !ok {
-					candidates[instanceName] = &mdnsCandidate{name: instanceName}
-				}
-
-			case dnsTypeSRV:
-				instanceName := extractInstanceName(r.Name)
-				if instanceName == "" || instanceName == s.name {
-					continue
-				}
-				c, ok := candidates[instanceName]
-				if !ok {
-					c = &mdnsCandidate{name: instanceName}
-					candidates[instanceName] = c
-				}
-				c.port = r.SrvPort
-
-			case dnsTypeA:
-				for _, c := range candidates {
-					if c.ipv4 == nil {
-						c.ipv4 = make(net.IP, len(r.AAddr))
-						copy(c.ipv4, r.AAddr)
-					}
-				}
-			}
-		}
-
-		for name, c := range candidates {
-			if c.port > 0 && c.ipv4 != nil {
-				peerAddr := fmt.Sprintf("%s:%d", c.ipv4.String(), c.port)
-				s.mu.Lock()
-				s.peers[peerAddr] = &Peer{
-					Name:     c.name,
-					Addr:     peerAddr,
-					LastSeen: time.Now(),
-				}
-				s.mu.Unlock()
-				delete(candidates, name)
-			}
+		if msg.Header.Flags&dnsFlagQR == 0 && !isFromSelf(src, ourIPs) && hasKeibidropQuestion(msg) && responsePacket != nil {
+			_, _ = sendConn.Write(responsePacket)
 		}
 	}
 }
@@ -189,17 +115,6 @@ func extractInstanceName(fullName string) string {
 		return strings.TrimSuffix(fullName, suffix)
 	}
 	return ""
-}
-
-func (s *Service) removePeerByName(name string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for addr, p := range s.peers {
-		if p.Name == name {
-			delete(s.peers, addr)
-			return
-		}
-	}
 }
 
 func mdnsHostname() string {
