@@ -395,8 +395,11 @@ func (api *API) SaveFile(remoteName string) (string, error) {
 	api.kd.SyncTracker.RemoteFilesMu.RUnlock()
 
 	if info, statErr := os.Stat(localPath); statErr == nil {
-		if expectedSize > 0 && uint64(info.Size()) == expectedSize {
-			// Already have the full file, no need to re-download.
+		bitmapExists := false
+		if _, bmErr := os.Stat(localPath + ".kdbitmap"); bmErr == nil {
+			bitmapExists = true
+		}
+		if expectedSize > 0 && uint64(info.Size()) == expectedSize && !bitmapExists {
 			return localPath, nil
 		}
 	}
