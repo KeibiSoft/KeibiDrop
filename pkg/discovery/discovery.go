@@ -48,10 +48,11 @@ type Service struct {
 	port   int
 	logger *slog.Logger
 
-	mu      sync.RWMutex
-	peers   map[string]*Peer // keyed by addr
-	cancel  context.CancelFunc
-	running bool
+	mu       sync.RWMutex
+	peers    map[string]*Peer // keyed by addr
+	cancel   context.CancelFunc
+	running  bool
+	mdnsConn *net.UDPConn
 }
 
 // New creates a discovery service with a random two-word name.
@@ -79,6 +80,7 @@ func (s *Service) Start() error {
 	go s.advertise(ctx)
 	go s.listen(ctx)
 	go s.cleanup(ctx)
+	go s.mdnsRun(ctx)
 
 	s.logger.Info("Discovery started", "name", s.name, "port", s.port)
 	return nil
