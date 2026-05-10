@@ -17,17 +17,18 @@ import (
 )
 
 // bridgeRoomToken computes a deterministic 32-byte room token from two
-// fingerprints. Both peers compute the same token regardless of who is
-// the creator vs joiner because the fingerprints are sorted first.
-func bridgeRoomToken(ownFingerprint, peerFingerprint string) [32]byte {
+// fingerprints and a direction label. Both peers compute the same token
+// for a given direction regardless of who is creator vs joiner.
+func bridgeRoomToken(ownFingerprint, peerFingerprint, direction string) [32]byte {
 	fps := []string{ownFingerprint, peerFingerprint}
 	sort.Strings(fps)
-	return sha256.Sum256([]byte(fps[0] + fps[1]))
+	return sha256.Sum256([]byte(fps[0] + fps[1] + direction))
 }
 
-// dialBridge connects to the bridge relay and sends the room token.
-// The bridge pairs connections with matching tokens.
-func (kd *KeibiDrop) dialBridge(logger *slog.Logger) (net.Conn, error) {
+// dialBridgeDir connects to the bridge relay and sends a direction-tagged room token.
+// Using separate tokens for "out" and "in" prevents the bridge from pairing
+// two connections from the same peer (self-pair bug).
+func (kd *KeibiDrop) dialBridgeDir(direction string, logger *slog.Logger) (net.Conn, error) {
 	conn, err := session.DialWithStableAddr("tcp", kd.BridgeAddr, 15*time.Second, logger)
 	if err != nil {
 		return nil, fmt.Errorf("dial bridge: %w", err)
@@ -35,7 +36,7 @@ func (kd *KeibiDrop) dialBridge(logger *slog.Logger) (net.Conn, error) {
 
 	ownFP := kd.session.OwnFingerprint
 	peerFP := kd.session.ExpectedPeerFingerprint
-	token := bridgeRoomToken(ownFP, peerFP)
+	token := bridgeRoomToken(ownFP, peerFP, direction)
 
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := conn.Write(token[:]); err != nil {
@@ -44,6 +45,6 @@ func (kd *KeibiDrop) dialBridge(logger *slog.Logger) (net.Conn, error) {
 	}
 	_ = conn.SetWriteDeadline(time.Time{})
 
-	logger.Info("Bridge room token sent", "token", fmt.Sprintf("%x..%x", token[:4], token[28:]))
+	logger.Info("Bridge room token sent", "dir", direction, "token", fmt.Sprintf("%x..%x", token[:4], token[28:]))
 	return conn, nil
 }

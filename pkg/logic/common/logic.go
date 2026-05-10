@@ -759,7 +759,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 		}
 
 		if needBridge {
-			outConn, err := kd.dialBridge(logger)
+			outConn, err := kd.dialBridgeDir("pair1", logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (outbound): %w", err)
 			}
@@ -768,7 +768,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 				return fmt.Errorf("bridge outbound handshake: %w", err)
 			}
 
-			inConn, err := kd.dialBridge(logger)
+			inConn, err := kd.dialBridgeDir("pair2", logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (inbound): %w", err)
 			}
@@ -897,17 +897,27 @@ func (kd *KeibiDrop) CreateRoom() error {
 	{
 		useBridge := false
 
-		// Set accept deadline: 15s if bridge available (fallback), no deadline otherwise.
-		if kd.BridgeAddr != "" {
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+		if kd.LocalIPv6IP == "" && kd.BridgeAddr != "" {
+			logger.Info("No IPv6, skipping direct P2P, using bridge")
+			useBridge = true
 		}
 
-		conn, acceptErr := kd.listener.Accept()
-		if kd.BridgeAddr != "" {
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
+		if !useBridge {
+			if kd.BridgeAddr != "" {
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+			}
 		}
 
-		if acceptErr != nil {
+		var conn net.Conn
+		var acceptErr error
+		if !useBridge {
+			conn, acceptErr = kd.listener.Accept()
+			if kd.BridgeAddr != "" {
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
+			}
+		}
+
+		if !useBridge && acceptErr != nil {
 			if kd.BridgeAddr != "" {
 				logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
 				useBridge = true
@@ -974,7 +984,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 			// Bridge fallback.
 			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
 
-			inConn, err := kd.dialBridge(logger)
+			inConn, err := kd.dialBridgeDir("pair1", logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (inbound): %w", err)
 			}
@@ -983,7 +993,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
 
-			outConn, err := kd.dialBridge(logger)
+			outConn, err := kd.dialBridgeDir("pair2", logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (outbound): %w", err)
 			}
