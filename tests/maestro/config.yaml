@@ -1,0 +1,6 @@
+# ABOUTME: Maestro test suite configuration for KeibiDrop Android E2E tests.
+# ABOUTME: Defines app package, timeouts, and shared env vars.
+appId: com.keibisoft.keibidrop
+tags:
+  - android
+  - e2e

@@ -1,0 +1,33 @@
+# ABOUTME: Maestro flow testing disconnect/reconnect from the Android side.
+# ABOUTME: Requires desktop to disconnect then reconnect between runs (handled by runner script).
+appId: com.keibisoft.keibidrop
+---
+# After desktop disconnects, Android should return to Screen 0.
+- extendedWaitUntil:
+    visible: "Connect Securely"
+    timeout: 15000
+
+- assertVisible: "Connect Securely"
+- assertVisible: "1 Peer Code"
+
+- takeScreenshot: 05_disconnected
+
+# Re-enter peer code and reconnect.
+- tapOn: "Paste peer's code"
+- inputText: ${DESKTOP_FINGERPRINT}
+- tapOn: "Add"
+- assertVisible: "Code added"
+- swipe:
+    direction: UP
+    duration: 400
+- tapOn: "Connect"
+
+# Wait for reconnection.
+- extendedWaitUntil:
+    visible: "Direct"
+    timeout: 15000
+
+- assertVisible: "Direct"
+- assertVisible: "\\+ Share File"
+
+- takeScreenshot: 05_reconnected

@@ -1,0 +1,29 @@
+# ABOUTME: Maestro flow verifying shared files appear on Android.
+# ABOUTME: Expects desktop to have already shared files before this flow runs.
+appId: com.keibisoft.keibidrop
+---
+# Should already be on the connected screen.
+- assertVisible: "Direct"
+
+# Wait for file list to populate (desktop shares files before this flow).
+- extendedWaitUntil:
+    visible: "FROM PEER"
+    timeout: 10000
+
+- assertVisible: "FROM PEER"
+- assertVisible: "test-small.txt"
+- assertVisible: "55 B"
+- assertVisible: "TXT"
+- assertVisible: "test-10mb.bin"
+- assertVisible: "10.0 MB"
+- assertVisible: "Save All"
+
+# Verify each file has a Save button.
+- assertVisible:
+    text: "Save"
+    index: 0
+- assertVisible:
+    text: "Save"
+    index: 1
+
+- takeScreenshot: 02_files_visible

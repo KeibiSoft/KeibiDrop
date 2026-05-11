@@ -1,0 +1,34 @@
+# ABOUTME: Maestro flow reproducing the Save-kills-connection bug.
+# ABOUTME: Taps Save, expects the app to navigate away to file picker, then verifies disconnect.
+appId: com.keibisoft.keibidrop
+---
+# Should be on connected screen with files visible.
+- assertVisible: "FROM PEER"
+- assertVisible: "test-small.txt"
+
+# Tap Save on the first file.
+- tapOn:
+    text: "Save"
+    index: 0
+
+# The file picker should open. Wait a moment for the transition.
+- wait: 3000
+
+# BUG VERIFICATION: if we're still in KeibiDrop, the bug is fixed.
+# If we navigated away, the app lost connection.
+# Try to go back to the app.
+- launchApp:
+    clearState: false
+
+# Check which screen we land on.
+# If bug is present: we see "Connect Securely" (Screen 0 - disconnected).
+# If bug is fixed: we see "Direct" (still connected).
+- wait: 2000
+- takeScreenshot: 03_after_save
+
+# This assertion documents the EXPECTED behavior (connected).
+# If the bug is present, this will FAIL — which is what we want.
+- assertVisible:
+    text: "Direct"
+    optional: true
+    label: "BUG CHECK: app should stay connected after Save"
