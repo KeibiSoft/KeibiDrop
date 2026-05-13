@@ -60,6 +60,8 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	}
 	kd.ReconnectManager.OnReconnected = kd.onReconnected
 
+	kd.wireReconnectEvents()
+
 	// Start all components
 	kd.HealthMonitor.Start()
 
@@ -176,6 +178,28 @@ func (kd *KeibiDrop) onReconnected() {
 		kd.HealthMonitor.OnDisconnect = kd.onDisconnect
 		kd.HealthMonitor.Start()
 	}
+}
+
+func (kd *KeibiDrop) wireReconnectEvents() {
+	if kd.ReconnectManager == nil {
+		return
+	}
+
+	// wrapCb chains an event emission after an existing callback.
+	wrapCb := func(orig func(), event string) func() {
+		return func() {
+			if orig != nil {
+				orig()
+			}
+			if kd.OnEvent != nil {
+				kd.OnEvent(event)
+			}
+		}
+	}
+
+	kd.ReconnectManager.OnReconnecting = wrapCb(kd.ReconnectManager.OnReconnecting, "reconnecting:")
+	kd.ReconnectManager.OnReconnected = wrapCb(kd.ReconnectManager.OnReconnected, "reconnected:")
+	kd.ReconnectManager.OnGaveUp = wrapCb(kd.ReconnectManager.OnGaveUp, "gave_up:")
 }
 
 // ConnectionStatus returns the current connection health status.

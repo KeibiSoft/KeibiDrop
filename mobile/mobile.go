@@ -28,6 +28,7 @@ import (
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
 	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
@@ -605,9 +606,9 @@ func (api *API) GetConnectionStatus() int {
 		return 2 // no monitor = assume connected
 	}
 	switch api.kd.HealthMonitor.Health() {
-	case 0:
+	case session.HealthHealthy:
 		return 2 // connected
-	case 1:
+	case session.HealthDegraded:
 		return 3 // reconnecting
 	default:
 		return 0 // disconnected

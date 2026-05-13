@@ -463,11 +463,10 @@ func KD_GetConnectionStatus() C.int {
 	if kd.HealthMonitor == nil {
 		return 2 // no monitor = assume connected
 	}
-	// Map: 0=healthy→2, 1=degraded→3, 2=disconnected→0
 	switch kd.HealthMonitor.Health() {
-	case 0:
+	case session.HealthHealthy:
 		return 2 // connected
-	case 1:
+	case session.HealthDegraded:
 		return 3 // reconnecting
 	default:
 		return 0 // disconnected
@@ -563,32 +562,8 @@ func KD_SetupEventCallbacks() {
 		}
 	}
 
-	// Wire reconnect manager events.
-	if kd.ReconnectManager != nil {
-		origOnReconnecting := kd.ReconnectManager.OnReconnecting
-		kd.ReconnectManager.OnReconnecting = func() {
-			if origOnReconnecting != nil {
-				origOnReconnecting()
-			}
-			pushEvent("reconnecting:")
-		}
-
-		origOnReconnected := kd.ReconnectManager.OnReconnected
-		kd.ReconnectManager.OnReconnected = func() {
-			if origOnReconnected != nil {
-				origOnReconnected()
-			}
-			pushEvent("reconnected:")
-		}
-
-		origOnGaveUp := kd.ReconnectManager.OnGaveUp
-		kd.ReconnectManager.OnGaveUp = func() {
-			if origOnGaveUp != nil {
-				origOnGaveUp()
-			}
-			pushEvent("gave_up:")
-		}
-	}
+	// Reconnect manager events (reconnecting/reconnected/gave_up) are
+	// wired centrally in wireReconnectEvents via kd.OnEvent.
 }
 
 func pushEvent(evt string) {
