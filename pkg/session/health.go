@@ -94,7 +94,11 @@ func (m *HealthMonitor) Stop() {
 }
 
 func (m *HealthMonitor) TransferStarted() { m.activeTransfers.Add(1) }
-func (m *HealthMonitor) TransferEnded()   { m.activeTransfers.Add(-1) }
+func (m *HealthMonitor) TransferEnded() {
+	if m.activeTransfers.Add(-1) < 0 {
+		m.activeTransfers.Store(0)
+	}
+}
 
 // Health returns the current connection health state.
 func (m *HealthMonitor) Health() ConnectionHealth {
