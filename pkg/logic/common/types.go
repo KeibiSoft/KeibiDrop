@@ -106,6 +106,7 @@ type KeibiDrop struct {
 
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc
+	activeBitmaps     map[string]*filesystem.ChunkBitmap
 	activeDownloadsMu sync.Mutex
 }
 
@@ -186,6 +187,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		serverReadyMu:   sync.Mutex{},
 		SyncTracker:     synctracker.NewSyncTracker(),
 		activeDownloads: make(map[string]context.CancelFunc),
+		activeBitmaps:   make(map[string]*filesystem.ChunkBitmap),
 	}
 
 	return kd, nil
@@ -478,6 +480,7 @@ func (kd *KeibiDrop) Run() {
 			kd.session = kd.refreshSession()
 			kd.SyncTracker = synctracker.NewSyncTracker()
 			kd.activeDownloads = make(map[string]context.CancelFunc)
+			kd.activeBitmaps = make(map[string]*filesystem.ChunkBitmap)
 			ctx, c := context.WithCancel(context.Background())
 			kd.running.Store(false)
 			kd.mu.Lock()

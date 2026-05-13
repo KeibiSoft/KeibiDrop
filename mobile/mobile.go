@@ -395,8 +395,11 @@ func (api *API) SaveFile(remoteName string) (string, error) {
 	api.kd.SyncTracker.RemoteFilesMu.RUnlock()
 
 	if info, statErr := os.Stat(localPath); statErr == nil {
-		if expectedSize > 0 && uint64(info.Size()) == expectedSize {
-			// Already have the full file, no need to re-download.
+		bitmapExists := false
+		if _, bmErr := os.Stat(localPath + ".kdbitmap"); bmErr == nil {
+			bitmapExists = true
+		}
+		if expectedSize > 0 && uint64(info.Size()) == expectedSize && !bitmapExists {
 			return localPath, nil
 		}
 	}
@@ -462,7 +465,10 @@ func isInternalFile(name string) bool {
 		strings.Contains(name, ".fseventsd") ||
 		strings.Contains(name, ".fseventuuid") ||
 		strings.Contains(name, ".DS_Store") ||
-		strings.Contains(name, ".kdbitmap")
+		strings.Contains(name, ".kdbitmap") ||
+		strings.Contains(name, ".Trash") ||
+		strings.Contains(name, ".trash") ||
+		strings.Contains(name, ".Trashes")
 }
 
 // --- File lists (index-based for gomobile compatibility) ---

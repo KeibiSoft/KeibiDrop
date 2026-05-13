@@ -245,6 +245,13 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		dlCtx, dlCancel := context.WithCancel(kd.ctx)
 		defer dlCancel()
 		kd.registerDownload(remoteName, dlCancel)
+		kd.activeDownloadsMu.Lock()
+		kd.activeBitmaps[remoteName] = bitmap
+		kd.activeDownloadsMu.Unlock()
+		if kd.HealthMonitor != nil {
+			kd.HealthMonitor.TransferStarted()
+			defer kd.HealthMonitor.TransferEnded()
+		}
 		defer kd.unregisterDownload(remoteName)
 
 		if err := kd.pullParallelRead(dlCtx, dlCancel, bitmap, f, relPath, fileSize, config.BlockSize, bitmapPath, logger); err != nil {
@@ -283,6 +290,10 @@ func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize,
 	logger := kd.logger.With("method", "pull-file-with-params")
 	if kd.session == nil || kd.session.GRPCClient == nil {
 		return ErrInvalidSession
+	}
+	if kd.HealthMonitor != nil {
+		kd.HealthMonitor.TransferStarted()
+		defer kd.HealthMonitor.TransferEnded()
 	}
 
 	localPath = filepath.Clean(localPath)
@@ -423,6 +434,7 @@ func (kd *KeibiDrop) registerDownload(name string, cancel context.CancelFunc) {
 func (kd *KeibiDrop) unregisterDownload(name string) {
 	kd.activeDownloadsMu.Lock()
 	delete(kd.activeDownloads, name)
+	delete(kd.activeBitmaps, name)
 	kd.activeDownloadsMu.Unlock()
 }
 
@@ -442,22 +454,26 @@ func (kd *KeibiDrop) CancelDownload(remoteName string) error {
 // GetDownloadProgress returns the download progress for a file as a fraction
 // [0.0, 1.0]. Returns -1 if the file has no active or resumable download.
 func (kd *KeibiDrop) GetDownloadProgress(remoteName string) float64 {
-	// Check if there's a partial bitmap on disk.
+	kd.activeDownloadsMu.Lock()
+	bm, ok := kd.activeBitmaps[remoteName]
+	kd.activeDownloadsMu.Unlock()
+	if ok && bm != nil {
+		return bm.Progress()
+	}
+
 	kd.SyncTracker.RemoteFilesMu.RLock()
 	rf, ok := kd.SyncTracker.RemoteFiles[remoteName]
 	kd.SyncTracker.RemoteFilesMu.RUnlock()
 	if !ok {
 		return -1
 	}
-
-	// Try loading bitmap from the save path.
 	localPath := filepath.Join(kd.ToSave, rf.RelativePath)
 	bitmapPath := filesystem.BitmapPath(localPath)
-	bm, err := filesystem.LoadChunkBitmap(bitmapPath, int64(rf.Size))
+	diskBm, err := filesystem.LoadChunkBitmap(bitmapPath, int64(rf.Size))
 	if err != nil {
 		return -1
 	}
-	return bm.Progress()
+	return diskBm.Progress()
 }
 
 func (kd *KeibiDrop) ExportFingerprint() (string, error) {
@@ -743,7 +759,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 		}
 
 		if needBridge {
-			outConn, err := kd.dialBridge(logger)
+			outConn, err := kd.dialBridgeDir("pair1", logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (outbound): %w", err)
 			}
@@ -752,7 +768,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 				return fmt.Errorf("bridge outbound handshake: %w", err)
 			}
 
-			inConn, err := kd.dialBridge(logger)
+			inConn, err := kd.dialBridgeDir("pair2", logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (inbound): %w", err)
 			}
@@ -881,17 +897,27 @@ func (kd *KeibiDrop) CreateRoom() error {
 	{
 		useBridge := false
 
-		// Set accept deadline: 15s if bridge available (fallback), no deadline otherwise.
-		if kd.BridgeAddr != "" {
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+		if kd.LocalIPv6IP == "" && kd.BridgeAddr != "" {
+			logger.Info("No IPv6, skipping direct P2P, using bridge")
+			useBridge = true
 		}
 
-		conn, acceptErr := kd.listener.Accept()
-		if kd.BridgeAddr != "" {
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
+		if !useBridge {
+			if kd.BridgeAddr != "" {
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+			}
 		}
 
-		if acceptErr != nil {
+		var conn net.Conn
+		var acceptErr error
+		if !useBridge {
+			conn, acceptErr = kd.listener.Accept()
+			if kd.BridgeAddr != "" {
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
+			}
+		}
+
+		if !useBridge && acceptErr != nil {
 			if kd.BridgeAddr != "" {
 				logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
 				useBridge = true
@@ -958,7 +984,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 			// Bridge fallback.
 			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
 
-			inConn, err := kd.dialBridge(logger)
+			inConn, err := kd.dialBridgeDir("pair1", logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (inbound): %w", err)
 			}
@@ -967,7 +993,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
 
-			outConn, err := kd.dialBridge(logger)
+			outConn, err := kd.dialBridgeDir("pair2", logger)
 			if err != nil {
 				return fmt.Errorf("bridge dial (outbound): %w", err)
 			}

@@ -48,7 +48,7 @@ type ReconnectManager struct {
 
 	// Bridge relay (for firewall traversal). If set, reconnect uses bridge instead of direct.
 	BridgeAddr string
-	DialBridge func() (net.Conn, error) // Dial bridge with room token
+	DialBridge func(direction string) (net.Conn, error) // Dial bridge with direction-tagged room token
 
 	// Callbacks
 	OnReconnecting func()                                                    // Called when reconnection starts
@@ -61,7 +61,8 @@ type ReconnectManager struct {
 	// Control
 	ctx     context.Context
 	cancel  context.CancelFunc
-	stopped atomic.Bool // prevents new loops after Stop()
+	stopped atomic.Bool
+	done    chan struct{}
 }
 
 // NewReconnectManager creates a new reconnection manager with default settings.
@@ -123,7 +124,11 @@ func (r *ReconnectManager) OnDisconnect() {
 	}
 
 	r.ctx, r.cancel = context.WithCancel(context.Background())
-	go r.reconnectLoop()
+	r.done = make(chan struct{})
+	go func() {
+		defer close(r.done)
+		r.reconnectLoop()
+	}()
 }
 
 // Stop halts any ongoing reconnection attempts and prevents new ones.
@@ -134,6 +139,12 @@ func (r *ReconnectManager) Stop() {
 	r.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if r.done != nil {
+		select {
+		case <-r.done:
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 
@@ -183,6 +194,9 @@ func (r *ReconnectManager) reconnectLoop() {
 		case <-time.After(delay):
 		}
 
+		if r.stopped.Load() {
+			return
+		}
 		if err := r.attemptReconnect(); err == nil {
 			r.state.Store(int32(ReconnectStateConnected))
 			r.attempts.Store(0)
@@ -238,7 +252,7 @@ func (r *ReconnectManager) reconnectAsInitiator() error {
 	if r.BridgeAddr != "" && r.DialBridge != nil {
 		logger.Info("Reconnecting via bridge", "addr", r.BridgeAddr)
 
-		outConn, err := r.DialBridge()
+		outConn, err := r.DialBridge("pair1")
 		if err != nil {
 			return fmt.Errorf("bridge dial (outbound): %w", err)
 		}
@@ -247,7 +261,7 @@ func (r *ReconnectManager) reconnectAsInitiator() error {
 			return fmt.Errorf("bridge outbound handshake: %w", err)
 		}
 
-		inConn, err := r.DialBridge()
+		inConn, err := r.DialBridge("pair2")
 		if err != nil {
 			return fmt.Errorf("bridge dial (inbound): %w", err)
 		}
@@ -306,7 +320,7 @@ func (r *ReconnectManager) reconnectAsResponder() error {
 	if r.BridgeAddr != "" && r.DialBridge != nil {
 		logger.Info("Reconnecting via bridge", "addr", r.BridgeAddr)
 
-		inConn, err := r.DialBridge()
+		inConn, err := r.DialBridge("pair1")
 		if err != nil {
 			return fmt.Errorf("bridge dial (inbound): %w", err)
 		}
@@ -315,7 +329,7 @@ func (r *ReconnectManager) reconnectAsResponder() error {
 			return fmt.Errorf("bridge inbound handshake: %w", err)
 		}
 
-		outConn, err := r.DialBridge()
+		outConn, err := r.DialBridge("pair2")
 		if err != nil {
 			return fmt.Errorf("bridge dial (outbound): %w", err)
 		}

@@ -38,6 +38,7 @@ type HealthMonitor struct {
 	avgRTT           atomic.Int64 // exponential moving average
 	consecutiveFails atomic.Int32
 	seq              atomic.Uint64
+	activeTransfers  atomic.Int32
 
 	// Configuration
 	Interval    time.Duration // heartbeat interval (default 5s)
@@ -92,6 +93,9 @@ func (m *HealthMonitor) Stop() {
 	m.logger.Debug("Health monitor stopped")
 }
 
+func (m *HealthMonitor) TransferStarted() { m.activeTransfers.Add(1) }
+func (m *HealthMonitor) TransferEnded()   { m.activeTransfers.Add(-1) }
+
 // Health returns the current connection health state.
 func (m *HealthMonitor) Health() ConnectionHealth {
 	return ConnectionHealth(m.health.Load())
@@ -117,6 +121,10 @@ func (m *HealthMonitor) runLoop() {
 		case <-m.ctx.Done():
 			return
 		case <-ticker.C:
+			if m.activeTransfers.Load() > 0 {
+				m.consecutiveFails.Store(0)
+				continue
+			}
 			if err := m.sendHeartbeat(); err != nil {
 				m.handleFailure(err)
 			}

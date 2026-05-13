@@ -79,6 +79,7 @@ func (s *Service) Start() error {
 	go s.advertise(ctx)
 	go s.listen(ctx)
 	go s.cleanup(ctx)
+	go s.mdnsRun(ctx)
 
 	s.logger.Info("Discovery started", "name", s.name, "port", s.port)
 	return nil
