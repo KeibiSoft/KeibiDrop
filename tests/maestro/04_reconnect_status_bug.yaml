@@ -1,0 +1,33 @@
+# ABOUTME: Maestro flow checking the "Reconnecting..." status display bug.
+# ABOUTME: After connecting, verifies whether status shows "Connected" or stuck on "Reconnecting...".
+appId: com.keibisoft.keibidrop
+---
+- launchApp
+
+- assertVisible: "Connect Securely"
+
+# Enter peer code and connect (same as 01_connect).
+- tapOn: "Paste peer's code"
+- inputText: ${DESKTOP_FINGERPRINT}
+- tapOn: "Add"
+- assertVisible: "Code added"
+- swipe:
+    direction: UP
+    duration: 400
+- tapOn: "Connect"
+
+- extendedWaitUntil:
+    visible: "Direct"
+    timeout: 15000
+
+# Wait for the status to stabilize (give it 10s).
+- wait: 10000
+
+- takeScreenshot: 04_status_check
+
+# BUG CHECK: The status text should NOT say "Reconnecting..."
+# when the connection is actually healthy.
+# This assertion documents the bug — it will FAIL if bug is present.
+- assertNotVisible:
+    text: "Reconnecting"
+    label: "BUG CHECK: status should not show Reconnecting when connected"

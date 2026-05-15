@@ -1,0 +1,30 @@
+# ABOUTME: Maestro flow for connecting Android to desktop peer.
+# ABOUTME: Enters peer code, taps Add, then taps Connect. Expects DESKTOP_FINGERPRINT env var.
+appId: com.keibisoft.keibidrop
+---
+- launchApp
+
+- assertVisible: "Connect Securely"
+
+# Enter the desktop peer fingerprint.
+- tapOn: "Paste peer's code"
+- inputText: ${DESKTOP_FINGERPRINT}
+- tapOn: "Add"
+- assertVisible: "Code added"
+
+# Dismiss keyboard and scroll to Connect.
+- pressKey: back
+- swipe:
+    direction: UP
+    duration: 400
+
+- tapOn: "Connect"
+
+# Wait up to 30s for the connected screen.
+- extendedWaitUntil:
+    visible:
+      text: "Direct"
+    timeout: 30000
+
+- assertVisible: "Save Peer"
+- takeScreenshot: 01_connected
