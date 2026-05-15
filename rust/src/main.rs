@@ -1041,7 +1041,7 @@ fn main() {
         // Handle Cancel (abort room creation/join)
         let weak_cancel = app.as_weak();
         app.on_cancel_connect_pressed(move || {
-            
+            bindings::KD_ClearDiscoveredPeers();
             bindings::KD_UnmountFilesystem();
             bindings::KD_Disconnect();
             if let Some(app) = weak_cancel.upgrade() {
@@ -1110,6 +1110,7 @@ fn main() {
             let disc_done = disconnecting_disconnect.clone();
             std::thread::spawn(move || {
                 bindings::KD_UnmountFilesystem();
+                bindings::KD_ClearDiscoveredPeers();
                 bindings::KD_Disconnect();
                 let _ = slint::invoke_from_event_loop(move || {
                     disc_done.store(false, Ordering::Relaxed);
@@ -1884,6 +1885,7 @@ fn main() {
                             let disc_done = disconnecting_evt.clone();
                             std::thread::spawn(move || {
                                 bindings::KD_UnmountFilesystem();
+                                bindings::KD_ClearDiscoveredPeers();
                                 bindings::KD_Disconnect();
                                 let _ = slint::invoke_from_event_loop(move || {
                                     disc_done.store(false, Ordering::Relaxed);

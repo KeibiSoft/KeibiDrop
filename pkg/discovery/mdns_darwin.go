@@ -158,11 +158,7 @@ func (s *Service) dnssdBrowseOnce() {
 		peerAddr := fmt.Sprintf("%s:%d", ip, port)
 		s.mu.Lock()
 		_, exists := s.peers[peerAddr]
-		s.peers[peerAddr] = &Peer{
-			Name:     name,
-			Addr:     peerAddr,
-			LastSeen: time.Now(),
-		}
+		s.upsertPeer(name, peerAddr)
 		s.mu.Unlock()
 		if !exists {
 			s.logger.Debug("mDNS: peer discovered", "name", name, "addr", peerAddr)
