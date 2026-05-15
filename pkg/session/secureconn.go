@@ -23,6 +23,11 @@ import (
 
 const lengthHeaderSize = 4 // uint32 prefix
 
+// MaxSecureMessageSize caps the encrypted payload a SecureReader will accept.
+// Anything larger is rejected before allocation, preventing OOM from a
+// malicious length header on the raw TCP stream.
+const MaxSecureMessageSize = 20 * 1024 * 1024 // 20 MiB
+
 // Re-keying thresholds for forward secrecy.
 const (
 	RekeyBytesThreshold = 1 << 30 // 1 GB
@@ -124,6 +129,9 @@ func (s *SecureReader) Read() ([]byte, error) {
 	}
 	length := binary.BigEndian.Uint32(s.head[:])
 
+	if length > MaxSecureMessageSize {
+		return nil, fmt.Errorf("encrypted message length %d exceeds maximum %d", length, MaxSecureMessageSize)
+	}
 	if length < uint32(kbc.NonceSize)+uint32(s.aead.Overhead()) { //nolint:gosec // G115: NonceSize and Overhead are small constants
 		return nil, fmt.Errorf("encrypted message too short: %d bytes", length)
 	}

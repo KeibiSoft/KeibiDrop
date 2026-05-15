@@ -228,6 +228,55 @@ func TestSecureConn_ConcurrentReadWrite(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
+// TestSecureReader_RejectsOversizedLength sends a length header exceeding
+// MaxSecureMessageSize and verifies the reader returns an error instead of
+// allocating an unbounded buffer.
+func TestSecureReader_RejectsOversizedLength(t *testing.T) {
+	key := randomKey(t)
+	c1, c2 := net.Pipe()
+	t.Cleanup(func() {
+		c1.Close()
+		c2.Close()
+	})
+
+	reader := NewSecureReader(c2, key, kbc.CipherChaCha20)
+
+	go func() {
+		var header [4]byte
+		// 1 byte over the limit.
+		oversize := uint32(MaxSecureMessageSize + 1)
+		header[0] = byte(oversize >> 24)
+		header[1] = byte(oversize >> 16)
+		header[2] = byte(oversize >> 8)
+		header[3] = byte(oversize)
+		c1.Write(header[:])
+	}()
+
+	_, err := reader.Read()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum")
+}
+
+// TestSecureReader_AcceptsMaxSizeLength verifies that a message exactly at
+// MaxSecureMessageSize is accepted (not rejected by the bounds check).
+func TestSecureReader_AcceptsMaxSizeLength(t *testing.T) {
+	key := randomKey(t)
+	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
+
+	original := randomBytes(t, 64)
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := writer.Write(original)
+		errCh <- err
+	}()
+
+	got, err := reader.r.Read()
+	require.NoError(t, err)
+	require.Equal(t, original, got)
+	require.NoError(t, <-errCh)
+}
+
 // TestSecureConn_LeftoverAcrossMessages writes two messages and reads them
 // in 5000-byte chunks, crossing message boundaries to exercise leftover logic.
 func TestSecureConn_LeftoverAcrossMessages(t *testing.T) {
