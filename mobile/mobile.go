@@ -628,7 +628,14 @@ func (api *API) SetupEventCallbacks() {
 			select {
 			case api.eventCh <- event:
 			default:
-				// Channel full, drop oldest.
+				select {
+				case <-api.eventCh:
+				default:
+				}
+				select {
+				case api.eventCh <- event:
+				default:
+				}
 			}
 		}
 	})
