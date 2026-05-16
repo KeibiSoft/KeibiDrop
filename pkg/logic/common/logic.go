@@ -698,39 +698,24 @@ func (kd *KeibiDrop) JoinRoom() error {
 			// fall back to bridge for both directions.
 			logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
 
-			type acceptResult struct {
-				conn net.Conn
-				err  error
-			}
-			ch := make(chan acceptResult, 1)
-			go func() {
-				c, e := kd.listener.Accept()
-				ch <- acceptResult{c, e}
-			}()
+			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+			inConn, acceptErr := kd.listener.Accept()
+			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
 
-			select {
-			case res := <-ch:
-				if res.err != nil {
-					logger.Warn("Inbound accept failed", "error", res.err)
-					needBridge = kd.BridgeAddr != ""
-					if !needBridge {
-						return res.err
-					}
-				} else {
-					if err := session.PerformInboundHandshake(kd.session, res.conn); err != nil {
-						logger.Error("Failed inbound handshake", "error", err)
-						return err
-					}
-					kd.ConnectionMode = "direct"
-					if kd.OnEvent != nil {
-						kd.OnEvent("connection_mode:direct")
-					}
-				}
-			case <-time.After(15 * time.Second):
-				logger.Warn("Inbound accept timed out (15s), peer likely behind firewall")
+			if acceptErr != nil {
+				logger.Warn("Inbound accept failed", "error", acceptErr)
 				needBridge = kd.BridgeAddr != ""
 				if !needBridge {
 					return fmt.Errorf("inbound accept timed out and no bridge configured")
+				}
+			} else {
+				if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+					logger.Error("Failed inbound handshake", "error", err)
+					return err
+				}
+				kd.ConnectionMode = "direct"
+				if kd.OnEvent != nil {
+					kd.OnEvent("connection_mode:direct")
 				}
 			}
 
@@ -903,28 +888,28 @@ func (kd *KeibiDrop) CreateRoom() error {
 		}
 
 		if !useBridge {
-			if kd.BridgeAddr != "" {
-				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
-			}
+			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
 		}
 
 		var conn net.Conn
 		var acceptErr error
 		if !useBridge {
 			conn, acceptErr = kd.listener.Accept()
-			if kd.BridgeAddr != "" {
-				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
-			}
+			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
 		}
 
 		if !useBridge && acceptErr != nil {
-			if kd.BridgeAddr != "" {
-				logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
-				useBridge = true
-			} else {
-				logger.Error("Failed to accept", "error", acceptErr)
+			// Close the listener so late-arriving joiners get
+			// "connection refused" instead of a phantom TCP accept.
+			kd.listener.Close()
+			kd.listener = nil
+
+			if kd.BridgeAddr == "" {
+				logger.Error("Direct P2P accept timed out and no bridge configured", "error", acceptErr)
 				return acceptErr
 			}
+			logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
+			useBridge = true
 		}
 
 		if !useBridge {
@@ -1002,6 +987,16 @@ func (kd *KeibiDrop) CreateRoom() error {
 				return fmt.Errorf("bridge outbound handshake: %w", err)
 			}
 		}
+	}
+
+	// Reopen listener if it was closed during bridge fallback.
+	if kd.listener == nil {
+		addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
+		newLn, lnErr := net.Listen("tcp", addr)
+		if lnErr != nil {
+			return fmt.Errorf("reopen listener: %w", lnErr)
+		}
+		kd.listener = newLn
 	}
 
 	kd.filesystemReady = make(chan struct{})

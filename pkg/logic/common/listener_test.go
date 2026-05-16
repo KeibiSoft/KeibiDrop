@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"testing"
+	"time"
 )
 
 // TestListenerAcceptsIPv4 verifies the listener is dual-stack and accepts IPv4.
@@ -85,5 +86,83 @@ func TestLANAddressesSkippedInInternetMode(t *testing.T) {
 	// We verify the flag is correct — the logic test is the guard condition.
 	if kd.IsLocalMode {
 		t.Fatal("IsLocalMode should still be false after setting PeerLocalAddrs")
+	}
+}
+
+// TestListenerClosedOnBridgeFallback verifies that after closing the listener
+// (as CreateRoom does when P2P times out), TCP dials are refused, and the
+// reopened listener accepts connections again.
+// Regression test for #146: stale listener caused phantom P2P connections.
+func TestListenerClosedOnBridgeFallback(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	relayURL, _ := url.Parse("https://localhost:9999")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const port = 26704
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, 26705, "", t.TempDir(), false, false, "::1")
+	if err != nil {
+		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
+	}
+
+	// Verify the listener works before close.
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("Dial before close failed: %v", err)
+	}
+	conn.Close()
+
+	// Close the listener and nil it — simulates CreateRoom bridge fallback.
+	kd.listener.Close()
+	kd.listener = nil
+
+	// Dial MUST be refused now. This is the core of the #146 fix:
+	// before the fix, the listener stayed open and the kernel accepted
+	// phantom connections into the backlog.
+	_, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
+	if dialErr == nil {
+		t.Fatal("Dial after listener close should be refused, but succeeded (phantom accept)")
+	}
+
+	// Reopen on the same port — simulates the reopen step.
+	addr := net.JoinHostPort("", fmt.Sprintf("%d", port))
+	newLn, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("Reopen listener failed: %v", err)
+	}
+	kd.listener = newLn
+
+	// New listener must accept connections.
+	conn2, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("Dial after reopen failed: %v", err)
+	}
+	conn2.Close()
+}
+
+// TestAcceptDeadlineExitsOnTimeout verifies that Accept with SetDeadline
+// returns a deadline error promptly, matching the pattern used in JoinRoom
+// for inbound P2P accept.
+// Regression test for #146: goroutine leak when Accept had no deadline.
+func TestAcceptDeadlineExitsOnTimeout(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	relayURL, _ := url.Parse("https://localhost:9999")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, 26706, 26707, "", t.TempDir(), false, false, "::1")
+	if err != nil {
+		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
+	}
+
+	_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(200 * time.Millisecond))
+	_, acceptErr := kd.listener.Accept()
+	_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
+
+	if acceptErr == nil {
+		t.Fatal("Expected deadline error from Accept, got nil")
+	}
+	if !os.IsTimeout(acceptErr) {
+		t.Fatalf("Expected timeout error, got: %v", acceptErr)
 	}
 }
