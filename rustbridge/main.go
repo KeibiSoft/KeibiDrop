@@ -710,6 +710,15 @@ func KD_GetDiscoveredPeerAddr(i C.int) *C.char {
 	return C.CString(peers[int(i)].Addr)
 }
 
+//export KD_ClearDiscoveredPeers
+func KD_ClearDiscoveredPeers() {
+	discMu.Lock()
+	defer discMu.Unlock()
+	if disc != nil {
+		disc.ClearPeers()
+	}
+}
+
 //export KD_GetConnectionMode
 func KD_GetConnectionMode() *C.char {
 	if kd == nil {

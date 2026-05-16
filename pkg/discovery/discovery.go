@@ -98,6 +98,29 @@ func (s *Service) Stop() {
 	s.logger.Info("Discovery stopped")
 }
 
+// ClearPeers removes all discovered peers without stopping the service.
+func (s *Service) ClearPeers() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.peers = make(map[string]*Peer)
+}
+
+// upsertPeer inserts or updates a peer, removing any stale entry with the
+// same name at a different address. Caller must hold s.mu.
+func (s *Service) upsertPeer(name, addr string) {
+	for a, p := range s.peers {
+		if p.Name == name && a != addr {
+			delete(s.peers, a)
+			break
+		}
+	}
+	s.peers[addr] = &Peer{
+		Name:     name,
+		Addr:     addr,
+		LastSeen: time.Now(),
+	}
+}
+
 // Name returns this peer's random display name.
 func (s *Service) Name() string {
 	return s.name
@@ -193,11 +216,7 @@ func (s *Service) listen(ctx context.Context) {
 		peerAddr := fmt.Sprintf("%s:%d", src.IP.String(), beacon.Port)
 
 		s.mu.Lock()
-		s.peers[peerAddr] = &Peer{
-			Name:     beacon.Name,
-			Addr:     peerAddr,
-			LastSeen: time.Now(),
-		}
+		s.upsertPeer(beacon.Name, peerAddr)
 		s.mu.Unlock()
 	}
 }

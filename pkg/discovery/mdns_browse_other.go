@@ -120,11 +120,7 @@ func (s *Service) mdnsBrowseMulticast(ctx context.Context) {
 			if c.port > 0 && c.ipv4 != nil {
 				peerAddr := fmt.Sprintf("%s:%d", c.ipv4.String(), c.port)
 				s.mu.Lock()
-				s.peers[peerAddr] = &Peer{
-					Name:     c.name,
-					Addr:     peerAddr,
-					LastSeen: time.Now(),
-				}
+				s.upsertPeer(c.name, peerAddr)
 				s.mu.Unlock()
 				delete(candidates, name)
 			}
