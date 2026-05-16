@@ -86,9 +86,28 @@ func (kd *KeibiDrop) AddFile(path string) error {
 		return err
 	}
 
+	if kd.sharedStore != nil && kd.dlRegistry != nil && kd.session != nil {
+		tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
+		kd.persistSharedFile(tag, file)
+	}
+
 	logger.Info("Success")
 
 	return nil
+}
+
+func (kd *KeibiDrop) persistSharedFile(tag [16]byte, file *synctracker.File) {
+	if kd.sharedStore == nil {
+		return
+	}
+	entries := kd.sharedStore.Load()
+	entries = append(entries, sharedEntry{
+		PeerTag: tag,
+		Path:    file.RealPathOfFile,
+		Size:    file.Size,
+		ModTime: file.LastEditTime,
+	})
+	kd.sharedStore.Save(entries)
 }
 
 // AddFileAs adds a file with a custom remote name (preserving folder structure).
@@ -249,7 +268,7 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		kd.activeBitmaps[remoteName] = bitmap
 		kd.activeDownloadsMu.Unlock()
 		if kd.dlRegistry != nil && kd.session != nil {
-			tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.identityOpts.ExternalMaster)
+			tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
 			kd.dlRegistry.Register(bitmapPath, tag)
 		}
 		if kd.HealthMonitor != nil {

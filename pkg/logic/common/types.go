@@ -110,7 +110,13 @@ type KeibiDrop struct {
 	activeDownloadsMu sync.Mutex
 
 	// Download registry: tracks which bitmaps belong to which peer (privacy-preserving).
-	dlRegistry *downloadRegistry
+	dlRegistry    *downloadRegistry
+	registryKey   []byte
+
+	// Preserved shared files from previous session (only served to same peer).
+	lastSharedPeerFP string
+	lastSharedFiles  map[string]*synctracker.File
+	sharedStore      *sharedFilesStore
 }
 
 type TaskSignal int
@@ -250,7 +256,13 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 	kd.session = sess
 	kd.identityOpts = opts
 	kd.identityConfig = configDir
-	kd.dlRegistry = newDownloadRegistry(configDir, opts.ExternalMaster)
+	regKey := opts.ExternalMaster
+	if len(regKey) == 0 {
+		regKey = []byte(id.Fingerprint)
+	}
+	kd.registryKey = regKey
+	kd.dlRegistry = newDownloadRegistry(configDir, regKey)
+	kd.sharedStore = newSharedFilesStore(configDir, regKey)
 
 	kd.refreshSession = func() *session.Session {
 		s, err := session.InitSessionWithKeys(kd.logger, id.Keys, outPort, inPort)
@@ -458,6 +470,10 @@ func (kd *KeibiDrop) Run() {
 			}
 			kd.KDClient = nil
 			kd.KDSvc = nil
+			prevPeerFP := ""
+			if kd.session != nil {
+				prevPeerFP = kd.session.ExpectedPeerFingerprint
+			}
 			kd.session = nil
 			kd.PeerIPv6IP = ""
 
@@ -481,9 +497,14 @@ func (kd *KeibiDrop) Run() {
 			default:
 			}
 
-			// Temporary disconnect — refresh session, tracker, and context.
+			// Temporary disconnect — refresh session and context.
+			// Preserve LocalFiles tagged with peer identity so they're only
+			// served back to the SAME peer on reconnect, not leaked to others.
+			prevLocal := kd.SyncTracker.LocalFiles
 			kd.session = kd.refreshSession()
 			kd.SyncTracker = synctracker.NewSyncTracker()
+			kd.lastSharedPeerFP = prevPeerFP
+			kd.lastSharedFiles = prevLocal
 			kd.activeDownloads = make(map[string]context.CancelFunc)
 			kd.activeBitmaps = make(map[string]*filesystem.ChunkBitmap)
 			ctx, c := context.WithCancel(context.Background())

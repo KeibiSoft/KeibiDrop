@@ -121,6 +121,74 @@ func (r *downloadRegistry) load() {
 	}
 }
 
+// sharedFilesStore persists what files were shared with which peer.
+// Encrypted at rest, stored in configDir. Never in the shared/FUSE folder.
+type sharedFilesStore struct {
+	path string
+	key  []byte
+}
+
+type sharedEntry struct {
+	PeerTag  [16]byte `json:"t"`
+	Path     string   `json:"p"`
+	Size     uint64   `json:"s"`
+	ModTime  uint64   `json:"m"`
+}
+
+func newSharedFilesStore(configDir string, masterKey []byte) *sharedFilesStore {
+	if configDir == "" || len(masterKey) == 0 {
+		return nil
+	}
+	h := sha256.Sum256(append(masterKey, []byte("shared-files-store")...))
+	return &sharedFilesStore{
+		path: filepath.Clean(filepath.Join(configDir, ".kd_shared")),
+		key:  h[:],
+	}
+}
+
+func (s *sharedFilesStore) Save(entries []sharedEntry) {
+	if s == nil {
+		return
+	}
+	if len(entries) == 0 {
+		_ = os.Remove(s.path)
+		return
+	}
+	data, _ := json.Marshal(entries)
+	ct, err := encryptAESGCM(s.key, data)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(s.path, ct, 0600) // #nosec G306
+}
+
+func (s *sharedFilesStore) Load() []sharedEntry {
+	if s == nil {
+		return nil
+	}
+	data, err := os.ReadFile(s.path) // #nosec G304
+	if err != nil {
+		return nil
+	}
+	pt, err := decryptAESGCM(s.key, data)
+	if err != nil {
+		_ = os.Remove(s.path)
+		return nil
+	}
+	var entries []sharedEntry
+	if err := json.Unmarshal(pt, &entries); err != nil {
+		return nil
+	}
+	return entries
+}
+
+func (s *sharedFilesStore) Clear() {
+	if s == nil {
+		return
+	}
+	_ = os.Remove(s.path)
+}
+
 func encryptAESGCM(key, plaintext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
