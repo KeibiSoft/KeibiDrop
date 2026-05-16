@@ -1343,6 +1343,12 @@ fn main() {
             let _ = Command::new("cmd").args(["/c", "start", "", &local_path]).spawn();
         });
 
+        app.on_unshare_file(move |filename| {
+            let name = filename.to_string();
+            let c_name = CString::new(name).unwrap();
+            bindings::KD_UnshareFile(c_name.as_ptr() as *mut i8);
+        });
+
         // Handle Save All: save every remote unsaved file
         let downloads_all = downloads.clone();
         let save_path_all = to_save.clone();

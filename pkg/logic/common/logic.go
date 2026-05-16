@@ -110,6 +110,27 @@ func (kd *KeibiDrop) persistSharedFile(tag [16]byte, file *synctracker.File) {
 	kd.sharedStore.Save(entries)
 }
 
+// UnshareFile removes a file from the shared list and notifies the peer.
+// Does NOT delete the file from disk.
+func (kd *KeibiDrop) UnshareFile(name string) error {
+	kd.SyncTracker.LocalFilesMu.Lock()
+	_, exists := kd.SyncTracker.LocalFiles[name]
+	delete(kd.SyncTracker.LocalFiles, name)
+	kd.SyncTracker.LocalFilesMu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("file %q not shared", name)
+	}
+
+	if kd.session != nil && kd.KDClient != nil {
+		_, _ = kd.KDClient.Notify(context.Background(), &bindings.NotifyRequest{
+			Type: bindings.NotifyType(types.RemoveFile),
+			Path: name,
+		})
+	}
+	return nil
+}
+
 // AddFileAs adds a file with a custom remote name (preserving folder structure).
 // Automatically sends ADD_DIR for any parent directories the peer may not have.
 func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {

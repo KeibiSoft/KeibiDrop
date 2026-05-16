@@ -8290,6 +8290,9 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn KD_UnshareFile(name: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn KD_ListFiles() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {

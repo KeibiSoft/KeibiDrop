@@ -92,6 +92,7 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		}
 		kd.SyncTracker.LocalFilesMu.Unlock()
 		logger.Info("Restored shared files for same peer (memory)", "count", len(kd.lastSharedFiles))
+		go kd.notifyRestoredFiles(logger)
 	} else if kd.sharedStore != nil && kd.dlRegistry != nil {
 		tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
 		entries := kd.sharedStore.Load()
