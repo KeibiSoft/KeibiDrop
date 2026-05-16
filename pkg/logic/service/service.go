@@ -605,6 +605,10 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				if fh != nil {
 					fh.Close()
 				}
+				if err == context.Canceled || status.Code(err) == codes.Canceled {
+					logger.Debug("Stream cancelled by peer", "error", err)
+					return nil
+				}
 				logger.Error("Failed to receive from stream", "error", err)
 				return status.Error(codes.Internal, "failed to receive read request")
 			}

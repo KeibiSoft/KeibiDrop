@@ -108,8 +108,12 @@ func (kd *KeibiDrop) pullParallelRead(
 	wg.Wait()
 	close(errCh)
 	if err := <-errCh; err != nil {
-		logger.Error("Download failed (partial state preserved)", "error", err, "progress", bitmap.Progress())
 		_ = bitmap.Save(bitmapPath)
+		if ctx.Err() == context.Canceled {
+			logger.Info("Download paused", "progress", bitmap.Progress())
+			return ErrDownloadPaused
+		}
+		logger.Error("Download failed (partial state preserved)", "error", err, "progress", bitmap.Progress())
 		return err
 	}
 	return nil

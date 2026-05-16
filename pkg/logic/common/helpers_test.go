@@ -89,10 +89,20 @@ func TestParsePeerDirectAddress_Loopback(t *testing.T) {
 	}
 }
 
-func TestParsePeerDirectAddress_IPv4_Rejected(t *testing.T) {
-	_, _, _, err := ParsePeerDirectAddress("192.168.1.1:26431")
+func TestParsePeerDirectAddress_IPv4_PrivateAccepted(t *testing.T) {
+	ip, zone, port, err := ParsePeerDirectAddress("192.168.1.1:26431")
+	if err != nil {
+		t.Fatalf("unexpected error for private IPv4: %v", err)
+	}
+	if ip != "192.168.1.1" || zone != "" || port != 26431 {
+		t.Fatalf("got ip=%q zone=%q port=%d", ip, zone, port)
+	}
+}
+
+func TestParsePeerDirectAddress_IPv4_PublicRejected(t *testing.T) {
+	_, _, _, err := ParsePeerDirectAddress("8.8.8.8:26431")
 	if err == nil {
-		t.Fatal("expected error for IPv4 address, got nil")
+		t.Fatal("expected error for public IPv4 address, got nil")
 	}
 }
 

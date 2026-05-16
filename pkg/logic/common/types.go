@@ -108,6 +108,9 @@ type KeibiDrop struct {
 	activeDownloads   map[string]context.CancelFunc
 	activeBitmaps     map[string]*filesystem.ChunkBitmap
 	activeDownloadsMu sync.Mutex
+
+	// Download registry: tracks which bitmaps belong to which peer (privacy-preserving).
+	dlRegistry *downloadRegistry
 }
 
 type TaskSignal int
@@ -188,6 +191,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		SyncTracker:     synctracker.NewSyncTracker(),
 		activeDownloads: make(map[string]context.CancelFunc),
 		activeBitmaps:   make(map[string]*filesystem.ChunkBitmap),
+		dlRegistry:      newDownloadRegistry("", nil),
 	}
 
 	return kd, nil
@@ -246,6 +250,7 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 	kd.session = sess
 	kd.identityOpts = opts
 	kd.identityConfig = configDir
+	kd.dlRegistry = newDownloadRegistry(configDir, opts.ExternalMaster)
 
 	kd.refreshSession = func() *session.Session {
 		s, err := session.InitSessionWithKeys(kd.logger, id.Keys, outPort, inPort)

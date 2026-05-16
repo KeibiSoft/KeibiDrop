@@ -314,16 +314,13 @@ func DeriveFileEncryptionKey(masterKey, salt []byte, info string) ([]byte, error
 
 // ========== PRESENCE ==========
 
-// DerivePresenceKey derives a shared presence token from two fingerprints.
-// Both peers compute the same key (fingerprints are sorted). The relay cannot
-// link presence tokens to registration tokens (different HKDF label).
-func DerivePresenceKey(ownFingerprint, peerFingerprint string) ([]byte, error) {
-	a, b := ownFingerprint, peerFingerprint
-	if a > b {
-		a, b = b, a
-	}
-	ikm := sha512.Sum512([]byte(a + ":" + b))
-	return deriveKeyInternal(sha512.New, "keibidrop-presence-v1", KeySize, ikm[:])
+// DerivePresenceKey derives a directional presence token.
+// The poster uses DerivePresenceKey(own, peer) to POST "I'm online for peer".
+// The checker uses DerivePresenceKey(peer, own) to GET "is peer online for me?"
+// Tokens are directional: poster's fingerprint is always first in the derivation.
+func DerivePresenceKey(posterFingerprint, checkerFingerprint string) ([]byte, error) {
+	ikm := sha512.Sum512([]byte(posterFingerprint + ":" + checkerFingerprint))
+	return deriveKeyInternal(sha512.New, "keibidrop-presence-v2", KeySize, ikm[:])
 }
 
 // ========== RELAY PRIVACY ==========

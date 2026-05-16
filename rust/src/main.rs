@@ -1849,6 +1849,19 @@ fn main() {
                             }
                         }
 
+                        if evt.starts_with("resuming_downloads:") {
+                            let count = evt.trim_start_matches("resuming_downloads:");
+                            if let Some(app) = weak_evt.upgrade() {
+                                app.set_status_message(slint::SharedString::from(
+                                    format!("Resuming {} download(s)...", count),
+                                ));
+                            }
+                        } else if evt.starts_with("reconnected:") {
+                            if let Some(app) = weak_evt.upgrade() {
+                                app.set_status_message(slint::SharedString::from("Reconnected"));
+                            }
+                        }
+
                         let is_disconnect = evt.starts_with("peer_disconnected:")
                             || evt.starts_with("gave_up:");
                         if is_disconnect {

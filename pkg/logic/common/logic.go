@@ -248,6 +248,10 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		kd.activeDownloadsMu.Lock()
 		kd.activeBitmaps[remoteName] = bitmap
 		kd.activeDownloadsMu.Unlock()
+		if kd.dlRegistry != nil && kd.session != nil {
+			tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.identityOpts.ExternalMaster)
+			kd.dlRegistry.Register(bitmapPath, tag)
+		}
 		if kd.HealthMonitor != nil {
 			kd.HealthMonitor.TransferStarted()
 			defer kd.HealthMonitor.TransferEnded()
@@ -260,8 +264,11 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		_ = bitmap.Save(bitmapPath)
 	}
 
-	// Download complete. Clean up bitmap file.
+	// Download complete. Clean up bitmap and registry entry.
 	os.Remove(bitmapPath)
+	if kd.dlRegistry != nil {
+		kd.dlRegistry.Unregister(bitmapPath)
+	}
 
 updateTracker:
 	fileCopy.RealPathOfFile = localPath

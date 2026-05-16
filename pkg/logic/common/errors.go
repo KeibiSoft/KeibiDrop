@@ -37,6 +37,7 @@ var (
 	ErrInvalidSession                = errors.New("invalid session")
 	ErrServerAtCapacity              = errors.New("relay server at capacity, please try again in 5 minutes")
 	ErrIdenticalFingerprints         = errors.New("own and peer fingerprints are identical")
+	ErrDownloadPaused                = errors.New("download paused")
 )
 
 func RegisterErrorMapper(statusCode int, err error) error {

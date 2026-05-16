@@ -8,10 +8,14 @@ package common
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 )
 
 // InitConnectionResilience sets up health monitoring, reconnection, and relay keepalive.
@@ -177,6 +181,69 @@ func (kd *KeibiDrop) onReconnected() {
 		kd.HealthMonitor = session.NewHealthMonitor(kd.session, kd.KDClient, kd.logger)
 		kd.HealthMonitor.OnDisconnect = kd.onDisconnect
 		kd.HealthMonitor.Start()
+	}
+
+	// Auto-resume partial downloads for this peer (receiver-initiated).
+	go kd.resumePartialDownloads(logger)
+}
+
+// resumePartialDownloads checks the registry for bitmaps belonging to the
+// current peer and auto-resumes them. Called after successful reconnection.
+func (kd *KeibiDrop) resumePartialDownloads(logger *slog.Logger) {
+	if kd.dlRegistry == nil || kd.session == nil || kd.SyncTracker == nil {
+		return
+	}
+	tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.identityOpts.ExternalMaster)
+	paths := kd.dlRegistry.ForPeer(tag)
+	if len(paths) == 0 {
+		return
+	}
+
+	// Emit event so UI can show toast.
+	if kd.OnEvent != nil {
+		kd.OnEvent(fmt.Sprintf("resuming_downloads:%d", len(paths)))
+	}
+
+	for _, bitmapPath := range paths {
+		localPath := strings.TrimSuffix(bitmapPath, ".kdbitmap")
+		remoteName := strings.TrimPrefix(localPath, kd.ToSave+"/")
+		if remoteName == localPath {
+			remoteName = strings.TrimPrefix(localPath, kd.ToSave)
+		}
+		remoteName = strings.TrimPrefix(remoteName, "/")
+		if remoteName == "" {
+			continue
+		}
+
+		// Load bitmap to get file size for the synthetic entry.
+		info, statErr := os.Stat(localPath)
+		if statErr != nil {
+			kd.dlRegistry.Unregister(bitmapPath)
+			os.Remove(bitmapPath)
+			continue
+		}
+
+		// Add synthetic RemoteFiles entry so PullFile can find it.
+		kd.SyncTracker.RemoteFilesMu.Lock()
+		if _, exists := kd.SyncTracker.RemoteFiles[remoteName]; !exists {
+			kd.SyncTracker.RemoteFiles[remoteName] = &synctracker.File{
+				RelativePath: remoteName,
+				Size:         uint64(info.Size()),
+			}
+		}
+		kd.SyncTracker.RemoteFilesMu.Unlock()
+
+		logger.Info("Auto-resuming download", "remoteName", remoteName)
+		err := kd.PullFile(remoteName, localPath)
+		if err != nil {
+			logger.Warn("Resume failed, peer may have deleted file", "remoteName", remoteName, "err", err)
+			// Peer doesn't have it anymore — clean up.
+			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
+				kd.dlRegistry.Unregister(bitmapPath)
+				os.Remove(bitmapPath)
+				os.Remove(localPath)
+			}
+		}
 	}
 }
 

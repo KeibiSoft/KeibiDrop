@@ -37,24 +37,26 @@ const (
 	NotifyType_REMOVE_FILE NotifyType = 4
 	NotifyType_EDIT_DIR    NotifyType = 5
 	NotifyType_EDIT_FILE   NotifyType = 6
-	NotifyType_RENAME_FILE NotifyType = 7 // File moved/renamed. old_path -> path.
-	NotifyType_RENAME_DIR  NotifyType = 8 // Directory moved/renamed. old_path -> path.
-	NotifyType_DISCONNECT  NotifyType = 9 // Graceful peer disconnect notification.
+	NotifyType_RENAME_FILE NotifyType = 7  // File moved/renamed. old_path -> path.
+	NotifyType_RENAME_DIR  NotifyType = 8  // Directory moved/renamed. old_path -> path.
+	NotifyType_DISCONNECT  NotifyType = 9  // Graceful peer disconnect notification.
+	NotifyType_CHECK_FILES NotifyType = 10 // Request peer to confirm which files it still has (resume).
 )
 
 // Enum value maps for NotifyType.
 var (
 	NotifyType_name = map[int32]string{
-		0: "UNKNOWN",
-		1: "ADD_DIR",
-		2: "ADD_FILE",
-		3: "REMOVE_DIR",
-		4: "REMOVE_FILE",
-		5: "EDIT_DIR",
-		6: "EDIT_FILE",
-		7: "RENAME_FILE",
-		8: "RENAME_DIR",
-		9: "DISCONNECT",
+		0:  "UNKNOWN",
+		1:  "ADD_DIR",
+		2:  "ADD_FILE",
+		3:  "REMOVE_DIR",
+		4:  "REMOVE_FILE",
+		5:  "EDIT_DIR",
+		6:  "EDIT_FILE",
+		7:  "RENAME_FILE",
+		8:  "RENAME_DIR",
+		9:  "DISCONNECT",
+		10: "CHECK_FILES",
 	}
 	NotifyType_value = map[string]int32{
 		"UNKNOWN":     0,
@@ -67,6 +69,7 @@ var (
 		"RENAME_FILE": 7,
 		"RENAME_DIR":  8,
 		"DISCONNECT":  9,
+		"CHECK_FILES": 10,
 	}
 )
 
@@ -1503,7 +1506,7 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x11HeartbeatResponse\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x04R\ttimestamp\x12#\n" +
 	"\rreq_timestamp\x18\x02 \x01(\x04R\freqTimestamp\x12\x10\n" +
-	"\x03seq\x18\x03 \x01(\x04R\x03seq*\xa3\x01\n" +
+	"\x03seq\x18\x03 \x01(\x04R\x03seq*\xb4\x01\n" +
 	"\n" +
 	"NotifyType\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
@@ -1518,7 +1521,9 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\n" +
 	"RENAME_DIR\x10\b\x12\x0e\n" +
 	"\n" +
-	"DISCONNECT\x10\t2\xd4\x05\n" +
+	"DISCONNECT\x10\t\x12\x0f\n" +
+	"\vCHECK_FILES\x10\n" +
+	"2\xd4\x05\n" +
 	"\fKeibiService\x127\n" +
 	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12<\n" +
 	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse(\x01\x12;\n" +

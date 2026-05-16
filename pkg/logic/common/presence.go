@@ -60,7 +60,7 @@ func (kd *KeibiDrop) CheckContactPresence(fingerprint string) bool {
 	if kd.Identity == nil || kd.RelayEndoint == nil {
 		return false
 	}
-	token, err := kbc.DerivePresenceKey(kd.Identity.Fingerprint, fingerprint)
+	token, err := kbc.DerivePresenceKey(fingerprint, kd.Identity.Fingerprint)
 	if err != nil {
 		return false
 	}

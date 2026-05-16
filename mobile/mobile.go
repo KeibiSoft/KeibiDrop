@@ -39,6 +39,7 @@ type API struct {
 	kd               *common.KeibiDrop
 	running          bool
 	ctxCancel        context.CancelFunc
+	presenceCancel   context.CancelFunc
 	logger           *slog.Logger
 	op               *opState
 	opTimeoutSeconds int
@@ -145,9 +146,15 @@ func (api *API) Start() error {
 		return fmt.Errorf("already running")
 	}
 	api.running = true
+	presenceCtx, presenceCancel := context.WithCancel(context.Background())
+	api.presenceCancel = presenceCancel
 	api.mu.Unlock()
 
 	go api.kd.Run()
+
+	if api.kd.Identity != nil {
+		go api.kd.StartPresenceHeartbeat(presenceCtx)
+	}
 
 	// Block until stopped.
 	for {
@@ -167,6 +174,9 @@ func (api *API) Stop() error {
 	defer api.mu.Unlock()
 	if api.kd == nil {
 		return nil
+	}
+	if api.presenceCancel != nil {
+		api.presenceCancel()
 	}
 	if api.ctxCancel != nil {
 		api.ctxCancel()
