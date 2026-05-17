@@ -1,0 +1,73 @@
+// Design system tokens — single source of truth.
+// Matches Figma export (iPhone 11 Pro.svg, the_color_scheme.svg).
+
+export global Theme {
+    // Primitive palette
+    in property <color> palette-white: #FFFFFF;
+    in property <color> palette-black: #000000;
+    in property <color> palette-blue-400: #60a5fa;
+    in property <color> palette-blue-500: #3b82f6;
+    in property <color> palette-blue-600: #177DF5;
+    in property <color> palette-blue-700: #2563eb;
+    in property <color> palette-blue-900: #125ec0;
+    in property <color> palette-green-500: #22c55e;
+    in property <color> palette-orange-500: #d97706;
+    in property <color> palette-orange-600: #D97A31;
+    in property <color> palette-red-500: #ef4444;
+    in property <color> palette-gray-200: #9ca3af;
+    in property <color> palette-gray-300: #6A6A6A;
+    in property <color> palette-gray-400: #888888;
+    in property <color> palette-gray-600: #363434;
+    in property <color> palette-gray-700: #2a2a2a;
+    in property <color> palette-gray-800: #262626;
+    in property <color> palette-gray-900: #222222;
+
+    // Semantic: backgrounds
+    in property <color> bg-base: Theme.palette-gray-900;
+    in property <color> bg-card: Theme.palette-gray-800;
+    in property <color> bg-elevated: Theme.palette-gray-600;
+    in property <color> bg-input: Theme.palette-gray-900;
+
+    // Semantic: text
+    in property <color> text-primary: Theme.palette-white;
+    in property <color> text-secondary: Theme.palette-gray-200;
+    in property <color> text-tertiary: Theme.palette-gray-300;
+    in property <color> text-disabled: Theme.palette-gray-300;
+
+    // Semantic: accent
+    in property <color> accent-primary: Theme.palette-blue-500;
+    in property <color> accent-active: Theme.palette-blue-600;
+    in property <color> accent-success: Theme.palette-green-500;
+    in property <color> accent-warning: Theme.palette-orange-500;
+    in property <color> accent-error: Theme.palette-red-500;
+
+    // Semantic: interactive
+    in property <color> button-primary: Theme.palette-blue-500;
+    in property <color> button-secondary: Theme.palette-gray-400;
+    in property <color> button-hover: #999999;
+    in property <color> button-pressed: #777777;
+
+    // Semantic: borders
+    in property <color> border-default: rgba(255,255,255,0.08);
+    in property <color> border-subtle: rgba(255,255,255,0.05);
+    in property <color> border-input: rgba(255,255,255,0.5);
+
+    // Geometry
+    in property <length> radius-sm: 5px;
+    in property <length> radius-md: 7px;
+    in property <length> radius-lg: 12px;
+    in property <length> border-thin: 0.5px;
+    in property <length> border-normal: 1px;
+
+    // Spacing
+    in property <length> spacing-xs: 4px;
+    in property <length> spacing-sm: 8px;
+    in property <length> spacing-md: 12px;
+    in property <length> spacing-lg: 16px;
+    in property <length> spacing-xl: 24px;
+    in property <length> spacing-xxl: 40px;
+
+    // Touch / interactive
+    in property <length> input-height: 33px;
+    in property <length> button-width: 80px;
+}
