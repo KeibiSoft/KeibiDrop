@@ -7,15 +7,19 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 )
 
 // InitConnectionResilience sets up health monitoring, reconnection, and relay keepalive.
@@ -40,6 +44,10 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	kd.ReconnectManager.CachedPeerPort = kd.session.PeerPort
 	if !kd.IsLocalMode {
 		kd.ReconnectManager.RelayRefresh = func() error {
+			if newIP, err := GetGlobalIPv6(); err == nil && newIP != "" && newIP != kd.LocalIPv6IP {
+				logger.Info("IP changed before reconnect, updating", "old", kd.LocalIPv6IP, "new", newIP)
+				kd.LocalIPv6IP = newIP
+			}
 			return kd.registerRoomToRelay()
 		}
 		kd.ReconnectManager.RelayLookup = func(fingerprint string) (string, int, error) {
@@ -74,6 +82,52 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		kd.RelayKeepalive = NewRelayKeepalive(kd, kd.logger)
 		kd.RelayKeepalive.Start()
 	}
+
+	// Restore shared files if reconnecting to the same peer.
+	if kd.lastSharedFiles != nil && kd.lastSharedPeerFP != "" &&
+		kd.session.ExpectedPeerFingerprint == kd.lastSharedPeerFP {
+		kd.SyncTracker.LocalFilesMu.Lock()
+		for k, v := range kd.lastSharedFiles {
+			kd.SyncTracker.LocalFiles[k] = v
+		}
+		kd.SyncTracker.LocalFilesMu.Unlock()
+		logger.Info("Restored shared files for same peer (memory)", "count", len(kd.lastSharedFiles))
+		go kd.notifyRestoredFiles(logger)
+	} else if kd.sharedStore != nil && kd.dlRegistry != nil {
+		tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
+		entries := kd.sharedStore.Load()
+		var restored int
+		kd.SyncTracker.LocalFilesMu.Lock()
+		for _, e := range entries {
+			if e.PeerTag != tag {
+				continue
+			}
+			cleanPath := filepath.Clean(e.Path)
+			info, err := os.Stat(cleanPath)
+			if err != nil {
+				continue
+			}
+			name := filepath.Base(cleanPath)
+			kd.SyncTracker.LocalFiles[name] = &synctracker.File{
+				Name:           name,
+				RelativePath:   name,
+				RealPathOfFile: cleanPath,
+				Size:           uint64(info.Size()),
+				LastEditTime:   uint64(info.ModTime().UnixNano()),
+			}
+			restored++
+		}
+		kd.SyncTracker.LocalFilesMu.Unlock()
+		if restored > 0 {
+			logger.Info("Restored shared files for same peer (disk)", "count", restored)
+			go kd.notifyRestoredFiles(logger)
+		}
+		if restored == 0 && len(entries) > 0 {
+			kd.sharedStore.Clear()
+		}
+	}
+	kd.lastSharedFiles = nil
+	kd.lastSharedPeerFP = ""
 
 	logger.Info("Connection resilience initialized")
 	return nil
@@ -187,13 +241,46 @@ func (kd *KeibiDrop) onReconnected() {
 	go kd.resumePartialDownloads(logger)
 }
 
+// notifyRestoredFiles sends ADD_FILE for each restored LocalFile so the peer
+// can see them. Only called after same-peer reconnection with confirmed files.
+func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
+	if kd.KDClient == nil {
+		return
+	}
+	kd.SyncTracker.LocalFilesMu.RLock()
+	files := make(map[string]*synctracker.File, len(kd.SyncTracker.LocalFiles))
+	for k, v := range kd.SyncTracker.LocalFiles {
+		files[k] = v
+	}
+	kd.SyncTracker.LocalFilesMu.RUnlock()
+
+	for _, file := range files {
+		info, err := os.Stat(filepath.Clean(file.RealPathOfFile))
+		if err != nil {
+			continue
+		}
+		_, _ = kd.KDClient.Notify(context.Background(), &bindings.NotifyRequest{
+			Type: bindings.NotifyType(types.AddFile),
+			Path: file.RelativePath,
+			Attr: &bindings.Attr{
+				Mode:             uint32(info.Mode().Perm()) | 0100000,
+				Size:             info.Size(),
+				ModificationTime: uint64(info.ModTime().UnixNano()),
+				ChangeTime:       uint64(info.ModTime().UnixNano()),
+				BirthTime:        uint64(info.ModTime().UnixNano()),
+			},
+		})
+		logger.Info("Re-notified peer about restored file", "path", file.RelativePath)
+	}
+}
+
 // resumePartialDownloads checks the registry for bitmaps belonging to the
 // current peer and auto-resumes them. Called after successful reconnection.
 func (kd *KeibiDrop) resumePartialDownloads(logger *slog.Logger) {
 	if kd.dlRegistry == nil || kd.session == nil || kd.SyncTracker == nil {
 		return
 	}
-	tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.identityOpts.ExternalMaster)
+	tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
 	paths := kd.dlRegistry.ForPeer(tag)
 	if len(paths) == 0 {
 		return

@@ -32,6 +32,8 @@ import (
 	"golang.org/x/term"
 )
 
+var eventCh = make(chan string, 64)
+
 // socketPath returns the Unix socket path for daemon<->client communication.
 func socketPath() string {
 	if s := os.Getenv("KD_SOCKET"); s != "" {
@@ -154,6 +156,22 @@ func runDaemon() {
 		if err := kd.EnablePersistentIdentity(config.ConfigDir(), opts); err != nil {
 			logger.Warn("Failed to enable persistent identity, using ephemeral", "error", err)
 		}
+	}
+
+	kd.OnEvent = func(evt string) {
+		select {
+		case eventCh <- evt:
+		default:
+			select {
+			case <-eventCh:
+			default:
+			}
+			eventCh <- evt
+		}
+	}
+
+	if !cfg.Incognito && kd.Identity != nil && kd.AddressBook != nil && kd.AddressBook.Count() > 0 {
+		go kd.StartPresenceHeartbeat(ctx)
 	}
 
 	go kd.Run()
@@ -330,11 +348,16 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		type contactInfo struct {
 			Name        string `json:"name"`
 			Fingerprint string `json:"fingerprint"`
+			Online      bool   `json:"online"`
 			LastSeen    string `json:"last_seen,omitempty"`
 		}
 		out := make([]contactInfo, len(contacts))
 		for i, c := range contacts {
-			ci := contactInfo{Name: c.Name, Fingerprint: c.Fingerprint}
+			ci := contactInfo{
+				Name:        c.Name,
+				Fingerprint: c.Fingerprint,
+				Online:      kd.CheckContactPresence(c.Fingerprint),
+			}
 			if !c.LastSeen.IsZero() {
 				ci.LastSeen = c.LastSeen.Format(time.RFC3339)
 			}
@@ -391,6 +414,94 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 			return errResponse(err.Error())
 		}
 		return okResponse(map[string]string{"saved": req.Args[0]})
+
+	case "unshare":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd unshare <filename>")
+		}
+		if err := kd.UnshareFile(req.Args[0]); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"unshared": req.Args[0]})
+
+	case "add-as":
+		if len(req.Args) < 2 {
+			return errResponse("usage: kd add-as <local-path> <remote-name>")
+		}
+		if err := kd.AddFileAs(req.Args[0], req.Args[1]); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{
+			"added":       req.Args[0],
+			"remote_name": req.Args[1],
+		})
+
+	case "cancel-download":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd cancel-download <name>")
+		}
+		if err := kd.CancelDownload(req.Args[0]); err != nil {
+			return errResponse(err.Error())
+		}
+		return okResponse(map[string]string{"cancelled": req.Args[0]})
+
+	case "progress":
+		if len(req.Args) < 1 {
+			return errResponse("usage: kd progress <name>")
+		}
+		p := kd.GetDownloadProgress(req.Args[0])
+		return okResponse(map[string]any{
+			"name":     req.Args[0],
+			"progress": int(p * 100),
+		})
+
+	case "poll-event":
+		select {
+		case evt := <-eventCh:
+			return okResponse(map[string]string{"event": evt})
+		default:
+			return okResponse(map[string]string{"event": ""})
+		}
+
+	case "incognito":
+		if len(req.Args) < 1 {
+			if kd.Incognito {
+				return okResponse(map[string]string{"incognito": "true"})
+			}
+			return okResponse(map[string]string{"incognito": "false"})
+		}
+		enable := req.Args[0] == "true" || req.Args[0] == "1" || req.Args[0] == "on"
+		newFP, err := kd.ToggleIncognito(enable, config.ConfigDir())
+		if err != nil {
+			return errResponse(err.Error())
+		}
+		fp := newFP
+		if fp == "" {
+			fp, _ = kd.ExportFingerprint()
+		}
+		return okResponse(map[string]string{
+			"incognito":   fmt.Sprintf("%v", enable),
+			"fingerprint": fp,
+		})
+
+	case "peer-info":
+		pfp, _ := kd.GetPeerFingerprint()
+		data := map[string]any{
+			"peer_fingerprint": pfp,
+			"peer_ip":          kd.PeerIPv6IP,
+			"connection_mode":  kd.ConnectionMode,
+			"peer_persistent":  kd.IsPeerPersistent(),
+		}
+		if kd.AddressBook != nil && pfp != "" && pfp != "TOFU" {
+			data["peer_is_contact"] = kd.AddressBook.Lookup(pfp) != nil
+		}
+		return okResponse(data)
+
+	case "version":
+		return okResponse(map[string]string{
+			"version": common.Version,
+			"commit":  common.CommitHash,
+		})
 
 	case "stop", "quit":
 		kd.NotifyDisconnect()
@@ -556,6 +667,8 @@ func cmdList(kd *common.KeibiDrop) Response {
 		Source string `json:"source"` // "local" or "remote"
 	}
 
+	kd.SyncTracker.PruneStaleLocalFiles()
+
 	var files []fileInfo
 
 	kd.SyncTracker.LocalFilesMu.RLock()
@@ -662,15 +775,23 @@ USAGE:
   kd create                      Create a room (you are the initiator).
   kd join                        Join a room (peer must have created first).
   kd add <filepath>              Share a file with the peer.
+  kd add-as <path> <remote-name> Share with a custom remote name.
+  kd unshare <filename>          Stop sharing a file (keeps it on disk).
   kd list                        List all shared files (local + remote).
   kd pull <name> [local-path]    Download a remote file.
+  kd cancel-download <name>      Pause/cancel an active download.
+  kd progress <name>             Download progress (0-100).
   kd status                      Connection status and session info.
+  kd peer-info                   Peer details and connection mode.
+  kd poll-event                  Pop next event from the event queue.
   kd disconnect                  Disconnect and reset session.
-  kd contacts                    List saved contacts (JSON array).
+  kd contacts                    List saved contacts (with online status).
   kd add-contact <name> <fp>     Save a contact.
   kd remove-contact <fp>         Remove a saved contact.
   kd quick-connect <fp>          Connect to a saved contact (1-click).
   kd save-contact <name>         Save current peer as contact.
+  kd incognito [on|off]          Query or toggle incognito mode.
+  kd version                     Show version and commit hash.
   kd help                        Show this help.
 
 ENVIRONMENT (for "kd start"):

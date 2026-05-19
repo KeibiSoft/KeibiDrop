@@ -373,6 +373,14 @@ func (api *API) ImportFileAs(localPath string, remoteName string) error {
 	return api.kd.AddFileAs(localPath, remoteName)
 }
 
+// UnshareFile removes a file from the shared list without deleting from disk.
+func (api *API) UnshareFile(name string) error {
+	if api.kd == nil {
+		return fmt.Errorf("not initialized")
+	}
+	return api.kd.UnshareFile(name)
+}
+
 // ExportFile downloads a file from the peer and saves it to destPath.
 // destPath is where to write on the device (app sandbox, then share via OS).
 func (api *API) ExportFile(remoteName string, destPath string) error {
@@ -536,6 +544,7 @@ func (api *API) snapshotLocalFiles() {
 		api.localSnap = fileSnapshot{}
 		return
 	}
+	api.kd.SyncTracker.PruneStaleLocalFiles()
 	api.kd.SyncTracker.LocalFilesMu.RLock()
 	snap := fileSnapshot{
 		names: make([]string, 0, len(api.kd.SyncTracker.LocalFiles)),

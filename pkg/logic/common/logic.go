@@ -86,8 +86,48 @@ func (kd *KeibiDrop) AddFile(path string) error {
 		return err
 	}
 
+	if kd.sharedStore != nil && kd.dlRegistry != nil && kd.session != nil {
+		tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
+		kd.persistSharedFile(tag, file)
+	}
+
 	logger.Info("Success")
 
+	return nil
+}
+
+func (kd *KeibiDrop) persistSharedFile(tag [16]byte, file *synctracker.File) {
+	if kd.sharedStore == nil {
+		return
+	}
+	entries := kd.sharedStore.Load()
+	entries = append(entries, sharedEntry{
+		PeerTag: tag,
+		Path:    file.RealPathOfFile,
+		Size:    file.Size,
+		ModTime: file.LastEditTime,
+	})
+	kd.sharedStore.Save(entries)
+}
+
+// UnshareFile removes a file from the shared list and notifies the peer.
+// Does NOT delete the file from disk.
+func (kd *KeibiDrop) UnshareFile(name string) error {
+	kd.SyncTracker.LocalFilesMu.Lock()
+	_, exists := kd.SyncTracker.LocalFiles[name]
+	delete(kd.SyncTracker.LocalFiles, name)
+	kd.SyncTracker.LocalFilesMu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("file %q not shared", name)
+	}
+
+	if kd.session != nil && kd.KDClient != nil {
+		_, _ = kd.KDClient.Notify(context.Background(), &bindings.NotifyRequest{
+			Type: bindings.NotifyType(types.RemoveFile),
+			Path: name,
+		})
+	}
 	return nil
 }
 
@@ -249,7 +289,7 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		kd.activeBitmaps[remoteName] = bitmap
 		kd.activeDownloadsMu.Unlock()
 		if kd.dlRegistry != nil && kd.session != nil {
-			tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.identityOpts.ExternalMaster)
+			tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
 			kd.dlRegistry.Register(bitmapPath, tag)
 		}
 		if kd.HealthMonitor != nil {

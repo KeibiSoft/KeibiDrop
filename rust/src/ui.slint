@@ -701,6 +701,11 @@ component FileCard inherits Rectangle {
             }
         }
 
+        if root.is-local && !root.browse-mode: SmallOutlineButton {
+            width: 24px;
+            text: "X";
+            clicked => { root.delete-clicked(); }
+        }
         if root.browse-mode: SmallOutlineButton {
             width: 24px;
             text: "X";
@@ -785,6 +790,7 @@ export component MainWindow inherits Window {
     callback save_file(string);
     callback open_file(string);
     callback pause_file(string);
+    callback unshare_file(string);
     callback save_all_pressed();
     callback exit_pressed();
     callback open_fuse_install();
@@ -1444,6 +1450,7 @@ export component MainWindow inherits Window {
                     }
                 }
                 pause-clicked => { root.pause_file(file.name) }
+                delete-clicked => { root.unshare_file(file.name) }
             }
         }
     }
