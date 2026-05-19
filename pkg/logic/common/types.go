@@ -110,8 +110,8 @@ type KeibiDrop struct {
 	activeDownloadsMu sync.Mutex
 
 	// Download registry: tracks which bitmaps belong to which peer (privacy-preserving).
-	dlRegistry    *downloadRegistry
-	registryKey   []byte
+	dlRegistry  *downloadRegistry
+	registryKey []byte
 
 	// Preserved shared files from previous session (only served to same peer).
 	lastSharedPeerFP string

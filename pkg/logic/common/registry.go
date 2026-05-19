@@ -129,10 +129,10 @@ type sharedFilesStore struct {
 }
 
 type sharedEntry struct {
-	PeerTag  [16]byte `json:"t"`
-	Path     string   `json:"p"`
-	Size     uint64   `json:"s"`
-	ModTime  uint64   `json:"m"`
+	PeerTag [16]byte `json:"t"`
+	Path    string   `json:"p"`
+	Size    uint64   `json:"s"`
+	ModTime uint64   `json:"m"`
 }
 
 func newSharedFilesStore(configDir string, masterKey []byte) *sharedFilesStore {
