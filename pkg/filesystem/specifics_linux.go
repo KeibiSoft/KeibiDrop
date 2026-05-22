@@ -101,5 +101,5 @@ func syscallStatfs(path string, stat *syscall.Statfs_t) error {
 // chown rules (only root can chown), which blocks database init flows where
 // MySQL/PostgreSQL need to chown their data directories.
 func getMountOptions() []string {
-	return []string{"-o", "nonempty,allow_other"}
+	return []string{"-o", "nonempty,allow_other,max_read=131072"}
 }
