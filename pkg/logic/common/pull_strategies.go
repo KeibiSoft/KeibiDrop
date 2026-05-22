@@ -84,6 +84,8 @@ func (kd *KeibiDrop) pullStreamFile(
 // Each worker owns a shard of chunk indices and processes them sequentially.
 // 4 workers with interleaved shards saturate the link while keeping per-chunk
 // ordering within each stream (required by gRPC).
+//
+//nolint:unused // kept as alternative strategy for high-latency links
 func (kd *KeibiDrop) pullParallelRead(
 	ctx context.Context,
 	cancel context.CancelFunc,

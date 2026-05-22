@@ -29,6 +29,6 @@ var _ = [1]struct{}{}[int(GRPCStreamBuffer)-int(GRPCMaxMsgSize)+int(GRPCOverhead
 // Go gRPC defaults (64 KiB window, 32 KiB buffers) are designed for small
 // RPC messages and severely throttle large file streams on fast networks.
 const (
-	GRPCWindowSize    = 16 << 20 // 16 MiB - per-stream and per-connection HTTP/2 window
-	GRPCIOBufferSize  = 4 << 20  // 4 MiB  - read/write buffer for gRPC transport
+	GRPCWindowSize   = 16 << 20 // 16 MiB - per-stream and per-connection HTTP/2 window
+	GRPCIOBufferSize = 4 << 20  // 4 MiB  - read/write buffer for gRPC transport
 )
