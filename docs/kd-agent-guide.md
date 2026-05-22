@@ -49,9 +49,13 @@ The daemon runs in the foreground and prints its fingerprint as JSON on startup.
 
 **no-FUSE mode:**
 ```bash
-./kd add ./myfile.pdf              # share a local file
-./kd list                          # see all files (local + remote)
-./kd pull report.pdf ./report.pdf  # download a remote file
+./kd add ./myfile.pdf                # share a local file
+./kd add-as ./f.txt report.txt       # share with a custom remote name
+./kd unshare myfile.pdf              # stop sharing (keeps on disk)
+./kd list                            # see all files (local + remote)
+./kd pull report.pdf ./report.pdf    # download a remote file
+./kd progress report.pdf             # check download progress (0-100)
+./kd cancel-download report.pdf      # pause download (resume later with pull)
 ```
 
 **FUSE mode:**
@@ -139,24 +143,69 @@ Every command returns a single JSON line:
 
 | Command | Description | Example Output |
 |---|---|---|
+| **Lifecycle** | | |
 | `kd start` | Start daemon (foreground) | `{"ok":true,"data":{"fingerprint":"...","ip":"...","socket":"..."}}` |
 | `kd stop` | Stop daemon | `{"ok":true,"data":{"status":"stopped"}}` |
-| `kd show [what]` | Show info (fingerprint/ip/peer/relay/status/all) | `{"ok":true,"data":{"fingerprint":"..."}}` |
-| `kd register <fp>` | Register peer fingerprint | `{"ok":true,"data":{"registered":"..."}}` |
+| `kd show [what]` | Show info (fingerprint/ip/peer/relay/status/config/all) | `{"ok":true,"data":{"fingerprint":"..."}}` |
+| `kd status` | Full status | `{"ok":true,"data":{"running":true,"connection_status":"healthy",...}}` |
+| `kd version` | Version and commit hash | `{"ok":true,"data":{"version":"...","commit":"..."}}` |
+| **Connection** | | |
+| `kd register <fp>` | Register peer fingerprint (or LAN address in local mode) | `{"ok":true,"data":{"registered":"..."}}` |
+| `kd discover` | Discover peers on local network (10s scan) | `{"ok":true,"data":{"my_name":"...","peers":[{"name":"...","addr":"..."}]}}` |
+| `kd connect` | Connect (auto role via fingerprint tiebreak) | `{"ok":true,"data":{"status":"connected","peer_ip":"...","mode":"..."}}` |
 | `kd create` | Create room (blocks until peer joins) | `{"ok":true,"data":{"status":"connected","peer_ip":"..."}}` |
 | `kd join` | Join room (blocks until connected) | `{"ok":true,"data":{"status":"connected","peer_ip":"..."}}` |
+| `kd disconnect` | Disconnect | `{"ok":true,"data":{"status":"disconnected","new_fingerprint":"..."}}` |
+| `kd peer-info` | Peer details and connection mode | `{"ok":true,"data":{"peer_fingerprint":"...","connection_mode":"lan"}}` |
+| **File Operations** | | |
 | `kd add <path>` | Share a file | `{"ok":true,"data":{"added":"./file.txt"}}` |
+| `kd add-as <path> <name>` | Share with custom remote name | `{"ok":true,"data":{"added":"./f.txt","remote_name":"report.txt"}}` |
+| `kd unshare <name>` | Stop sharing a file (keeps on disk) | `{"ok":true,"data":{"unshared":"file.txt"}}` |
 | `kd list` | List all files | `{"ok":true,"data":{"files":[{"name":"...","size":123,"source":"remote"}]}}` |
 | `kd pull <name> [path]` | Download remote file | `{"ok":true,"data":{"pulled":"file.txt","to":"./file.txt"}}` |
-| `kd status` | Full status | `{"ok":true,"data":{"running":true,"connection_status":"healthy",...}}` |
-| `kd disconnect` | Disconnect | `{"ok":true,"data":{"status":"disconnected","new_fingerprint":"..."}}` |
-| `kd connect` | Connect (auto role) | `{"ok":true,"data":{"status":"connected","peer_ip":"..."}}` |
-| `kd contacts` | List saved contacts | `{"ok":true,"data":[{"name":"Alice","fingerprint":"..."}]}` |
+| `kd cancel-download <name>` | Pause/cancel active download | `{"ok":true,"data":{"cancelled":"file.txt"}}` |
+| `kd progress <name>` | Download progress 0-100 | `{"ok":true,"data":{"name":"file.txt","progress":42}}` |
+| `kd file-size <name>` | Get remote file size in bytes | `{"ok":true,"data":{"name":"file.txt","size":1048576}}` |
+| `kd local-file-path <name>` | Get local file real path | `{"ok":true,"data":{"name":"file.txt","path":"/tmp/file.txt"}}` |
+| `kd bench-pull <name> [path]` | Benchmark: pull file, report MB/s, cleanup | `{"ok":true,"data":{"file":"big.mp4","size":104857600,"duration":"1.5s","mb_per_s":"66.7","mode":"lan"}}` |
+| **Contacts** | | |
+| `kd contacts` | List saved contacts (with online status) | `{"ok":true,"data":[{"name":"Alice","fingerprint":"...","online":true}]}` |
 | `kd add-contact <name> <fp>` | Save a contact | `{"ok":true,"data":{"added":"Alice"}}` |
 | `kd remove-contact <fp>` | Remove a contact | `{"ok":true,"data":{"removed":"..."}}` |
-| `kd quick-connect <fp>` | Connect to saved contact | `{"ok":true,"data":{"status":"connecting"}}` |
+| `kd quick-connect <fp>` | Connect to saved contact (1-click) | `{"ok":true,"data":{"status":"connecting"}}` |
 | `kd save-contact <name>` | Save current peer | `{"ok":true,"data":{"saved":"Alice"}}` |
+| **Identity** | | |
+| `kd incognito [on\|off]` | Query or toggle incognito mode | `{"ok":true,"data":{"incognito":"true","fingerprint":"..."}}` |
+| **Events** | | |
+| `kd poll-event` | Pop next event from queue | `{"ok":true,"data":{"event":"health_changed:healthy:disconnected"}}` |
+| **Diagnostics** | | |
+| `kd export-logs [dest]` | Export sanitized logs | `{"ok":true,"data":{"path":"keibidrop-sanitized.log"}}` |
+| `kd sanitize-logs [dest]` | Alias for export-logs | `{"ok":true,"data":{"path":"keibidrop-sanitized.log"}}` |
+| `kd config-path` | Show config file path | `{"ok":true,"data":{"path":"~/.config/keibidrop/config.json"}}` |
+| `kd log-path` | Show log file path | `{"ok":true,"data":{"path":"~/.config/keibidrop/keibidrop.log"}}` |
 | `kd help` | Show help text | (plain text) |
+
+## LAN / Local Mode
+
+Connect to peers on the same network without a relay (e.g., phone to desktop):
+
+```bash
+./kd discover                         # scans LAN for 10s, returns peer list
+./kd register <peer-addr>             # e.g. fe80::1%en0:26431
+./kd connect                          # auto role, direct LAN connection
+```
+
+After connecting, `kd status` shows `"connection_mode":"lan"`.
+
+### Benchmark a LAN transfer
+
+Once connected, measure real transfer speed:
+
+```bash
+./kd bench-pull big-video.mp4         # pulls, times, reports MB/s, cleans up
+```
+
+Returns: `{"ok":true,"data":{"file":"big-video.mp4","size":104857600,"duration":"1.5s","mb_per_s":"66.7","mode":"lan"}}`
 
 ## Security Notes
 
@@ -170,12 +219,15 @@ Every command returns a single JSON line:
 
 When building an agent tool that uses `kd`:
 
-1. Start the daemon with FUSE enabled (`KD_MOUNT_PATH=./mount`). This is the recommended mode for agents.
-2. Parse all output as JSON — check the `ok` field.
-3. `kd create` and `kd join` are blocking — they wait for the peer. Run them in the background or with a timeout.
-4. After connecting, use `kd status` to get the `mount_path` — this is the synced folder your agent should use.
-5. The `mount_path` is a live, bidirectional view of shared files. Read remote files and write local files directly to/from this folder. No need for `kd add` or `kd pull` — just use normal file I/O.
-6. Each daemon instance needs unique ports and a unique `KD_SOCKET`.
+1. **Start the daemon** with `KD_SAVE_PATH` and `KD_NO_FUSE=1` for simple file transfer, or `KD_MOUNT_PATH=./mount` for FUSE (bidirectional sync folder).
+2. **Parse all output as JSON** — check the `ok` field.
+3. **`kd connect` is the preferred connection method** — auto-determines creator/joiner role via fingerprint tiebreak. Both peers just run `kd connect`.
+4. **`kd create` and `kd join` are blocking** — they wait for the peer. Use them if you need explicit role control.
+5. **LAN mode**: use `kd discover` to find peers on the same network, then `kd register <addr>` and `kd connect`. No relay needed.
+6. **Monitor events**: `kd poll-event` returns health changes, disconnects, and reconnect events. Poll it periodically to react to connection state changes.
+7. **Track downloads**: `kd progress <name>` returns 0-100. `kd cancel-download <name>` pauses (partial data preserved for resume).
+8. **Benchmark**: `kd bench-pull <name>` measures real transfer throughput and reports MB/s — useful for agents that need to estimate transfer time.
+9. Each daemon instance needs unique ports and a unique `KD_SOCKET`.
 
 ## Full Example with Outputs
 

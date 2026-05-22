@@ -24,3 +24,11 @@ const (
 
 // Compile-time check: ensure buffer fits within max message size
 var _ = [1]struct{}{}[int(GRPCStreamBuffer)-int(GRPCMaxMsgSize)+int(GRPCOverheadRoom)]
+
+// HTTP/2 flow-control tuning for bulk transfer.
+// Go gRPC defaults (64 KiB window, 32 KiB buffers) are designed for small
+// RPC messages and severely throttle large file streams on fast networks.
+const (
+	GRPCWindowSize    = 16 << 20 // 16 MiB - per-stream and per-connection HTTP/2 window
+	GRPCIOBufferSize  = 4 << 20  // 4 MiB  - read/write buffer for gRPC transport
+)

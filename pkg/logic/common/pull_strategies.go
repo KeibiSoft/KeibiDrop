@@ -8,6 +8,7 @@ package common
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"sync"
@@ -16,6 +17,68 @@ import (
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 )
+
+// pullStreamFile downloads using the server-streaming StreamFile RPC.
+// One request, server pushes all chunks — zero per-chunk round-trip overhead.
+// On resume, starts from the first incomplete chunk — no-FUSE downloads
+// are always contiguous so everything after the pause point is missing.
+func (kd *KeibiDrop) pullStreamFile(
+	ctx context.Context,
+	bitmap *filesystem.ChunkBitmap,
+	f *os.File,
+	relPath string,
+	fileSize uint64,
+	blockSize int,
+	bitmapPath string,
+	logger *slog.Logger,
+) error {
+	first := bitmap.NextMissing(0)
+	if first < 0 {
+		return nil
+	}
+	startOffset := uint64(first) * uint64(blockSize)
+	if startOffset >= fileSize {
+		return nil
+	}
+
+	stream, err := kd.session.GRPCClient.StreamFile(ctx, &bindings.StreamFileRequest{
+		Path:        relPath,
+		StartOffset: startOffset,
+	})
+	if err != nil {
+		return fmt.Errorf("open stream: %w", err)
+	}
+
+	var chunksWritten atomic.Int32
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			if ctx.Err() == context.Canceled {
+				_ = bitmap.Save(bitmapPath)
+				logger.Info("Download paused", "progress", bitmap.Progress())
+				return ErrDownloadPaused
+			}
+			_ = bitmap.Save(bitmapPath)
+			logger.Error("Download failed (partial state preserved)", "error", err, "progress", bitmap.Progress())
+			return err
+		}
+
+		if _, err := f.WriteAt(resp.Data, int64(resp.Offset)); err != nil {
+			return fmt.Errorf("write at %d: %w", resp.Offset, err)
+		}
+
+		chunkIdx := int(resp.Offset / uint64(blockSize))
+		bitmap.Set(chunkIdx)
+
+		if chunksWritten.Add(1)%25 == 0 {
+			_ = bitmap.Save(bitmapPath)
+		}
+	}
+	return nil
+}
 
 // pullParallelRead downloads using N parallel bidirectional Read streams.
 // Each worker owns a shard of chunk indices and processes them sequentially.

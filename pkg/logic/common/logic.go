@@ -298,7 +298,7 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		}
 		defer kd.unregisterDownload(remoteName)
 
-		if err := kd.pullParallelRead(dlCtx, dlCancel, bitmap, f, relPath, fileSize, config.BlockSize, bitmapPath, logger); err != nil {
+		if err := kd.pullStreamFile(dlCtx, bitmap, f, relPath, fileSize, config.BlockSize, bitmapPath, logger); err != nil {
 			return err
 		}
 		_ = bitmap.Save(bitmapPath)
