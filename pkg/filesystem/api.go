@@ -154,9 +154,61 @@ func (fs *FS) Unmount() {
 		return
 	}
 
-	// TODO: Also call umount on the MountPath in case its stuck or something.
+	// Cancel all in-flight gRPC operations BEFORE asking the kernel to
+	// unmount. The kernel waits for every pending FUSE operation (Read,
+	// Getattr, etc.) to return before completing the unmount. If those
+	// handlers are blocked on gRPC calls to a disconnected peer (up to
+	// 10s timeout * 3 retries each), host.Unmount() hangs for 30+ seconds.
+	//
+	// By cancelling prefetch contexts and closing stream pools first, those
+	// handlers hit context.Canceled immediately and return, allowing the
+	// kernel to complete the unmount promptly.
+	if fs.Root != nil {
+		fs.drainInFlightOperations()
+	}
 
 	fs.host.Unmount()
 	fs.Root = nil
 	fs.logger.Warn("FUSE Unmount completed")
+}
+
+// drainInFlightOperations cancels all prefetch goroutines and closes all
+// stream pools on open file handles so that pending FUSE Read/Open handlers
+// unblock immediately instead of waiting for gRPC timeouts.
+func (fs *FS) drainInFlightOperations() {
+	root := fs.Root
+	if root == nil {
+		return
+	}
+
+	// 1. Cancel all prefetch goroutines (they hold PrefetchSem slots and
+	//    stream from the peer via gRPC).
+	root.AfmLock.RLock()
+	for _, f := range root.AllFileMap {
+		if f.PrefetchCancel != nil {
+			f.PrefetchCancel()
+			f.PrefetchCancel = nil
+		}
+	}
+	root.AfmLock.RUnlock()
+
+	// 2. Close all stream pools on open file handles. This causes any
+	//    in-flight pool.ReadAt() call (inside a FUSE Read handler) to
+	//    return an error immediately instead of blocking on the 10s timeout.
+	root.OpenMapLock.Lock()
+	for _, entry := range root.OpenFileHandlers {
+		if entry.File != nil {
+			if entry.File.StreamPool != nil {
+				_ = entry.File.StreamPool.Close()
+				entry.File.StreamPool = nil
+			}
+			if entry.File.StreamCancel != nil {
+				entry.File.StreamCancel()
+				entry.File.StreamCancel = nil
+			}
+		}
+	}
+	root.OpenMapLock.Unlock()
+
+	fs.logger.Warn("FUSE drainInFlightOperations completed")
 }

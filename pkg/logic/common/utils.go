@@ -533,6 +533,10 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 					grpc.MaxCallRecvMsgSize(config.GRPCMaxMsgSize),
 					grpc.MaxCallSendMsgSize(config.GRPCMaxMsgSize),
 				),
+				grpc.WithInitialWindowSize(config.GRPCWindowSize),
+				grpc.WithInitialConnWindowSize(config.GRPCWindowSize),
+				grpc.WithWriteBufferSize(config.GRPCIOBufferSize),
+				grpc.WithReadBufferSize(config.GRPCIOBufferSize),
 			)
 			if err != nil {
 				logger.Debug("grpc dial attempt failed, retrying", "err", err)
@@ -581,6 +585,10 @@ func (kd *KeibiDrop) startGRPCServer() error {
 	grpcServer := grpc.NewServer(
 		grpc.MaxRecvMsgSize(config.GRPCMaxMsgSize),
 		grpc.MaxSendMsgSize(config.GRPCMaxMsgSize),
+		grpc.InitialWindowSize(config.GRPCWindowSize),
+		grpc.InitialConnWindowSize(config.GRPCWindowSize),
+		grpc.WriteBufferSize(config.GRPCIOBufferSize),
+		grpc.ReadBufferSize(config.GRPCIOBufferSize),
 	)
 	kd.grpcServer = grpcServer
 

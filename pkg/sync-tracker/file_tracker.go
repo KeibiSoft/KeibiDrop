@@ -7,6 +7,7 @@
 package synctracker
 
 import (
+	"os"
 	"sync"
 )
 
@@ -34,5 +35,19 @@ func NewSyncTracker() *SyncTracker {
 	return &SyncTracker{
 		LocalFiles:  make(map[string]*File),
 		RemoteFiles: make(map[string]*File),
+	}
+}
+
+// PruneStaleLocalFiles removes entries whose underlying file no longer exists.
+func (st *SyncTracker) PruneStaleLocalFiles() {
+	st.LocalFilesMu.Lock()
+	defer st.LocalFilesMu.Unlock()
+	for name, f := range st.LocalFiles {
+		if f.RealPathOfFile == "" {
+			continue
+		}
+		if _, err := os.Stat(f.RealPathOfFile); err != nil {
+			delete(st.LocalFiles, name)
+		}
 	}
 }

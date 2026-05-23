@@ -261,6 +261,19 @@ func KD_AddFileAs(localPath *C.char, remoteName *C.char) C.int {
 	return 0
 }
 
+//export KD_UnshareFile
+func KD_UnshareFile(name *C.char) C.int {
+	if kd == nil {
+		setLastError(fmt.Errorf("not initialized"))
+		return -1
+	}
+	if err := kd.UnshareFile(C.GoString(name)); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
 //export KD_ListFiles
 func KD_ListFiles() *C.char {
 	if kd == nil {
@@ -381,6 +394,7 @@ func KD_GetLocalFileCount() C.int {
 	if kd == nil {
 		return 0
 	}
+	kd.SyncTracker.PruneStaleLocalFiles()
 	kd.SyncTracker.LocalFilesMu.RLock()
 	defer kd.SyncTracker.LocalFilesMu.RUnlock()
 	return C.int(len(kd.SyncTracker.LocalFiles))

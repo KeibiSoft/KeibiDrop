@@ -26,6 +26,27 @@ import (
 	"golang.org/x/term"
 )
 
+var eventCh = make(chan string, 64)
+
+// Local mode discovery state: names for deterministic tiebreak.
+var (
+	cliLocalMyName       string
+	cliLocalPeerName     string
+	cliDiscoveredPeerMap = map[string]string{} // addr → name
+)
+
+func pushEvent(evt string) {
+	select {
+	case eventCh <- evt:
+	default:
+		select {
+		case <-eventCh:
+		default:
+		}
+		eventCh <- evt
+	}
+}
+
 type cliContext struct {
 	kd *common.KeibiDrop
 }
@@ -215,6 +236,104 @@ func (c *cliContext) executor(in string) {
 			fmt.Printf("Peer saved as '%s'.\n", args[1])
 		}
 
+	case "add-as":
+		if len(args) < 3 {
+			fmt.Println("Usage: add-as <local-path> <remote-name>")
+			return
+		}
+		if err := c.kd.AddFileAs(filepath.Clean(args[1]), args[2]); err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		fmt.Printf("Shared '%s' as '%s'\n", args[1], args[2])
+
+	case "unshare":
+		if len(args) != 2 {
+			fmt.Println("Usage: unshare <filename>")
+			return
+		}
+		deleteFile(c.kd, args[1])
+
+	case "cancel-download":
+		if len(args) != 2 {
+			fmt.Println("Usage: cancel-download <name>")
+			return
+		}
+		if err := c.kd.CancelDownload(args[1]); err != nil {
+			fmt.Println("Error:", err)
+		} else {
+			fmt.Println("Download cancelled:", args[1])
+		}
+
+	case "progress":
+		if len(args) != 2 {
+			fmt.Println("Usage: progress <name>")
+			return
+		}
+		p := c.kd.GetDownloadProgress(args[1])
+		if p < 0 {
+			fmt.Println("No active download:", args[1])
+		} else {
+			fmt.Printf("%s: %d%%\n", args[1], int(p*100))
+		}
+
+	case "incognito":
+		if len(args) < 2 {
+			if c.kd.Incognito {
+				fmt.Println("incognito: on")
+			} else {
+				fmt.Println("incognito: off")
+			}
+			return
+		}
+		enable := args[1] == "on" || args[1] == "true" || args[1] == "1"
+		newFP, err := c.kd.ToggleIncognito(enable, config.ConfigDir())
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		if newFP == "" {
+			newFP, _ = c.kd.ExportFingerprint()
+		}
+		fmt.Println("Incognito:", args[1])
+		fmt.Println("Fingerprint:", newFP)
+
+	case "peer-info":
+		pfp, _ := c.kd.GetPeerFingerprint()
+		fmt.Printf("Peer fingerprint: %s\n", pfp)
+		fmt.Printf("Peer IP:          %s\n", c.kd.PeerIPv6IP)
+		fmt.Printf("Connection mode:  %s\n", c.kd.ConnectionMode)
+		fmt.Printf("Peer persistent:  %v\n", c.kd.IsPeerPersistent())
+
+	case "status":
+		fp, _ := c.kd.ExportFingerprint()
+		pfp, _ := c.kd.GetPeerFingerprint()
+		fmt.Printf("Running:          %v\n", c.kd.IsRunning())
+		fmt.Printf("Connection:       %s\n", c.kd.ConnectionStatus())
+		fmt.Printf("Fingerprint:      %s\n", fp)
+		fmt.Printf("Peer fingerprint: %s\n", pfp)
+		fmt.Printf("IP:               %s\n", c.kd.LocalIPv6IP)
+		fmt.Printf("Peer IP:          %s\n", c.kd.PeerIPv6IP)
+		fmt.Printf("Mode:             %s\n", c.kd.ConnectionMode)
+		fmt.Printf("Relay:            %s\n", c.kd.RelayEndoint)
+		fmt.Printf("FUSE:             %v\n", c.kd.IsFUSE)
+		c.kd.SyncTracker.LocalFilesMu.RLock()
+		localCount := len(c.kd.SyncTracker.LocalFiles)
+		c.kd.SyncTracker.LocalFilesMu.RUnlock()
+		c.kd.SyncTracker.RemoteFilesMu.RLock()
+		remoteCount := len(c.kd.SyncTracker.RemoteFiles)
+		c.kd.SyncTracker.RemoteFilesMu.RUnlock()
+		fmt.Printf("Local files:      %d\n", localCount)
+		fmt.Printf("Remote files:     %d\n", remoteCount)
+
+	case "poll-event":
+		select {
+		case evt := <-eventCh:
+			fmt.Println("Event:", evt)
+		default:
+			fmt.Println("No events")
+		}
+
 	case "export-logs", "sanitize-logs":
 		dest := "keibidrop-sanitized.log"
 		if len(args) > 1 {
@@ -266,24 +385,35 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 	s := []prompt.Suggest{
 		{Text: "help", Description: "Show help message"},
 		{Text: "version", Description: "Show banner, version and commit hash"},
+		{Text: "status", Description: "Full connection and session status"},
 		{Text: "show", Description: "Show local or peer info"},
 		{Text: "show relay", Description: "Show the connected relay URL"},
 		{Text: "show peer", Description: "Show the peer fingerprint"},
 		{Text: "show fingerprint", Description: "Show our fingerprint"},
+		{Text: "show config", Description: "Show full configuration"},
 		{Text: "register", Description: "Register peer fingerprint"},
+		{Text: "discover", Description: "Discover peers on local network"},
 		{Text: "create", Description: "Create a room"},
 		{Text: "join", Description: "Join a room by fingerprint"},
+		{Text: "connect", Description: "Connect (auto role via fingerprint)"},
 		{Text: "disconnect", Description: "Disconnect from peer and reset session"},
-		{Text: "reset", Description: "Reset session, rotate keys"},
 		{Text: "add", Description: "Add file or folder to share"},
+		{Text: "add-as", Description: "Share with custom name: add-as <path> <name>"},
+		{Text: "unshare", Description: "Stop sharing a file"},
 		{Text: "list", Description: "List shared files"},
 		{Text: "pull", Description: "Pull file/folder from peer"},
 		{Text: "delete", Description: "Stop sharing a file/folder"},
+		{Text: "cancel-download", Description: "Cancel an active download"},
+		{Text: "progress", Description: "Download progress: progress <name>"},
+		{Text: "peer-info", Description: "Peer details and connection mode"},
+		{Text: "incognito", Description: "Query or toggle incognito mode"},
+		{Text: "poll-event", Description: "Pop next event from event queue"},
 		{Text: "contacts", Description: "List saved contacts"},
 		{Text: "add-contact", Description: "Add contact: add-contact <name> <fp>"},
 		{Text: "remove-contact", Description: "Remove contact by fingerprint"},
 		{Text: "quick-connect", Description: "Connect to saved contact by fingerprint"},
 		{Text: "save-contact", Description: "Save current peer as contact"},
+		{Text: "export-logs", Description: "Export sanitized logs"},
 		{Text: "exit", Description: "Exit the CLI"},
 	}
 	return prompt.FilterHasPrefix(s, d.GetWordBeforeCursor(), true)
@@ -293,25 +423,35 @@ func printHelp() {
 	fmt.Println(`
 help                         Show this help message
 version                      Show banner and version
+status                       Full connection and session status
 show fingerprint             Show your fingerprint
 show ip                      Show your IP
 show peer fingerprint        Show peer's fingerprint
 show peer ip                 Show peer's IP
 show relay                   Show the currently connected relay URL
+show config                  Show full configuration
 register <fingerprint>       Register a peer's fingerprint
+discover                     Discover peers on local network
 connect                      Connect (auto role via fingerprint)
 create                       Create a room
 join                         Join a room
 disconnect                   Disconnect from peer and reset session
 add <filepath>               Share a file or directory
+add-as <path> <remote-name>  Share with a custom remote name
+unshare <filename>           Stop sharing a file
 list                         List shared files and their locations
 pull <remote> <local>        Copy file/folder from peer to local path
-delete <filepath>            Unshare a file or folder
+cancel-download <name>       Cancel an active download
+progress <name>              Download progress (0-100%)
+peer-info                    Peer details and connection mode
+incognito [on|off]           Query or toggle incognito mode
+poll-event                   Pop next event from event queue
 contacts                     List saved contacts
 add-contact <name> <fp>      Save a contact
 remove-contact <fp>          Remove a saved contact
 quick-connect <fp>           Connect to a saved contact
 save-contact <name>          Save current peer as contact
+export-logs [dest]           Export sanitized logs
 exit                         Quit the CLI`)
 }
 
@@ -348,14 +488,14 @@ func discoverPeers(kd *common.KeibiDrop) {
 	_ = disc.Start()
 	defer disc.Stop()
 
-	fmt.Printf("You appear as: %s\n", disc.Name())
+	cliLocalMyName = disc.Name()
+	fmt.Printf("You appear as: %s\n", cliLocalMyName)
 	fmt.Println("Searching for nearby KeibiDrop devices (10s)...")
 
 	time.Sleep(6 * time.Second)
 
 	peers := disc.Peers()
 	if len(peers) == 0 {
-		// Wait a bit more
 		time.Sleep(4 * time.Second)
 		peers = disc.Peers()
 	}
@@ -365,21 +505,34 @@ func discoverPeers(kd *common.KeibiDrop) {
 		return
 	}
 
+	cliDiscoveredPeerMap = make(map[string]string, len(peers))
 	fmt.Printf("\nFound %d device(s):\n", len(peers))
 	for i, p := range peers {
+		cliDiscoveredPeerMap[p.Addr] = p.Name
 		fmt.Printf("  [%d] %s  (%s)\n", i+1, p.Name, p.Addr)
 	}
-	fmt.Println("\nTo connect: register <address> then create/join")
+	fmt.Println("\nTo connect: register <address> then connect")
 	fmt.Println("Example:  register " + peers[0].Addr)
 }
 
 func registerPeer(kd *common.KeibiDrop, fp string) {
-	err := kd.AddPeerFingerprint(fp)
-	if err != nil {
-		fmt.Println("Error: ", err)
+	if kd.IsLocalMode {
+		if err := kd.SetPeerDirectAddress(fp); err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		if name, ok := cliDiscoveredPeerMap[fp]; ok {
+			cliLocalPeerName = name
+		}
+		fmt.Println("Registered LAN address:", fp)
 		return
 	}
-	fmt.Println("Peer registed: ", fp)
+	err := kd.AddPeerFingerprint(fp)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println("Peer registered:", fp)
 }
 
 func createRoom(kd *common.KeibiDrop) {
@@ -436,11 +589,36 @@ func connectPeer(kd *common.KeibiDrop) {
 		return
 	}
 
+	// In local mode, use name-based tiebreak (same as mobile + Rust UI).
+	if kd.IsLocalMode && cliLocalMyName != "" && cliLocalPeerName != "" {
+		iAmCreator := cliLocalMyName < cliLocalPeerName
+		role := "joiner"
+		if iAmCreator {
+			role = "creator"
+		}
+		fmt.Printf("Connecting as %s (me=%s, peer=%s)\n", role, cliLocalMyName, cliLocalPeerName)
+		go func() {
+			defer kd.OpInProgress.Add(-1)
+			var err error
+			if iAmCreator {
+				err = kd.CreateRoom()
+			} else {
+				err = kd.JoinRoom()
+			}
+			if err != nil {
+				fmt.Println("Error:", err)
+				return
+			}
+			fmt.Printf("Connected to peer: %s (mode: %s)\n", kd.PeerIPv6IP, kd.ConnectionMode)
+		}()
+		return
+	}
+
 	go func() {
 		defer kd.OpInProgress.Add(-1)
 		err := kd.Connect()
 		if err != nil {
-			fmt.Println("Error: ", err)
+			fmt.Println("Error:", err)
 			return
 		}
 		fmt.Printf("Connected to peer: %s (mode: %s)\n", kd.PeerIPv6IP, kd.ConnectionMode)
@@ -454,7 +632,7 @@ func resetSession(kd *common.KeibiDrop) {
 }
 
 func addFile(kd *common.KeibiDrop, p string) {
-	err := kd.AddFile(p)
+	err := kd.AddFile(filepath.Clean(p))
 	if err != nil {
 		fmt.Println(fmt.Errorf("failed to add the file `%v` to the shared list: %e", p, err))
 		return
@@ -499,8 +677,11 @@ func disconnectRoom(kd *common.KeibiDrop) {
 }
 
 func deleteFile(kd *common.KeibiDrop, path string) {
-	_ = kd
-	fmt.Println("[TODO] Unshared:", path)
+	if err := kd.UnshareFile(path); err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+	fmt.Println("Unshared:", path)
 }
 
 // promptPassphraseFromTTY reads a passphrase from the controlling terminal
@@ -587,6 +768,7 @@ func main() {
 		}
 	}
 
+	kd.OnEvent = pushEvent
 	go kd.Run()
 
 	ctx := &cliContext{kd: kd}

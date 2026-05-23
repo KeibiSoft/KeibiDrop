@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -23,9 +24,9 @@ import (
 // even if the registry file is decrypted, the actual peer fingerprints are not exposed.
 type downloadRegistry struct {
 	mu      sync.Mutex
-	entries map[string][16]byte // bitmapPath → peerTag
-	path    string             // encrypted file path (empty = memory-only / incognito)
-	key     []byte             // AES-256 key derived from master key (nil = no persistence)
+	entries map[string][16]byte
+	path    string
+	key     []byte
 }
 
 func newDownloadRegistry(configDir string, masterKey []byte) *downloadRegistry {
@@ -35,13 +36,12 @@ func newDownloadRegistry(configDir string, masterKey []byte) *downloadRegistry {
 	if len(masterKey) > 0 && configDir != "" {
 		h := sha256.Sum256(append(masterKey, []byte("download-registry")...))
 		r.key = h[:]
-		r.path = filepath.Join(configDir, ".kd_registry")
+		r.path = filepath.Clean(filepath.Join(configDir, ".kd_registry"))
 		r.load()
 	}
 	return r
 }
 
-// peerTag computes a deterministic, one-way tag for a peer fingerprint.
 func (r *downloadRegistry) peerTag(peerFingerprint string, masterKey []byte) [16]byte {
 	mac := hmac.New(sha256.New, masterKey)
 	mac.Write([]byte(peerFingerprint))
@@ -51,23 +51,20 @@ func (r *downloadRegistry) peerTag(peerFingerprint string, masterKey []byte) [16
 	return tag
 }
 
-// Register records that a bitmap belongs to a specific peer.
 func (r *downloadRegistry) Register(bitmapPath string, tag [16]byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.entries[bitmapPath] = tag
+	r.entries[filepath.Clean(bitmapPath)] = tag
 	r.save()
 }
 
-// Unregister removes a completed download entry.
 func (r *downloadRegistry) Unregister(bitmapPath string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.entries, bitmapPath)
+	delete(r.entries, filepath.Clean(bitmapPath))
 	r.save()
 }
 
-// ForPeer returns all bitmap paths that belong to the given peer tag.
 func (r *downloadRegistry) ForPeer(tag [16]byte) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -80,7 +77,6 @@ func (r *downloadRegistry) ForPeer(tag [16]byte) []string {
 	return paths
 }
 
-// Count returns total entries.
 func (r *downloadRegistry) Count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -92,7 +88,7 @@ func (r *downloadRegistry) save() {
 		return
 	}
 	if len(r.entries) == 0 {
-		os.Remove(r.path)
+		_ = os.Remove(r.path)
 		return
 	}
 	plaintext, _ := json.Marshal(r.entries)
@@ -100,26 +96,97 @@ func (r *downloadRegistry) save() {
 	if err != nil {
 		return
 	}
-	os.WriteFile(r.path, ct, 0600)
+	_ = os.WriteFile(r.path, ct, 0600) // #nosec G306
 }
 
 func (r *downloadRegistry) load() {
 	if r.path == "" || r.key == nil {
 		return
 	}
-	data, err := os.ReadFile(r.path)
+	data, err := os.ReadFile(r.path) // #nosec G304
 	if err != nil {
 		return
 	}
 	plaintext, err := decryptAESGCM(r.key, data)
 	if err != nil {
-		os.Remove(r.path)
+		_ = os.Remove(r.path)
 		return
 	}
-	json.Unmarshal(plaintext, &r.entries)
+	if err := json.Unmarshal(plaintext, &r.entries); err != nil {
+		r.entries = make(map[string][16]byte)
+		return
+	}
 	if r.entries == nil {
 		r.entries = make(map[string][16]byte)
 	}
+}
+
+// sharedFilesStore persists what files were shared with which peer.
+// Encrypted at rest, stored in configDir. Never in the shared/FUSE folder.
+type sharedFilesStore struct {
+	path string
+	key  []byte
+}
+
+type sharedEntry struct {
+	PeerTag [16]byte `json:"t"`
+	Path    string   `json:"p"`
+	Size    uint64   `json:"s"`
+	ModTime uint64   `json:"m"`
+}
+
+func newSharedFilesStore(configDir string, masterKey []byte) *sharedFilesStore {
+	if configDir == "" || len(masterKey) == 0 {
+		return nil
+	}
+	h := sha256.Sum256(append(masterKey, []byte("shared-files-store")...))
+	return &sharedFilesStore{
+		path: filepath.Clean(filepath.Join(configDir, ".kd_shared")),
+		key:  h[:],
+	}
+}
+
+func (s *sharedFilesStore) Save(entries []sharedEntry) {
+	if s == nil {
+		return
+	}
+	if len(entries) == 0 {
+		_ = os.Remove(s.path)
+		return
+	}
+	data, _ := json.Marshal(entries)
+	ct, err := encryptAESGCM(s.key, data)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(s.path, ct, 0600) // #nosec G306
+}
+
+func (s *sharedFilesStore) Load() []sharedEntry {
+	if s == nil {
+		return nil
+	}
+	data, err := os.ReadFile(s.path) // #nosec G304
+	if err != nil {
+		return nil
+	}
+	pt, err := decryptAESGCM(s.key, data)
+	if err != nil {
+		_ = os.Remove(s.path)
+		return nil
+	}
+	var entries []sharedEntry
+	if err := json.Unmarshal(pt, &entries); err != nil {
+		return nil
+	}
+	return entries
+}
+
+func (s *sharedFilesStore) Clear() {
+	if s == nil {
+		return
+	}
+	_ = os.Remove(s.path)
 }
 
 func encryptAESGCM(key, plaintext []byte) ([]byte, error) {
@@ -148,7 +215,7 @@ func decryptAESGCM(key, ciphertext []byte) ([]byte, error) {
 		return nil, err
 	}
 	if len(ciphertext) < gcm.NonceSize() {
-		return nil, err
+		return nil, fmt.Errorf("ciphertext too short")
 	}
 	nonce := ciphertext[:gcm.NonceSize()]
 	ct := ciphertext[gcm.NonceSize():]
