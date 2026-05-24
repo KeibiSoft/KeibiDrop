@@ -137,12 +137,12 @@ jobs:
 
       - name: Package .dmg (macOS arm64)
         if: matrix.package == 'dmg'
-        run: make package-macos VERSION=${{ steps.version.outputs.version }}
+        run: make package-macos VERSION=${{ steps.version.outputs.version }} GOARCH=${{ matrix.goarch }}
 
       - name: Package .tar.gz
         if: matrix.package != 'zip'
         shell: bash
-        run: make package-tar VERSION=${{ steps.version.outputs.version }}
+        run: make package-tar VERSION=${{ steps.version.outputs.version }} GOARCH=${{ matrix.goarch }}
 
       - name: Package .zip (Windows)
         if: matrix.package == 'zip'
