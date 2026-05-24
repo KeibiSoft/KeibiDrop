@@ -565,12 +565,15 @@ fn connect_room(
         running.store(true, Ordering::Relaxed);
         start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder.clone());
 
-        // Transition to connected screen
+        let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
+        let peer_already_contact = bindings::KD_IsPeerAlreadyContact() != 0;
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(app) = weak.upgrade() {
                 app.set_room_action(0);
                 app.set_status_message(slint::SharedString::default());
                 app.set_error_message(slint::SharedString::default());
+                app.set_peer_is_persistent(peer_persistent);
+                app.set_peer_already_saved(peer_already_contact);
                 app.set_current_screen(target_screen);
             }
         });

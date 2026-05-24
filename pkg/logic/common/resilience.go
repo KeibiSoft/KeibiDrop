@@ -7,7 +7,6 @@
 package common
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -34,8 +33,8 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	// Initialize health monitor
 	kd.HealthMonitor = session.NewHealthMonitor(kd.session, kd.KDClient, kd.logger)
 	kd.HealthMonitor.OnDisconnect = kd.onDisconnect
-	kd.HealthMonitor.OnHealthChange = func(old, new session.ConnectionHealth) {
-		logger.Info("Connection health changed", "from", old, "to", new)
+	kd.HealthMonitor.OnHealthChange = func(old, cur session.ConnectionHealth) {
+		logger.Info("Connection health changed", "from", old, "to", cur)
 	}
 
 	// Initialize reconnection manager
@@ -54,7 +53,11 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 			if err := kd.getRoomFromRelay(fingerprint); err != nil {
 				return "", 0, err
 			}
-			return kd.PeerIPv6IP, kd.session.PeerPort, nil
+			sess := kd.session
+			if sess == nil {
+				return "", 0, fmt.Errorf("session nil during relay lookup")
+			}
+			return kd.PeerIPv6IP, sess.PeerPort, nil
 		}
 	}
 	kd.ReconnectManager.AcceptConn = func(timeout time.Duration) (net.Conn, error) {
@@ -192,7 +195,7 @@ func (kd *KeibiDrop) onReconnected() {
 	logger.Info("Connection restored")
 
 	// Update cached peer info.
-	if kd.ReconnectManager != nil {
+	if kd.ReconnectManager != nil && kd.session != nil {
 		kd.ReconnectManager.CachedPeerIP = kd.PeerIPv6IP
 		kd.ReconnectManager.CachedPeerPort = kd.session.PeerPort
 	}
@@ -201,6 +204,13 @@ func (kd *KeibiDrop) onReconnected() {
 	if kd.RelayKeepalive != nil {
 		kd.RelayKeepalive.Resume()
 		_ = kd.RelayKeepalive.ForceRefresh()
+	}
+
+	// Stop old health monitor BEFORE tearing down gRPC so it doesn't
+	// fire heartbeats against the dead client and trigger a spurious
+	// second reconnection.
+	if kd.HealthMonitor != nil {
+		kd.HealthMonitor.Stop()
 	}
 
 	// Tear down stale gRPC infrastructure.
@@ -228,12 +238,12 @@ func (kd *KeibiDrop) onReconnected() {
 	}
 
 	// Restart health monitoring with the fresh client.
-	if kd.HealthMonitor != nil {
-		kd.HealthMonitor.Stop()
-	}
-	if kd.KDClient != nil {
+	if kd.KDClient != nil && kd.session != nil {
 		kd.HealthMonitor = session.NewHealthMonitor(kd.session, kd.KDClient, kd.logger)
 		kd.HealthMonitor.OnDisconnect = kd.onDisconnect
+		kd.HealthMonitor.OnHealthChange = func(old, cur session.ConnectionHealth) {
+			logger.Info("Connection health changed", "from", old, "to", cur)
+		}
 		kd.HealthMonitor.Start()
 	}
 
@@ -244,7 +254,8 @@ func (kd *KeibiDrop) onReconnected() {
 // notifyRestoredFiles sends ADD_FILE for each restored LocalFile so the peer
 // can see them. Only called after same-peer reconnection with confirmed files.
 func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
-	if kd.KDClient == nil {
+	client := kd.KDClient
+	if client == nil {
 		return
 	}
 	kd.SyncTracker.LocalFilesMu.RLock()
@@ -255,11 +266,14 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 	kd.SyncTracker.LocalFilesMu.RUnlock()
 
 	for _, file := range files {
+		if kd.ctx.Err() != nil {
+			return
+		}
 		info, err := os.Stat(filepath.Clean(file.RealPathOfFile))
 		if err != nil {
 			continue
 		}
-		_, _ = kd.KDClient.Notify(context.Background(), &bindings.NotifyRequest{
+		_, _ = client.Notify(kd.ctx, &bindings.NotifyRequest{
 			Type: bindings.NotifyType(types.AddFile),
 			Path: file.RelativePath,
 			Attr: &bindings.Attr{
@@ -277,10 +291,11 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 // resumePartialDownloads checks the registry for bitmaps belonging to the
 // current peer and auto-resumes them. Called after successful reconnection.
 func (kd *KeibiDrop) resumePartialDownloads(logger *slog.Logger) {
-	if kd.dlRegistry == nil || kd.session == nil || kd.SyncTracker == nil {
+	sess := kd.session
+	if kd.dlRegistry == nil || sess == nil || kd.SyncTracker == nil {
 		return
 	}
-	tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
+	tag := kd.dlRegistry.peerTag(sess.ExpectedPeerFingerprint, kd.registryKey)
 	paths := kd.dlRegistry.ForPeer(tag)
 	if len(paths) == 0 {
 		return
