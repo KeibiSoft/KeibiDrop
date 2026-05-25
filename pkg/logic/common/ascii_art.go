@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Version    = "0.0.0"
+	Version    = "0.3.1"
 	CommitHash = "dev" // default fallback
 )
 
