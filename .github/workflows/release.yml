@@ -135,9 +135,38 @@ jobs:
           COMMIT=${{ steps.version.outputs.commit }}
           GOARCH=${{ matrix.goarch }} make build-cli build-kd VERSION=$VERSION COMMIT=$COMMIT
 
+      - name: Import signing certificate (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH=$RUNNER_TEMP/cert.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
+          echo "$APPLE_CERTIFICATE_P12" | base64 -d > "$CERT_PATH"
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+      - name: Sign binaries (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"
+          for bin in keibidrop-cli kd; do
+            if [ -f "$bin" ]; then
+              codesign --force --options runtime --sign "$IDENTITY" --timestamp "./$bin"
+            fi
+          done
+          if [ -f "rust/target/release/keibidrop-rust" ]; then
+            codesign --force --options runtime --sign "$IDENTITY" --timestamp "rust/target/release/keibidrop-rust"
+          fi
+
       - name: Package .dmg (macOS arm64)
         if: matrix.package == 'dmg'
-        run: make package-macos VERSION=${{ steps.version.outputs.version }} GOARCH=${{ matrix.goarch }}
+        run: make package-macos VERSION=${{ steps.version.outputs.version }} GOARCH=${{ matrix.goarch }} CODESIGN_IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"
 
       - name: Package .tar.gz
         if: matrix.package != 'zip'
@@ -152,6 +181,32 @@ jobs:
       - name: Package .deb (Linux)
         if: matrix.package == 'deb'
         run: make package-deb VERSION=${{ steps.version.outputs.version }}
+
+      - name: Notarize (macOS)
+        if: runner.os == 'macOS'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          for pkg in dist/*.dmg dist/*.tar.gz; do
+            [ -f "$pkg" ] || continue
+            ZIP_PATH="${pkg}.zip"
+            if [[ "$pkg" == *.tar.gz ]]; then
+              cp "$pkg" "$ZIP_PATH"
+            else
+              zip -j "$ZIP_PATH" "$pkg"
+            fi
+            xcrun notarytool submit "$ZIP_PATH" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_PASSWORD" \
+              --wait --timeout 10m
+            if [[ "$pkg" == *.dmg ]]; then
+              xcrun stapler staple "$pkg"
+            fi
+            rm -f "$ZIP_PATH"
+          done
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4

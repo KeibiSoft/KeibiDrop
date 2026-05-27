@@ -122,6 +122,11 @@ package-macos: $(DIST)
 	cp kd $(DIST)/dmg-staging/KeibiDrop.app/Contents/MacOS/
 	cp assets/icons/keibidrop.icns $(DIST)/dmg-staging/KeibiDrop.app/Contents/Resources/keibidrop.icns
 	sed 's/VERSION_PLACEHOLDER/$(VERSION)/g' assets/Info.plist.tmpl > $(DIST)/dmg-staging/KeibiDrop.app/Contents/Info.plist
+	# Sign .app bundle if CODESIGN_IDENTITY is set
+	@if [ -n "$(CODESIGN_IDENTITY)" ]; then \
+		codesign --deep --force --options runtime --sign "$(CODESIGN_IDENTITY)" --timestamp $(DIST)/dmg-staging/KeibiDrop.app; \
+		echo "Signed KeibiDrop.app with $(CODESIGN_IDENTITY)"; \
+	fi
 	# Applications symlink for drag-to-install
 	ln -s /Applications $(DIST)/dmg-staging/Applications
 	hdiutil create -volname "KeibiDrop $(VERSION)" \
