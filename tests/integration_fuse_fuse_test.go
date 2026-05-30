@@ -278,8 +278,13 @@ func TestFUSEtoFUSE(t *testing.T) {
 			}
 		}
 		for _, dir := range []string{aliceMount, bobMount} {
-			exec.Command("/sbin/umount", "-f", dir).Run()
+			if runtime.GOOS == "linux" {
+				exec.Command("fusermount", "-u", dir).Run()
+			} else {
+				exec.Command("/sbin/umount", "-f", dir).Run()
+			}
 			waitForUnmount(dir, 5*time.Second)
+			os.RemoveAll(dir)
 		}
 	})
 
@@ -455,8 +460,13 @@ func TestFUSEtoFUSE_ReaddirNoPhantoms(t *testing.T) {
 			}
 		}
 		for _, dir := range []string{aliceMount, bobMount} {
-			exec.Command("/sbin/umount", "-f", dir).Run()
+			if runtime.GOOS == "linux" {
+				exec.Command("fusermount", "-u", dir).Run()
+			} else {
+				exec.Command("/sbin/umount", "-f", dir).Run()
+			}
 			waitForUnmount(dir, 5*time.Second)
+			os.RemoveAll(dir)
 		}
 	})
 
