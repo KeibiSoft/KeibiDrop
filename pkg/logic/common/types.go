@@ -411,12 +411,18 @@ func (kd *KeibiDrop) Stop() {
 	kd.stopDone = done
 	cancel := kd.Cancel
 	kd.mu.Unlock()
-	logger.Info("Stop: cancelling context")
 	if cancel != nil {
 		cancel()
 	}
-	<-done
-	logger.Info("Stop: completed")
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		logger.Warn("Stop timed out, forcing cleanup")
+		kd.running.Store(false)
+		kd.mu.Lock()
+		kd.stopDone = nil
+		kd.mu.Unlock()
+	}
 }
 
 // cancelContext cancels the current context under mutex protection.
@@ -453,10 +459,6 @@ func (kd *KeibiDrop) Run() {
 			kd.HealthMonitor = nil
 			kd.ReconnectManager = nil
 			kd.RelayKeepalive = nil
-			if kd.FS != nil {
-				kd.FS.Unmount()
-				kd.FS = nil
-			}
 			// Safe to Stop()/Close() here: handleNotifyDisconnect waits
 			// grpcDisconnectGraceDelay before cancelling the context, so the
 			// in-flight DISCONNECT RPC response has flushed. See #122.
@@ -480,6 +482,9 @@ func (kd *KeibiDrop) Run() {
 			// Permanent shutdown — close listener and exit.
 			select {
 			case <-kd.shutdown:
+				if kd.FS != nil {
+					kd.FS.Unmount()
+				}
 				if kd.listener != nil {
 					kd.listener.Close()
 					kd.listener = nil
@@ -518,7 +523,6 @@ func (kd *KeibiDrop) Run() {
 			if done != nil {
 				close(done)
 			}
-			logger.Info("Run loop: context refreshed, ready for next session")
 			continue
 		case s := <-kd.signals:
 			if s == Start {
@@ -552,29 +556,32 @@ func (kd *KeibiDrop) Run() {
 				kd.running.Store(true)
 
 				if kd.FS != nil && kd.KDSvc != nil {
-					logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
 					kd.KDSvc.FS = kd.FS
-					if err := kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave)); err != nil {
-						logger.Error("Filesystem mount failed", "error", err)
+					if kd.FS.IsMounted() {
+						logger.Info("FUSE already mounted, waiting for disconnect")
+						<-kd.ctx.Done()
 					} else {
-						logger.Info("Filesystem mount session ended")
+						logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
+						mountDone := make(chan struct{})
+						go func() {
+							if err := kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave)); err != nil {
+								logger.Error("Filesystem mount failed", "error", err)
+							} else {
+								logger.Info("Filesystem mount session ended")
+							}
+							close(mountDone)
+						}()
+						select {
+						case <-mountDone:
+						case <-kd.ctx.Done():
+							logger.Info("Context cancelled while FUSE mounted")
+						}
 					}
 				} else {
 					logger.Warn("No FS to mount")
+					<-kd.ctx.Done()
 				}
-
-				// If we were asked to stop while Mount() was blocking,
-				// don't stay running — the ctx.Done handler will clean up.
-				if kd.FS == nil && kd.IsFUSE {
-					logger.Info("FS externally unmounted during mount")
-					continue
-				}
-				select {
-				case <-kd.ctx.Done():
-					logger.Info("Context cancelled during mount")
-					continue
-				default:
-				}
+				continue
 			}
 		}
 	}

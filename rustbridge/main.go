@@ -311,9 +311,17 @@ func KD_Fingerprint() *C.char {
 	return C.CString(fp)
 }
 
+//export KD_PrepareDisconnect
+func KD_PrepareDisconnect() {
+	if kd != nil {
+		kd.StopConnectionResilience()
+	}
+}
+
 //export KD_UnmountFilesystem
 func KD_UnmountFilesystem() {
 	if kd != nil {
+		kd.StopConnectionResilience()
 		_ = kd.UnmountFilesystem()
 	}
 }

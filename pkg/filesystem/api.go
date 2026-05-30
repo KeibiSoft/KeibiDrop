@@ -9,6 +9,7 @@
 package filesystem
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -35,11 +36,19 @@ type FS struct {
 	// Host.
 	host *winfuse.FileSystemHost
 	Root *Dir
+
+	// Cancelled during Unmount to unblock FUSE handlers waiting on gRPC.
+	ctx        context.Context
+	cancel     context.CancelFunc
+	mountPoint string
 }
 
 func NewFS(logger *slog.Logger) *FS {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &FS{
 		logger: logger,
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
@@ -117,6 +126,8 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		PrefetchOnOpen: fs.PrefetchOnOpen,
 		PushOnWrite:    fs.PushOnWrite,
 
+		FsCtx: fs.ctx,
+
 		RemoteFilesLock: sync.RWMutex{},
 		RemoteFiles:     make(map[string]*File),
 
@@ -127,13 +138,10 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	fs.Root = root
 
 	host := winfuse.NewFileSystemHost(root)
-
-	// I think this is windows specific.
 	host.SetCapReaddirPlus(true)
-	// Fuse3 only.
 	host.SetUseIno(true)
-
 	fs.host = host
+	fs.mountPoint = cleanMountPoint
 
 	opts := getMountOptions()
 
@@ -154,22 +162,86 @@ func (fs *FS) Unmount() {
 		return
 	}
 
-	// Cancel all in-flight gRPC operations BEFORE asking the kernel to
-	// unmount. The kernel waits for every pending FUSE operation (Read,
-	// Getattr, etc.) to return before completing the unmount. If those
-	// handlers are blocked on gRPC calls to a disconnected peer (up to
-	// 10s timeout * 3 retries each), host.Unmount() hangs for 30+ seconds.
-	//
-	// By cancelling prefetch contexts and closing stream pools first, those
-	// handlers hit context.Canceled immediately and return, allowing the
-	// kernel to complete the unmount promptly.
+	fs.cancel()
+
 	if fs.Root != nil {
 		fs.drainInFlightOperations()
 	}
 
-	fs.host.Unmount()
+	done := make(chan struct{})
+	go func() {
+		fs.host.Unmount()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		fs.logger.Warn("FUSE Unmount timed out, force-unmounting", "mountPoint", fs.mountPoint)
+		fs.forceUnmount()
+		<-done
+	}
 	fs.Root = nil
 	fs.logger.Warn("FUSE Unmount completed")
+}
+
+// RefreshCallbacks updates the Root's callbacks to match the FS-level ones.
+// Call after setupFilesystem re-wires OnLocalChange/OpenStreamProvider for
+// a new session, so the persistent Root uses the new session's gRPC client.
+func (fs *FS) RefreshCallbacks() {
+	if fs.Root != nil {
+		fs.Root.OnLocalChange = fs.OnLocalChange
+		fs.Root.OpenStreamProvider = fs.OpenStreamProvider
+		fs.Root.FsCtx = fs.ctx
+	}
+}
+
+// IsMounted returns true if the FUSE host is active.
+func (fs *FS) IsMounted() bool {
+	return fs.host != nil && fs.Root != nil
+}
+
+// ClearFiles cancels in-flight operations and clears all file/dir maps
+// without unmounting. The mount stays alive as an empty folder. Used on
+// disconnect so the same mount can be reused on reconnect (cgofuse only
+// allows one mount per process).
+func (fs *FS) ClearFiles() {
+	fs.cancel()
+	if fs.Root != nil {
+		fs.drainInFlightOperations()
+		fs.Root.AfmLock.Lock()
+		fs.Root.AllFileMap = make(map[string]*File)
+		fs.Root.AfmLock.Unlock()
+		fs.Root.Adm.Lock()
+		fs.Root.AllDirMap = make(map[string]*Dir)
+		fs.Root.Adm.Unlock()
+		fs.Root.RemoteFilesLock.Lock()
+		fs.Root.RemoteFiles = make(map[string]*File)
+		fs.Root.RemoteFilesLock.Unlock()
+		fs.Root.OpenMapLock.Lock()
+		fs.Root.OpenFileHandlers = make(map[uint64]*HandleEntry)
+		fs.Root.OpenMapLock.Unlock()
+	}
+	// Fresh context for the next session.
+	fs.ctx, fs.cancel = context.WithCancel(context.Background())
+	if fs.Root != nil {
+		fs.Root.FsCtx = fs.ctx
+	}
+}
+
+func (fs *FS) forceUnmount() {
+	mp := fs.mountPoint
+	if mp == "" {
+		return
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("diskutil", "unmount", "force", mp).Run() // #nosec G204
+	case "linux":
+		_ = exec.Command("fusermount", "-u", mp).Run() // #nosec G204
+	case "windows":
+		// WinFsp handles cleanup via host.Unmount(); no force path needed.
+	}
 }
 
 // drainInFlightOperations cancels all prefetch goroutines and closes all

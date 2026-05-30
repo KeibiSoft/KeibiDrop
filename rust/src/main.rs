@@ -1044,14 +1044,24 @@ fn main() {
         // Handle Cancel (abort room creation/join)
         let weak_cancel = app.as_weak();
         app.on_cancel_connect_pressed(move || {
-            bindings::KD_ClearDiscoveredPeers();
-            bindings::KD_UnmountFilesystem();
-            bindings::KD_Disconnect();
             if let Some(app) = weak_cancel.upgrade() {
                 app.set_room_action(0);
                 app.set_status_message(slint::SharedString::default());
                 app.set_error_message(slint::SharedString::default());
             }
+            let weak_bg = weak_cancel.clone();
+            std::thread::spawn(move || {
+                bindings::KD_PrepareDisconnect();
+                bindings::KD_ClearDiscoveredPeers();
+                bindings::KD_UnmountFilesystem();
+                bindings::KD_Disconnect();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(app) = weak_bg.upgrade() {
+                        app.set_room_action(0);
+                        app.set_status_message(slint::SharedString::default());
+                    }
+                });
+            });
         });
 
         // Handle Disconnect — warn if download in progress, then disconnect
@@ -1108,10 +1118,11 @@ fn main() {
                 app.set_current_screen(0);
             }
 
-            // FFI cleanup in background thread (KD_Disconnect blocks up to 2s+)
+            // FFI cleanup in background thread (blocking calls)
             let weak_bg = weak_disconnect.clone();
             let disc_done = disconnecting_disconnect.clone();
             std::thread::spawn(move || {
+                bindings::KD_PrepareDisconnect();
                 bindings::KD_UnmountFilesystem();
                 bindings::KD_ClearDiscoveredPeers();
                 bindings::KD_Disconnect();
@@ -1906,6 +1917,7 @@ fn main() {
                             let weak_bg = weak_evt.clone();
                             let disc_done = disconnecting_evt.clone();
                             std::thread::spawn(move || {
+                                bindings::KD_PrepareDisconnect();
                                 bindings::KD_UnmountFilesystem();
                                 bindings::KD_ClearDiscoveredPeers();
                                 bindings::KD_Disconnect();
