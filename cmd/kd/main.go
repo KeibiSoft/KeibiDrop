@@ -221,7 +221,6 @@ func runDaemon() {
 	go func() {
 		<-sigCh
 		logger.Info("Shutting down")
-		kd.StopConnectionResilience()
 		kd.NotifyDisconnect()
 		_ = kd.UnmountFilesystem()
 		kd.Shutdown()
@@ -401,7 +400,6 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 			daemonDisc.Stop()
 			daemonDisc = nil
 		}
-		kd.StopConnectionResilience()
 		kd.NotifyDisconnect()
 		_ = kd.UnmountFilesystem()
 		kd.Stop()
@@ -643,7 +641,6 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 			daemonDisc.Stop()
 			daemonDisc = nil
 		}
-		kd.StopConnectionResilience()
 		kd.NotifyDisconnect()
 		_ = kd.UnmountFilesystem()
 		kd.Shutdown()

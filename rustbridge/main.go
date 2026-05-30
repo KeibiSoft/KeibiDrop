@@ -321,6 +321,7 @@ func KD_PrepareDisconnect() {
 //export KD_UnmountFilesystem
 func KD_UnmountFilesystem() {
 	if kd != nil {
+		kd.StopConnectionResilience()
 		_ = kd.UnmountFilesystem()
 	}
 }

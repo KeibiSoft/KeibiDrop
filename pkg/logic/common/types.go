@@ -411,16 +411,13 @@ func (kd *KeibiDrop) Stop() {
 	kd.stopDone = done
 	cancel := kd.Cancel
 	kd.mu.Unlock()
-	logger.Debug("Stop: cancelling ctx")
 	if cancel != nil {
 		cancel()
 	}
-	logger.Debug("Stop: waiting on done")
 	select {
 	case <-done:
-		logger.Debug("Stop: done received")
 	case <-time.After(5 * time.Second):
-		logger.Warn("Stop: timed out waiting for Run(), forcing cleanup")
+		logger.Warn("Stop timed out, forcing cleanup")
 		kd.running.Store(false)
 		kd.mu.Lock()
 		kd.stopDone = nil
@@ -455,7 +452,6 @@ func (kd *KeibiDrop) Shutdown() {
 func (kd *KeibiDrop) Run() {
 	logger := kd.logger.With("method", "run-state")
 	for {
-		logger.Debug("Run: top of loop", "running", kd.running.Load(), "fsNil", kd.FS == nil, "sessionNil", kd.session == nil)
 		select {
 		case <-kd.ctx.Done():
 			logger.Info("Stopping KeibiDrop run instance (ctx cancelled)")
@@ -524,7 +520,6 @@ func (kd *KeibiDrop) Run() {
 			done := kd.stopDone
 			kd.stopDone = nil
 			kd.mu.Unlock()
-			logger.Debug("Run: temp disconnect done", "doneNil", done == nil)
 			if done != nil {
 				close(done)
 			}

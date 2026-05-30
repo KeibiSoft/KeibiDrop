@@ -1166,6 +1166,8 @@ func (kd *KeibiDrop) UnmountFilesystem() error {
 	logger := kd.logger.With("method", "unmonut-filesystem")
 	logger.Info("Unmounting virtual filesystem")
 
+	kd.StopConnectionResilience()
+
 	kd.mu.Lock()
 	fs := kd.FS
 	kd.mu.Unlock()
@@ -1178,10 +1180,6 @@ func (kd *KeibiDrop) UnmountFilesystem() error {
 		kd.KDSvc.FS = nil
 	}
 
-	// Clear file state but keep the mount alive — cgofuse only allows
-	// one mount per process (signal handler limitation). Files will
-	// repopulate on reconnect via ADD_FILE notifications.
-	// Full unmount happens in Shutdown/Run ctx.Done handler.
 	fs.ClearFiles()
 
 	logger.Info("Success")
