@@ -366,7 +366,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					// Channel closed — flush all pending with fresh sizes.
 					remaining := make([]*bindings.NotifyRequest, 0, len(pending))
 					for path, p := range pending {
-						if p.req.Attr != nil && kd.FS != nil {
+						if p.req.Attr != nil && kd.FS != nil && kd.FS.Root != nil {
 							diskPath := filepath.Join(kd.FS.Root.LocalDownloadFolder, p.req.Path)
 							if info, err := os.Lstat(diskPath); err == nil {
 								p.req.Attr.Size = info.Size()
@@ -430,7 +430,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				ready := make([]*bindings.NotifyRequest, 0, 16)
 				for path, p := range pending {
 					if now.After(p.deadline) {
-						if p.req.Attr != nil && kd.FS != nil {
+						if p.req.Attr != nil && kd.FS != nil && kd.FS.Root != nil {
 							diskPath := filepath.Join(kd.FS.Root.LocalDownloadFolder, p.req.Path)
 							if info, err := os.Lstat(diskPath); err == nil {
 								p.req.Attr.Size = info.Size()
