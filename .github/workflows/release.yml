@@ -166,7 +166,8 @@ jobs:
 
       - name: Package .dmg (macOS arm64)
         if: matrix.package == 'dmg'
-        run: make package-macos VERSION=${{ steps.version.outputs.version }} GOARCH=${{ matrix.goarch }} CODESIGN_IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"
+        run: |
+          make package-macos VERSION=${{ steps.version.outputs.version }} GOARCH=${{ matrix.goarch }} CODESIGN_IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"
 
       - name: Package .tar.gz
         if: matrix.package != 'zip'
