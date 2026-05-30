@@ -302,8 +302,11 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		return ErrNilPointer
 	}
 
-	fs := filesystem.NewFS(logger)
-	kd.FS = fs
+	fs := kd.FS
+	if fs == nil {
+		fs = filesystem.NewFS(logger)
+		kd.FS = fs
+	}
 
 	// Set collab sync options.
 	fs.PrefetchOnOpen = kd.PrefetchOnOpen
@@ -494,6 +497,8 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs.OpenStreamProvider = func() types.FileStreamProvider {
 		return NewImplStreamProvider(kd.session.GRPCClient)
 	}
+
+	fs.RefreshCallbacks()
 
 	if ready != nil {
 		kd.filesystemReadyOnce.Do(func() {

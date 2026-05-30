@@ -351,6 +351,7 @@ func (c *cliContext) executor(in string) {
 		}
 
 	case "exit", "quit":
+		c.kd.StopConnectionResilience()
 		c.kd.NotifyDisconnect()
 		_ = c.kd.UnmountFilesystem()
 		fmt.Println("Goodbye.")
@@ -665,6 +666,7 @@ func pullFile(kd *common.KeibiDrop, remote, local string) {
 }
 
 func disconnectRoom(kd *common.KeibiDrop) {
+	kd.StopConnectionResilience()
 	kd.NotifyDisconnect()
 	_ = kd.UnmountFilesystem()
 	kd.Stop()

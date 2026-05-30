@@ -191,6 +191,9 @@ type Dir struct {
 	// Without this, a large clone (600+ files) spawns 600+ simultaneous
 	// StreamFile gRPC streams which overwhelm the connection.
 	PrefetchSem chan struct{}
+
+	// Cancelled during FS.Unmount() to unblock FUSE handlers stuck on gRPC.
+	FsCtx context.Context
 }
 
 type File struct {

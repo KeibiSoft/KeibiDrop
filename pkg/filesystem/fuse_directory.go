@@ -682,7 +682,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	var cacheFD *os.File
 	if remoteHasUpdate {
 		fsp := d.OpenStreamProvider()
-		streamCtx, cancel := context.WithCancel(context.Background())
+		streamCtx, cancel := context.WithCancel(d.FsCtx)
 		streamCancel = cancel
 		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
 		if err != nil {
@@ -954,6 +954,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 				stat:                &winfuse.Stat_t{},
 				OnLocalChange:       d.OnLocalChange,
 				OpenStreamProvider:  d.OpenStreamProvider,
+				FsCtx:               d.FsCtx,
 
 				RemoteFilesLock: sync.RWMutex{},
 				RemoteFiles:     make(map[string]*File),
@@ -1078,6 +1079,7 @@ func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode 
 			stat:                st,
 			OnLocalChange:       d.OnLocalChange,
 			OpenStreamProvider:  d.OpenStreamProvider,
+			FsCtx:               d.FsCtx,
 			RemoteFilesLock:     sync.RWMutex{},
 			RemoteFiles:         make(map[string]*File),
 		}
@@ -1270,7 +1272,7 @@ func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 
 	// Open stream pool + cache FD (network call - no locks held)
 	fsp := d.OpenStreamProvider()
-	streamCtx, streamCancel := context.WithCancel(context.Background())
+	streamCtx, streamCancel := context.WithCancel(d.FsCtx)
 	pool, poolErr := NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
 	if poolErr != nil {
 		streamCancel()
@@ -2110,7 +2112,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	// try to create a pool on-demand so we can fetch the missing data.
 	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && f.StreamProvider != nil {
 		// logger.Info("Creating on-demand stream pool for incomplete remote file")
-		streamCtx, streamCancel := context.WithCancel(context.Background())
+		streamCtx, streamCancel := context.WithCancel(d.FsCtx)
 		newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, StreamPoolSize)
 		if openErr != nil {
 			streamCancel()
@@ -2163,8 +2165,11 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		var data []byte
 		var readErr error
 		for attempt := 0; attempt < 3; attempt++ {
+			if d.FsCtx.Err() != nil {
+				return 0
+			}
 			// Read from stream pool with timeout to prevent system freeze.
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(d.FsCtx, 10*time.Second)
 			data, readErr = pool.ReadAt(ctx, offset, readSize)
 			cancel()
 
@@ -2183,7 +2188,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			// Try to re-establish the stream pool.
 			if f.StreamProvider != nil {
 				// logger.Info("Attempting to re-establish stream pool", "path", path, "attempt", attempt+1)
-				streamCtx, streamCancel := context.WithCancel(context.Background())
+				streamCtx, streamCancel := context.WithCancel(d.FsCtx)
 				newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, StreamPoolSize)
 				if openErr != nil {
 					streamCancel()
@@ -2540,7 +2545,7 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		lf.Close()
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(d.FsCtx)
 	f.PrefetchCancel = cancel
 
 	go d.prefetchFile(ctx, logger, f, path, realPath)

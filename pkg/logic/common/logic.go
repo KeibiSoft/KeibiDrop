@@ -1165,17 +1165,24 @@ func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond boo
 func (kd *KeibiDrop) UnmountFilesystem() error {
 	logger := kd.logger.With("method", "unmonut-filesystem")
 	logger.Info("Unmounting virtual filesystem")
-	if kd.FS == nil {
+
+	kd.mu.Lock()
+	fs := kd.FS
+	kd.mu.Unlock()
+	if fs == nil {
 		logger.Warn("Nil filesystem", "error", ErrNilFilesystem)
 		return ErrNilFilesystem
 	}
 
-	if kd.KDSvc != nil && kd.KDSvc.FS != nil {
+	if kd.KDSvc != nil {
 		kd.KDSvc.FS = nil
 	}
 
-	kd.FS.Unmount()
-	kd.FS = nil
+	// Clear file state but keep the mount alive — cgofuse only allows
+	// one mount per process (signal handler limitation). Files will
+	// repopulate on reconnect via ADD_FILE notifications.
+	// Full unmount happens in Shutdown/Run ctx.Done handler.
+	fs.ClearFiles()
 
 	logger.Info("Success")
 	return nil
