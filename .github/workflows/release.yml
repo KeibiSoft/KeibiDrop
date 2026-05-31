@@ -183,6 +183,20 @@ jobs:
         if: matrix.package == 'deb'
         run: make package-deb VERSION=${{ steps.version.outputs.version }}
 
+      - name: Push to Packagecloud (Linux)
+        if: matrix.package == 'deb'
+        env:
+          PACKAGECLOUD_TOKEN: ${{ secrets.PACKAGECLOUD_TOKEN }}
+        run: |
+          if [ -n "$PACKAGECLOUD_TOKEN" ]; then
+            gem install package_cloud
+            package_cloud push keibisoft/keibidrop/ubuntu/jammy dist/*.deb
+            package_cloud push keibisoft/keibidrop/ubuntu/noble dist/*.deb
+            package_cloud push keibisoft/keibidrop/debian/bookworm dist/*.deb
+          else
+            echo "PACKAGECLOUD_TOKEN not set, skipping"
+          fi
+
       - name: Package and push Chocolatey (Windows)
         if: matrix.package == 'zip'
         shell: bash
