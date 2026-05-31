@@ -200,7 +200,6 @@ jobs:
               --password "$APPLE_APP_PASSWORD" \
               --wait --timeout 10m
             xcrun stapler staple "$pkg"
-            fi
             rm -f "$ZIP_PATH"
           done
 
