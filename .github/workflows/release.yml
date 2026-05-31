@@ -183,6 +183,20 @@ jobs:
         if: matrix.package == 'deb'
         run: make package-deb VERSION=${{ steps.version.outputs.version }}
 
+      - name: Package and push Chocolatey (Windows)
+        if: matrix.package == 'zip'
+        shell: bash
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        run: |
+          SHA256=$(sha256sum dist/keibidrop-${{ steps.version.outputs.version }}-windows-amd64.zip | cut -d' ' -f1)
+          make package-choco VERSION=${{ steps.version.outputs.version }} SHA256=$SHA256
+          if [ -n "$CHOCO_API_KEY" ]; then
+            choco push dist/*.nupkg --source https://push.chocolatey.org/ --api-key "$CHOCO_API_KEY"
+          else
+            echo "CHOCO_API_KEY not set, skipping push"
+          fi
+
       - name: Notarize (macOS)
         if: runner.os == 'macOS' && matrix.package == 'dmg'
         env:
