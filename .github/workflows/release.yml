@@ -184,27 +184,22 @@ jobs:
         run: make package-deb VERSION=${{ steps.version.outputs.version }}
 
       - name: Notarize (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.package == 'dmg'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          for pkg in dist/*.dmg dist/*.tar.gz; do
+          for pkg in dist/*.dmg; do
             [ -f "$pkg" ] || continue
             ZIP_PATH="${pkg}.zip"
-            if [[ "$pkg" == *.tar.gz ]]; then
-              cp "$pkg" "$ZIP_PATH"
-            else
-              zip -j "$ZIP_PATH" "$pkg"
-            fi
+            zip -j "$ZIP_PATH" "$pkg"
             xcrun notarytool submit "$ZIP_PATH" \
               --apple-id "$APPLE_ID" \
               --team-id "$APPLE_TEAM_ID" \
               --password "$APPLE_APP_PASSWORD" \
               --wait --timeout 10m
-            if [[ "$pkg" == *.dmg ]]; then
-              xcrun stapler staple "$pkg"
+            xcrun stapler staple "$pkg"
             fi
             rm -f "$ZIP_PATH"
           done
