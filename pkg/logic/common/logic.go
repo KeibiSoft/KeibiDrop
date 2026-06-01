@@ -502,18 +502,29 @@ func (kd *KeibiDrop) CancelDownload(remoteName string) error {
 // [0.0, 1.0]. Returns -1 if the file has no active or resumable download.
 func (kd *KeibiDrop) GetDownloadProgress(remoteName string) float64 {
 	kd.activeDownloadsMu.Lock()
-	bm, ok := kd.activeBitmaps[remoteName]
+	resolvedBitmapKey, ok := resolveKeyWithFallback(remoteName, func(k string) bool {
+		return kd.activeBitmaps[k] != nil
+	})
+	var bm *filesystem.ChunkBitmap
+	if ok {
+		bm = kd.activeBitmaps[resolvedBitmapKey]
+	}
 	kd.activeDownloadsMu.Unlock()
 	if ok && bm != nil {
 		return bm.Progress()
 	}
 
 	kd.SyncTracker.RemoteFilesMu.RLock()
-	rf, ok := kd.SyncTracker.RemoteFiles[remoteName]
-	kd.SyncTracker.RemoteFilesMu.RUnlock()
+	resolvedRFKey, ok := resolveKeyWithFallback(remoteName, func(k string) bool {
+		_, exists := kd.SyncTracker.RemoteFiles[k]
+		return exists
+	})
 	if !ok {
+		kd.SyncTracker.RemoteFilesMu.RUnlock()
 		return -1
 	}
+	rf := kd.SyncTracker.RemoteFiles[resolvedRFKey]
+	kd.SyncTracker.RemoteFilesMu.RUnlock()
 	localPath := filepath.Join(kd.ToSave, rf.RelativePath)
 	bitmapPath := filesystem.BitmapPath(localPath)
 	diskBm, err := filesystem.LoadChunkBitmap(bitmapPath, int64(rf.Size))

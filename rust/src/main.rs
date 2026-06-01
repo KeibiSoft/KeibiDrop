@@ -42,8 +42,6 @@ fn is_hidden_file(name: &str) -> bool {
 
 /// Per-file download state tracked on the Rust side.
 struct DownloadInfo {
-    local_path: String,
-    expected_size: i64,
     downloading: bool,
     saved: bool,
     paused: bool,
@@ -250,17 +248,13 @@ fn start_file_watcher(
                     // Check download state
                     let (downloading, progress, saved, paused) = if let Some(info) = dl.get(&name) {
                         if info.downloading {
-                            // Poll local file size for progress
-                            let local_size = std::fs::metadata(&info.local_path)
-                                .map(|m| m.len() as f64)
-                                .unwrap_or(0.0);
-                            let expected = if info.expected_size > 0 {
-                                info.expected_size as f64
-                            } else {
-                                1.0
-                            };
-                            let prog = (local_size / expected).min(1.0);
-                            (true, prog as f32, false, false)
+                            // Progress from the chunk bitmap, not on-disk size: the
+                            // destination file is pre-allocated to full size, so size
+                            // would read 100% for the entire transfer.
+                            let c_name = CString::new(name.clone()).unwrap();
+                            let prog = bindings::KD_GetDownloadProgress(c_name.as_ptr() as *mut i8);
+                            let p = if prog >= 0 { prog as f32 / 100.0 } else { 0.0 };
+                            (true, p, false, false)
                         } else if info.paused {
                             // Paused: show progress from bitmap via FFI
                             let c_name = CString::new(name.clone()).unwrap();
@@ -271,10 +265,18 @@ fn start_file_watcher(
                             (false, if info.saved { 1.0 } else { 0.0 }, info.saved, false)
                         }
                     } else {
-                        // Check if file already exists in save path
+                        // Not tracked in-session. A leftover ".kdbitmap" sidecar means
+                        // an incomplete download (e.g. from a previous run) — not saved.
                         let local = format!("{}/{}", save_path, name);
-                        let already_saved = Path::new(&local).exists();
-                        (false, if already_saved { 1.0 } else { 0.0 }, already_saved, false)
+                        if Path::new(&format!("{}.kdbitmap", local)).exists() {
+                            let c_name = CString::new(name.clone()).unwrap();
+                            let prog = bindings::KD_GetDownloadProgress(c_name.as_ptr() as *mut i8);
+                            let p = if prog >= 0 { prog as f32 / 100.0 } else { 0.0 };
+                            (false, p, false, false)
+                        } else {
+                            let already_saved = Path::new(&local).exists();
+                            (false, if already_saved { 1.0 } else { 0.0 }, already_saved, false)
+                        }
                     };
 
                     files.push(FileInfo {
@@ -1230,10 +1232,6 @@ fn main() {
             let downloads = downloads_save.clone();
             let save_path = save_path_save.clone();
 
-            // Get file size by name
-            let c_name = CString::new(name.clone()).unwrap();
-            let size = bindings::KD_GetFileSizeByName(c_name.as_ptr() as *mut i8) as i64;
-
             let local_path = format!("{}/{}", save_path, name);
             // Create parent directories (handles nested paths like screenshots/foo.png)
             if let Some(parent) = Path::new(&local_path).parent() {
@@ -1251,8 +1249,6 @@ fn main() {
                 dl.insert(
                     name.clone(),
                     DownloadInfo {
-                        local_path: local_path.clone(),
-                        expected_size: size,
                         downloading: true,
                         saved: false,
                         paused: false,
@@ -1394,8 +1390,6 @@ fn main() {
             let downloads = downloads_all.clone();
             let base = save_path_all.clone();
             for name in to_save_names {
-                let c_name = CString::new(name.clone()).unwrap();
-                let size = bindings::KD_GetFileSizeByName(c_name.as_ptr() as *mut i8) as i64;
                 let local_path = format!("{}/{}", base, name);
                 // Create parent directories (handles nested paths like screenshots/foo.png)
                 if let Some(parent) = Path::new(&local_path).parent() {
@@ -1409,8 +1403,6 @@ fn main() {
                     dl.insert(
                         name.clone(),
                         DownloadInfo {
-                            local_path: local_path.clone(),
-                            expected_size: size,
                             downloading: true,
                             saved: false,
                             paused: false,
