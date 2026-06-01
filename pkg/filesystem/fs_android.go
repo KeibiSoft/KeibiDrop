@@ -31,3 +31,12 @@ func NewFS(_ *slog.Logger) *FS { return &FS{} }
 func (fs *FS) Mount(_ string, _ bool, _ string) error { return nil }
 
 func (fs *FS) Unmount() {}
+
+// RefreshCallbacks is a no-op on android — there is no FUSE Root to re-wire.
+func (fs *FS) RefreshCallbacks() {}
+
+// IsMounted always returns false on android — no FUSE host is ever mounted.
+func (fs *FS) IsMounted() bool { return false }
+
+// ClearFiles is a no-op on android — there are no FUSE file/dir maps to clear.
+func (fs *FS) ClearFiles() {}
