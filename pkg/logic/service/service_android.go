@@ -93,6 +93,11 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 		existing, ok := kd.SyncTracker.RemoteFiles[req.Path]
 		if ok {
+			if uint64(req.Attr.Size) < existing.Size {
+				logger.Info("Ignoring stale ADD_FILE with smaller size",
+					"path", req.Path, "staleSize", req.Attr.Size, "currentSize", existing.Size)
+				return &bindings.NotifyResponse{}, nil
+			}
 			existing.Size = uint64(req.Attr.Size)
 			existing.LastEditTime = req.Attr.ModificationTime
 			logger.Info("Updated existing remote file", "path", req.Path, "newSize", req.Attr.Size)
@@ -180,10 +185,6 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 		return ErrGRPCFailedPrecondition
 	}
 
-	kd.SyncTracker.LocalFilesMu.RLock()
-	defer kd.SyncTracker.LocalFilesMu.RUnlock()
-
-	isOpen := false
 	var fh *os.File
 	var openedPath string
 	buf := make([]byte, config.GRPCStreamBuffer)
@@ -205,25 +206,32 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			return status.Error(codes.Internal, "failed to receive read request")
 		}
 
-		if !isOpen {
-			isOpen = true
+		if fh == nil {
 			lookupPath := strings.TrimPrefix(rec.Path, "/")
+			kd.SyncTracker.LocalFilesMu.RLock()
 			f, ok := kd.SyncTracker.LocalFiles[lookupPath]
 			if !ok {
 				f, ok = kd.SyncTracker.LocalFiles[rec.Path]
 			}
+			var realPath string
+			if ok {
+				realPath = f.RealPathOfFile
+			}
+			kd.SyncTracker.LocalFilesMu.RUnlock()
+
 			if !ok {
 				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(f.RealPathOfFile)
+			fh, err = os.Open(realPath)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
 			}
 			openedPath = rec.Path
 		} else if openedPath != rec.Path {
+			fh.Close()
 			logger.Error("Multiple paths in same stream not supported", "requested", rec.Path)
 			return status.Error(codes.InvalidArgument, "stream can only read a single file")
 		}
@@ -237,6 +245,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 		n, err := fh.ReadAt(buf[:size], offset)
 		if err != nil && !errors.Is(err, io.EOF) {
+			fh.Close()
 			logger.Error("Failed to read file", "error", err)
 			return status.Error(codes.Internal, "error reading file")
 		}
