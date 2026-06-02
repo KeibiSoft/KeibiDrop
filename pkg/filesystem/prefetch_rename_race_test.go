@@ -6,7 +6,6 @@ package filesystem
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -36,8 +35,29 @@ func (p *slowStreamProvider) OpenRemoteFile(_ context.Context, _ uint64, _ strin
 	return &slowStream{content: p.content, delay: p.delay}, nil
 }
 
-func (p *slowStreamProvider) StreamFile(_ context.Context, _ string, _ uint64) (types.StreamFileReceiver, error) {
-	return nil, fmt.Errorf("not implemented in test")
+func (p *slowStreamProvider) StreamFile(_ context.Context, _ string, startOffset uint64) (types.StreamFileReceiver, error) {
+	return &slowStreamReceiver{content: p.content, delay: p.delay, offset: startOffset}, nil
+}
+
+// slowStreamReceiver serves the content buffer one chunk at a time, with an
+// optional delay, satisfying types.StreamFileReceiver for prefetch tests.
+type slowStreamReceiver struct {
+	content []byte
+	delay   time.Duration
+	offset  uint64
+}
+
+func (r *slowStreamReceiver) Recv() (data []byte, offset uint64, totalSize uint64, err error) {
+	if r.delay > 0 {
+		time.Sleep(r.delay)
+	}
+	if r.offset >= uint64(len(r.content)) {
+		return nil, 0, 0, io.EOF
+	}
+	chunk := r.content[r.offset:]
+	cur := r.offset
+	r.offset = uint64(len(r.content))
+	return chunk, cur, uint64(len(r.content)), nil
 }
 
 type slowStream struct {
@@ -97,6 +117,8 @@ func TestPrefetchRenameRace(t *testing.T) {
 		RemoteFiles:         make(map[string]*File),
 		OpenStreamProvider:  openStreamProvider,
 		PrefetchOnOpen:      true,
+		FsCtx:               context.Background(),
+		PrefetchSem:         make(chan struct{}, 8),
 	}
 	root.Root = root
 	root.logger = nopLogger()

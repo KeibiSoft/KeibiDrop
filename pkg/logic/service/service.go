@@ -204,6 +204,24 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCInvalidArgument
 		}
 
+		if kd.SyncTracker != nil {
+			kd.SyncTracker.RemoteFilesMu.Lock()
+			existing, ok := kd.SyncTracker.RemoteFiles[req.Path]
+			if ok {
+				existing.Size = uint64(req.Attr.Size)
+				existing.LastEditTime = req.Attr.ModificationTime
+			} else {
+				kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+					Name:         req.Name,
+					RelativePath: req.Path,
+					Size:         uint64(req.Attr.Size),
+					LastEditTime: req.Attr.ModificationTime,
+					CreatedTime:  req.Attr.BirthTime,
+				}
+			}
+			kd.SyncTracker.RemoteFilesMu.Unlock()
+		}
+
 		if kd.OnEvent != nil {
 			name := req.Name
 			if name == "" {
@@ -285,6 +303,27 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 		if err != nil {
 			return nil, ErrGRPCFailedPrecondition
+		}
+
+		if kd.SyncTracker != nil {
+			kd.SyncTracker.RemoteFilesMu.Lock()
+			if f, ok := kd.SyncTracker.RemoteFiles[req.Path]; ok {
+				f.Size = uint64(req.Attr.Size)
+				f.LastEditTime = req.Attr.ModificationTime
+			} else {
+				name := req.Name
+				if name == "" {
+					name = filepath.Base(req.Path)
+				}
+				kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+					Name:         name,
+					RelativePath: req.Path,
+					Size:         uint64(req.Attr.Size),
+					LastEditTime: req.Attr.ModificationTime,
+					CreatedTime:  req.Attr.BirthTime,
+				}
+			}
+			kd.SyncTracker.RemoteFilesMu.Unlock()
 		}
 	case bindings.NotifyType_REMOVE_FILE:
 		// Buffer REMOVE for 1000ms. Git's atomic write pattern is:
