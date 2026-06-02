@@ -114,8 +114,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		kd.SyncTracker.RemoteFilesMu.RLock()
-		defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+		kd.SyncTracker.RemoteFilesMu.Lock()
+		defer kd.SyncTracker.RemoteFilesMu.Unlock()
 
 		f, ok := kd.SyncTracker.RemoteFiles[req.Path]
 		if !ok {
