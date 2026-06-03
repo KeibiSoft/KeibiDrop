@@ -14,6 +14,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -111,6 +112,10 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			LastEditTime: req.Attr.ModificationTime,
 			CreatedTime:  req.Attr.BirthTime,
 		}
+
+		if kd.OnEvent != nil {
+			kd.OnEvent(fmt.Sprintf("file_arrived:%s:%d", req.Name, req.Attr.Size))
+		}
 		logger.Info("Success")
 
 	case bindings.NotifyType_EDIT_FILE:
@@ -124,15 +129,32 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 		f, ok := kd.SyncTracker.RemoteFiles[req.Path]
 		if !ok {
-			logger.Error("File does not exist", "error", ErrGRPCNotFound)
-			return nil, ErrGRPCNotFound
+			name := req.Name
+			if name == "" {
+				name = filepath.Base(req.Path)
+			}
+			kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+				Name:         name,
+				RelativePath: req.Path,
+				Size:         uint64(req.Attr.Size),
+				LastEditTime: req.Attr.ModificationTime,
+				CreatedTime:  req.Attr.BirthTime,
+			}
+		} else {
+			f.Name = req.Name
+			f.RelativePath = req.Path
+			f.Size = uint64(req.Attr.Size)
+			f.LastEditTime = req.Attr.ModificationTime
+			f.CreatedTime = req.Attr.BirthTime
 		}
 
-		f.Name = req.Name
-		f.RelativePath = req.Path
-		f.Size = uint64(req.Attr.Size)
-		f.LastEditTime = req.Attr.ModificationTime
-		f.CreatedTime = req.Attr.BirthTime
+		if kd.OnEvent != nil {
+			name := req.Name
+			if name == "" {
+				name = filepath.Base(req.Path)
+			}
+			kd.OnEvent(fmt.Sprintf("file_arrived:%s:%d", name, req.Attr.Size))
+		}
 		logger.Info("Success")
 
 	case bindings.NotifyType_REMOVE_FILE:
@@ -149,7 +171,18 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			delete(kd.SyncTracker.RemoteFiles, req.OldPath)
 			f.RelativePath = req.Path
 			f.Name = filepath.Base(req.Path)
+			if req.Attr != nil && req.Attr.Size > 0 {
+				f.Size = uint64(req.Attr.Size)
+			}
 			kd.SyncTracker.RemoteFiles[req.Path] = f
+		} else if req.Attr != nil && req.Attr.Size > 0 {
+			kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+				Name:         filepath.Base(req.Path),
+				RelativePath: req.Path,
+				Size:         uint64(req.Attr.Size),
+				LastEditTime: req.Attr.ModificationTime,
+			}
+			logger.Info("Created file from RENAME (old path not tracked)", "path", req.Path, "size", req.Attr.Size)
 		}
 		kd.SyncTracker.RemoteFilesMu.Unlock()
 		logger.Info("Renamed file in sync tracker", "oldPath", req.OldPath, "newPath", req.Path)
