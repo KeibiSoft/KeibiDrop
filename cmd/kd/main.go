@@ -300,10 +300,17 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		if err := kd.SetPeerDirectAddress(peerAddr); err != nil {
 			return errResponse(err.Error())
 		}
+		// Tiebreak on the name we actually advertise (daemonDisc), not a throwaway discovery
+		// instance — otherwise the role tiebreak runs on a name the peer never saw, so both sides
+		// can pick the same role and deadlock (the desktop analog of the mobile reconnect bug).
 		myName := ""
-		disc := discovery.New(kd.InboundPort(), slog.Default())
-		myName = disc.Name()
-		disc.Stop()
+		if daemonDisc != nil {
+			myName = daemonDisc.Name()
+		} else {
+			disc := discovery.New(kd.InboundPort(), slog.Default())
+			myName = disc.Name()
+			disc.Stop()
+		}
 		if myName < peerName {
 			return cmdCreateOrJoin(kd, "create")
 		}
