@@ -103,17 +103,28 @@ func setupPeerPairImpl(t *testing.T, aliceFuse bool, bobFuse bool, timeout time.
 	bobInPort := getFreePortInRange(t, 26400, 26549)
 	bobOutPort := getFreePortInRange(t, 26550, 26699)
 
+	// Prefetch mode for tests. Default ON (eager) keeps the suite green; set
+	// KEIBIDROP_PREFETCH_ON_OPEN=0 to exercise pure on-demand streaming (now
+	// correct for random seeks via chunk-aligned fetch).
+	prefetchOnOpen := os.Getenv("KEIBIDROP_PREFETCH_ON_OPEN") != "0"
+	// live_collab (macFUSE auto_cache): set KEIBIDROP_LIVE_COLLAB=1 to exercise
+	// collab-mode cache coherence (same-size in-place edits seen live) and to
+	// benchmark its open-path overhead.
+	liveCollab := os.Getenv("KEIBIDROP_LIVE_COLLAB") == "1"
+
 	// Create Alice with ::1 loopback
 	kdAlice, err := common.NewKeibiDropWithIP(ctx, logger.With("peer", "alice"),
 		aliceFuse, relayURL, aliceInPort, aliceOutPort,
-		aliceMount, aliceSave, true, true, "::1")
+		aliceMount, aliceSave, prefetchOnOpen, true, "::1")
 	require.NoError(err)
+	kdAlice.AutoCache = liveCollab
 
 	// Create Bob with ::1 loopback
 	kdBob, err := common.NewKeibiDropWithIP(ctx, logger.With("peer", "bob"),
 		bobFuse, relayURL, bobInPort, bobOutPort,
-		bobMount, bobSave, true, true, "::1")
+		bobMount, bobSave, prefetchOnOpen, true, "::1")
 	require.NoError(err)
+	kdBob.AutoCache = liveCollab
 
 	// Exchange fingerprints
 	aliceFp, err := kdAlice.ExportFingerprint()
@@ -224,13 +235,7 @@ func (tp *TestPair) Teardown() {
 		if dir == "" {
 			continue
 		}
-		if runtime.GOOS == "windows" {
-			// WinFSP: use fsptool to force-unmount drive letters / directories.
-			exec.Command(`C:\Program Files (x86)\WinFsp\bin\fsptool-x64.exe`, "lsvol").Run()
-			exec.Command(`C:\Program Files (x86)\WinFsp\bin\fsptool-x64.exe`, "unmount", dir).Run()
-		} else {
-			exec.Command("/sbin/umount", "-f", dir).Run()
-		}
+		forceUnmount(dir)
 	}
 
 	// Step 5: Wait for macFUSE to fully release /dev/macfuseN devices.
@@ -243,6 +248,28 @@ func (tp *TestPair) Teardown() {
 
 	if tp.Relay != nil {
 		tp.Relay.Close()
+	}
+}
+
+// forceUnmount best-effort detaches a FUSE/WinFsp mount, cross-platform. On
+// Linux a libfuse mount must be released with fusermount(3) — /sbin/umount -f
+// (macOS) leaves the mount half-dead ("transport endpoint is not connected"),
+// which then fails t.TempDir's RemoveAll. macOS uses /sbin/umount; Windows uses
+// WinFsp's fsptool.
+func forceUnmount(dir string) {
+	switch runtime.GOOS {
+	case "windows":
+		exec.Command(`C:\Program Files (x86)\WinFsp\bin\fsptool-x64.exe`, "unmount", dir).Run() //nolint:errcheck,gosec // best-effort cleanup
+	case "linux":
+		if exec.Command("fusermount3", "-u", dir).Run() == nil { //nolint:errcheck,gosec // best-effort cleanup
+			return
+		}
+		if exec.Command("fusermount", "-u", dir).Run() == nil { //nolint:errcheck,gosec // best-effort cleanup
+			return
+		}
+		exec.Command("/sbin/umount", "-f", dir).Run() //nolint:errcheck,gosec // best-effort cleanup
+	default: // darwin and others
+		exec.Command("/sbin/umount", "-f", dir).Run() //nolint:errcheck,gosec // best-effort cleanup
 	}
 }
 

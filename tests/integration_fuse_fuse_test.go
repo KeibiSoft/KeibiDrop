@@ -136,7 +136,16 @@ func getTestPeerBinary(t *testing.T) string {
 		if runtime.GOOS == "windows" {
 			binName = "testpeer.exe"
 		}
-		binPath := filepath.Join(t.TempDir(), binName)
+		// Build into a package-lifetime temp dir, NOT t.TempDir(): the Once
+		// caches this path for the whole run, but t.TempDir() is deleted when
+		// the first calling test ends, leaving later spawn-based tests with a
+		// missing binary ("fork/exec ...: no such file or directory").
+		tmpDir, mkErr := os.MkdirTemp("", "kd-testpeer")
+		if mkErr != nil {
+			testPeerBuildError = mkErr
+			return
+		}
+		binPath := filepath.Join(tmpDir, binName)
 		cmd := exec.Command("go", "build", "-o", binPath, "./tests/cmd/testpeer/") //#nosec G204
 		// Use the project root as working directory
 		// Find project root by looking for go.mod
@@ -187,10 +196,14 @@ func spawnPeer(t *testing.T, binary string, env map[string]string) *testPeer {
 
 	require.NoError(t, cmd.Start())
 
+	scanner := bufio.NewScanner(stdoutPipe)
+	// Allow large response lines (e.g. hex-encoded read_at blocks) — the
+	// default 64 KiB token limit is too small for multi-KiB reads.
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	peer := &testPeer{
 		cmd:    cmd,
 		stdin:  stdin,
-		stdout: bufio.NewScanner(stdoutPipe),
+		stdout: scanner,
 	}
 
 	// Wait for READY

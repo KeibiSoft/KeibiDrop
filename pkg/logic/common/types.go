@@ -72,6 +72,10 @@ type KeibiDrop struct {
 	// Collab sync options.
 	PrefetchOnOpen bool
 	PushOnWrite    bool
+	// AutoCache (live_collab) enables the macFUSE auto_cache mount option so a
+	// peer's same-size in-place edit is seen live. Set by the caller from
+	// config.LiveCollab (not a constructor arg). Default false = git-safe.
+	AutoCache bool
 
 	// Signals for loop management.
 	signals      chan TaskSignal

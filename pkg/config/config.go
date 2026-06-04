@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -31,6 +32,7 @@ type Config struct {
 	Incognito         bool   `toml:"incognito"`
 	PrefetchOnOpen    bool   `toml:"prefetch_on_open"`
 	PushOnWrite       bool   `toml:"push_on_write"`
+	LiveCollab        bool   `toml:"live_collab"`        // prioritize seeing peers' same-size in-place edits live (macFUSE auto_cache); trades off local mmap-write integrity (git). See note in template.
 	PassphraseProtect bool   `toml:"passphrase_protect"` // opt into Tier 2 (Argon2id passphrase) for identity at-rest encryption
 }
 
@@ -163,6 +165,16 @@ no_fuse = %v
 # Collaborative sync options (experimental).
 # prefetch_on_open = false
 # push_on_write = false
+#
+# live_collab: see a peer's in-place edits immediately even when the edited
+# file keeps the same byte length. Default false = git-safe: files written via
+# mmap (notably git's index) stay intact, and same-size live edits are NOT
+# reflected until the next size change (macOS/macFUSE limitation). Set true to
+# prioritize live collaboration — on macOS this enables the auto_cache mount
+# option, which can corrupt mmap-written files such as git's index, so only
+# enable it on machines used for document/code collaboration, not git work.
+# On Linux and Windows both work regardless of this setting.
+# live_collab = false
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.NoFUSE)
 
@@ -205,9 +217,17 @@ strict_mode = %v
 
 # Set to true to force ephemeral keys every session (no persistent identity).
 incognito = %v
+
+# Prioritize live collaboration over local mmap-write integrity (default false).
+# false = git-safe: mmap writes (git's index) stay intact; on macOS a peer's
+# same-size in-place edit is not seen live until the next size change.
+# true = on macOS enables the auto_cache mount option so same-size edits show up
+# live, at the risk of corrupting mmap-written files (git). Linux/Windows handle
+# both regardless. Leave false unless this machine is for document/code collab.
+live_collab = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
-		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito)
+		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.LiveCollab)
 
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }
@@ -238,23 +258,26 @@ func applyEnvOverrides(cfg *Config) {
 	if v := envFirst("BRIDGE_ADDR", "KD_BRIDGE"); v != "" {
 		cfg.BridgeAddr = v
 	}
-	if v := envFirst("STRICT_MODE", "KD_STRICT"); v != "" {
-		cfg.StrictMode = true
+	if b, ok := envBool("STRICT_MODE", "KD_STRICT"); ok {
+		cfg.StrictMode = b
 	}
-	if v := envFirst("NO_FUSE", "KD_NO_FUSE"); v != "" {
-		cfg.NoFUSE = true
+	if b, ok := envBool("NO_FUSE", "KD_NO_FUSE"); ok {
+		cfg.NoFUSE = b
 	}
-	if v := envFirst("KEIBIDROP_INCOGNITO", "KD_INCOGNITO"); v != "" {
-		cfg.Incognito = true
+	if b, ok := envBool("KEIBIDROP_INCOGNITO", "KD_INCOGNITO"); ok {
+		cfg.Incognito = b
 	}
-	if v := envFirst("KEIBIDROP_PASSPHRASE_PROTECT", "KD_PASSPHRASE_PROTECT"); v != "" {
-		cfg.PassphraseProtect = true
+	if b, ok := envBool("KEIBIDROP_PASSPHRASE_PROTECT", "KD_PASSPHRASE_PROTECT"); ok {
+		cfg.PassphraseProtect = b
 	}
-	if v := envFirst("KEIBIDROP_PREFETCH_ON_OPEN", "PREFETCH_ON_OPEN_ENV"); v != "" {
-		cfg.PrefetchOnOpen = true
+	if b, ok := envBool("KEIBIDROP_PREFETCH_ON_OPEN", "PREFETCH_ON_OPEN_ENV"); ok {
+		cfg.PrefetchOnOpen = b
 	}
-	if v := envFirst("KEIBIDROP_PUSH_ON_WRITE", "PUSH_ON_WRITE_ENV"); v != "" {
-		cfg.PushOnWrite = true
+	if b, ok := envBool("KEIBIDROP_PUSH_ON_WRITE", "PUSH_ON_WRITE_ENV"); ok {
+		cfg.PushOnWrite = b
+	}
+	if b, ok := envBool("KEIBIDROP_LIVE_COLLAB", "LIVE_COLLAB_ENV"); ok {
+		cfg.LiveCollab = b
 	}
 }
 
@@ -266,4 +289,54 @@ func envFirst(names ...string) string {
 		}
 	}
 	return ""
+}
+
+// envBool resolves a boolean-valued env var from the given names. The second
+// return value reports whether any of the vars was set; when false the caller
+// should leave the existing (default / config-file) value untouched rather than
+// forcing it to false. A present value is parsed leniently: "0", "false",
+// "no", "off" (any case) → false; anything else → true. This fixes the old
+// presence-only behaviour where e.g. NO_FUSE=false wrongly enabled the flag.
+func envBool(names ...string) (val bool, set bool) {
+	v := envFirst(names...)
+	if v == "" {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return true, true
+	}
+}
+
+// Warnings returns notes about flag combinations that are redundant or carry a
+// known tradeoff, for the caller to log at startup. None are fatal — there is
+// no combination that crashes or that the program must refuse. The cases are:
+//
+//   - no_fuse disables the FUSE mount, so the mount-tuning flags prefetch_on_open
+//     and live_collab have nothing to act on (the no-FUSE AddFile/PullFile API is
+//     used instead). They are silently ignored; we surface that here.
+//   - live_collab on macOS enables the macFUSE auto_cache mount option, which
+//     fixes same-size live-edit visibility but can corrupt files written via mmap
+//     (notably git's index). That is a deliberate tradeoff, flagged so it is not
+//     a surprise. On Linux/Windows live_collab is a no-op (both already work).
+//
+// Note prefetch_on_open and live_collab are NOT mutually exclusive: prefetch
+// fills the local disk cache while auto_cache governs the kernel page cache —
+// they operate at different layers and compose cleanly.
+func (c Config) Warnings() []string {
+	var w []string
+	if c.NoFUSE {
+		if c.PrefetchOnOpen {
+			w = append(w, "prefetch_on_open has no effect with no_fuse: it triggers on FUSE Open(), which never fires without a mount")
+		}
+		if c.LiveCollab {
+			w = append(w, "live_collab has no effect with no_fuse: it tunes the FUSE mount cache, while no_fuse uses the AddFile/PullFile API")
+		}
+	}
+	if c.LiveCollab && runtime.GOOS == "darwin" {
+		w = append(w, "live_collab enables macFUSE auto_cache: peers' same-size in-place edits become visible live, but files written via mmap on the mount (e.g. git's index) may be corrupted — do not run git operations on the mount in this mode")
+	}
+	return w
 }

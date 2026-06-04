@@ -284,6 +284,18 @@ func (ofc *OpenFileCounter) Open() {
 	ofc.counter++
 }
 
+// OpenIfActive bumps the count and returns true only if it was already >0, so
+// a handle whose last Release is tearing it down is not reused.
+func (ofc *OpenFileCounter) OpenIfActive() bool {
+	ofc.mu.Lock()
+	defer ofc.mu.Unlock()
+	if ofc.counter == 0 {
+		return false
+	}
+	ofc.counter++
+	return true
+}
+
 func (ofc *OpenFileCounter) Release() uint64 {
 	ofc.mu.Lock()
 	defer ofc.mu.Unlock()

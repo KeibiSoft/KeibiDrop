@@ -146,6 +146,22 @@ func (s *Session) GetFingerPrint() string {
 	return s.OwnFingerprint
 }
 
+// ResetOutboundCrypto clears the outbound shared key and negotiated cipher
+// suite so a fresh outbound handshake can run (e.g. when falling back to the
+// bridge). The caller is responsible for closing any existing outbound conn.
+func (s *Session) ResetOutboundCrypto() {
+	s.SEKOutbound = nil
+	s.CipherMu.Lock()
+	s.CipherSuite = ""
+	s.CipherMu.Unlock()
+}
+
+// ResetInboundCrypto clears the inbound shared key. The caller is responsible
+// for closing any existing inbound conn.
+func (s *Session) ResetInboundCrypto() {
+	s.SEKInbound = nil
+}
+
 // SessionSockets holds a duplex connection for peer communication.
 type SessionSockets struct {
 	Inbound  *SecureConn // Bob -> Alice

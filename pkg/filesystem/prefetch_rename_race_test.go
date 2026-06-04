@@ -131,10 +131,17 @@ func TestPrefetchRenameRace(t *testing.T) {
 		Mode: 0o644 | winfuse.S_IFREG,
 	}
 
-	// AddRemoteFile starts the prefetch goroutine for HEAD.lock.
+	// AddRemoteFile registers HEAD.lock (metadata only under on-demand).
 	if err := root.AddRemoteFile(root.logger, lockPath, "HEAD.lock", stat); err != nil {
 		t.Fatalf("AddRemoteFile failed: %v", err)
 	}
+
+	// Prefetch starts on Open now, not on announce; trigger it explicitly so
+	// this test still races an in-flight prefetch against the rename.
+	root.RemoteFilesLock.RLock()
+	pf := root.RemoteFiles[lockPath]
+	root.RemoteFilesLock.RUnlock()
+	root.startPrefetch(root.logger, pf, lockPath)
 
 	// Immediately simulate the RENAME_FILE notification arriving on Bob's side,
 	// before the prefetch goroutine has finished.

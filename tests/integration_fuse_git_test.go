@@ -5,7 +5,6 @@ package tests
 
 import (
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,7 +70,7 @@ func TestFUSEtoFUSE_GitClone(t *testing.T) {
 			}
 		}
 		for _, dir := range []string{aliceMount, bobMount} {
-			exec.Command("/sbin/umount", "-f", dir).Run()
+			forceUnmount(dir)
 			waitForUnmount(dir, 5*time.Second)
 		}
 	})

@@ -32,6 +32,7 @@ type FS struct {
 	// Collab sync options (set from env before Mount).
 	PrefetchOnOpen bool // If true, fetch entire file on Open() and write to local disk.
 	PushOnWrite    bool // If true, async push deltas to peer on Write().
+	AutoCache      bool // If true (live_collab), add the macFUSE auto_cache mount option so a peer's same-size in-place edit is seen live. Trades off mmap-write integrity (git) on macOS; no-op on Linux/Windows.
 
 	// Host.
 	host *winfuse.FileSystemHost
@@ -143,11 +144,16 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	fs.host = host
 	fs.mountPoint = cleanMountPoint
 
-	opts := getMountOptions()
+	opts := getMountOptions(fs.AutoCache)
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
 	ok := fs.host.Mount(cleanMountPoint, opts)
 	if !ok {
+		// Reset host/Root so IsMounted() reports false. Otherwise a failed mount
+		// leaves them set, and the next reconnect takes the "already mounted,
+		// waiting" branch and never retries — hanging the mount permanently.
+		fs.host = nil
+		fs.Root = nil
 		fs.logger.Error("FUSE Mount failed", "mountPoint", cleanMountPoint)
 		return fmt.Errorf("FUSE mount failed for %s: ensure user_allow_other is set in /etc/fuse.conf, or run with KD_NO_FUSE=1", cleanMountPoint)
 	}

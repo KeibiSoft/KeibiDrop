@@ -54,6 +54,25 @@ type KeibidropServiceImpl struct {
 	pendingRemoves   map[string]*time.Timer
 }
 
+// statFromAttr builds a fuse.Stat_t from a peer-sent Attr. Remote files are
+// presented as owned by the current user; Nlink is always 1.
+func statFromAttr(a *bindings.Attr) *fuse.Stat_t {
+	return &fuse.Stat_t{
+		Dev:      a.Dev,
+		Ino:      a.Ino,
+		Mode:     a.Mode,
+		Nlink:    1,
+		Uid:      uint32(os.Getuid()),
+		Gid:      uint32(os.Getgid()),
+		Size:     a.Size,
+		Atim:     fuse.NewTimespec(time.Unix(0, int64(a.AccessTime))),
+		Mtim:     fuse.NewTimespec(time.Unix(0, int64(a.ModificationTime))),
+		Ctim:     fuse.NewTimespec(time.Unix(0, int64(a.ChangeTime))),
+		Birthtim: fuse.NewTimespec(time.Unix(0, int64(a.BirthTime))),
+		Flags:    a.Flags,
+	}
+}
+
 func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (*bindings.DebugResponse, error) {
 	kd.Logger.Info("Debug called. Success!")
 
@@ -132,15 +151,6 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCInvalidArgument
 		}
 
-		// logger.Info("<<< RECEIVED ADD_FILE FROM PEER",
-		// 	"path", req.Path,
-		// 	"size", req.Attr.Size)
-
-		atim := time.Unix(0, int64(req.Attr.AccessTime))
-		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
-		ctim := time.Unix(0, int64(req.Attr.ChangeTime))
-		btim := time.Unix(0, int64(req.Attr.BirthTime))
-
 		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
 			kd.SyncTracker.RemoteFilesMu.Lock()
 			defer kd.SyncTracker.RemoteFilesMu.Unlock()
@@ -186,41 +196,14 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		err := kd.FS.Root.AddRemoteFile(logger, req.Path, req.Name, &fuse.Stat_t{
-			Dev:      req.Attr.Dev,
-			Ino:      req.Attr.Ino,
-			Mode:     req.Attr.Mode,
-			Nlink:    1,
-			Uid:      uint32(os.Getuid()),
-			Gid:      uint32(os.Getgid()),
-			Size:     req.Attr.Size,
-			Atim:     fuse.NewTimespec(atim),
-			Mtim:     fuse.NewTimespec(mtim),
-			Ctim:     fuse.NewTimespec(ctim),
-			Birthtim: fuse.NewTimespec(btim),
-			Flags:    req.Attr.Flags,
-		})
+		err := kd.FS.Root.AddRemoteFile(logger, req.Path, req.Name, statFromAttr(req.Attr))
 		if err != nil {
 			return nil, ErrGRPCInvalidArgument
 		}
 
-		if kd.SyncTracker != nil {
-			kd.SyncTracker.RemoteFilesMu.Lock()
-			existing, ok := kd.SyncTracker.RemoteFiles[req.Path]
-			if ok {
-				existing.Size = uint64(req.Attr.Size)
-				existing.LastEditTime = req.Attr.ModificationTime
-			} else {
-				kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
-					Name:         req.Name,
-					RelativePath: req.Path,
-					Size:         uint64(req.Attr.Size),
-					LastEditTime: req.Attr.ModificationTime,
-					CreatedTime:  req.Attr.BirthTime,
-				}
-			}
-			kd.SyncTracker.RemoteFilesMu.Unlock()
-		}
+		// Mirror into SyncTracker so the desktop/mobile file list (which reads
+		// SyncTracker.RemoteFiles) shows files added over the FUSE path (#164).
+		kd.upsertRemoteInTracker(req)
 
 		if kd.OnEvent != nil {
 			name := req.Name
@@ -236,10 +219,6 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			logger.Error("Failed to add file, invalid attr", "error", ErrGRPCInvalidArgument)
 			return nil, ErrGRPCFailedPrecondition
 		}
-		atim := time.Unix(0, int64(req.Attr.AccessTime))
-		mtim := time.Unix(0, int64(req.Attr.ModificationTime))
-		ctim := time.Unix(0, int64(req.Attr.ChangeTime))
-		btim := time.Unix(0, int64(req.Attr.BirthTime))
 
 		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
 			kd.SyncTracker.RemoteFilesMu.Lock()
@@ -286,45 +265,14 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		err := kd.FS.Root.EditRemoteFile(logger, req.Path, req.Name, &fuse.Stat_t{
-			Dev:      req.Attr.Dev,
-			Ino:      req.Attr.Ino,
-			Mode:     req.Attr.Mode,
-			Nlink:    1,
-			Uid:      uint32(os.Getuid()),
-			Gid:      uint32(os.Getgid()),
-			Size:     req.Attr.Size,
-			Atim:     fuse.NewTimespec(atim),
-			Mtim:     fuse.NewTimespec(mtim),
-			Ctim:     fuse.NewTimespec(ctim),
-			Birthtim: fuse.NewTimespec(btim),
-			Flags:    req.Attr.Flags,
-		})
+		err := kd.FS.Root.EditRemoteFile(logger, req.Path, req.Name, statFromAttr(req.Attr))
 
 		if err != nil {
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		if kd.SyncTracker != nil {
-			kd.SyncTracker.RemoteFilesMu.Lock()
-			if f, ok := kd.SyncTracker.RemoteFiles[req.Path]; ok {
-				f.Size = uint64(req.Attr.Size)
-				f.LastEditTime = req.Attr.ModificationTime
-			} else {
-				name := req.Name
-				if name == "" {
-					name = filepath.Base(req.Path)
-				}
-				kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
-					Name:         name,
-					RelativePath: req.Path,
-					Size:         uint64(req.Attr.Size),
-					LastEditTime: req.Attr.ModificationTime,
-					CreatedTime:  req.Attr.BirthTime,
-				}
-			}
-			kd.SyncTracker.RemoteFilesMu.Unlock()
-		}
+		// Keep SyncTracker in sync on the FUSE path too (#164).
+		kd.upsertRemoteInTracker(req)
 	case bindings.NotifyType_REMOVE_FILE:
 		// Buffer REMOVE for 1000ms. Git's atomic write pattern is:
 		//   REMOVE HEAD → CREATE HEAD → RENAME HEAD.lock (all within <1ms)
@@ -411,24 +359,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				}
 
 				if needsRedownload {
-					atim := time.Unix(0, int64(req.Attr.AccessTime))
-					mtim := time.Unix(0, int64(req.Attr.ModificationTime))
-					ctim := time.Unix(0, int64(req.Attr.ChangeTime))
-					btim := time.Unix(0, int64(req.Attr.BirthTime))
-					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), &fuse.Stat_t{
-						Dev:      req.Attr.Dev,
-						Ino:      req.Attr.Ino,
-						Mode:     req.Attr.Mode,
-						Nlink:    1,
-						Uid:      uint32(os.Getuid()),
-						Gid:      uint32(os.Getgid()),
-						Size:     req.Attr.Size,
-						Atim:     fuse.NewTimespec(atim),
-						Mtim:     fuse.NewTimespec(mtim),
-						Ctim:     fuse.NewTimespec(ctim),
-						Birthtim: fuse.NewTimespec(btim),
-						Flags:    req.Attr.Flags,
-					})
+					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr))
 				}
 			}
 
@@ -444,24 +375,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				if targetTracked {
 					logger.Info("Lock-file rename: re-downloading target",
 						"path", req.Path, "size", req.Attr.Size)
-					atim := time.Unix(0, int64(req.Attr.AccessTime))
-					mtim := time.Unix(0, int64(req.Attr.ModificationTime))
-					ctim := time.Unix(0, int64(req.Attr.ChangeTime))
-					btim := time.Unix(0, int64(req.Attr.BirthTime))
-					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), &fuse.Stat_t{
-						Dev:      req.Attr.Dev,
-						Ino:      req.Attr.Ino,
-						Mode:     req.Attr.Mode,
-						Nlink:    1,
-						Uid:      uint32(os.Getuid()),
-						Gid:      uint32(os.Getgid()),
-						Size:     req.Attr.Size,
-						Atim:     fuse.NewTimespec(atim),
-						Mtim:     fuse.NewTimespec(mtim),
-						Ctim:     fuse.NewTimespec(ctim),
-						Birthtim: fuse.NewTimespec(btim),
-						Flags:    req.Attr.Flags,
-					})
+					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr))
 				}
 			}
 		}
@@ -618,6 +532,68 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, logger *slog.Logger) 
 	}
 }
 
+// upsertRemoteInTracker mirrors a peer ADD_FILE/EDIT_FILE into
+// SyncTracker.RemoteFiles. The desktop/mobile file lists read SyncTracker, so
+// the FUSE path must update it too — otherwise files added over FUSE never
+// appear in the list even though FUSE serves them (#164). Keyed by req.Path to
+// match the RENAME_FILE and REMOVE_FILE handlers.
+func (kd *KeibidropServiceImpl) upsertRemoteInTracker(req *bindings.NotifyRequest) {
+	if kd.SyncTracker == nil || req.Attr == nil {
+		return
+	}
+	name := req.Name
+	if name == "" {
+		name = filepath.Base(req.Path)
+	}
+	kd.SyncTracker.RemoteFilesMu.Lock()
+	defer kd.SyncTracker.RemoteFilesMu.Unlock()
+	if f, ok := kd.SyncTracker.RemoteFiles[req.Path]; ok {
+		f.Name = name
+		f.RelativePath = req.Path
+		f.Size = uint64(req.Attr.Size)
+		f.LastEditTime = req.Attr.ModificationTime
+		f.CreatedTime = req.Attr.BirthTime
+		return
+	}
+	kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+		Name:         name,
+		RelativePath: req.Path,
+		Size:         uint64(req.Attr.Size),
+		LastEditTime: req.Attr.ModificationTime,
+		CreatedTime:  req.Attr.BirthTime,
+	}
+}
+
+// resolveFUSEPath returns the on-disk path for a peer-requested path in FUSE
+// mode: AllFileMap first (keys carry a leading "/"), then SyncTracker.LocalFiles
+// (drag-and-drop AddFile entries). Returns "" if not found. Each map lock is
+// held only briefly and never across the returned path's use. Caller must have
+// verified kd.FS and kd.FS.Root are non-nil.
+func (kd *KeibidropServiceImpl) resolveFUSEPath(path string) string {
+	fuseKey := path
+	if !strings.HasPrefix(fuseKey, "/") {
+		fuseKey = "/" + fuseKey
+	}
+	kd.FS.Root.AfmLock.RLock()
+	f, ok := kd.FS.Root.AllFileMap[fuseKey]
+	kd.FS.Root.AfmLock.RUnlock()
+	if ok {
+		return f.RealPathOfFile
+	}
+	if kd.SyncTracker == nil {
+		return ""
+	}
+	kd.SyncTracker.LocalFilesMu.RLock()
+	defer kd.SyncTracker.LocalFilesMu.RUnlock()
+	if lf, ok := kd.SyncTracker.LocalFiles[strings.TrimPrefix(path, "/")]; ok {
+		return lf.RealPathOfFile
+	}
+	if lf, ok := kd.SyncTracker.LocalFiles[path]; ok {
+		return lf.RealPathOfFile
+	}
+	return ""
+}
+
 func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
 	logger := kd.Logger.With("method", "server-read")
 
@@ -723,8 +699,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 	var fh *os.File
 	var openedPath string
-	// hardcode buffer to 16 MiB (1<<24 is 16 MB; adjust if needed)
-	buf := make([]byte, 1<<24)
+	buf := make([]byte, config.GRPCStreamBuffer)
 
 	for {
 		rec, err := stream.Recv()
@@ -746,35 +721,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 		if !isOpen {
 			isOpen = true
 
-			// Normalize to FUSE convention: AllFileMap keys have leading "/".
-			fuseKey := rec.Path
-			if !strings.HasPrefix(fuseKey, "/") {
-				fuseKey = "/" + fuseKey
-			}
-
-			// Only hold the lock briefly to look up the file path
-			kd.FS.Root.AfmLock.RLock()
-			f, ok := kd.FS.Root.AllFileMap[fuseKey]
-			kd.FS.Root.AfmLock.RUnlock()
-
-			// Fallback: files added via drag-and-drop (AddFile) live in
-			// SyncTracker.LocalFiles, not in FUSE's AllFileMap.
-			var realPath string
-			if ok {
-				realPath = f.RealPathOfFile
-			} else if kd.SyncTracker != nil {
-				lookupPath := strings.TrimPrefix(rec.Path, "/")
-				kd.SyncTracker.LocalFilesMu.RLock()
-				lf, lfOk := kd.SyncTracker.LocalFiles[lookupPath]
-				if !lfOk {
-					lf, lfOk = kd.SyncTracker.LocalFiles[rec.Path]
-				}
-				kd.SyncTracker.LocalFilesMu.RUnlock()
-				if lfOk {
-					realPath = lf.RealPathOfFile
-				}
-			}
-
+			realPath := kd.resolveFUSEPath(rec.Path)
 			if realPath == "" {
 				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")
@@ -845,27 +792,7 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 			realPath = f.RealPathOfFile
 		}
 	} else if kd.FS != nil && kd.FS.Root != nil {
-		fuseKey := req.Path
-		if !strings.HasPrefix(fuseKey, "/") {
-			fuseKey = "/" + fuseKey
-		}
-		kd.FS.Root.AfmLock.RLock()
-		f, ok := kd.FS.Root.AllFileMap[fuseKey]
-		kd.FS.Root.AfmLock.RUnlock()
-		if ok {
-			realPath = f.RealPathOfFile
-		} else if kd.SyncTracker != nil {
-			lookupPath := strings.TrimPrefix(req.Path, "/")
-			kd.SyncTracker.LocalFilesMu.RLock()
-			lf, lfOk := kd.SyncTracker.LocalFiles[lookupPath]
-			if !lfOk {
-				lf, lfOk = kd.SyncTracker.LocalFiles[req.Path]
-			}
-			kd.SyncTracker.LocalFilesMu.RUnlock()
-			if lfOk {
-				realPath = lf.RealPathOfFile
-			}
-		}
+		realPath = kd.resolveFUSEPath(req.Path)
 	}
 
 	if realPath == "" {

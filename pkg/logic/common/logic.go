@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -28,6 +29,8 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 )
 
+// Timeout is the peer-join wait budget in seconds: 10 minutes minus a 5s
+// margin, matching the relay registration TTL.
 const Timeout = 10*60 - 5
 
 // Add a file to be tracked.
@@ -311,17 +314,7 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	}
 
 updateTracker:
-	fileCopy.RealPathOfFile = localPath
-
-	kd.SyncTracker.RemoteFilesMu.Lock()
-	if rf, ok := kd.SyncTracker.RemoteFiles[remoteName]; ok {
-		rf.RealPathOfFile = localPath
-	}
-	kd.SyncTracker.RemoteFilesMu.Unlock()
-
-	kd.SyncTracker.LocalFilesMu.Lock()
-	kd.SyncTracker.LocalFiles[remoteName] = &fileCopy
-	kd.SyncTracker.LocalFilesMu.Unlock()
+	kd.finalizeDownload(remoteName, localPath, fileCopy)
 
 	if fi, statErr := os.Stat(localPath); statErr == nil {
 		logger.Info("PullFile complete", "expectedSize", fileSize, "actualSize", fi.Size(), "match", uint64(fi.Size()) == fileSize)
@@ -460,6 +453,13 @@ func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize,
 	os.Remove(bitmapPath)
 
 updateTracker:
+	kd.finalizeDownload(remoteName, localPath, fileCopy)
+	return nil
+}
+
+// finalizeDownload records a completed download in the sync tracker: it points
+// the remote entry at the local path and registers the file as locally held.
+func (kd *KeibiDrop) finalizeDownload(remoteName, localPath string, fileCopy synctracker.File) {
 	fileCopy.RealPathOfFile = localPath
 	kd.SyncTracker.RemoteFilesMu.Lock()
 	if rf, ok := kd.SyncTracker.RemoteFiles[remoteName]; ok {
@@ -469,7 +469,6 @@ updateTracker:
 	kd.SyncTracker.LocalFilesMu.Lock()
 	kd.SyncTracker.LocalFiles[remoteName] = &fileCopy
 	kd.SyncTracker.LocalFilesMu.Unlock()
-	return nil
 }
 
 func (kd *KeibiDrop) registerDownload(name string, cancel context.CancelFunc) {
@@ -601,6 +600,54 @@ func (kd *KeibiDrop) SetPeerDirectAddress(addr string) error {
 	return nil
 }
 
+// waitForPeerFingerprint blocks until the expected peer fingerprint is set
+// (via AddPeerFingerprint or a relay lookup), polling once a second up to the
+// connection Timeout. Returns ErrTimeoutReached if it never arrives.
+func (kd *KeibiDrop) waitForPeerFingerprint() error {
+	for elapsed := 0; elapsed < Timeout; elapsed++ {
+		if kd.session.ExpectedPeerFingerprint != "" {
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	kd.logger.Error("Timeout reached", "error", ErrTimeoutReached)
+	return ErrTimeoutReached
+}
+
+// finishConnect runs the shared post-connection setup for JoinRoom and
+// CreateRoom: start the gRPC server, dial the client with retry, init
+// connection resilience, then either signal ready (no-FUSE) or mount FUSE.
+func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
+	kd.filesystemReady = make(chan struct{})
+	kd.filesystemReadyOnce = sync.Once{}
+	kd.Start()
+
+	// Retry dialing until the gRPC server is ready.
+	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {
+		logger.Error("Failed to connect to grpc server after retries", "error", err)
+		return err
+	}
+
+	// Start health monitoring, reconnection, and relay keepalive.
+	if err := kd.InitConnectionResilience(); err != nil {
+		logger.Warn("Failed to init connection resilience", "error", err)
+	}
+
+	if !kd.IsFUSE {
+		// Unblock Run()'s <-filesystemReady so it can process signals.
+		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
+		logger.Info("Success, starting without FUSE")
+		return nil
+	}
+
+	if err := kd.setupFilesystem(logger, kd.filesystemReady); err != nil {
+		return err
+	}
+
+	logger.Info("Success")
+	return nil
+}
+
 func (kd *KeibiDrop) JoinRoom() error {
 	logger := kd.logger.With("method", "join-room")
 	if kd.session == nil {
@@ -612,19 +659,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 		return ErrAlreadyRunning
 	}
 
-	// Wait for expected peer fingerprint
-	elapsed := 0
-	for {
-		if elapsed >= Timeout {
-			logger.Error("Timeout reached", "error", ErrTimeoutReached)
-			return ErrTimeoutReached
-		}
-		if kd.session.ExpectedPeerFingerprint == "" {
-			elapsed++
-			time.Sleep(time.Second)
-			continue
-		}
-		break
+	// Wait for the expected peer fingerprint to be set.
+	if err := kd.waitForPeerFingerprint(); err != nil {
+		return err
 	}
 
 	// Get peer info from relay (needed for both direct and bridge paths).
@@ -711,10 +748,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 						kd.session.Session.Outbound.Close()
 						kd.session.Session.Outbound = nil
 					}
-					kd.session.SEKOutbound = nil
-					kd.session.CipherMu.Lock()
-					kd.session.CipherSuite = ""
-					kd.session.CipherMu.Unlock()
+					kd.session.ResetOutboundCrypto()
 					lanConnected = false
 					break
 				}
@@ -732,10 +766,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 				goto connected
 			}
 			// Reset crypto state after failed LAN attempts.
-			kd.session.SEKOutbound = nil
-			kd.session.CipherMu.Lock()
-			kd.session.CipherSuite = ""
-			kd.session.CipherMu.Unlock()
+			kd.session.ResetOutboundCrypto()
 		}
 
 		// 2. Try direct IPv6 P2P (skip if peer has no IPv6, e.g. mobile).
@@ -784,18 +815,12 @@ func (kd *KeibiDrop) JoinRoom() error {
 					kd.session.Session.Outbound.Close()
 					kd.session.Session.Outbound = nil
 				}
-				kd.session.SEKOutbound = nil
-				kd.session.CipherMu.Lock()
-				kd.session.CipherSuite = ""
-				kd.session.CipherMu.Unlock()
+				kd.session.ResetOutboundCrypto()
 			}
 		case kd.BridgeAddr != "":
 			logger.Warn("Direct P2P failed, falling back to bridge", "error", directErr, "bridge", kd.BridgeAddr)
 			needBridge = true
-			kd.session.SEKOutbound = nil
-			kd.session.CipherMu.Lock()
-			kd.session.CipherSuite = ""
-			kd.session.CipherMu.Unlock()
+			kd.session.ResetOutboundCrypto()
 		default:
 			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
 			return directErr
@@ -827,34 +852,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 	}
 
 connected:
-	kd.filesystemReady = make(chan struct{})
-	kd.filesystemReadyOnce = sync.Once{}
-	kd.Start()
-
-	// retry dialing until gRPC server is ready
-	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {
-		logger.Error("Failed to connect to grpc server after retries", "error", err)
-		return err
-	}
-
-	// Start health monitoring, reconnection, and relay keepalive.
-	if err := kd.InitConnectionResilience(); err != nil {
-		logger.Warn("Failed to init connection resilience", "error", err)
-	}
-
-	if !kd.IsFUSE {
-		// Unblock Run()'s <-filesystemReady so it can process signals.
-		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
-		logger.Info("Success, starting without FUSE")
-		return nil
-	}
-
-	if err := kd.setupFilesystem(logger, kd.filesystemReady); err != nil {
-		return err
-	}
-
-	logger.Info("Success")
-	return nil
+	return kd.finishConnect(logger)
 }
 
 // Connect determines the creator/joiner role automatically using
@@ -904,19 +902,9 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 	logger.Info("Waiting for peer to join...")
 
-	// Wait for expected peer fingerprint (skip if already set, e.g. local mode TOFU).
-	elapsed := 0
-	for {
-		if elapsed >= Timeout {
-			logger.Error("Timeout reached", "error", ErrTimeoutReached)
-			return ErrTimeoutReached
-		}
-		if kd.session.ExpectedPeerFingerprint == "" {
-			time.Sleep(time.Second)
-			elapsed++
-			continue
-		}
-		break
+	// Wait for the expected peer fingerprint (skip if already set, e.g. local mode TOFU).
+	if err := kd.waitForPeerFingerprint(); err != nil {
+		return err
 	}
 
 	// In local mode, exchange public keys before the PQC handshake.
@@ -993,16 +981,13 @@ func (kd *KeibiDrop) CreateRoom() error {
 				if kd.BridgeAddr != "" {
 					logger.Warn("Direct outbound to peer failed, falling back to bridge for outbound", "error", err)
 					// Reset outbound crypto state for bridge handshake.
-					kd.session.SEKOutbound = nil
-					kd.session.CipherMu.Lock()
-					kd.session.CipherSuite = ""
-					kd.session.CipherMu.Unlock()
+					kd.session.ResetOutboundCrypto()
 					// Close direct inbound too — we need both via bridge.
 					if kd.session.Session != nil && kd.session.Session.Inbound != nil {
 						kd.session.Session.Inbound.Close()
 						kd.session.Session.Inbound = nil
 					}
-					kd.session.SEKInbound = nil
+					kd.session.ResetInboundCrypto()
 					useBridge = true
 				} else {
 					return err
@@ -1057,31 +1042,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 		kd.listener = newLn
 	}
 
-	kd.filesystemReady = make(chan struct{})
-	kd.filesystemReadyOnce = sync.Once{}
-	kd.Start()
-
-	if err := kd.connectGRPCClientWithRetry(15 * time.Second); err != nil {
-		logger.Error("Failed to connect to grpc server after retries", "error", err)
-		return err
-	}
-
-	if err := kd.InitConnectionResilience(); err != nil {
-		logger.Warn("Failed to init connection resilience", "error", err)
-	}
-
-	if !kd.IsFUSE {
-		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
-		logger.Info("Success, starting without FUSE")
-		return nil
-	}
-
-	if err := kd.setupFilesystem(logger, kd.filesystemReady); err != nil {
-		return err
-	}
-
-	logger.Info("Success")
-	return nil
+	return kd.finishConnect(logger)
 }
 
 // ConnectToContact looks up a contact by fingerprint, registers it, and connects.
@@ -1196,17 +1157,3 @@ func (kd *KeibiDrop) UnmountFilesystem() error {
 	logger.Info("Success")
 	return nil
 }
-
-/*
-	func (kd *KeibiDrop) ResetSession() {
-		kd.logger.Info("Resetting session state")
-
-		// You probably want to close any existing net.Conn, etc.
-	}
-
-	func (kd *KeibiDrop) RegenerateKeys() error {
-		kd.logger.Info("Regenerating ephemeral keys")
-
-		return nil
-	}
-*/

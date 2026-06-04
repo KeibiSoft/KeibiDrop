@@ -107,12 +107,3 @@ func remoteChildrenForDir(remoteFiles map[string]*File, dirPath string) (files m
 	}
 	return
 }
-
-func getPathWithoutName(path string) string {
-	aux := strings.Split(path, "/")
-	if len(aux) == 0 {
-		return path
-	}
-
-	return strings.Join(aux[:len(aux)-1], "/")
-}

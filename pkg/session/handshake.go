@@ -92,7 +92,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computed, session.ExpectedPeerFingerprint)
 	}
 
-	if msg.OutboundPort < 26000 || msg.OutboundPort > 27000 {
+	if !config.ValidPeerPort(int(msg.OutboundPort)) {
 		logger.Warn("Provided outbound port is out of known range, defaulting to config", "provided-port", msg.OutboundPort, "default-to", config.OutboundPort)
 		msg.OutboundPort = config.OutboundPort
 	}
