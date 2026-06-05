@@ -31,6 +31,7 @@ type Config struct {
 	NoFUSE            bool   `toml:"no_fuse"`
 	Incognito         bool   `toml:"incognito"`
 	PrefetchOnOpen    bool   `toml:"prefetch_on_open"`
+	PrefetchAutoMB    int    `toml:"prefetch_auto_mb"` // auto-prefetch files >= this many MB (sequential fill + on-demand jumps); 0 disables (pure on-demand). Default 100. prefetch_on_open=true forces prefetch for any size.
 	PushOnWrite       bool   `toml:"push_on_write"`
 	LiveCollab        bool   `toml:"live_collab"`        // prioritize seeing peers' same-size in-place edits live (macFUSE auto_cache); trades off local mmap-write integrity (git). See note in template.
 	PassphraseProtect bool   `toml:"passphrase_protect"` // opt into Tier 2 (Argon2id passphrase) for identity at-rest encryption
@@ -43,12 +44,13 @@ const DefaultBridge = "bridge.keibisoft.com:26600"
 func DefaultConfig() Config {
 	home, _ := os.UserHomeDir()
 	cfg := Config{
-		Relay:        DefaultRelay,
-		SavePath:     filepath.Join(home, "KeibiDrop", "Received"),
-		MountPath:    filepath.Join(home, "KeibiDrop", "Mount"),
-		InboundPort:  InboundPort,
-		OutboundPort: OutboundPort,
-		BridgeAddr:   DefaultBridge,
+		Relay:          DefaultRelay,
+		SavePath:       filepath.Join(home, "KeibiDrop", "Received"),
+		MountPath:      filepath.Join(home, "KeibiDrop", "Mount"),
+		InboundPort:    InboundPort,
+		OutboundPort:   OutboundPort,
+		BridgeAddr:     DefaultBridge,
+		PrefetchAutoMB: 100, // files >= 100MB auto-prefetch (sequential fill + on-demand jumps); smaller stay pure on-demand
 	}
 	switch runtime.GOOS {
 	case "darwin":
@@ -218,12 +220,13 @@ strict_mode = %v
 # Set to true to force ephemeral keys every session (no persistent identity).
 incognito = %v
 
-# FUSE download strategy. false (default, recommended) = on-demand: stream bytes
-# as they are read, so large files open and seek instantly and only what is read
-# is downloaded. true = prefetch-on-open: download the whole file in the
-# background when it is opened (good for offline use / smooth sequential
-# playback, but downloads everything). Persisted here so the choice survives
-# restarts.
+# FUSE download strategy (persisted so the choice survives restarts).
+# prefetch_auto_mb: files >= this many MB are prefetched on open — sequential fill
+#   at wire speed PLUS on-demand jumps so a seek into a not-yet-downloaded region
+#   never lags. Smaller files stay pure on-demand (instant open, fetch only what's
+#   read). 0 disables auto-prefetch. Default 100.
+# prefetch_on_open: force prefetch for ANY size (overrides prefetch_auto_mb).
+prefetch_auto_mb = %v
 prefetch_on_open = %v
 
 # Prioritize live collaboration over local mmap-write integrity (default false).
@@ -235,7 +238,7 @@ prefetch_on_open = %v
 live_collab = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
-		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.PrefetchOnOpen, cfg.LiveCollab)
+		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.PrefetchAutoMB, cfg.PrefetchOnOpen, cfg.LiveCollab)
 
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }
@@ -280,6 +283,11 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if b, ok := envBool("KEIBIDROP_PREFETCH_ON_OPEN", "PREFETCH_ON_OPEN_ENV"); ok {
 		cfg.PrefetchOnOpen = b
+	}
+	if v := envFirst("KEIBIDROP_PREFETCH_AUTO_MB", "PREFETCH_AUTO_MB_ENV"); v != "" {
+		if mb, err := strconv.Atoi(v); err == nil {
+			cfg.PrefetchAutoMB = mb
+		}
 	}
 	if b, ok := envBool("KEIBIDROP_PUSH_ON_WRITE", "PUSH_ON_WRITE_ENV"); ok {
 		cfg.PushOnWrite = b

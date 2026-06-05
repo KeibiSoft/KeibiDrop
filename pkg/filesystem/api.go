@@ -31,6 +31,7 @@ type FS struct {
 
 	// Collab sync options (set from env before Mount).
 	PrefetchOnOpen bool // If true, fetch entire file on Open() and write to local disk.
+	PrefetchAutoMB int  // files >= this many MB auto-prefetch on open (0=off; PrefetchOnOpen forces any size)
 	PushOnWrite    bool // If true, async push deltas to peer on Write().
 	AutoCache      bool // If true (live_collab), add the macFUSE auto_cache mount option so a peer's same-size in-place edit is seen live. Trades off mmap-write integrity (git) on macOS; no-op on Linux/Windows.
 
@@ -125,6 +126,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		OpenStreamProvider: fs.OpenStreamProvider,
 
 		PrefetchOnOpen: fs.PrefetchOnOpen,
+		PrefetchAutoMB: fs.PrefetchAutoMB,
 		PushOnWrite:    fs.PushOnWrite,
 
 		FsCtx: fs.ctx,

@@ -258,6 +258,21 @@ func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, retFh ui
 	return errc, fi.Fh
 }
 
+// shouldPrefetchOnOpen decides whether to background-prefetch a file of the given
+// size on Open: forced when prefetchOnOpen is set, otherwise auto for files
+// >= autoMB megabytes (autoMB <= 0 disables auto). Smaller files stay pure
+// on-demand (instant open, fetch only what's read). Prefetch always cooperates
+// with on-demand jumps, so a seek into a not-yet-filled region never lags.
+func shouldPrefetchOnOpen(prefetchOnOpen bool, autoMB int, size uint64) bool {
+	if prefetchOnOpen {
+		return true
+	}
+	if autoMB <= 0 {
+		return false
+	}
+	return size >= uint64(autoMB)*1024*1024
+}
+
 // shouldUseDirectIo determines if a file should bypass kernel page cache.
 // Returns true for files that need real-time sync (write access, not in .git/).
 // Returns false for .git/ files (to allow mmap for git operations).
@@ -691,11 +706,14 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	d.OpenMapLock.Unlock()
 	d.AfmLock.Unlock()
 
-	// Prefetch-on-open (Netflix-style): when enabled, fill the rest of the file
-	// in the background while on-demand reads serve immediate seeks. The two
-	// cooperate via the chunk bitmap (prefetch skips chunks reads already got).
-	// Guarded so a second handle on the same file doesn't start a duplicate.
-	if remoteHasUpdate && d.PrefetchOnOpen && fh.PrefetchCancel == nil {
+	// Prefetch-on-open (Netflix-style): fill the rest of the file in the background
+	// while on-demand reads serve immediate seeks; the two cooperate via the chunk
+	// bitmap (prefetch skips chunks reads already got). Strategy: force when
+	// PrefetchOnOpen, otherwise auto for files >= PrefetchAutoMB — large files get
+	// wire-speed sequential fill + lag-free jumps, while small files stay pure
+	// on-demand (instant open, fetch only what's read). Guarded so a second handle
+	// on the same file doesn't start a duplicate.
+	if remoteHasUpdate && shouldPrefetchOnOpen(d.PrefetchOnOpen, d.PrefetchAutoMB, remoteTotalSize) && fh.PrefetchCancel == nil {
 		d.startPrefetch(logger, fh, path)
 	}
 

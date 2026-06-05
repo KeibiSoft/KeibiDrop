@@ -76,6 +76,7 @@ type KeibiDrop struct {
 	// peer's same-size in-place edit is seen live. Set by the caller from
 	// config.LiveCollab (not a constructor arg). Default false = git-safe.
 	AutoCache bool
+	PrefetchAutoMB int // files >= this many MB auto-prefetch on open; set from config.PrefetchAutoMB (0=off)
 
 	// Signals for loop management.
 	signals      chan TaskSignal
