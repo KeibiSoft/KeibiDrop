@@ -218,6 +218,14 @@ strict_mode = %v
 # Set to true to force ephemeral keys every session (no persistent identity).
 incognito = %v
 
+# FUSE download strategy. false (default, recommended) = on-demand: stream bytes
+# as they are read, so large files open and seek instantly and only what is read
+# is downloaded. true = prefetch-on-open: download the whole file in the
+# background when it is opened (good for offline use / smooth sequential
+# playback, but downloads everything). Persisted here so the choice survives
+# restarts.
+prefetch_on_open = %v
+
 # Prioritize live collaboration over local mmap-write integrity (default false).
 # false = git-safe: mmap writes (git's index) stay intact; on macOS a peer's
 # same-size in-place edit is not seen live until the next size change.
@@ -227,7 +235,7 @@ incognito = %v
 live_collab = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
-		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.LiveCollab)
+		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.PrefetchOnOpen, cfg.LiveCollab)
 
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }

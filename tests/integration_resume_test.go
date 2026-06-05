@@ -155,8 +155,10 @@ func TestNoFUSE_ResumeAfterDisconnect(t *testing.T) {
 	tp := SetupPeerPairWithTimeout(t, false, 60*time.Second)
 	require := require.New(t)
 
-	// 50 MB file.
-	size := 50 * 1024 * 1024
+	// 100 MB file — big enough to reliably catch mid-transfer on loopback. With a
+	// small file the download can finish before we cancel, silently turning the
+	// resume path into a no-op (the test would pass while testing nothing).
+	size := 100 * 1024 * 1024
 	data := make([]byte, size)
 	rand.Read(data)
 	originalMD5 := md5.Sum(data)
@@ -168,35 +170,45 @@ func TestNoFUSE_ResumeAfterDisconnect(t *testing.T) {
 
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, name, 5*time.Second)
 
-	// Cancel mid-download to simulate partial state.
 	pullDest := filepath.Join(tp.BobSaveDir, name)
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- tp.Bob.PullFile(name, pullDest)
 	}()
 
-	time.Sleep(30 * time.Millisecond)
-	_ = tp.Bob.CancelDownload(name)
-	pullErr := <-errCh
-
-	if pullErr == nil {
-		// Completed too fast. Still verify correctness.
-		pulled, err := os.ReadFile(pullDest)
-		require.NoError(err)
-		require.Equal(originalMD5, md5.Sum(pulled))
-		t.Log("Download completed before cancel, skipping resume test")
-		return
+	// Cancel DETERMINISTICALLY at a partial point: poll live progress and cancel
+	// once we are provably mid-download (5%–60%). A fixed sleep races the transfer
+	// and can finish first on a fast link, making "resume" a silent no-op.
+	var partial float64
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) && partial == 0 {
+		select {
+		case pullErr := <-errCh:
+			require.NoError(pullErr)
+			t.Fatal("download completed before a partial state could be observed — increase file size")
+		default:
+		}
+		if p := tp.Bob.GetDownloadProgress(name); p > 0.05 && p < 0.6 {
+			partial = p
+		} else {
+			time.Sleep(time.Millisecond)
+		}
 	}
+	require.Greater(partial, 0.0, "never observed an in-flight partial download")
+	_ = tp.Bob.CancelDownload(name)
+	require.Error(<-errCh, "PullFile must return an error after a mid-flight cancel")
 
-	// Verify partial state exists.
+	// Verify the on-disk state is GENUINELY partial (not zero, not complete) —
+	// this is what resume relies on.
 	bmPath := filesystem.BitmapPath(pullDest)
 	require.FileExists(pullDest)
 	require.FileExists(bmPath)
 
 	bm, err := filesystem.LoadChunkBitmap(bmPath, int64(size))
 	require.NoError(err)
-	partialProgress := bm.Progress()
-	t.Logf("Partial download at %.1f%%", partialProgress*100)
+	require.True(bm.Have() > 0 && !bm.IsComplete(),
+		"bitmap must be genuinely partial, got %d/%d chunks", bm.Have(), bm.Total())
+	t.Logf("Cancelled at %.1f%% (%d/%d chunks) — now resuming", bm.Progress()*100, bm.Have(), bm.Total())
 
 	// Resume download (same PullFile call, bitmap on disk enables resume).
 	require.NoError(tp.Bob.PullFile(name, pullDest))
