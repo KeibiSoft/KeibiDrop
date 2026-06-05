@@ -12,7 +12,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -56,12 +58,18 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// prefetchOnOpen honors KEIBIDROP_PREFETCH_ON_OPEN (default off = on-demand) so
+	// benchmarks can compare the on-demand vs push/prefetch read paths.
+	prefetchOnOpen := os.Getenv("KEIBIDROP_PREFETCH_ON_OPEN") == "1"
 	kd, err := common.NewKeibiDropWithIP(ctx, logger, useFUSE, parsed,
-		inbound, outbound, mountDir, saveDir, false, false, "::1")
+		inbound, outbound, mountDir, saveDir, prefetchOnOpen, false, "::1")
 	if err != nil {
 		fmt.Println("ERR:init failed: " + err.Error())
 		os.Exit(1)
 	}
+	// live_collab toggle: when set, enable macFUSE auto_cache so a peer's
+	// same-size in-place edit is seen live (at the cost of mmap-write integrity).
+	kd.AutoCache = os.Getenv("KEIBIDROP_LIVE_COLLAB") == "1"
 
 	go kd.Run()
 	fmt.Println("READY")
@@ -166,6 +174,29 @@ func main() {
 			} else {
 				fmt.Printf("DATA:%d:%s\n", len(data), string(data))
 			}
+
+		case "read_at":
+			// read_at <name> <offset> <size> — ReadAt on the mounted file,
+			// returns the bytes hex-encoded (binary-safe). For seek/scrub tests.
+			if len(args) < 4 {
+				fmt.Println("ERR:usage: read_at <name> <offset> <size>")
+				continue
+			}
+			off, _ := strconv.ParseInt(args[2], 10, 64)
+			sz, _ := strconv.Atoi(args[3])
+			rf, oerr := os.Open(filepath.Join(mountDir, args[1])) // #nosec G304
+			if oerr != nil {
+				fmt.Println("ERR:" + oerr.Error())
+				continue
+			}
+			rbuf := make([]byte, sz)
+			rn, rerr := rf.ReadAt(rbuf, off)
+			rf.Close()
+			if rerr != nil && rerr != io.EOF {
+				fmt.Println("ERR:" + rerr.Error())
+				continue
+			}
+			fmt.Printf("HEX:%d:%s\n", rn, hex.EncodeToString(rbuf[:rn]))
 
 		case "write_file":
 			// write_file <name> <content>

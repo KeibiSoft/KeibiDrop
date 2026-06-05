@@ -114,8 +114,8 @@ func syscallStatfs(path string, stat *syscall.Statfs_t) error {
 // returns ENOENT before the file exists. With negative_vncache, the kernel
 // keeps returning ENOENT even after the file appears, causing "deleted" files
 // in git status and missing files in ls.
-func getMountOptions() []string {
-	return []string{
+func getMountOptions(autoCache bool) []string {
+	opts := []string{
 		"-o", "volname=KeibiDrop",
 		"-o", "local",
 		"-o", "slow_statfs",
@@ -125,4 +125,15 @@ func getMountOptions() []string {
 		// for drag-and-drop to work. We filter .DS_Store from peer sync instead.
 		"-o", "iosize=524288", // 512KB — matches ChunkSize, best throughput in benchmarks.
 	}
+	// auto_cache (opt-in via live_collab): flush the page cache on open when
+	// mtime/size changed, so a peer's SAME-SIZE in-place edit is seen live —
+	// macFUSE otherwise only drops its data cache on a size change. The cost:
+	// auto_cache DISCARDS dirty mmap pages before writeback, corrupting files
+	// written via mmap (git's index). So it's off by default (git-safe); the
+	// per-file KeepCache=false in OpenEx covers Linux without this hazard, but
+	// is a no-op on macFUSE, which is why the same-size case needs auto_cache here.
+	if autoCache {
+		opts = append(opts, "-o", "auto_cache")
+	}
+	return opts
 }

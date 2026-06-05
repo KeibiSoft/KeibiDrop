@@ -153,6 +153,10 @@ func runDaemon() {
 	kd.IsLocalMode = isLocal
 	kd.BridgeAddr = cfg.BridgeAddr
 	kd.StrictMode = cfg.StrictMode
+	kd.AutoCache = cfg.LiveCollab // live_collab → macFUSE auto_cache (same-size live edits, macOS)
+	for _, warn := range cfg.Warnings() {
+		logger.Warn("config flag note", "note", warn)
+	}
 
 	if !cfg.Incognito {
 		opts := common.EnableOpts{

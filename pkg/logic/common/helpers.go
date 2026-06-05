@@ -16,7 +16,14 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 )
+
+// preferredLANIfaces lists interface-name prefixes to prefer when choosing a
+// LAN address — physical Wi-Fi/Ethernet ahead of anything else. Shared by
+// GetLinkLocalAddress and GetGlobalIPv6 (intentionally the same order).
+var preferredLANIfaces = []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp"}
 
 // GetLinkLocalAddress finds a link-local IPv6 address on this machine and
 // returns it formatted as "ip%zone:port" for direct LAN peer connections.
@@ -52,7 +59,7 @@ func GetLinkLocalAddress(port int) (string, error) {
 	if len(candidates) > 0 {
 		// Prefer common LAN interfaces: en0 (macOS WiFi), eth0/wlan0 (Linux).
 		// Avoid utun*, awdl*, llw*, ap* (VPN, AirDrop, low-latency WLAN, access point).
-		preferred := []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp"}
+		preferred := preferredLANIfaces
 		for _, pref := range preferred {
 			for _, c := range candidates {
 				if strings.HasPrefix(c.iface, pref) {
@@ -126,8 +133,8 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 			return "", "", 0, fmt.Errorf("address must be link-local, loopback, or private: %q", ipPart)
 		}
 
-		if port < 26000 || port > 27000 {
-			return "", "", 0, fmt.Errorf("port %d out of range 26000-27000", port)
+		if !config.ValidPeerPort(port) {
+			return "", "", 0, fmt.Errorf("port %d out of range %d-%d", port, config.MinPeerPort, config.MaxPeerPort)
 		}
 
 		return ipPart, zone, port, nil
@@ -166,8 +173,8 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 		if !parsedIP.IsPrivate() && !parsedIP.IsLoopback() {
 			return "", "", 0, fmt.Errorf("IPv4 address must be private or loopback: %q", ipPart)
 		}
-		if port < 26000 || port > 27000 {
-			return "", "", 0, fmt.Errorf("port %d out of range 26000-27000", port)
+		if !config.ValidPeerPort(port) {
+			return "", "", 0, fmt.Errorf("port %d out of range %d-%d", port, config.MinPeerPort, config.MaxPeerPort)
 		}
 		return ipPart, "", port, nil
 	}
@@ -175,8 +182,8 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 		return "", "", 0, fmt.Errorf("non-loopback address without zone ID: %q", ipPart)
 	}
 
-	if port < 26000 || port > 27000 {
-		return "", "", 0, fmt.Errorf("port %d out of range 26000-27000", port)
+	if !config.ValidPeerPort(port) {
+		return "", "", 0, fmt.Errorf("port %d out of range %d-%d", port, config.MinPeerPort, config.MaxPeerPort)
 	}
 
 	return ipPart, "", port, nil
@@ -216,7 +223,7 @@ func GetGlobalIPv6() (string, error) {
 	}
 
 	// Preferred interfaces for LAN (same order as GetLinkLocalAddress).
-	preferred := []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp"}
+	preferred := preferredLANIfaces
 
 	type candidate struct {
 		ip    string

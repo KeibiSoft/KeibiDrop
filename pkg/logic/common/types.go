@@ -72,6 +72,10 @@ type KeibiDrop struct {
 	// Collab sync options.
 	PrefetchOnOpen bool
 	PushOnWrite    bool
+	// AutoCache (live_collab) enables the macFUSE auto_cache mount option so a
+	// peer's same-size in-place edit is seen live. Set by the caller from
+	// config.LiveCollab (not a constructor arg). Default false = git-safe.
+	AutoCache bool
 
 	// Signals for loop management.
 	signals      chan TaskSignal
@@ -510,8 +514,13 @@ func (kd *KeibiDrop) Run() {
 			kd.SyncTracker = synctracker.NewSyncTracker()
 			kd.lastSharedPeerFP = prevPeerFP
 			kd.lastSharedFiles = prevLocal
+			kd.activeDownloadsMu.Lock()
+			for _, cancel := range kd.activeDownloads {
+				cancel()
+			}
 			kd.activeDownloads = make(map[string]context.CancelFunc)
 			kd.activeBitmaps = make(map[string]*filesystem.ChunkBitmap)
+			kd.activeDownloadsMu.Unlock()
 			ctx, c := context.WithCancel(context.Background())
 			kd.running.Store(false)
 			kd.mu.Lock()

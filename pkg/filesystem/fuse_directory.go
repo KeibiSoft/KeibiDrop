@@ -248,71 +248,14 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
 //	   O_EXCL      error if O_CREAT and the file exists"
 //
 // Use winfuse.O_ACCMODE to extract access mode (portable across macOS/Linux/Windows).
-func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, fh uint64) {
-	defer d.recoverPanic("Create", &errCode)
-	if e := checkPath(path); e != 0 {
-		return e, 0
-	}
-	logger := d.logger.With("method", "create", "path", path)
-	// accessMode := flags & winfuse.O_ACCMODE
-	// logger.Info("Create called", "flags", flags, "accessMode", accessMode, "mode", mode, "isRDWR", accessMode == winfuse.O_RDWR)
-
-	d.AfmLock.Lock()
-	defer d.AfmLock.Unlock()
-	d.OpenMapLock.Lock()
-	defer d.OpenMapLock.Unlock()
-
-	relativePath := path
-	path = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-
-	// Extract permission bits only (mode may include S_IFREG file type bits).
-	// Ensure owner has write permission so file can be reopened after close.
-	createMode := mode & 0o777
-	if createMode&0o200 == 0 {
-		createMode |= 0o200 // Add owner write permission
-	}
-	if createMode == 0 {
-		createMode = 0o644 // Default if mode was 0
-	}
-
-	fd, err := platOpen(path, flags, createMode)
-	if err != nil {
-		logger.Error("Failed to create file", "error", err)
-		return int(convertOsErrToSyscallErrno("open", err)), 0
-	}
-
-	name := strings.Split(path, "/")
-
-	f := &File{
-		logger:          logger,
-		openFileCounter: OpenFileCounter{mu: &sync.Mutex{}, counter: 1},
-		Inode:           uint64(fd),
-		Name:            name[len(name)-1],
-		RelativePath:    relativePath,
-		RealPathOfFile:  path,
-		OnLocalChange:   d.OnLocalChange,
-		StreamProvider:  d.OpenStreamProvider(),
-		NotRemoteSynced: true,
-		IsLocalPresent:  true, // File was just created locally
-		LocalNewer:      true, // Local version is the only version
-	}
-
-	if stgo, statErr := platLstat(path); statErr == nil {
-		st := new(winfuse.Stat_t)
-		*st = stgo
-		uid, gid, _ := winfuse.Getcontext()
-		st.Uid = uid
-		st.Gid = gid
-		f.stat = st
-	}
-
-	handleID := allocHandleID()
-	f.CurrentHandleID = handleID
-	d.AllFileMap[relativePath] = f
-	d.OpenFileHandlers[handleID] = &HandleEntry{FD: fd, File: f}
-
-	// logger.Info("Created file", "fd", fd)
-	return 0, handleID
+// Create is dead on all platforms: cgofuse routes creates through CreateEx
+// (which we implement; see host.go create dispatch). It is kept only to satisfy
+// fuse.FileSystemInterface. Delegate to CreateEx so there is ONE implementation
+// — no duplicated logic to drift, and it stays correct if it were ever called.
+func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, retFh uint64) {
+	fi := winfuse.FileInfo_t{Flags: flags}
+	errc := d.CreateEx(path, mode, &fi)
+	return errc, fi.Fh
 }
 
 // shouldUseDirectIo determines if a file should bypass kernel page cache.
@@ -484,8 +427,14 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		}
 	}
 
-	// File already opened - return existing handle
-	if fh.openFileCounter.CountOpenDescriptors() != 0 {
+	// File already opened - reuse the existing shared handle, but ONLY while it is
+	// still active. OpenIfActive atomically bumps the open count iff it is >0; the
+	// kernel calls Release once per open(), so each open must add a count or a
+	// racing async Release of an earlier handle drops the count to 0 and tears
+	// down the shared fd/pool — leaving this open's Read with ok=false, which then
+	// blind-preads the sparse cache file and returns zeros. If the count just hit
+	// 0 (last handle being torn down), fall through to a fresh open.
+	if fh.openFileCounter.OpenIfActive() {
 		handleID := fh.CurrentHandleID
 		d.AfmLock.Unlock()
 		fi.Fh = handleID
@@ -508,20 +457,29 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		if remoteFile.stat != nil {
 			remoteTotalSize = uint64(remoteFile.stat.Size)
 		}
-		if remoteFile.NotLocalSynced {
-			// logger.Info("Remote has newer version, streaming from remote", "path", path)
-			localNewer = false
-			remoteHasUpdate = true
-		} else if remoteTotalSize > 0 {
-			// Even if NotLocalSynced=false, verify download is actually complete.
-			// IMPORTANT: Can't use file size because pre-allocation makes file look complete.
-			// Use Download.BytesDownloaded which tracks actual bytes received.
-			bytesDownloaded := remoteFile.Download.BytesDownloaded.Load()
-			if bytesDownloaded < remoteTotalSize {
-				// logger.Info("Download incomplete, re-streaming from remote", "bytesDownloaded", bytesDownloaded, "remoteSize", remoteTotalSize)
-				localNewer = false
+		// Only consider streaming from the peer when our local copy is NOT
+		// authoritative. A local write or rename sets LocalNewer=true (e.g. git's
+		// atomic index.lock→index on commit); the local content then wins. Without
+		// this guard, the incomplete-download check below fires whenever
+		// Download.BytesDownloaded — which only counts REMOTE fetches — lags the
+		// stat.Size that refreshFileStat updated from the local write, so we
+		// re-stream the peer's stale bytes over our just-written file. That is the
+		// "git index file corrupt" we lose on Linux (and usually win on macOS).
+		// Peer edits set LocalNewer=false, so live-collab still streams here.
+		if !localNewer {
+			if remoteFile.NotLocalSynced {
+				// logger.Info("Remote has newer version, streaming from remote", "path", path)
 				remoteHasUpdate = true
-				needsRemark = true
+			} else if remoteTotalSize > 0 {
+				// Even if NotLocalSynced=false, verify download is actually complete.
+				// IMPORTANT: Can't use file size because pre-allocation makes file look complete.
+				// Use Download.BytesDownloaded which tracks actual bytes received.
+				bytesDownloaded := remoteFile.Download.BytesDownloaded.Load()
+				if bytesDownloaded < remoteTotalSize {
+					// logger.Info("Download incomplete, re-streaming from remote", "bytesDownloaded", bytesDownloaded, "remoteSize", remoteTotalSize)
+					remoteHasUpdate = true
+					needsRemark = true
+				}
 			}
 		}
 	}
@@ -733,8 +691,24 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	d.OpenMapLock.Unlock()
 	d.AfmLock.Unlock()
 
+	// Prefetch-on-open (Netflix-style): when enabled, fill the rest of the file
+	// in the background while on-demand reads serve immediate seeks. The two
+	// cooperate via the chunk bitmap (prefetch skips chunks reads already got).
+	// Guarded so a second handle on the same file doesn't start a duplicate.
+	if remoteHasUpdate && d.PrefetchOnOpen && fh.PrefetchCancel == nil {
+		d.startPrefetch(logger, fh, path)
+	}
+
 	fi.Fh = handleID
 	fi.DirectIo = shouldUseDirectIo(path, flags)
+	// Remote file: don't let the kernel keep the page cache across opens. A peer
+	// can edit the file underneath us (live collab); macFUSE only drops its data
+	// cache on a size change, so a same-size in-place edit would keep serving
+	// stale pages. KeepCache=false makes each open re-read through our Read
+	// handler, which the reset bitmap then re-fetches. This is per-file, so
+	// local mmap writes (git's index) keep their cache and stay consistent —
+	// unlike the global auto_cache mount option, which corrupts them.
+	fi.KeepCache = false
 	// logger.Info("Opened for remote streaming", "fh", fd, "directIo", fi.DirectIo, "remoteHasUpdate", remoteHasUpdate, "fhNotLocalSynced", fh.NotLocalSynced, "poolNil", fh.StreamPool == nil)
 	return 0
 }
@@ -1116,209 +1090,16 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 	return 0
 }
 
+// Open is dead on all platforms: cgofuse routes opens through OpenEx (which we
+// implement — see host.go's open dispatch), proven by the suite passing with this
+// returning ENOSYS on Linux+macOS. It exists only to satisfy the base
+// fuse.FileSystemInterface; OpenEx is the real (default) open path. Delegate to
+// it so there is no duplicated open logic to drift — that duplication is what hid
+// the handle-counter bug, now fixed once in OpenEx.
 func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
-	defer d.recoverPanic("Open", &errCode)
-	if e := checkPath(path); e != 0 {
-		return e, 0
-	}
-	// d.logger.Info("FUSE open(legacy)", "path", path, "flags", flags)
-	logger := d.logger.With("method", "open", "path", path, "flags", flags)
-
-	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-
-	d.AfmLock.Lock()
-	fh, ok := d.AllFileMap[path]
-	if !ok {
-		// File not in map - check if it exists on disk (pre-existing local file)
-		if _, statErr := os.Stat(localPath); statErr == nil {
-			// Check if this is a remote file (placeholder might have been created)
-			d.RemoteFilesLock.RLock()
-			_, isRemoteFile := d.RemoteFiles[path]
-			d.RemoteFilesLock.RUnlock()
-
-			fh = &File{
-				logger:          d.logger,
-				openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
-				Name:            getNameFromPath(path),
-				RelativePath:    path,
-				RealPathOfFile:  localPath,
-				IsLocalPresent:  true,
-				LocalNewer:      !isRemoteFile, // Remote files should not be marked as local newer
-				OnLocalChange:   d.OnLocalChange,
-				StreamProvider:  d.OpenStreamProvider(),
-				stat:            &winfuse.Stat_t{},
-			}
-			d.AllFileMap[path] = fh
-		} else {
-			d.AfmLock.Unlock()
-			return -winfuse.ENOENT, 0
-		}
-	}
-
-	// File already opened - return existing handle (FUSE calls Release once per fh)
-	if fh.openFileCounter.CountOpenDescriptors() != 0 {
-		handleID := fh.CurrentHandleID
-		d.AfmLock.Unlock()
-		return 0, handleID
-	}
-
-	// CRITICAL: Release AfmLock BEFORE RemoteFilesLock to maintain lock order
-	isLocalPresent := fh.IsLocalPresent
-	localNewer := fh.LocalNewer
-	d.AfmLock.Unlock()
-
-	// Check if remote has newer version
-	remoteHasUpdate := false
-	var remoteTotalSize uint64
-	var remoteMtime time.Time
-	var remoteBitmap *ChunkBitmap
-	needsRemark := false
-	d.RemoteFilesLock.RLock()
-	if remoteFile, hasRemote := d.RemoteFiles[path]; hasRemote {
-		if remoteFile.stat != nil {
-			remoteTotalSize = uint64(remoteFile.stat.Size)
-			remoteMtime = remoteFile.stat.Mtim.Time()
-		}
-		remoteBitmap = remoteFile.Bitmap
-		if remoteFile.NotLocalSynced {
-			// logger.Info("Remote has newer version, streaming from remote", "path", path)
-			localNewer = false
-			remoteHasUpdate = true
-		} else if remoteTotalSize > 0 {
-			// Even if NotLocalSynced=false, verify download is actually complete.
-			// Use bitmap (preferred) or BytesDownloaded as fallback.
-			if remoteBitmap != nil && !remoteBitmap.IsComplete() {
-				// logger.Info("Download incomplete (bitmap), re-streaming from remote", "progress", remoteBitmap.Progress(), "remoteSize", remoteTotalSize)
-				localNewer = false
-				remoteHasUpdate = true
-				needsRemark = true
-			} else if remoteBitmap == nil {
-				bytesDownloaded := remoteFile.Download.BytesDownloaded.Load()
-				if bytesDownloaded < remoteTotalSize {
-					// logger.Info("Download incomplete, re-streaming from remote", "bytesDownloaded", bytesDownloaded, "remoteSize", remoteTotalSize)
-					localNewer = false
-					remoteHasUpdate = true
-					needsRemark = true
-				}
-			}
-		}
-	}
-	d.RemoteFilesLock.RUnlock()
-
-	// Re-mark for streaming outside of read lock
-	if needsRemark {
-		d.RemoteFilesLock.Lock()
-		if rf, ok := d.RemoteFiles[path]; ok {
-			rf.NotLocalSynced = true
-		}
-		d.RemoteFilesLock.Unlock()
-	}
-
-	// Open locally if we have newer local version
-	if isLocalPresent && localNewer {
-		// accessMode := flags & winfuse.O_ACCMODE
-		// logger.Info("Opening local file", "flags", flags, "accessMode", accessMode, "isReadOnly", accessMode == winfuse.O_RDONLY)
-		fd, err := platOpen(localPath, flags, 0)
-		if err != nil {
-			logger.Error("Failed to open local file", "error", err)
-			return int(convertOsErrToSyscallErrno("open", err)), 0
-		}
-
-		d.AfmLock.Lock()
-		d.OpenMapLock.Lock()
-		fh.Inode = uint64(fd)
-		fh.openFileCounter.Open()
-		handleID := allocHandleID()
-		fh.CurrentHandleID = handleID
-		d.OpenFileHandlers[handleID] = &HandleEntry{FD: fd, File: fh}
-		d.OpenMapLock.Unlock()
-		d.AfmLock.Unlock()
-		// logger.Info("Opened local file", "fh", fd)
-		return 0, handleID
-	}
-
-	// Remote file path - check for partial download or create cache file.
-	var existingLocalSize int64
-	localStat, err := os.Stat(localPath)
-	if err != nil {
-		if err2 := os.MkdirAll(getPathWithoutName(localPath), 0o755); err2 != nil {
-			logger.Error("Failed to create folders", "error", err2)
-			return int(convertOsErrToSyscallErrno("open", err2)), 0
-		}
-		f, err2 := os.Create(localPath)
-		if err2 != nil {
-			logger.Error("Failed to create cache file", "error", err2)
-			return int(convertOsErrToSyscallErrno("open", err2)), 0
-		}
-		_ = f.Close()
-		// Set placeholder mtime to match remote file's mtime.
-		// This ensures Getattr's mtime comparison favors remote stat (with correct size).
-		if !remoteMtime.IsZero() {
-			_ = os.Chtimes(localPath, remoteMtime, remoteMtime)
-		}
-	} else {
-		// Local file exists - this may be a partial download from a previous session.
-		existingLocalSize = localStat.Size()
-		_ = existingLocalSize > 0 && remoteTotalSize > 0 && uint64(existingLocalSize) < remoteTotalSize
-	}
-
-	// accessMode := flags & winfuse.O_ACCMODE
-	// logger.Info("Opening remote cache file", "flags", flags, "accessMode", accessMode, "isReadOnly", accessMode == winfuse.O_RDONLY)
-	fd, err := platOpen(localPath, flags, 0)
-	if err != nil {
-		logger.Error("Failed to open path", "error", err)
-		return int(convertOsErrToSyscallErrno("open", err)), 0
-	}
-
-	// Open stream pool + cache FD (network call - no locks held)
-	fsp := d.OpenStreamProvider()
-	streamCtx, streamCancel := context.WithCancel(d.FsCtx)
-	pool, poolErr := NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
-	if poolErr != nil {
-		streamCancel()
-		_ = platClose(fd)
-		logger.Error("Failed to open stream pool", "error", poolErr)
-		return -winfuse.EACCES, 0
-	}
-	// Open persistent cache FD for on-demand writes (avoids open/close per chunk).
-	cacheFD, cacheErr := os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY, 0600)
-	if cacheErr != nil {
-		streamCancel()
-		pool.Close()
-		_ = platClose(fd)
-		logger.Error("Failed to open cache FD", "error", cacheErr)
-		return -winfuse.EIO, 0
-	}
-
-	d.AfmLock.Lock()
-	d.OpenMapLock.Lock()
-	fh.Inode = uint64(fd)
-	fh.StreamProvider = fsp
-	fh.StreamPool = pool
-	fh.StreamCancel = streamCancel
-	fh.CacheFD = cacheFD
-	if remoteHasUpdate {
-		fh.NotLocalSynced = true // Ensure Read uses stream, not stale local cache
-		// Initialize download state for resume capability.
-		fh.Download.Reset(remoteTotalSize)
-		// Share the bitmap from RemoteFiles so Read() can check which chunks are cached.
-		fh.Bitmap = remoteBitmap
-
-		// Pre-allocate local file to expected size for out-of-order writes.
-		// Without this, non-sequential reads (e.g., video moov atom at end) can cause corruption.
-		if existingLocalSize == 0 && remoteTotalSize > 0 {
-			_ = os.Truncate(localPath, int64(remoteTotalSize))
-		}
-	}
-	handleID := allocHandleID()
-	fh.CurrentHandleID = handleID
-	d.OpenFileHandlers[handleID] = &HandleEntry{FD: fd, File: fh}
-	fh.openFileCounter.Open()
-	d.OpenMapLock.Unlock()
-	d.AfmLock.Unlock()
-
-	// logger.Info("Opened remote file", "fh", handleID, "notLocalSynced", fh.NotLocalSynced, "poolNil", fh.StreamPool == nil, "totalSize", remoteTotalSize)
-	return 0, handleID
+	fi := winfuse.FileInfo_t{Flags: flags}
+	errc := d.OpenEx(path, &fi)
+	return errc, fi.Fh
 }
 
 func (d *Dir) Opendir(path string) (errCode int, retFh uint64) {
@@ -2151,14 +1932,21 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 		// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "remote")
 
-		// Clamp the request size to the file's actual size to prevent
-		// reading garbage past EOF on pre-allocated cache files.
-		readSize := int64(len(buff))
-		if remoteFileSize > 0 && offset+readSize > remoteFileSize {
-			readSize = remoteFileSize - offset
-			if readSize <= 0 {
-				return 0
-			}
+		// CHUNK-ALIGNED on-demand fetch. We fetch the whole ChunkSize block(s)
+		// covering the request so the cache holds — and the bitmap only ever
+		// marks — COMPLETE chunks. Fetching a sub-chunk range and marking the
+		// whole 512 KiB chunk "present" was the random-seek corruption bug: a
+		// later read elsewhere in that chunk took the HasRange fast path and
+		// served sparse-hole zeros from the pre-allocated cache file.
+		cs := int64(ChunkSize)
+		fetchStart := (offset / cs) * cs
+		fetchEnd := ((offset + int64(len(buff)) + cs - 1) / cs) * cs
+		if remoteFileSize > 0 && fetchEnd > remoteFileSize {
+			fetchEnd = remoteFileSize
+		}
+		fetchLen := fetchEnd - fetchStart
+		if fetchLen <= 0 {
+			return 0
 		}
 
 		// Retry loop for resilience against transient failures.
@@ -2168,9 +1956,9 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			if d.FsCtx.Err() != nil {
 				return 0
 			}
-			// Read from stream pool with timeout to prevent system freeze.
+			// Read the aligned block from the stream pool with a timeout.
 			ctx, cancel := context.WithTimeout(d.FsCtx, 10*time.Second)
-			data, readErr = pool.ReadAt(ctx, offset, readSize)
+			data, readErr = pool.ReadAt(ctx, fetchStart, fetchLen)
 			cancel()
 
 			if readErr == nil {
@@ -2226,41 +2014,49 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			return 0
 		}
 
-		// Copy remote data into buffer for FUSE.
-		n := copy(buff, data)
-
-		// Clamp to remote file size — the server may return more bytes
-		// than the actual file content on pre-allocated cache files.
-		if f.stat != nil {
-			if fileSize := f.stat.Size; fileSize > 0 && offset+int64(n) > fileSize {
-				n = int(fileSize - offset)
-				if n < 0 {
-					n = 0
-				}
-			}
+		// Serve the requested [offset, offset+len(buff)) slice out of the block.
+		sliceOff := offset - fetchStart
+		var n int
+		if sliceOff >= 0 && sliceOff < int64(len(data)) {
+			n = copy(buff, data[sliceOff:])
 		}
 
-		// Track download progress and update checksum.
+		// Track download progress and update checksum for the served bytes.
 		f.Download.UpdateProgress(offset, n)
-		f.Download.UpdateChecksum(data[:n])
+		if n > 0 {
+			f.Download.UpdateChecksum(buff[:n])
+		}
 
-		// Write to local cache asynchronously — data is already in the FUSE
-		// buffer so we can return immediately. The cache write and bitmap
-		// update happen in the background. CacheWg is waited on in Release()
-		// before closing the FD.
-		if cacheFD != nil {
-			cacheData := data[:n]
-			cacheOffset := offset
+		// Persist the WHOLE block and mark only the chunks fully present in it
+		// (handles a short read and the final EOF chunk). Done async, off the
+		// read path; CacheWg is waited on in Release() before closing the FD.
+		if cacheFD != nil && len(data) > 0 {
+			block := data
+			base := fetchStart
+			fsz := remoteFileSize
 			bm := bitmap
 			f.CacheWg.Add(1)
 			go func() {
 				defer f.CacheWg.Done()
-				if _, err := cacheFD.WriteAt(cacheData, cacheOffset); err != nil {
-					logger.Error("Async cache write failed", "error", err)
+				if _, werr := cacheFD.WriteAt(block, base); werr != nil {
+					logger.Error("Async cache write failed", "error", werr)
 					return
 				}
-				if bm != nil {
-					bm.SetRange(cacheOffset, len(cacheData))
+				if bm == nil {
+					return
+				}
+				end := base + int64(len(block))
+				for c := int(base / cs); ; c++ {
+					chunkBegin := int64(c) * cs
+					chunkEnd := chunkBegin + cs
+					if fsz > 0 && chunkEnd > fsz {
+						chunkEnd = fsz
+					}
+					// Stop once a chunk isn't fully covered by the written block.
+					if chunkBegin >= end || chunkEnd > end {
+						break
+					}
+					bm.Set(c)
 				}
 			}()
 		}
@@ -2448,19 +2244,33 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
 			d.AfmLock.Unlock()
-			d.startPrefetch(logger, existing, path)
+			// Metadata-only on announce. Read streams chunks on-demand; prefetch
+			// (if enabled) starts when the file is Opened.
 		} else {
-			// Same size: update metadata but don't reset bitmap or truncate.
-			// The previous prefetch may have already completed — don't destroy its work.
+			// Same size. By default keep the cache: a duplicate or stale
+			// ADD_FILE re-announce must not destroy a completed prefetch. But a
+			// genuine in-place edit keeps the byte length while advancing mtime
+			// (live collab: "version-one" -> "version-two-x"). When the incoming
+			// mtime is newer, the content changed under us — reset the bitmap +
+			// cancel any in-flight prefetch so reads re-fetch the new bytes
+			// on-demand, mirroring EditRemoteFile. Without this, a peer that
+			// already fully cached the file keeps serving stale content.
+			if incomingMtime > existingMtime {
+				existing.NotLocalSynced = true
+				existing.Download.Reset(uint64(stat.Size))
+				if existing.PrefetchCancel != nil {
+					existing.PrefetchCancel()
+					existing.PrefetchCancel = nil
+				}
+				existing.Bitmap = NewChunkBitmap(stat.Size)
+			} else if existing.Bitmap != nil && !existing.Bitmap.IsComplete() {
+				// Same mtime, still incomplete — keep fetching the rest on-demand.
+				existing.NotLocalSynced = true
+			}
 			d.RemoteFilesLock.Unlock()
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
 			d.AfmLock.Unlock()
-			// If prefetch isn't running and bitmap isn't complete, restart it.
-			if existing.PrefetchCancel == nil && existing.Bitmap != nil && !existing.Bitmap.IsComplete() {
-				existing.NotLocalSynced = true
-				d.startPrefetch(logger, existing, path)
-			}
 		}
 		return nil
 	}
@@ -2494,7 +2304,9 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	}
 	d.RemoteFiles[path] = f
 	d.RemoteFilesLock.Unlock()
-	d.startPrefetch(logger, f, path)
+	// Metadata-only on announce: registered with metadata + bitmap +
+	// NotLocalSynced=true above. Read streams chunks on-demand; prefetch (if
+	// enabled) starts when the file is Opened.
 	return nil
 }
 
@@ -2708,7 +2520,8 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 		d.AfmLock.Lock()
 		d.AllFileMap[path] = newFile
 		d.AfmLock.Unlock()
-		d.startPrefetch(logger, newFile, path)
+		// Metadata-only — the edited content is fetched on-demand on the next
+		// read (or prefetched on Open). Keeps live collab lightweight.
 		return nil
 	}
 
@@ -2719,34 +2532,20 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	}
 
 	// logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
-	oldSize := f.stat.Size
-	sizeChanged := oldSize != stat.Size
 	f.stat = stat
 	f.LocalNewer = false // Remote has newer content.
 
-	if sizeChanged {
-		// Size changed: full re-download required.
-		f.NotLocalSynced = true
-		f.Download.Reset(uint64(stat.Size))
-		if f.PrefetchCancel != nil {
-			f.PrefetchCancel()
-		}
-		f.Bitmap = NewChunkBitmap(stat.Size)
-		d.RemoteFilesLock.Unlock()
-		d.AfmLock.Lock()
-		d.AllFileMap[path] = f
-		d.AfmLock.Unlock()
-		d.startPrefetch(logger, f, path)
-	} else {
-		// Same size: metadata update only. Don't reset bitmap or cancel prefetch.
-		d.RemoteFilesLock.Unlock()
-		d.AfmLock.Lock()
-		d.AllFileMap[path] = f
-		d.AfmLock.Unlock()
-		if f.PrefetchCancel == nil && f.Bitmap != nil && !f.Bitmap.IsComplete() {
-			f.NotLocalSynced = true
-			d.startPrefetch(logger, f, path)
-		}
+	// Content changed: reset bitmap + cancel prefetch so reads re-fetch on-demand.
+	f.NotLocalSynced = true
+	f.Download.Reset(uint64(stat.Size))
+	if f.PrefetchCancel != nil {
+		f.PrefetchCancel()
+		f.PrefetchCancel = nil
 	}
+	f.Bitmap = NewChunkBitmap(stat.Size)
+	d.RemoteFilesLock.Unlock()
+	d.AfmLock.Lock()
+	d.AllFileMap[path] = f
+	d.AfmLock.Unlock()
 	return nil
 }

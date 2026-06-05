@@ -24,6 +24,7 @@ type FS struct {
 	OpenStreamProvider func() types.FileStreamProvider
 	PrefetchOnOpen     bool
 	PushOnWrite        bool
+	AutoCache          bool // Unused on Android (no FUSE); present so shared setup code compiles.
 }
 
 func NewFS(_ *slog.Logger) *FS { return &FS{} }

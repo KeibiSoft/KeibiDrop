@@ -43,3 +43,35 @@ func TestApplyEnvOverrides_DefaultsNotSet(t *testing.T) {
 		t.Error("expected PassphraseProtect=false when env var not set")
 	}
 }
+
+// TestSaveLoad_PrefetchOnOpenPersists verifies the on-demand/prefetch toggle
+// survives a Save->Load round-trip. It is read on Load, but Save must also WRITE
+// it — otherwise a UI toggle silently resets to on-demand next session.
+func TestSaveLoad_PrefetchOnOpenPersists(t *testing.T) {
+	t.Setenv("KEIBIDROP_CONFIG_DIR", t.TempDir())
+
+	// Default must be on-demand (prefetch off) — the recommended default.
+	if DefaultConfig().PrefetchOnOpen {
+		t.Fatal("default PrefetchOnOpen should be false (on-demand)")
+	}
+
+	// Persist both FUSE toggles ON.
+	cfg := DefaultConfig()
+	cfg.PrefetchOnOpen = true
+	cfg.LiveCollab = true
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// A fresh Load must observe both (proves Save actually wrote them).
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !got.PrefetchOnOpen {
+		t.Error("prefetch_on_open did not persist across Save/Load")
+	}
+	if !got.LiveCollab {
+		t.Error("live_collab did not persist across Save/Load")
+	}
+}

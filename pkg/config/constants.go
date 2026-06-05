@@ -11,6 +11,18 @@ package config
 const InboundPort = 26431
 const OutboundPort = 26432
 
+// Peer connection ports must fall in this range. Handshake and relay
+// registration reject anything outside it.
+const (
+	MinPeerPort = 26000
+	MaxPeerPort = 27000
+)
+
+// ValidPeerPort reports whether port is within the allowed peer port range.
+func ValidPeerPort(port int) bool {
+	return port >= MinPeerPort && port <= MaxPeerPort
+}
+
 const BlockSize = 4 * 1024 * 1024 // 4 MiB - larger chunks = fewer gRPC round-trips over WAN
 
 // gRPC message size limits

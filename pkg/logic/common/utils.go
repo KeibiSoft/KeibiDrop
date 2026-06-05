@@ -34,6 +34,34 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// deriveRelayAuth derives the relay lookup token (sent as the Bearer header)
+// and the registration encryption key from a fingerprint's room password.
+// Both register and fetch use this; the relay only ever sees the opaque token.
+func deriveRelayAuth(fp string) (lookupToken string, encryptionKey []byte, err error) {
+	roomPassword, err := crypto.ExtractRoomPassword(fp)
+	if err != nil {
+		return "", nil, fmt.Errorf("extract room password: %w", err)
+	}
+	lookupKey, encryptionKey, err := crypto.DeriveRelayKeys(roomPassword)
+	if err != nil {
+		return "", nil, fmt.Errorf("derive relay keys: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(lookupKey), encryptionKey, nil
+}
+
+// relayURL joins sub onto the configured relay endpoint and parses the result.
+func (kd *KeibiDrop) relayURL(sub string) (*url.URL, error) {
+	joined, err := url.JoinPath(kd.RelayEndoint.String(), sub)
+	if err != nil {
+		return nil, fmt.Errorf("join relay path %q: %w", sub, err)
+	}
+	u, err := url.Parse(joined)
+	if err != nil {
+		return nil, fmt.Errorf("parse relay url: %w", err)
+	}
+	return u, nil
+}
+
 func (kd *KeibiDrop) registerRoomToRelay() error {
 	logger := kd.logger.With("method", "register-room-to-relay")
 	if kd.relayClient == nil || kd.session == nil || kd.session.OwnKeys == nil {
@@ -43,19 +71,11 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 
 	ownFp := kd.session.OwnFingerprint
 
-	// Extract room password and derive relay keys for privacy.
-	roomPassword, err := crypto.ExtractRoomPassword(ownFp)
+	lookupToken, encryptionKey, err := deriveRelayAuth(ownFp)
 	if err != nil {
-		logger.Error("Failed to extract room password", "error", err)
+		logger.Error("Failed to derive relay auth", "error", err)
 		return err
 	}
-
-	lookupKey, encryptionKey, err := crypto.DeriveRelayKeys(roomPassword)
-	if err != nil {
-		logger.Error("Failed to derive relay keys", "error", err)
-		return err
-	}
-	lookupToken := base64.RawURLEncoding.EncodeToString(lookupKey)
 
 	pkMap, err := kd.session.OwnKeys.ExportPubKeysAsMap()
 	if err != nil {
@@ -94,15 +114,9 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		Blob: base64.RawURLEncoding.EncodeToString(encryptedBlob),
 	}
 
-	path, err := url.JoinPath(kd.RelayEndoint.String(), "register")
+	registerUrl, err := kd.relayURL("register")
 	if err != nil {
-		logger.Error("Failed to add register path", "error", err)
-		return err
-	}
-
-	registerUrl, err := url.Parse(path)
-	if err != nil {
-		logger.Error("Failed to parse url", "error", err)
+		logger.Error("Failed to build register url", "error", err)
 		return err
 	}
 
@@ -145,29 +159,15 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		return ErrNilPointer
 	}
 
-	// Extract room password and derive relay keys for privacy.
-	roomPassword, err := crypto.ExtractRoomPassword(outOfBandFingerPrint)
+	lookupToken, encryptionKey, err := deriveRelayAuth(outOfBandFingerPrint)
 	if err != nil {
-		logger.Error("Failed to extract room password", "error", err)
+		logger.Error("Failed to derive relay auth", "error", err)
 		return err
 	}
 
-	lookupKey, encryptionKey, err := crypto.DeriveRelayKeys(roomPassword)
+	fetchUrl, err := kd.relayURL("fetch")
 	if err != nil {
-		logger.Error("Failed to derive relay keys", "error", err)
-		return err
-	}
-	lookupToken := base64.RawURLEncoding.EncodeToString(lookupKey)
-
-	path, err := url.JoinPath(kd.RelayEndoint.String(), "fetch")
-	if err != nil {
-		logger.Error("Failed to add fetch path", "error", err)
-		return err
-	}
-
-	fetchUrl, err := url.Parse(path)
-	if err != nil {
-		logger.Error("Failed to parse url", "error", err)
+		logger.Error("Failed to build fetch url", "error", err)
 		return err
 	}
 
@@ -264,7 +264,7 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	}
 
 	kd.session.PeerPubKeys = peerKeys
-	if peerReg.Listen.Port < 26000 || peerReg.Listen.Port > 27000 {
+	if !config.ValidPeerPort(peerReg.Listen.Port) {
 		logger.Warn("Provided outbound port is out of known range, defaulting to config", "provided-port", peerReg.Listen.Port, "default-to", config.OutboundPort)
 		peerReg.Listen.Port = config.OutboundPort
 	}
@@ -287,14 +287,31 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	return nil
 }
 
+// isValidIPv6 reports whether ipStr parses as an IPv6 address (i.e. a valid IP
+// that is not IPv4). Loopback/ULA/link-local are intentionally accepted.
 func isValidIPv6(ipStr string) bool {
 	ip := net.ParseIP(ipStr)
-	// TODO: Comment
 	return ip != nil && ip.To4() == nil
-	// return ip != nil && ip.To4() == nil && !ip.IsLoopback() && !ip.IsPrivate()
 }
 
 //
+
+// refreshAttrFromDisk updates req.Attr's Size/ModTime from the on-disk file
+// before a debounced notification is sent (the size captured when the event was
+// queued may be stale). It returns false only when the file no longer exists,
+// signalling the caller to drop the pending notification.
+func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) bool {
+	if req.Attr == nil {
+		return true
+	}
+	info, err := os.Lstat(filepath.Join(downloadFolder, req.Path))
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	req.Attr.Size = info.Size()
+	req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
+	return true
+}
 
 func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) error {
 	if kd.session == nil || kd.session.GRPCClient == nil {
@@ -311,6 +328,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	// Set collab sync options.
 	fs.PrefetchOnOpen = kd.PrefetchOnOpen
 	fs.PushOnWrite = kd.PushOnWrite
+	fs.AutoCache = kd.AutoCache // live_collab → macFUSE auto_cache (set before Mount)
 
 	// Notification worker with per-path debounce and batching.
 	//
@@ -339,11 +357,16 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			if len(batch) == 0 {
 				return
 			}
+			// Capture the client under the nil check: Run()'s ctx.Done teardown
+			// nils kd.session concurrently, so re-dereferencing kd.session below
+			// would race into a nil-deref panic. Holding a local reference is the
+			// same pattern connectGRPCClientWithRetry uses for the outbound conn.
 			if kd.session == nil || kd.session.GRPCClient == nil {
 				return
 			}
+			client := kd.session.GRPCClient
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_, err := kd.session.GRPCClient.BatchNotify(ctx, &bindings.BatchNotifyRequest{
+			_, err := client.BatchNotify(ctx, &bindings.BatchNotifyRequest{
 				Notifications: batch,
 				Seq:           batchSeq.Add(1),
 				Timestamp:     uint64(time.Now().UnixNano()),
@@ -353,7 +376,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				logger.Error("BatchNotify failed, falling back to individual", "count", len(batch), "error", err)
 				for _, req := range batch {
 					ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-					_, _ = kd.session.GRPCClient.Notify(ctx2, req)
+					_, _ = client.Notify(ctx2, req)
 					cancel2()
 				}
 			}
@@ -366,15 +389,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					// Channel closed — flush all pending with fresh sizes.
 					remaining := make([]*bindings.NotifyRequest, 0, len(pending))
 					for path, p := range pending {
-						if p.req.Attr != nil && kd.FS != nil && kd.FS.Root != nil {
-							diskPath := filepath.Join(kd.FS.Root.LocalDownloadFolder, p.req.Path)
-							if info, err := os.Lstat(diskPath); err == nil {
-								p.req.Attr.Size = info.Size()
-								p.req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
-							} else if os.IsNotExist(err) {
-								delete(pending, path)
-								continue
-							}
+						if kd.FS != nil && kd.FS.Root != nil && !refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder) {
+							delete(pending, path)
+							continue
 						}
 						remaining = append(remaining, p.req)
 					}
@@ -430,15 +447,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				ready := make([]*bindings.NotifyRequest, 0, 16)
 				for path, p := range pending {
 					if now.After(p.deadline) {
-						if p.req.Attr != nil && kd.FS != nil && kd.FS.Root != nil {
-							diskPath := filepath.Join(kd.FS.Root.LocalDownloadFolder, p.req.Path)
-							if info, err := os.Lstat(diskPath); err == nil {
-								p.req.Attr.Size = info.Size()
-								p.req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
-							} else if os.IsNotExist(err) {
-								delete(pending, path)
-								continue
-							}
+						if kd.FS != nil && kd.FS.Root != nil && !refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder) {
+							delete(pending, path)
+							continue
 						}
 						ready = append(ready, p.req)
 						delete(pending, path)
@@ -568,17 +579,23 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 // Declared as var (not const) so tests can shrink it.
 var grpcDisconnectGraceDelay = 250 * time.Millisecond
 
-// handleNotifyDisconnect runs the post-DISCONNECT teardown: unmount FUSE
-// first (so Run()'s Start handler can return), then sleep the grace window
-// to let the in-flight DISCONNECT RPC response flush before we cancel the
-// context (which the Run() ctx.Done branch uses to call grpcServer.Stop()
+// handleNotifyDisconnect runs the post-DISCONNECT teardown: clear the FUSE
+// view (keeping the mount alive for reuse on reconnect), then sleep the grace
+// window to let the in-flight DISCONNECT RPC response flush before we cancel
+// the context (which the Run() ctx.Done branch uses to call grpcServer.Stop()
 // and grpcClientConn.Close()).
 //
 // MUST be invoked in a goroutine separate from the gRPC handler — the
 // handler is still writing the response when this runs.
 func (kd *KeibiDrop) handleNotifyDisconnect() {
 	if kd.FS != nil {
-		kd.FS.Unmount()
+		// Keep the FUSE mount alive across the disconnect — cgofuse allows only
+		// one mount per process, so a fresh remount on reconnect is fragile and
+		// can fail (leaving the mount point dead). ClearFiles drops the peer's
+		// file view and cancels in-flight reads but leaves the mount up; Run()'s
+		// Start handler then reuses it on reconnect (it returns via the ctx.Done
+		// select, not by Mount() unblocking). Full Unmount stays on app exit.
+		kd.FS.ClearFiles()
 	}
 	time.Sleep(grpcDisconnectGraceDelay)
 	kd.cancelContext()

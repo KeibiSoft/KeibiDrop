@@ -258,7 +258,7 @@ fn start_file_watcher(
                         } else if info.paused {
                             // Paused: show progress from bitmap via FFI
                             let c_name = CString::new(name.clone()).unwrap();
-                            let prog = bindings::KD_GetDownloadProgress(c_name.into_raw());
+                            let prog = bindings::KD_GetDownloadProgress(c_name.as_ptr() as *mut i8);
                             let p = if prog >= 0 { prog as f32 / 100.0 } else { 0.0 };
                             (false, p, false, true)
                         } else {
@@ -731,11 +731,11 @@ fn main() {
 
     unsafe {
         let result = bindings::KD_Initialize(
-            relay_c.into_raw(),
+            relay_c.as_ptr() as *mut i8,
             inbound,
             outbound,
-            to_mount_c.into_raw(),
-            to_save_c.into_raw(),
+            to_mount_c.as_ptr() as *mut i8,
+            to_save_c.as_ptr() as *mut i8,
             if use_fuse { 1 } else { 0 },
             if prefetch_on_open { 1 } else { 0 },
             if push_on_write { 1 } else { 0 },
@@ -907,7 +907,7 @@ fn main() {
                 let i_am_creator = my_name < peer_name;
 
                 let addr_c = CString::new(addr.clone()).unwrap();
-                bindings::KD_SetPeerDirectAddress(addr_c.into_raw());
+                bindings::KD_SetPeerDirectAddress(addr_c.as_ptr() as *mut i8);
 
                 if let Some(app) = weak_peer_sel.upgrade() {
                     app.set_peer_code(slint::SharedString::from(&addr));
@@ -1078,7 +1078,7 @@ fn main() {
                     .save_file()
                 {
                     let c_dest = CString::new(dest.to_string_lossy().to_string()).unwrap();
-                    let res = bindings::KD_SanitizeLogs(c_dest.into_raw());
+                    let res = bindings::KD_SanitizeLogs(c_dest.as_ptr() as *mut i8);
                     if res == 0 {
                         println!("Sanitized logs saved to: {}", dest.display());
                     } else {
@@ -1209,7 +1209,7 @@ fn main() {
                             eprintln!("Failed to copy file to save folder: {}", e);
                         }
                         let c_path = CString::new(path_str).unwrap();
-                        let res = bindings::KD_AddFile(c_path.into_raw());
+                        let res = bindings::KD_AddFile(c_path.as_ptr() as *mut i8);
                         if res != 0 {
                             let err = get_last_error();
                             eprintln!("Failed to add file: {}", err);
@@ -1261,8 +1261,8 @@ fn main() {
                 let c_name = CString::new(name.clone()).unwrap();
                 let c_path = CString::new(local_path.clone()).unwrap();
                 let res = bindings::KD_SaveFileByName(
-                    c_name.into_raw(),
-                    c_path.into_raw(),
+                    c_name.as_ptr() as *mut i8,
+                    c_path.as_ptr() as *mut i8,
                 );
 
                 let mut dl = downloads.lock().unwrap();
@@ -1290,7 +1290,7 @@ fn main() {
                     info.downloading = false;
                     info.paused = true;
                     let c_name = CString::new(name.clone()).unwrap();
-                    bindings::KD_CancelDownload(c_name.into_raw());
+                    bindings::KD_CancelDownload(c_name.as_ptr() as *mut i8);
                     println!("Paused download: {}", name);
                 } else if info.paused {
                     // Resume: re-trigger download (PullFile resumes from bitmap)
@@ -1303,8 +1303,8 @@ fn main() {
                         let c_name = CString::new(name_clone.clone()).unwrap();
                         let c_path = CString::new(local_path).unwrap();
                         let res = bindings::KD_SaveFileByName(
-                            c_name.into_raw(),
-                            c_path.into_raw(),
+                            c_name.as_ptr() as *mut i8,
+                            c_path.as_ptr() as *mut i8,
                         );
                         let mut dl = dl_clone.lock().unwrap();
                         if let Some(info) = dl.get_mut(&name_clone) {
@@ -1414,7 +1414,7 @@ fn main() {
                 std::thread::spawn(move || {
                     let c_n = CString::new(n.clone()).unwrap();
                     let c_p = CString::new(local_path.clone()).unwrap();
-                    let res = bindings::KD_SaveFileByName(c_n.into_raw(), c_p.into_raw());
+                    let res = bindings::KD_SaveFileByName(c_n.as_ptr() as *mut i8, c_p.as_ptr() as *mut i8);
                     let mut dl = dl_clone.lock().unwrap();
                     if let Some(info) = dl.get_mut(&n) {
                         info.downloading = false;
@@ -1509,7 +1509,7 @@ fn main() {
 
             // Register the fingerprint with the session (required before Connect)
             let c_fp = CString::new(fp.clone()).unwrap();
-            let res = bindings::KD_AddPeerFingerprint(c_fp.into_raw());
+            let res = bindings::KD_AddPeerFingerprint(c_fp.as_ptr() as *mut i8);
             if res != 0 {
                 let err = get_last_error();
                 if let Some(app) = weak_connect_contact.upgrade() {
@@ -1544,7 +1544,7 @@ fn main() {
                 return;
             }
             let c_name = CString::new(name_str.clone()).unwrap();
-            let res = bindings::KD_SaveCurrentPeerAsContact(c_name.into_raw());
+            let res = bindings::KD_SaveCurrentPeerAsContact(c_name.as_ptr() as *mut i8);
             if res == 0 {
                 show_toast(&weak_save_contact, &format!("Saved as '{}'", name_str));
                 if let Some(app) = weak_save_contact.upgrade() {
@@ -1564,7 +1564,7 @@ fn main() {
             }
             let fp = CStr::from_ptr(fp_ptr).to_string_lossy().to_string();
             let c_fp = CString::new(fp).unwrap();
-            bindings::KD_RemoveContact(c_fp.into_raw());
+            bindings::KD_RemoveContact(c_fp.as_ptr() as *mut i8);
             if let Some(app) = weak_remove_contact.upgrade() {
                 app.set_contacts(slint::ModelRc::from(load_contacts_model()));
             }
@@ -1730,7 +1730,7 @@ fn main() {
                                     let _ = std::fs::copy(&entry, &dest);
                                     let c_local = CString::new(dest.to_string_lossy().to_string()).unwrap();
                                     let c_remote = CString::new(remote_name.clone()).unwrap();
-                                    let res = bindings::KD_AddFileAs(c_local.into_raw(), c_remote.into_raw());
+                                    let res = bindings::KD_AddFileAs(c_local.as_ptr() as *mut i8, c_remote.as_ptr() as *mut i8);
                                     if res != 0 {
                                         eprintln!("Failed to add: {}", remote_name);
                                     }
@@ -1745,7 +1745,7 @@ fn main() {
                                 }
                             }
                             let c_path = CString::new(path_str.clone()).unwrap();
-                            let res = bindings::KD_AddFile(c_path.into_raw());
+                            let res = bindings::KD_AddFile(c_path.as_ptr() as *mut i8);
                             if res != 0 {
                                 let err = get_last_error();
                                 eprintln!("Failed to add dropped file: {}", err);
