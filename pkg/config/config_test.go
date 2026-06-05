@@ -50,20 +50,24 @@ func TestApplyEnvOverrides_DefaultsNotSet(t *testing.T) {
 func TestSaveLoad_PrefetchOnOpenPersists(t *testing.T) {
 	t.Setenv("KEIBIDROP_CONFIG_DIR", t.TempDir())
 
-	// Default must be on-demand (prefetch off) — the recommended default.
+	// Defaults: on-demand (prefetch off) + auto-prefetch threshold 100MB.
 	if DefaultConfig().PrefetchOnOpen {
 		t.Fatal("default PrefetchOnOpen should be false (on-demand)")
 	}
+	if DefaultConfig().PrefetchAutoMB != 100 {
+		t.Fatalf("default PrefetchAutoMB should be 100, got %d", DefaultConfig().PrefetchAutoMB)
+	}
 
-	// Persist both FUSE toggles ON.
+	// Persist the FUSE toggles + a custom auto threshold.
 	cfg := DefaultConfig()
 	cfg.PrefetchOnOpen = true
 	cfg.LiveCollab = true
+	cfg.PrefetchAutoMB = 250
 	if err := Save(cfg); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// A fresh Load must observe both (proves Save actually wrote them).
+	// A fresh Load must observe all three (proves Save actually wrote them).
 	got, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -73,5 +77,8 @@ func TestSaveLoad_PrefetchOnOpenPersists(t *testing.T) {
 	}
 	if !got.LiveCollab {
 		t.Error("live_collab did not persist across Save/Load")
+	}
+	if got.PrefetchAutoMB != 250 {
+		t.Errorf("prefetch_auto_mb did not persist: got %d want 250", got.PrefetchAutoMB)
 	}
 }

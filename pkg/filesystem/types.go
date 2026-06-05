@@ -182,6 +182,7 @@ type Dir struct {
 
 	// Collab sync options (propagated from FS).
 	PrefetchOnOpen bool // If true, fetch entire file on Open() and write to local disk.
+	PrefetchAutoMB int  // files >= this many MB auto-prefetch on open (0=off)
 	PushOnWrite    bool // If true, async push deltas to peer on Write().
 
 	RemoteFilesLock sync.RWMutex

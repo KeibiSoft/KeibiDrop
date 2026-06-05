@@ -172,6 +172,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		kd.StrictMode = true
 	}
 	kd.AutoCache = cfg.LiveCollab // live_collab → macFUSE auto_cache (same-size live edits, macOS)
+	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	for _, warn := range cfg.Warnings() {
 		logger.Warn("config flag note", "note", warn)
 	}

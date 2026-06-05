@@ -23,6 +23,7 @@ type FS struct {
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
 	PrefetchOnOpen     bool
+	PrefetchAutoMB     int
 	PushOnWrite        bool
 	AutoCache          bool // Unused on Android (no FUSE); present so shared setup code compiles.
 }
