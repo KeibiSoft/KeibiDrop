@@ -31,7 +31,7 @@ type Config struct {
 	NoFUSE            bool   `toml:"no_fuse"`
 	Incognito         bool   `toml:"incognito"`
 	PrefetchOnOpen    bool   `toml:"prefetch_on_open"`
-	PrefetchAutoMB    int    `toml:"prefetch_auto_mb"` // auto-prefetch files >= this many MB (sequential fill + on-demand jumps); 0 disables (pure on-demand). Default 100. prefetch_on_open=true forces prefetch for any size.
+	PrefetchAutoMB    int    `toml:"prefetch_auto_mb"` // auto-prefetch files >= this many MB (sequential fill + on-demand jumps). Default 0 = off (pure on-demand) — aggressive prefetch saturates constrained/relay links and starves seeks. Set >0 only on a fat link. prefetch_on_open=true forces prefetch for any size.
 	PushOnWrite       bool   `toml:"push_on_write"`
 	LiveCollab        bool   `toml:"live_collab"`        // prioritize seeing peers' same-size in-place edits live (macFUSE auto_cache); trades off local mmap-write integrity (git). See note in template.
 	PassphraseProtect bool   `toml:"passphrase_protect"` // opt into Tier 2 (Argon2id passphrase) for identity at-rest encryption
@@ -50,7 +50,7 @@ func DefaultConfig() Config {
 		InboundPort:    InboundPort,
 		OutboundPort:   OutboundPort,
 		BridgeAddr:     DefaultBridge,
-		PrefetchAutoMB: 100, // files >= 100MB auto-prefetch (sequential fill + on-demand jumps); smaller stay pure on-demand
+		PrefetchAutoMB: 0, // default off: pure on-demand (instant open, fetch only what's read). Aggressive prefetch saturates constrained/relay links and freezes seeks; opt in (>0) only on a fat link.
 	}
 	switch runtime.GOOS {
 	case "darwin":
@@ -221,10 +221,11 @@ strict_mode = %v
 incognito = %v
 
 # FUSE download strategy (persisted so the choice survives restarts).
-# prefetch_auto_mb: files >= this many MB are prefetched on open — sequential fill
-#   at wire speed PLUS on-demand jumps so a seek into a not-yet-downloaded region
-#   never lags. Smaller files stay pure on-demand (instant open, fetch only what's
-#   read). 0 disables auto-prefetch. Default 100.
+# prefetch_auto_mb: 0 (default) = pure on-demand — open instantly and fetch only
+#   what's read; seeks stay responsive on any link. Set to N>0 to also background-
+#   prefetch files >= N MB on open (sequential fill). Only do this on a fat link:
+#   on a constrained or relayed connection the bulk prefetch saturates the pipe
+#   and freezes interactive seeks.
 # prefetch_on_open: force prefetch for ANY size (overrides prefetch_auto_mb).
 prefetch_auto_mb = %v
 prefetch_on_open = %v
