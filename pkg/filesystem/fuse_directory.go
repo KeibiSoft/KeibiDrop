@@ -76,9 +76,13 @@ func (d *Dir) refreshFileStat(filePath string) {
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, filePath))
 	if st, err := platLstat(cleanPath); err == nil {
 		d.AfmLock.Lock()
-		if f, ok := d.AllFileMap[filePath]; ok && f.stat != nil {
-			f.stat.Ctim = st.Ctim
-			f.stat.Mtim = st.Mtim
+		if f, ok := d.AllFileMap[filePath]; ok {
+			f.metaMu.Lock()
+			if f.stat != nil {
+				f.stat.Ctim = st.Ctim
+				f.stat.Mtim = st.Mtim
+			}
+			f.metaMu.Unlock()
 		}
 		d.AfmLock.Unlock()
 	}
@@ -839,6 +843,12 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 	if isRemote {
 		remFile, okRemote := d.RemoteFiles[path]
 		if okRemote {
+			// Guard this File's stat under its metaMu for the whole branch: it is
+			// mutated in place below while Read/OpenEx read it via a DIFFERENT lock
+			// (OpenMapLock). Every path here returns, so the defer releases metaMu
+			// (innermost) before the map locks — deadlock-free.
+			remFile.metaMu.Lock()
+			defer remFile.metaMu.Unlock()
 			// File is on remote, let's see if it is also locally.
 			stgo, lstatErr := platLstat(cleanPath)
 			if lstatErr != nil {
@@ -2264,7 +2274,9 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			return nil
 		}
 
+		existing.metaMu.Lock()
 		existing.stat = stat
+		existing.metaMu.Unlock()
 
 		if sizeChanged {
 			// Size changed: cancel old prefetch, reset bitmap, re-download.
@@ -2576,8 +2588,10 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	}
 
 	// logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
+	f.metaMu.Lock()
 	f.stat = stat
 	f.LocalNewer = false // Remote has newer content.
+	f.metaMu.Unlock()
 
 	// Content changed: reset bitmap + cancel prefetch so reads re-fetch on-demand.
 	f.NotLocalSynced = true
