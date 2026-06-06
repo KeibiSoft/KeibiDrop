@@ -50,12 +50,14 @@ func TestApplyEnvOverrides_DefaultsNotSet(t *testing.T) {
 func TestSaveLoad_PrefetchOnOpenPersists(t *testing.T) {
 	t.Setenv("KEIBIDROP_CONFIG_DIR", t.TempDir())
 
-	// Defaults: on-demand (prefetch off) + auto-prefetch threshold 100MB.
+	// Defaults: pure on-demand — prefetch off and auto-prefetch disabled (0).
+	// Aggressive prefetch saturates constrained/relay links and freezes seeks,
+	// so it is opt-in, not the default.
 	if DefaultConfig().PrefetchOnOpen {
 		t.Fatal("default PrefetchOnOpen should be false (on-demand)")
 	}
-	if DefaultConfig().PrefetchAutoMB != 100 {
-		t.Fatalf("default PrefetchAutoMB should be 100, got %d", DefaultConfig().PrefetchAutoMB)
+	if DefaultConfig().PrefetchAutoMB != 0 {
+		t.Fatalf("default PrefetchAutoMB should be 0 (on-demand), got %d", DefaultConfig().PrefetchAutoMB)
 	}
 
 	// Persist the FUSE toggles + a custom auto threshold.
