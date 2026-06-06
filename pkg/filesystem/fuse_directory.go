@@ -474,6 +474,10 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	d.RemoteFilesLock.RLock()
 	remoteFile, hasRemote := d.RemoteFiles[path]
 	if hasRemote {
+		// Read this File's metadata (stat/NotLocalSynced) under metaMu — Release and
+		// the notify handlers write them under metaMu (reached via a different map
+		// lock). Logic unchanged; this only makes the reads race-free.
+		remoteFile.metaMu.RLock()
 		// logger.Info("=== REMOTE CHECK ===", "path", path, "hasRemote", hasRemote, "NotLocalSynced", remoteFile.NotLocalSynced)
 		if remoteFile.stat != nil {
 			remoteTotalSize = uint64(remoteFile.stat.Size)
@@ -503,6 +507,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 				}
 			}
 		}
+		remoteFile.metaMu.RUnlock()
 	}
 	d.RemoteFilesLock.RUnlock()
 
