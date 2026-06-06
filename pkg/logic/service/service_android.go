@@ -14,6 +14,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -93,6 +94,11 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 		existing, ok := kd.SyncTracker.RemoteFiles[req.Path]
 		if ok {
+			if uint64(req.Attr.Size) < existing.Size {
+				logger.Info("Ignoring stale ADD_FILE with smaller size",
+					"path", req.Path, "staleSize", req.Attr.Size, "currentSize", existing.Size)
+				return &bindings.NotifyResponse{}, nil
+			}
 			existing.Size = uint64(req.Attr.Size)
 			existing.LastEditTime = req.Attr.ModificationTime
 			logger.Info("Updated existing remote file", "path", req.Path, "newSize", req.Attr.Size)
@@ -106,6 +112,10 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			LastEditTime: req.Attr.ModificationTime,
 			CreatedTime:  req.Attr.BirthTime,
 		}
+
+		if kd.OnEvent != nil {
+			kd.OnEvent(fmt.Sprintf("file_arrived:%s:%d", req.Name, req.Attr.Size))
+		}
 		logger.Info("Success")
 
 	case bindings.NotifyType_EDIT_FILE:
@@ -114,20 +124,37 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		kd.SyncTracker.RemoteFilesMu.RLock()
-		defer kd.SyncTracker.RemoteFilesMu.RUnlock()
+		kd.SyncTracker.RemoteFilesMu.Lock()
+		defer kd.SyncTracker.RemoteFilesMu.Unlock()
 
 		f, ok := kd.SyncTracker.RemoteFiles[req.Path]
 		if !ok {
-			logger.Error("File does not exist", "error", ErrGRPCNotFound)
-			return nil, ErrGRPCNotFound
+			name := req.Name
+			if name == "" {
+				name = filepath.Base(req.Path)
+			}
+			kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+				Name:         name,
+				RelativePath: req.Path,
+				Size:         uint64(req.Attr.Size),
+				LastEditTime: req.Attr.ModificationTime,
+				CreatedTime:  req.Attr.BirthTime,
+			}
+		} else {
+			f.Name = req.Name
+			f.RelativePath = req.Path
+			f.Size = uint64(req.Attr.Size)
+			f.LastEditTime = req.Attr.ModificationTime
+			f.CreatedTime = req.Attr.BirthTime
 		}
 
-		f.Name = req.Name
-		f.RelativePath = req.Path
-		f.Size = uint64(req.Attr.Size)
-		f.LastEditTime = req.Attr.ModificationTime
-		f.CreatedTime = req.Attr.BirthTime
+		if kd.OnEvent != nil {
+			name := req.Name
+			if name == "" {
+				name = filepath.Base(req.Path)
+			}
+			kd.OnEvent(fmt.Sprintf("file_arrived:%s:%d", name, req.Attr.Size))
+		}
 		logger.Info("Success")
 
 	case bindings.NotifyType_REMOVE_FILE:
@@ -144,7 +171,18 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			delete(kd.SyncTracker.RemoteFiles, req.OldPath)
 			f.RelativePath = req.Path
 			f.Name = filepath.Base(req.Path)
+			if req.Attr != nil && req.Attr.Size > 0 {
+				f.Size = uint64(req.Attr.Size)
+			}
 			kd.SyncTracker.RemoteFiles[req.Path] = f
+		} else if req.Attr != nil && req.Attr.Size > 0 {
+			kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
+				Name:         filepath.Base(req.Path),
+				RelativePath: req.Path,
+				Size:         uint64(req.Attr.Size),
+				LastEditTime: req.Attr.ModificationTime,
+			}
+			logger.Info("Created file from RENAME (old path not tracked)", "path", req.Path, "size", req.Attr.Size)
 		}
 		kd.SyncTracker.RemoteFilesMu.Unlock()
 		logger.Info("Renamed file in sync tracker", "oldPath", req.OldPath, "newPath", req.Path)
@@ -180,10 +218,6 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 		return ErrGRPCFailedPrecondition
 	}
 
-	kd.SyncTracker.LocalFilesMu.RLock()
-	defer kd.SyncTracker.LocalFilesMu.RUnlock()
-
-	isOpen := false
 	var fh *os.File
 	var openedPath string
 	buf := make([]byte, config.GRPCStreamBuffer)
@@ -205,25 +239,32 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			return status.Error(codes.Internal, "failed to receive read request")
 		}
 
-		if !isOpen {
-			isOpen = true
+		if fh == nil {
 			lookupPath := strings.TrimPrefix(rec.Path, "/")
+			kd.SyncTracker.LocalFilesMu.RLock()
 			f, ok := kd.SyncTracker.LocalFiles[lookupPath]
 			if !ok {
 				f, ok = kd.SyncTracker.LocalFiles[rec.Path]
 			}
+			var realPath string
+			if ok {
+				realPath = f.RealPathOfFile
+			}
+			kd.SyncTracker.LocalFilesMu.RUnlock()
+
 			if !ok {
 				logger.Warn("File not found", "rec", rec)
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(f.RealPathOfFile)
+			fh, err = os.Open(realPath)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
 			}
 			openedPath = rec.Path
 		} else if openedPath != rec.Path {
+			fh.Close()
 			logger.Error("Multiple paths in same stream not supported", "requested", rec.Path)
 			return status.Error(codes.InvalidArgument, "stream can only read a single file")
 		}
@@ -237,6 +278,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 		n, err := fh.ReadAt(buf[:size], offset)
 		if err != nil && !errors.Is(err, io.EOF) {
+			fh.Close()
 			logger.Error("Failed to read file", "error", err)
 			return status.Error(codes.Internal, "error reading file")
 		}
@@ -300,7 +342,7 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 	fileSize := uint64(finfo.Size())
 
 	buf := make([]byte, config.GRPCStreamBuffer)
-	chunkSize := uint64(filesystem.ChunkSize)
+	chunkSize := uint64(config.BlockSize)
 	offset := req.StartOffset
 
 	logger.Info("StreamFile starting", "fileSize", fileSize, "startOffset", offset)
