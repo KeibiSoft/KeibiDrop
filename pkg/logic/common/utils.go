@@ -306,7 +306,13 @@ func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) boo
 	}
 	info, err := os.Lstat(filepath.Join(downloadFolder, req.Path))
 	if err != nil {
-		return !os.IsNotExist(err)
+		// Option A: file is gone at flush — it either flickered (rename/replace)
+		// during the 200ms debounce, or is a true transient (.keep/.lock). Do NOT
+		// signal a drop: keep the ADD with the attr captured at enqueue. Silently
+		// dropping here loses REAL files that merely flickered (e.g. files generated
+		// then atomically replaced); a true phantom is harmless because the peer's
+		// on-demand Read returns EOF for a gone remote file (see fuse Read handler).
+		return true
 	}
 	req.Attr.Size = info.Size()
 	req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
@@ -341,7 +347,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	// notification per path. Each update resets a 200ms timer for that path.
 	// Only when the path is stable for 200ms do we include it in the batch.
 	// RENAME/REMOVE/ADD_DIR are sent immediately (no debounce).
-	kd.notifyCh = make(chan *bindings.NotifyRequest, 2048)
+	kd.notifyCh = make(chan *bindings.NotifyRequest, 16384) // 8x headroom for git-clone bursts (~1-1.5 events/file)
 	var batchSeq atomic.Uint64
 	go func() {
 		// Per-path debounce state.
@@ -389,10 +395,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				if !ok {
 					// Channel closed — flush all pending with fresh sizes.
 					remaining := make([]*bindings.NotifyRequest, 0, len(pending))
-					for path, p := range pending {
-						if kd.FS != nil && kd.FS.Root != nil && !refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder) {
-							delete(pending, path)
-							continue
+					for _, p := range pending {
+						if kd.FS != nil && kd.FS.Root != nil {
+							refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder)
 						}
 						remaining = append(remaining, p.req)
 					}
@@ -448,9 +453,8 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				ready := make([]*bindings.NotifyRequest, 0, 16)
 				for path, p := range pending {
 					if now.After(p.deadline) {
-						if kd.FS != nil && kd.FS.Root != nil && !refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder) {
-							delete(pending, path)
-							continue
+						if kd.FS != nil && kd.FS.Root != nil {
+							refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder)
 						}
 						ready = append(ready, p.req)
 						delete(pending, path)
@@ -497,7 +501,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		}
 
 		// Non-blocking send to notification channel.
-		// If the channel is full (1024 pending), drop the notification
+		// If the channel is full (16384 pending), drop the notification
 		// rather than blocking the FUSE handler.
 		select {
 		case kd.notifyCh <- req:

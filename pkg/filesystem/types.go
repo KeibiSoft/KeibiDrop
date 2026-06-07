@@ -257,6 +257,15 @@ type File struct {
 	OnLocalChange func(event types.FileEvent)
 
 	stat *winfuse.Stat_t
+
+	// metaMu guards the File's mutable metadata that concurrent FUSE ops reach
+	// through DIFFERENT map locks (AllFileMap/AfmLock vs OpenFileHandlers/
+	// OpenMapLock) — which therefore do NOT mutually exclude: the *stat struct
+	// (Getattr mutates it in place while Read/OpenEx read Size/Mode) and the
+	// sync-state bools IsLocalPresent/LocalNewer/NotLocalSynced. Confirmed by
+	// the race detector. Always taken INNERMOST: after any map lock, and never
+	// acquire a map lock while holding it (so it cannot deadlock).
+	metaMu sync.RWMutex
 }
 
 func (f *File) NotifyPeer() {}

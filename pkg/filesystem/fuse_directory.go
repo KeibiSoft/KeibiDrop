@@ -76,9 +76,13 @@ func (d *Dir) refreshFileStat(filePath string) {
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, filePath))
 	if st, err := platLstat(cleanPath); err == nil {
 		d.AfmLock.Lock()
-		if f, ok := d.AllFileMap[filePath]; ok && f.stat != nil {
-			f.stat.Ctim = st.Ctim
-			f.stat.Mtim = st.Mtim
+		if f, ok := d.AllFileMap[filePath]; ok {
+			f.metaMu.Lock()
+			if f.stat != nil {
+				f.stat.Ctim = st.Ctim
+				f.stat.Mtim = st.Mtim
+			}
+			f.metaMu.Unlock()
 		}
 		d.AfmLock.Unlock()
 	}
@@ -457,8 +461,10 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		return 0
 	}
 
+	fh.metaMu.RLock()
 	isLocalPresent := fh.IsLocalPresent
 	localNewer := fh.LocalNewer
+	fh.metaMu.RUnlock()
 	d.AfmLock.Unlock()
 
 	// Check if remote has newer version
@@ -468,6 +474,10 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	d.RemoteFilesLock.RLock()
 	remoteFile, hasRemote := d.RemoteFiles[path]
 	if hasRemote {
+		// Read this File's metadata (stat/NotLocalSynced) under metaMu — Release and
+		// the notify handlers write them under metaMu (reached via a different map
+		// lock). Logic unchanged; this only makes the reads race-free.
+		remoteFile.metaMu.RLock()
 		// logger.Info("=== REMOTE CHECK ===", "path", path, "hasRemote", hasRemote, "NotLocalSynced", remoteFile.NotLocalSynced)
 		if remoteFile.stat != nil {
 			remoteTotalSize = uint64(remoteFile.stat.Size)
@@ -497,6 +507,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 				}
 			}
 		}
+		remoteFile.metaMu.RUnlock()
 	}
 	d.RemoteFilesLock.RUnlock()
 
@@ -596,7 +607,9 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		d.OpenMapLock.Lock()
 		fh.Inode = uint64(fd)
 		fh.openFileCounter.Open()
+		fh.metaMu.Lock()
 		fh.IsLocalPresent = true
+		fh.metaMu.Unlock()
 		fh.NotRemoteSynced = true
 		handleID := allocHandleID()
 		fh.CurrentHandleID = handleID
@@ -637,8 +650,12 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	}
 
 	cacheMode := uint32(0644)
-	if fh != nil && fh.stat != nil {
-		cacheMode = fh.stat.Mode & 0o777
+	if fh != nil {
+		fh.metaMu.RLock()
+		if fh.stat != nil {
+			cacheMode = fh.stat.Mode & 0o777
+		}
+		fh.metaMu.RUnlock()
 		if cacheMode == 0 {
 			cacheMode = 0644
 		}
@@ -679,7 +696,9 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	d.OpenMapLock.Lock()
 	fh.Inode = uint64(fd)
 	fh.openFileCounter.Open()
+	fh.metaMu.Lock()
 	fh.IsLocalPresent = true
+	fh.metaMu.Unlock()
 	handleID := allocHandleID()
 	fh.CurrentHandleID = handleID
 	d.OpenFileHandlers[handleID] = &HandleEntry{FD: fd, File: fh}
@@ -827,6 +846,12 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 	if isRemote {
 		remFile, okRemote := d.RemoteFiles[path]
 		if okRemote {
+			// Guard this File's stat under its metaMu for the whole branch: it is
+			// mutated in place below while Read/OpenEx read it via a DIFFERENT lock
+			// (OpenMapLock). Every path here returns, so the defer releases metaMu
+			// (innermost) before the map locks — deadlock-free.
+			remFile.metaMu.Lock()
+			defer remFile.metaMu.Unlock()
 			// File is on remote, let's see if it is also locally.
 			stgo, lstatErr := platLstat(cleanPath)
 			if lstatErr != nil {
@@ -895,20 +920,27 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 	}
 
 	f, ok := d.AllFileMap[path]
-	if ok && f.stat != nil && gtAtim(f.stat.Mtim, stat.Mtim) {
-		copyFusestatFromFusestat(stat, f.stat)
-	}
-	if ok && f.stat != nil && !gtAtim(f.stat.Mtim, stat.Mtim) {
-		savedUid := f.stat.Uid
-		savedGid := f.stat.Gid
-		savedMode := f.stat.Mode
-		copyFusestatFromFusestat(f.stat, stat)
-		f.stat.Uid = savedUid
-		f.stat.Gid = savedGid
-		if !platDiskModeIsAuthoritative {
-			f.stat.Mode = savedMode
+	// Guard the shared *stat under the File's metaMu: Getattr mutates f.stat in
+	// place here while Read/OpenEx read it through OpenMapLock — a different lock,
+	// hence the data race. metaMu is innermost (no map lock taken under it).
+	if ok && f != nil {
+		f.metaMu.Lock()
+		if f.stat != nil && gtAtim(f.stat.Mtim, stat.Mtim) {
+			copyFusestatFromFusestat(stat, f.stat)
 		}
-		copyFusestatFromFusestat(stat, f.stat)
+		if f.stat != nil && !gtAtim(f.stat.Mtim, stat.Mtim) {
+			savedUid := f.stat.Uid
+			savedGid := f.stat.Gid
+			savedMode := f.stat.Mode
+			copyFusestatFromFusestat(f.stat, stat)
+			f.stat.Uid = savedUid
+			f.stat.Gid = savedGid
+			if !platDiskModeIsAuthoritative {
+				f.stat.Mode = savedMode
+			}
+			copyFusestatFromFusestat(stat, f.stat)
+		}
+		f.metaMu.Unlock()
 	}
 	if ok {
 		found = ok
@@ -1319,7 +1351,10 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			}
 		}
 
-		// Reset sync state for future opens
+		// Reset sync state for future opens. Guard under metaMu (OpenEx reads
+		// IsLocalPresent/NotLocalSynced via AfmLock — a different lock). Released
+		// BEFORE the AfmLock acquisition below to avoid a metaMu->AfmLock cycle.
+		f.metaMu.Lock()
 		f.IsLocalPresent = true
 		// Only mark as synced if download is actually COMPLETE.
 		// Use ChunkBitmap (preferred) or BytesDownloaded as fallback.
@@ -1344,6 +1379,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				}
 			}
 		}
+		f.metaMu.Unlock()
 
 		// If peer stopped sharing and download is now complete, remove from AllFileMap.
 		if f.PeerStoppedSharing {
@@ -1901,9 +1937,12 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		cacheFD = f.CacheFD
 		notLocalSynced = f.NotLocalSynced
 		bitmap = f.Bitmap
+		// Read f.stat under metaMu: Getattr mutates the same struct in place.
+		f.metaMu.RLock()
 		if f.stat != nil {
 			remoteFileSize = f.stat.Size
 		}
+		f.metaMu.RUnlock()
 	}
 	d.OpenMapLock.RUnlock()
 
@@ -2238,7 +2277,9 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			return nil
 		}
 
+		existing.metaMu.Lock()
 		existing.stat = stat
+		existing.metaMu.Unlock()
 
 		if sizeChanged {
 			// Size changed: cancel old prefetch, reset bitmap, re-download.
@@ -2550,8 +2591,10 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	}
 
 	// logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
+	f.metaMu.Lock()
 	f.stat = stat
 	f.LocalNewer = false // Remote has newer content.
+	f.metaMu.Unlock()
 
 	// Content changed: reset bitmap + cancel prefetch so reads re-fetch on-demand.
 	f.NotLocalSynced = true
