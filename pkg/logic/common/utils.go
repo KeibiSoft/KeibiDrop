@@ -296,13 +296,12 @@ func isValidIPv6(ipStr string) bool {
 
 //
 
-// refreshAttrFromDisk updates req.Attr's Size/ModTime from the on-disk file
-// before a debounced notification is sent (the size captured when the event was
-// queued may be stale). It returns false only when the file no longer exists,
-// signalling the caller to drop the pending notification.
-func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) bool {
+// refreshAttrFromDisk refreshes req.Attr's Size/ModTime from disk before a
+// debounced notify is sent (the queued size may be stale). A file gone at
+// flush time is kept, not dropped (see Option A below).
+func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) {
 	if req.Attr == nil {
-		return true
+		return
 	}
 	info, err := os.Lstat(filepath.Join(downloadFolder, req.Path))
 	if err != nil {
@@ -312,11 +311,10 @@ func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) boo
 		// dropping here loses REAL files that merely flickered (e.g. files generated
 		// then atomically replaced); a true phantom is harmless because the peer's
 		// on-demand Read returns EOF for a gone remote file (see fuse Read handler).
-		return true
+		return
 	}
 	req.Attr.Size = info.Size()
 	req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
-	return true
 }
 
 func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) error {
@@ -431,12 +429,10 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					immediate = append(immediate, req)
 				default:
 					// REMOVE, ADD_DIR, REMOVE_DIR, DISCONNECT — send immediately.
-					// Skip REMOVE if there's a debounced ADD for the same path:
-					// the file was deleted and recreated quickly (e.g., initdb).
+					// create-then-delete in the debounce window: drop the pending
+					// ADD and send the REMOVE so the peer doesn't keep a dead file.
 					if req.Type == bindings.NotifyType_REMOVE_FILE || req.Type == bindings.NotifyType_REMOVE_DIR {
-						if _, hasPending := pending[req.Path]; hasPending {
-							continue
-						}
+						delete(pending, req.Path)
 					}
 					immediate = append(immediate, req)
 				}

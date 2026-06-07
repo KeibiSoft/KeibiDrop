@@ -86,6 +86,60 @@ func TestAddFile_FuseMode_WritesSyncTracker(t *testing.T) {
 	assert.Equal(t, uint64(fileSize), got.Size, "Size mismatch")
 }
 
+// TestAddFile_NoFUSE_RejectsStaleSmallerOlder_AcceptsNewerShrink: the non-FUSE
+// ADD path rejects a stale smaller ADD but accepts a newer shrink (git HEAD 25->21).
+func TestAddFile_NoFUSE_RejectsStaleSmallerOlder_AcceptsNewerShrink(t *testing.T) {
+	st := synctracker.NewSyncTracker()
+	const filePath = "HEAD"
+	st.RemoteFilesMu.Lock()
+	st.RemoteFiles[filePath] = &synctracker.File{
+		Name: filePath, RelativePath: filePath, Size: 25, LastEditTime: 1000,
+	}
+	st.RemoteFilesMu.Unlock()
+
+	svc := &KeibidropServiceImpl{
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		FS:          nil, // non-FUSE path
+		SyncTracker: st,
+	}
+	sizeOf := func() uint64 {
+		st.RemoteFilesMu.RLock()
+		defer st.RemoteFilesMu.RUnlock()
+		return st.RemoteFiles[filePath].Size
+	}
+
+	// (a) smaller AND older -> rejected, entry unchanged.
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: filePath, Name: filePath,
+		Attr: &bindings.Attr{Size: 21, ModificationTime: 500},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint64(25), sizeOf(), "stale smaller+older ADD must be rejected")
+
+	// (b) smaller AND newer (legit shrink) -> accepted, entry updates.
+	_, err = svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: filePath, Name: filePath,
+		Attr: &bindings.Attr{Size: 21, ModificationTime: 2000},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, uint64(21), sizeOf(), "legit smaller+newer shrink must be accepted")
+
+	// (c) resume entry has no stored mtime (LastEditTime==0); its size is the
+	// stale one, so a fresh smaller ADD is accepted (else the resume would
+	// target a stale-larger size and stall).
+	st.RemoteFilesMu.Lock()
+	st.RemoteFiles["resume"] = &synctracker.File{Name: "resume", RelativePath: "resume", Size: 25, LastEditTime: 0}
+	st.RemoteFilesMu.Unlock()
+	_, err = svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: "resume", Name: "resume",
+		Attr: &bindings.Attr{Size: 21, ModificationTime: 2000},
+	})
+	require.NoError(t, err)
+	st.RemoteFilesMu.RLock()
+	assert.Equal(t, uint64(21), st.RemoteFiles["resume"].Size, "fresh smaller ADD on a resume entry (no stored mtime) must be accepted")
+	st.RemoteFilesMu.RUnlock()
+}
+
 // TestEditFile_FuseMode_UpdatesSyncTracker verifies that when FUSE is active,
 // a NotifyType_EDIT_FILE request updates an existing entry in SyncTracker.RemoteFiles.
 func TestEditFile_FuseMode_UpdatesSyncTracker(t *testing.T) {
