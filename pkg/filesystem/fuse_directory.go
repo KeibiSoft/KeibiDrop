@@ -523,8 +523,6 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		d.RemoteFilesLock.Unlock()
 	}
 
-	logger.Info("GITDBG open", "path", path, "isLocalPresent", isLocalPresent, "localNewer", localNewer, "remoteHasUpdate", remoteHasUpdate, "hasRemote", hasRemote, "needsRemark", needsRemark)
-
 	// Open locally if we have newer local version
 	if isLocalPresent && localNewer {
 		accessMode := flags & winfuse.O_ACCMODE

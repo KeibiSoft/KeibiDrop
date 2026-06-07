@@ -306,7 +306,13 @@ func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) boo
 	}
 	info, err := os.Lstat(filepath.Join(downloadFolder, req.Path))
 	if err != nil {
-		return !os.IsNotExist(err)
+		// Option A: file is gone at flush — it either flickered (rename/replace)
+		// during the 200ms debounce, or is a true transient (.keep/.lock). Do NOT
+		// signal a drop: keep the ADD with the attr captured at enqueue. Silently
+		// dropping here loses REAL files that merely flickered (e.g. files generated
+		// then atomically replaced); a true phantom is harmless because the peer's
+		// on-demand Read returns EOF for a gone remote file (see fuse Read handler).
+		return true
 	}
 	req.Attr.Size = info.Size()
 	req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
@@ -341,7 +347,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	// notification per path. Each update resets a 200ms timer for that path.
 	// Only when the path is stable for 200ms do we include it in the batch.
 	// RENAME/REMOVE/ADD_DIR are sent immediately (no debounce).
-	kd.notifyCh = make(chan *bindings.NotifyRequest, 2048)
+	kd.notifyCh = make(chan *bindings.NotifyRequest, 16384) // 8x headroom for git-clone bursts (~1-1.5 events/file)
 	var batchSeq atomic.Uint64
 	go func() {
 		// Per-path debounce state.
@@ -366,18 +372,31 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				return
 			}
 			client := kd.session.GRPCClient
+			seq := batchSeq.Add(1)
+			// Full lifecycle trace: log every path on the wire (path/type/size/mtime).
+			for _, n := range batch {
+				var sz int64 = -1
+				var mt uint64
+				if n.Attr != nil {
+					sz = n.Attr.Size
+					mt = n.Attr.ModificationTime
+				}
+				logger.Info("notify-send", "seq", seq, "path", n.Path, "type", n.Type, "oldPath", n.OldPath, "size", sz, "mtime", mt)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			_, err := client.BatchNotify(ctx, &bindings.BatchNotifyRequest{
 				Notifications: batch,
-				Seq:           batchSeq.Add(1),
+				Seq:           seq,
 				Timestamp:     uint64(time.Now().UnixNano()),
 			})
 			cancel()
 			if err != nil {
-				logger.Error("BatchNotify failed, falling back to individual", "count", len(batch), "error", err)
+				logger.Error("BatchNotify failed, falling back to individual", "count", len(batch), "seq", seq, "error", err)
 				for _, req := range batch {
 					ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-					_, _ = client.Notify(ctx2, req)
+					if _, ferr := client.Notify(ctx2, req); ferr != nil {
+						logger.Warn("notify-drop: individual fallback Notify failed", "path", req.Path, "type", req.Type, "error", ferr)
+					}
 					cancel2()
 				}
 			}
@@ -391,6 +410,14 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					remaining := make([]*bindings.NotifyRequest, 0, len(pending))
 					for path, p := range pending {
 						if kd.FS != nil && kd.FS.Root != nil && !refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder) {
+							cp := filepath.Join(kd.FS.Root.LocalDownloadFolder, path)
+							_, se := os.Lstat(cp)
+							logger.Warn("notify-drop: refreshAttrFromDisk false → DROPPING notification", "path", path, "type", p.req.Type, "action", p.req.Type, "checkedPath", cp, "lstatErr", se, "wantSize", func() int64 {
+								if p.req.Attr != nil {
+									return p.req.Attr.Size
+								}
+								return -1
+							}())
 							delete(pending, path)
 							continue
 						}
@@ -449,6 +476,14 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				for path, p := range pending {
 					if now.After(p.deadline) {
 						if kd.FS != nil && kd.FS.Root != nil && !refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder) {
+							cp := filepath.Join(kd.FS.Root.LocalDownloadFolder, path)
+							_, se := os.Lstat(cp)
+							logger.Warn("notify-drop: refreshAttrFromDisk false → DROPPING notification", "path", path, "type", p.req.Type, "action", p.req.Type, "checkedPath", cp, "lstatErr", se, "wantSize", func() int64 {
+								if p.req.Attr != nil {
+									return p.req.Attr.Size
+								}
+								return -1
+							}())
 							delete(pending, path)
 							continue
 						}
@@ -468,6 +503,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 
 	fs.OnLocalChange = func(event types.FileEvent) {
 		if kd.session == nil || kd.session.GRPCClient == nil {
+			logger.Warn("notify-drop: session/grpc client nil at OnLocalChange", "path", event.Path, "action", event.Action)
 			return
 		}
 
@@ -501,8 +537,15 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		// rather than blocking the FUSE handler.
 		select {
 		case kd.notifyCh <- req:
+			var esz int64 = -1
+			var emt uint64
+			if event.Attr != nil {
+				esz = event.Attr.Size
+				emt = event.Attr.ModificationTime
+			}
+			logger.Info("notify-enqueue", "path", event.Path, "action", event.Action, "oldPath", event.OldPath, "size", esz, "mtime", emt)
 		default:
-			logger.Warn("Notification queue full, dropping", "path", event.Path)
+			logger.Warn("notify-drop: queue full (channel 16384 saturated)", "path", event.Path, "action", event.Action)
 		}
 	}
 
