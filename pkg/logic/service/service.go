@@ -369,14 +369,18 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			// RemoteFiles (e.g., .git/HEAD), trigger re-download now so the
 			// peer doesn't read stale content during the debounce window.
 			if !exists && req.Attr != nil && req.Attr.Size > 0 {
-				kd.FS.Root.RemoteFilesLock.RLock()
-				_, targetTracked := kd.FS.Root.RemoteFiles[req.Path]
-				kd.FS.Root.RemoteFilesLock.RUnlock()
-				if targetTracked {
-					logger.Info("Lock-file rename: re-downloading target",
-						"path", req.Path, "size", req.Attr.Size)
-					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr))
-				}
+				// The rename's SOURCE was a transient temp the peer never received
+				// (git writes tmp_pack_XXX / *.lock then renames to the FINAL name),
+				// so neither map had it and the disk rename above failed with
+				// ENOENT — nothing materialized the destination. The RENAME event
+				// carries the destination's Attr, so create/refresh it as a remote
+				// on-demand file here. Previously this fired ONLY when the target was
+				// ALREADY tracked (true for git's HEAD, but NOT for a brand-new pack/
+				// idx/index), so those final clone artifacts intermittently never
+				// propagated → peer ".git/objects" empty → "bad object HEAD".
+				logger.Info("Rename of untracked source: materializing destination",
+					"path", req.Path, "size", req.Attr.Size)
+				_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr))
 			}
 		}
 

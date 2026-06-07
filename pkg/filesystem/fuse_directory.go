@@ -310,6 +310,9 @@ func shouldUseDirectIo(path string, flags int) bool {
 // CreateEx implements FileSystemOpenEx interface for per-file direct_io control.
 func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCode int) {
 	defer d.recoverPanic("CreateEx", &errCode)
+	if strings.Contains(path, "/.git/") {
+		d.logger.Info("GITOP-create", "path", path)
+	}
 	if e := checkPath(path); e != 0 {
 		return e
 	}
@@ -1127,6 +1130,9 @@ func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode 
 
 func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 	defer d.recoverPanic("Mknod", &errCode)
+	if strings.Contains(path, "/.git/") {
+		d.logger.Info("GITOP-mknod", "path", path)
+	}
 	if e := checkPath(path); e != 0 {
 		return e
 	}
@@ -1538,6 +1544,9 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	d.RemoteFilesLock.Unlock()
 
 	// Notify peer about the rename (only for local files, not remote-only).
+	if strings.Contains(newpath, "/.git/") || strings.Contains(oldpath, "/.git/") {
+		logger.Info("GITRENAME", "old", oldpath, "new", newpath, "isRemote", isRemote, "onLocalChange", d.OnLocalChange != nil, "willNotify", d.OnLocalChange != nil && !isRemote)
+	}
 	if d.OnLocalChange != nil && !isRemote {
 		// Get stat of the renamed file.
 		var attr *keibidrop.Attr
@@ -1684,6 +1693,9 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 // Unlink removes a file.
 func (d *Dir) Unlink(path string) (errCode int) {
 	defer d.recoverPanic("Unlink", &errCode)
+	if strings.Contains(path, "/.git/") {
+		d.logger.Info("GITOP-unlink", "path", path)
+	}
 	if e := checkPath(path); e != 0 {
 		return e
 	}
