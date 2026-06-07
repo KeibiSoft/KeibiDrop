@@ -372,31 +372,18 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				return
 			}
 			client := kd.session.GRPCClient
-			seq := batchSeq.Add(1)
-			// Full lifecycle trace: log every path on the wire (path/type/size/mtime).
-			for _, n := range batch {
-				var sz int64 = -1
-				var mt uint64
-				if n.Attr != nil {
-					sz = n.Attr.Size
-					mt = n.Attr.ModificationTime
-				}
-				logger.Info("notify-send", "seq", seq, "path", n.Path, "type", n.Type, "oldPath", n.OldPath, "size", sz, "mtime", mt)
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			_, err := client.BatchNotify(ctx, &bindings.BatchNotifyRequest{
 				Notifications: batch,
-				Seq:           seq,
+				Seq:           batchSeq.Add(1),
 				Timestamp:     uint64(time.Now().UnixNano()),
 			})
 			cancel()
 			if err != nil {
-				logger.Error("BatchNotify failed, falling back to individual", "count", len(batch), "seq", seq, "error", err)
+				logger.Error("BatchNotify failed, falling back to individual", "count", len(batch), "error", err)
 				for _, req := range batch {
 					ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-					if _, ferr := client.Notify(ctx2, req); ferr != nil {
-						logger.Warn("notify-drop: individual fallback Notify failed", "path", req.Path, "type", req.Type, "error", ferr)
-					}
+					_, _ = client.Notify(ctx2, req)
 					cancel2()
 				}
 			}
@@ -408,18 +395,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				if !ok {
 					// Channel closed — flush all pending with fresh sizes.
 					remaining := make([]*bindings.NotifyRequest, 0, len(pending))
-					for path, p := range pending {
-						if kd.FS != nil && kd.FS.Root != nil && !refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder) {
-							cp := filepath.Join(kd.FS.Root.LocalDownloadFolder, path)
-							_, se := os.Lstat(cp)
-							logger.Warn("notify-drop: refreshAttrFromDisk false → DROPPING notification", "path", path, "type", p.req.Type, "action", p.req.Type, "checkedPath", cp, "lstatErr", se, "wantSize", func() int64 {
-								if p.req.Attr != nil {
-									return p.req.Attr.Size
-								}
-								return -1
-							}())
-							delete(pending, path)
-							continue
+					for _, p := range pending {
+						if kd.FS != nil && kd.FS.Root != nil {
+							refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder)
 						}
 						remaining = append(remaining, p.req)
 					}
@@ -475,17 +453,8 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				ready := make([]*bindings.NotifyRequest, 0, 16)
 				for path, p := range pending {
 					if now.After(p.deadline) {
-						if kd.FS != nil && kd.FS.Root != nil && !refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder) {
-							cp := filepath.Join(kd.FS.Root.LocalDownloadFolder, path)
-							_, se := os.Lstat(cp)
-							logger.Warn("notify-drop: refreshAttrFromDisk false → DROPPING notification", "path", path, "type", p.req.Type, "action", p.req.Type, "checkedPath", cp, "lstatErr", se, "wantSize", func() int64 {
-								if p.req.Attr != nil {
-									return p.req.Attr.Size
-								}
-								return -1
-							}())
-							delete(pending, path)
-							continue
+						if kd.FS != nil && kd.FS.Root != nil {
+							refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder)
 						}
 						ready = append(ready, p.req)
 						delete(pending, path)
@@ -503,7 +472,6 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 
 	fs.OnLocalChange = func(event types.FileEvent) {
 		if kd.session == nil || kd.session.GRPCClient == nil {
-			logger.Warn("notify-drop: session/grpc client nil at OnLocalChange", "path", event.Path, "action", event.Action)
 			return
 		}
 
@@ -533,19 +501,12 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		}
 
 		// Non-blocking send to notification channel.
-		// If the channel is full (1024 pending), drop the notification
+		// If the channel is full (16384 pending), drop the notification
 		// rather than blocking the FUSE handler.
 		select {
 		case kd.notifyCh <- req:
-			var esz int64 = -1
-			var emt uint64
-			if event.Attr != nil {
-				esz = event.Attr.Size
-				emt = event.Attr.ModificationTime
-			}
-			logger.Info("notify-enqueue", "path", event.Path, "action", event.Action, "oldPath", event.OldPath, "size", esz, "mtime", emt)
 		default:
-			logger.Warn("notify-drop: queue full (channel 16384 saturated)", "path", event.Path, "action", event.Action)
+			logger.Warn("Notification queue full, dropping", "path", event.Path)
 		}
 	}
 

@@ -82,18 +82,6 @@ func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (
 func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRequest) (*bindings.NotifyResponse, error) {
 	logger := kd.Logger.With("method", "notify", "req-type", req.Type)
 
-	// notify-recv: log EVERY received notification (end-to-end trace with sender's
-	// notify-enqueue/notify-send). Lets us grep a path and see if it crossed the wire.
-	{
-		var rsz int64 = -1
-		var rmt uint64
-		if req.Attr != nil {
-			rsz = req.Attr.Size
-			rmt = req.Attr.ModificationTime
-		}
-		logger.Info("notify-recv", "path", req.Path, "type", req.Type, "oldPath", req.OldPath, "size", rsz, "mtime", rmt)
-	}
-
 	// Handle DISCONNECT before FS checks — it doesn't need a mounted filesystem.
 	if req.Type == bindings.NotifyType_DISCONNECT {
 		logger.Info("Peer requested graceful disconnect")
