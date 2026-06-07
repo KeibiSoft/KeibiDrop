@@ -883,6 +883,15 @@ func (kd *KeibiDrop) Connect() error {
 	return kd.JoinRoom()
 }
 
+// LocalConnectRole picks who creates (listens) vs joins (dials) in local mode.
+// Smaller name creates; if names collide (random), smaller address breaks it.
+func LocalConnectRole(myName, peerName, myAddr, peerAddr string) (create bool) {
+	if myName != peerName {
+		return myName < peerName
+	}
+	return myAddr < peerAddr
+}
+
 func (kd *KeibiDrop) CreateRoom() error {
 	logger := kd.logger.With("method", "create-room")
 	if kd.session == nil {
