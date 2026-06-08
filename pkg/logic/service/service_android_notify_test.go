@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
@@ -82,6 +83,44 @@ func TestNotify_EditFile_UpdatesExistingEntry(t *testing.T) {
 	require.NotNil(t, f)
 	assert.Equal(t, uint64(200), f.Size)
 	assert.Equal(t, uint64(2000), f.LastEditTime)
+}
+
+func TestNotify_Remove_BufferedThenCancelledByAdd(t *testing.T) {
+	svc := newTestService()
+	svc.SyncTracker.RemoteFiles["f.txt"] = &synctracker.File{Name: "f.txt", RelativePath: "f.txt", Size: 100}
+
+	// REMOVE is buffered, not applied immediately.
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{Type: bindings.NotifyType_REMOVE_FILE, Path: "f.txt"})
+	require.NoError(t, err)
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	_, ok := svc.SyncTracker.RemoteFiles["f.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+	assert.True(t, ok, "REMOVE should be buffered, file still present")
+
+	// An ADD for the same path within the window cancels the buffered remove.
+	_, err = svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: "f.txt", Name: "f.txt",
+		Attr: &bindings.Attr{Size: 100, ModificationTime: 1},
+	})
+	require.NoError(t, err)
+	time.Sleep(1200 * time.Millisecond)
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	_, ok = svc.SyncTracker.RemoteFiles["f.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+	assert.True(t, ok, "ADD within the window must cancel the buffered remove")
+}
+
+func TestNotify_Remove_ExecutesAfterWindow(t *testing.T) {
+	svc := newTestService()
+	svc.SyncTracker.RemoteFiles["g.txt"] = &synctracker.File{Name: "g.txt", RelativePath: "g.txt", Size: 100}
+
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{Type: bindings.NotifyType_REMOVE_FILE, Path: "g.txt"})
+	require.NoError(t, err)
+	time.Sleep(1200 * time.Millisecond)
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	_, ok := svc.SyncTracker.RemoteFiles["g.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+	assert.False(t, ok, "buffered remove must execute after the window")
 }
 
 func TestNotify_RenameFile_UpdatesSizeFromAttr(t *testing.T) {

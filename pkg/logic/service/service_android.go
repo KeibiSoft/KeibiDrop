@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -47,6 +48,11 @@ type KeibidropServiceImpl struct {
 	SyncTracker  *synctracker.SyncTracker
 	OnEvent      func(string)
 	OnDisconnect func()
+
+	// pendingRemoves buffers REMOVE_FILE for 1000ms; an ADD/EDIT/RENAME for the
+	// same path within that window cancels it (git's atomic .lock->rename dance).
+	pendingRemovesMu sync.Mutex
+	pendingRemoves   map[string]*time.Timer
 }
 
 func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (*bindings.DebugResponse, error) {
@@ -59,6 +65,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 	if req.Type == bindings.NotifyType_DISCONNECT {
 		logger.Info("Peer requested graceful disconnect")
+		kd.cancelAllPendingRemoves()
 		if kd.OnEvent != nil {
 			kd.OnEvent("peer_disconnected:")
 		}
@@ -84,6 +91,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Directory notification ignored in SyncTracker mode", "type", req.Type)
 
 	case bindings.NotifyType_ADD_FILE:
+		kd.cancelPendingRemove(req.Path)
 		if req.Attr == nil {
 			logger.Error("Failed to add file, invalid attr", "error", ErrGRPCInvalidArgument)
 			return nil, ErrGRPCInvalidArgument
@@ -119,6 +127,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Success")
 
 	case bindings.NotifyType_EDIT_FILE:
+		kd.cancelPendingRemove(req.Path)
 		if req.Attr == nil {
 			logger.Error("Failed to edit file, invalid attr", "error", ErrGRPCInvalidArgument)
 			return nil, ErrGRPCFailedPrecondition
@@ -158,13 +167,12 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Success")
 
 	case bindings.NotifyType_REMOVE_FILE:
-		logger.Info("Remove file reference", "path", req.Path)
-		kd.SyncTracker.RemoteFilesMu.Lock()
-		delete(kd.SyncTracker.RemoteFiles, req.Path)
-		kd.SyncTracker.RemoteFilesMu.Unlock()
-		logger.Info("Removed file from sync tracker", "path", req.Path)
+		// Buffer the remove; a quick ADD/RENAME for the same path cancels it.
+		kd.bufferRemove(req.Path, logger)
 
 	case bindings.NotifyType_RENAME_FILE:
+		kd.cancelPendingRemove(req.Path)
+		kd.cancelPendingRemove(req.OldPath)
 		logger.Info("Rename file", "oldPath", req.OldPath, "newPath", req.Path)
 		kd.SyncTracker.RemoteFilesMu.Lock()
 		if f, ok := kd.SyncTracker.RemoteFiles[req.OldPath]; ok {
@@ -190,6 +198,55 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 	logger.Info("Success")
 	return &bindings.NotifyResponse{}, nil
+}
+
+// bufferRemove delays a REMOVE_FILE by 1000ms; cancelPendingRemove for the same
+// path before it fires discards it.
+func (kd *KeibidropServiceImpl) bufferRemove(path string, logger *slog.Logger) {
+	kd.pendingRemovesMu.Lock()
+	defer kd.pendingRemovesMu.Unlock()
+
+	if kd.pendingRemoves == nil {
+		kd.pendingRemoves = make(map[string]*time.Timer)
+	}
+	if t, ok := kd.pendingRemoves[path]; ok {
+		t.Stop()
+	}
+	kd.pendingRemoves[path] = time.AfterFunc(1000*time.Millisecond, func() {
+		kd.pendingRemovesMu.Lock()
+		delete(kd.pendingRemoves, path)
+		kd.pendingRemovesMu.Unlock()
+		kd.executeRemove(path, logger)
+	})
+}
+
+// cancelPendingRemove discards a buffered REMOVE when an ADD/EDIT/RENAME for the
+// same path arrives (the remove was part of git's atomic .lock->rename dance).
+func (kd *KeibidropServiceImpl) cancelPendingRemove(path string) {
+	kd.pendingRemovesMu.Lock()
+	defer kd.pendingRemovesMu.Unlock()
+	if t, ok := kd.pendingRemoves[path]; ok {
+		t.Stop()
+		delete(kd.pendingRemoves, path)
+	}
+}
+
+// cancelAllPendingRemoves stops every buffered remove (on disconnect).
+func (kd *KeibidropServiceImpl) cancelAllPendingRemoves() {
+	kd.pendingRemovesMu.Lock()
+	defer kd.pendingRemovesMu.Unlock()
+	for _, t := range kd.pendingRemoves {
+		t.Stop()
+	}
+	kd.pendingRemoves = nil
+}
+
+// executeRemove drops the file from the sync tracker (android has no FUSE).
+func (kd *KeibidropServiceImpl) executeRemove(path string, logger *slog.Logger) {
+	kd.SyncTracker.RemoteFilesMu.Lock()
+	delete(kd.SyncTracker.RemoteFiles, path)
+	kd.SyncTracker.RemoteFilesMu.Unlock()
+	logger.Info("Removed file from sync tracker (buffered)", "path", path)
 }
 
 func (kd *KeibidropServiceImpl) BatchNotify(ctx context.Context, req *bindings.BatchNotifyRequest) (*bindings.BatchNotifyResponse, error) {
