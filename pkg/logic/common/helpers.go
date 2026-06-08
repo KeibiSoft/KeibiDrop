@@ -98,6 +98,60 @@ func GetLinkLocalAddress(port int) (string, error) {
 	return "", fmt.Errorf("no link-local or loopback IPv6 address found")
 }
 
+// virtualIfacePrefixes names interface kinds whose address LAN peers never see
+// (Docker/VPN/bridges/AirDrop), so the discovery-address scan skips them.
+var virtualIfacePrefixes = []string{"docker", "veth", "br-", "br0", "tun", "tap", "utun", "virbr", "wg", "awdl", "llw"}
+
+func isVirtualIface(name string) bool {
+	for _, p := range virtualIfacePrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetDiscoveryLANAddress returns this machine's private IPv4 on a preferred LAN
+// interface, in the same form peers see it via discovery. The local-connect
+// tiebreak uses it so equal names compare IPv4-vs-IPv4 (symmetric). Returns ""
+// when no private IPv4 is available.
+func GetDiscoveryLANAddress() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	pick := func(prefix string) string {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+			if isVirtualIface(iface.Name) {
+				continue
+			}
+			if prefix != "" && !strings.HasPrefix(iface.Name, prefix) {
+				continue
+			}
+			addrs, _ := iface.Addrs()
+			for _, addr := range addrs {
+				ip, _, err := net.ParseCIDR(addr.String())
+				if err != nil {
+					continue
+				}
+				if v4 := ip.To4(); v4 != nil && ip.IsPrivate() {
+					return v4.String()
+				}
+			}
+		}
+		return ""
+	}
+	for _, pref := range preferredLANIfaces {
+		if ip := pick(pref); ip != "" {
+			return ip
+		}
+	}
+	return pick("")
+}
+
 // ParsePeerDirectAddress parses a direct LAN peer address in the format
 // "ip%zone:port" (link-local) or "ip:port" (loopback). Returns the IP,
 // zone identifier, port number, and any error.

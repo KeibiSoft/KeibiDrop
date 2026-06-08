@@ -892,6 +892,19 @@ func LocalConnectRole(myName, peerName, myAddr, peerAddr string) (create bool) {
 	return myAddr < peerAddr
 }
 
+// DecideLocalRole reports whether this peer should create (listen) rather than
+// join (dial) for a local-mode connection to peerName at peerAddr. It feeds
+// LocalConnectRole this peer's own LAN IPv4 and the peer's IPv4, so colliding
+// names compare like-for-like and the two sides never both pick join. Callers
+// on every frontend (CLI, desktop UI, mobile) route through this one decider.
+func DecideLocalRole(myName, peerName, peerAddr string) bool {
+	peerIP := peerAddr
+	if ip, _, _, err := ParsePeerDirectAddress(peerAddr); err == nil {
+		peerIP = ip
+	}
+	return LocalConnectRole(myName, peerName, GetDiscoveryLANAddress(), peerIP)
+}
+
 func (kd *KeibiDrop) CreateRoom() error {
 	logger := kd.logger.With("method", "create-room")
 	if kd.session == nil {

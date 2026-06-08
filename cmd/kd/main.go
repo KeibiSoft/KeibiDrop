@@ -319,7 +319,7 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 			myName = disc.Name()
 			disc.Stop()
 		}
-		if common.LocalConnectRole(myName, peerName, kd.LocalIPv6IP, kd.PeerIPv6IP) {
+		if common.DecideLocalRole(myName, peerName, peerAddr) {
 			return cmdCreateOrJoin(kd, "create")
 		}
 		return cmdCreateOrJoin(kd, "join")
@@ -813,7 +813,7 @@ func cmdConnect(kd *common.KeibiDrop) Response {
 	// In local mode, use name-based tiebreak (same as mobile + Rust UI).
 	// The fingerprint tiebreak in Connect() doesn't work with TOFU.
 	if kd.IsLocalMode && localMyName != "" && localPeerName != "" {
-		if common.LocalConnectRole(localMyName, localPeerName, kd.LocalIPv6IP, kd.PeerIPv6IP) {
+		if common.DecideLocalRole(localMyName, localPeerName, kd.PeerIPv6IP) {
 			if err := kd.CreateRoom(); err != nil {
 				return errResponse(err.Error())
 			}

@@ -221,6 +221,18 @@ func KD_Connect() C.int {
 	return 0
 }
 
+// KD_DecideLocalRole reports whether this peer should create (1) or join (0) a
+// local-mode connection to peerName at peerAddr. Same decider as the CLI and
+// mobile so all frontends break colliding names the same way.
+//
+//export KD_DecideLocalRole
+func KD_DecideLocalRole(myName, peerName, peerAddr *C.char) C.int {
+	if common.DecideLocalRole(C.GoString(myName), C.GoString(peerName), C.GoString(peerAddr)) {
+		return 1
+	}
+	return 0
+}
+
 //export KD_AddPeerFingerprint
 func KD_AddPeerFingerprint(fp *C.char) C.int {
 	if kd == nil {
