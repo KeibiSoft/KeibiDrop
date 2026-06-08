@@ -1,5 +1,5 @@
-// ABOUTME: Tests for Android Notify handler: EDIT create-on-miss, RENAME
-// ABOUTME: resilience (size update + create-on-miss), and OnEvent emission.
+// ABOUTME: Tests for the Android Notify handler: ADD stale-guard, REMOVE
+// ABOUTME: debounce, EDIT/RENAME resilience, and OnEvent emission.
 
 //go:build android
 
@@ -254,4 +254,48 @@ func TestNotify_EditFile_EmitsFileArrivedEvent(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "file_arrived:doc.txt:200", received)
+}
+
+func TestNotify_AddFile_RejectsStaleSmallerOlder(t *testing.T) {
+	svc := newTestService()
+	svc.SyncTracker.RemoteFiles["f.txt"] = &synctracker.File{
+		Name: "f.txt", RelativePath: "f.txt", Size: 100, LastEditTime: 2000,
+	}
+
+	// A stale temp-file ADD: smaller AND older than what we have. Reject it.
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: "f.txt", Name: "f.txt",
+		Attr: &bindings.Attr{Size: 50, ModificationTime: 1000},
+	})
+	require.NoError(t, err)
+
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	f := svc.SyncTracker.RemoteFiles["f.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+
+	require.NotNil(t, f)
+	assert.Equal(t, uint64(100), f.Size, "stale smaller+older ADD must be ignored")
+	assert.Equal(t, uint64(2000), f.LastEditTime)
+}
+
+func TestNotify_AddFile_AcceptsSmallerNewer(t *testing.T) {
+	svc := newTestService()
+	svc.SyncTracker.RemoteFiles["f.txt"] = &synctracker.File{
+		Name: "f.txt", RelativePath: "f.txt", Size: 100, LastEditTime: 1000,
+	}
+
+	// A real shrink (e.g. git HEAD 100->50) carries a newer mtime. Accept it.
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: "f.txt", Name: "f.txt",
+		Attr: &bindings.Attr{Size: 50, ModificationTime: 2000},
+	})
+	require.NoError(t, err)
+
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	f := svc.SyncTracker.RemoteFiles["f.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+
+	require.NotNil(t, f)
+	assert.Equal(t, uint64(50), f.Size, "real shrink with newer mtime must be accepted")
+	assert.Equal(t, uint64(2000), f.LastEditTime)
 }

@@ -102,8 +102,12 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 		existing, ok := kd.SyncTracker.RemoteFiles[req.Path]
 		if ok {
-			if uint64(req.Attr.Size) < existing.Size {
-				logger.Info("Ignoring stale ADD_FILE with smaller size",
+			// A smaller size is usually a stale temp-file ADD arriving after a
+			// rename set the real size; those carry an older mtime, so reject
+			// only when older. A real shrink (git HEAD 25->21) is newer: accept.
+			if uint64(req.Attr.Size) < existing.Size &&
+				req.Attr.ModificationTime < existing.LastEditTime {
+				logger.Info("Ignoring stale ADD_FILE (smaller, older mtime)",
 					"path", req.Path, "staleSize", req.Attr.Size, "currentSize", existing.Size)
 				return &bindings.NotifyResponse{}, nil
 			}
