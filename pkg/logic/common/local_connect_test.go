@@ -8,6 +8,8 @@ package common
 import (
 	"net"
 	"testing"
+
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
 
 func TestLocalConnectRole(t *testing.T) {
@@ -37,6 +39,13 @@ func TestLocalConnectRole(t *testing.T) {
 	if !LocalConnectRole("x", "x", "::1", "::2") {
 		t.Error("equal names: smaller address should create")
 	}
+
+	// Full tie (names and addresses equal): unresolved, both sides pick join.
+	// Both simulated sides are the same call here since mirroring equal args
+	// changes nothing; documents the residual limitation DecideLocalRole warns about.
+	if LocalConnectRole("x", "x", "10.0.0.1", "10.0.0.1") {
+		t.Error("full tie: expected join (create=false) on both sides")
+	}
 }
 
 func TestGetDiscoveryLANAddress(t *testing.T) {
@@ -54,19 +63,68 @@ func TestGetDiscoveryLANAddress(t *testing.T) {
 }
 
 func TestDecideLocalRole(t *testing.T) {
-	// Distinct names: the name decides and the peer address form is irrelevant.
-	if !DecideLocalRole("alice", "bob", "203.0.113.9:26431") {
+	// Distinct names: the name decides for a normal LAN (RFC1918) peer.
+	if !DecideLocalRole("alice", "bob", "192.168.1.9:26431") {
 		t.Error("alice < bob should create")
 	}
-	if DecideLocalRole("bob", "alice", "203.0.113.9:26431") {
+	if DecideLocalRole("bob", "alice", "192.168.1.9:26431") {
 		t.Error("bob > alice should join")
 	}
 	// The peer port is stripped, so "ip:port" and bare "ip" decide the same.
 	if DecideLocalRole("x", "x", "10.0.0.5:26431") != DecideLocalRole("x", "x", "10.0.0.5") {
 		t.Error("peer port must not change the decision")
 	}
+	// The zone is stripped like the port, so every stored form of the same
+	// peer IP decides identically, whatever the zone or bracketing.
+	base := DecideLocalRole("x", "x", "fe80::2%eth0")
+	for _, form := range []string{"fe80::2%eth0:26431", "[fe80::2%eth0]:26431", "fe80::2%wlan1"} {
+		if DecideLocalRole("x", "x", form) != base {
+			t.Errorf("address form %q changed the decision", form)
+		}
+	}
 	// And it matches feeding LocalConnectRole our own LAN IPv4 + the stripped peer IP.
 	if DecideLocalRole("x", "x", "10.0.0.5:26431") != LocalConnectRole("x", "x", GetDiscoveryLANAddress(), "10.0.0.5") {
 		t.Error("DecideLocalRole should equal LocalConnectRole on the stripped peer IP")
+	}
+	// Names equal and the compared addresses equal (two daemons on one host):
+	// the tie stays unresolved and this side deterministically picks join.
+	if mine := GetDiscoveryLANAddress(); mine != "" {
+		if DecideLocalRole("x", "x", mine) {
+			t.Error("full tie: expected join (create=false)")
+		}
+	}
+}
+
+func TestSetPeerDirectAddress(t *testing.T) {
+	cases := []struct {
+		name     string
+		addr     string
+		wantIP   string
+		wantPort int
+		wantErr  bool
+	}{
+		{"discovery ipv4", "192.168.1.5:26431", "192.168.1.5", 26431, false},
+		{"link-local with zone", "fe80::1%eth0:26431", "fe80::1%eth0", 26431, false},
+		{"bare ipv4 lacks port", "192.168.1.5", "", 0, true},
+		{"zoned form lacks port", "fe80::1%eth0", "", 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			kd := &KeibiDrop{session: &session.Session{}}
+			err := kd.SetPeerDirectAddress(c.addr)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got nil", c.addr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", c.addr, err)
+			}
+			if kd.PeerIPv6IP != c.wantIP || kd.session.PeerPort != c.wantPort {
+				t.Errorf("got ip=%q port=%d, want ip=%q port=%d",
+					kd.PeerIPv6IP, kd.session.PeerPort, c.wantIP, c.wantPort)
+			}
+		})
 	}
 }

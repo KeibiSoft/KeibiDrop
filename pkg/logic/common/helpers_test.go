@@ -151,8 +151,68 @@ func TestParsePeerDirectAddress_JustPort(t *testing.T) {
 }
 
 func TestParsePeerDirectAddress_NoPort(t *testing.T) {
-	_, _, _, err := ParsePeerDirectAddress("fe80::1%eth0")
-	if err == nil {
-		t.Fatal("expected error for missing port, got nil")
+	// Port-less zoned form, exactly what SetPeerDirectAddress stores in PeerIPv6IP.
+	ip, zone, port, err := ParsePeerDirectAddress("fe80::1%eth0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ip != "fe80::1" || zone != "eth0" || port != 0 {
+		t.Errorf("got ip=%q zone=%q port=%d, want ip=%q zone=%q port=0", ip, zone, port, "fe80::1", "eth0")
+	}
+}
+
+// TestParsePeerDirectAddressForms covers every form the codebase produces:
+// discovery ("ipv4:port"), GetLinkLocalAddress ("ip%zone:port", "::1:port"),
+// the port-less forms stored in PeerIPv6IP, bracketed input, and garbage.
+func TestParsePeerDirectAddressForms(t *testing.T) {
+	cases := []struct {
+		name    string
+		addr    string
+		ip      string
+		zone    string
+		port    int
+		wantErr bool
+	}{
+		{"bare ipv4", "192.168.1.42", "192.168.1.42", "", 0, false},
+		{"bare ipv4 ten-net", "10.0.0.5", "10.0.0.5", "", 0, false},
+		{"ipv4 with port", "192.168.1.42:26431", "192.168.1.42", "", 26431, false},
+		{"bare ipv6 loopback", "::1", "::1", "", 0, false},
+		{"bare ipv6 ula", "fd00::5", "fd00::5", "", 0, false},
+		{"ipv6 loopback with port", "::1:26431", "::1", "", 26431, false},
+		{"zoned link-local", "fe80::1%eth0", "fe80::1", "eth0", 0, false},
+		{"zoned link-local with port", "fe80::1%eth0:26431", "fe80::1", "eth0", 26431, false},
+		{"bracketed ipv6 with port", "[fd00::5]:26431", "fd00::5", "", 26431, false},
+		{"bracketed zoned with port", "[fe80::1%eth0]:26431", "fe80::1", "eth0", 26431, false},
+		{"empty", "", "", "", 0, true},
+		{"garbage", "not-an-address", "", "", 0, true},
+		{"public ipv4", "203.0.113.9:26431", "", "", 0, true},
+		{"public bare ipv6", "2001:db8::5", "", "", 0, true},
+		{"zoneless link-local with port", "fe80::1:26431", "", "", 0, true},
+		{"bare zoneless link-local", "fe80::1", "", "", 0, true},
+		{"empty zone", "fe80::1%", "", "", 0, true},
+		{"empty zone with port", "fe80::1%:26431", "", "", 0, true},
+		{"port out of range", "192.168.1.42:80", "", "", 0, true},
+		{"port not a number", "192.168.1.42:abc", "", "", 0, true},
+		{"port zero", "192.168.1.42:0", "", "", 0, true},
+		{"trailing colon", "192.168.1.42:", "", "", 0, true},
+		{"just port", ":26431", "", "", 0, true},
+		{"bracket without port", "[fd00::5]", "", "", 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ip, zone, port, err := ParsePeerDirectAddress(c.addr)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("ParsePeerDirectAddress(%q): expected error, got ip=%q zone=%q port=%d", c.addr, ip, zone, port)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParsePeerDirectAddress(%q): unexpected error: %v", c.addr, err)
+			}
+			if ip != c.ip || zone != c.zone || port != c.port {
+				t.Errorf("ParsePeerDirectAddress(%q) = (%q, %q, %d), want (%q, %q, %d)", c.addr, ip, zone, port, c.ip, c.zone, c.port)
+			}
+		})
 	}
 }
