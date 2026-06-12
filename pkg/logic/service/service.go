@@ -159,6 +159,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				// A smaller size is usually a stale temp-file ADD arriving after a
 				// rename set the real size; those carry an older mtime, so reject
 				// only when older. A real shrink (git HEAD 25->21) is newer: accept.
+				// Strict <: equal-mtime shrink is accepted; reject only provably stale ADDs.
 				if uint64(req.Attr.Size) < existing.Size &&
 					req.Attr.ModificationTime < existing.LastEditTime {
 					logger.Info("Ignoring stale ADD_FILE (smaller, older mtime)",

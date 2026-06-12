@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// ABOUTME: Tests that ADD_FILE and EDIT_FILE via the FUSE path write SyncTracker.RemoteFiles.
-// ABOUTME: Regression for FUSE-mode files being invisible in the UI via KD_GetFileCount/KD_GetFileName.
+// ABOUTME: Tests the desktop Notify handler: FUSE ADD/EDIT writing SyncTracker.RemoteFiles,
+// ABOUTME: the no-FUSE ADD stale-guard, and the receiver-side REMOVE debounce.
 
 //go:build !android
 
@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
@@ -278,4 +279,71 @@ func TestEditFile_FuseMode_CreatesNewSyncTrackerEntry(t *testing.T) {
 	assert.Equal(t, uint64(fileSize), got.Size, "Size mismatch")
 	assert.Equal(t, fileModTime, got.LastEditTime, "LastEditTime mismatch")
 	assert.Equal(t, fileBirth, got.CreatedTime, "CreatedTime mismatch")
+}
+
+// TestRemoveFile_NoFUSE_BufferedThenCancelledByAdd: REMOVE is buffered for
+// 1000ms, not applied immediately; an ADD within the window cancels it.
+func TestRemoveFile_NoFUSE_BufferedThenCancelledByAdd(t *testing.T) {
+	st := synctracker.NewSyncTracker()
+	const filePath = "f.txt"
+	st.RemoteFilesMu.Lock()
+	st.RemoteFiles[filePath] = &synctracker.File{Name: filePath, RelativePath: filePath, Size: 100}
+	st.RemoteFilesMu.Unlock()
+
+	svc := &KeibidropServiceImpl{
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		FS:          nil, // non-FUSE path
+		SyncTracker: st,
+	}
+	tracked := func() bool {
+		st.RemoteFilesMu.RLock()
+		defer st.RemoteFilesMu.RUnlock()
+		_, ok := st.RemoteFiles[filePath]
+		return ok
+	}
+
+	// REMOVE is buffered, not applied immediately.
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_REMOVE_FILE, Path: filePath,
+	})
+	require.NoError(t, err)
+	assert.True(t, tracked(), "REMOVE should be buffered, file still present")
+
+	// An ADD for the same path within the window cancels the buffered remove.
+	_, err = svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: filePath, Name: filePath,
+		Attr: &bindings.Attr{Size: 100, ModificationTime: 1},
+	})
+	require.NoError(t, err)
+	time.Sleep(1200 * time.Millisecond)
+	assert.True(t, tracked(), "ADD within the window must cancel the buffered remove")
+}
+
+// TestRemoveFile_NoFUSE_ExecutesAfterWindow: a buffered REMOVE with no
+// ADD/RENAME within the window executes and drops the tracked entry.
+func TestRemoveFile_NoFUSE_ExecutesAfterWindow(t *testing.T) {
+	st := synctracker.NewSyncTracker()
+	const filePath = "g.txt"
+	st.RemoteFilesMu.Lock()
+	st.RemoteFiles[filePath] = &synctracker.File{Name: filePath, RelativePath: filePath, Size: 100}
+	st.RemoteFilesMu.Unlock()
+
+	svc := &KeibidropServiceImpl{
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		FS:          nil, // non-FUSE path
+		SyncTracker: st,
+	}
+
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_REMOVE_FILE, Path: filePath,
+	})
+	require.NoError(t, err)
+
+	// Poll past the 1000ms window with a deadline so load cannot flake this.
+	require.Eventually(t, func() bool {
+		st.RemoteFilesMu.RLock()
+		defer st.RemoteFilesMu.RUnlock()
+		_, ok := st.RemoteFiles[filePath]
+		return !ok
+	}, 5*time.Second, 25*time.Millisecond, "buffered remove must execute after the window")
 }
