@@ -85,6 +85,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	// Handle DISCONNECT before FS checks — it doesn't need a mounted filesystem.
 	if req.Type == bindings.NotifyType_DISCONNECT {
 		logger.Info("Peer requested graceful disconnect")
+		kd.cancelAllPendingRemoves()
 		if kd.OnEvent != nil {
 			kd.OnEvent("peer_disconnected:")
 		}
@@ -156,11 +157,13 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			defer kd.SyncTracker.RemoteFilesMu.Unlock()
 			existing, ok := kd.SyncTracker.RemoteFiles[req.Path]
 			if ok {
-				// Reject stale ADD_FILE with smaller size — git's debounced
-				// notification for a temp file can arrive AFTER a RENAME
-				// already set the correct (larger) size.
-				if uint64(req.Attr.Size) < existing.Size {
-					logger.Info("Ignoring stale ADD_FILE with smaller size",
+				// A smaller size is usually a stale temp-file ADD arriving after a
+				// rename set the real size; those carry an older mtime, so reject
+				// only when older. A real shrink (git HEAD 25->21) is newer: accept.
+				// Strict <: equal-mtime shrink is accepted; reject only provably stale ADDs.
+				if uint64(req.Attr.Size) < existing.Size &&
+					req.Attr.ModificationTime < existing.LastEditTime {
+					logger.Info("Ignoring stale ADD_FILE (smaller, older mtime)",
 						"path", req.Path, "staleSize", req.Attr.Size, "currentSize", existing.Size)
 					return &bindings.NotifyResponse{}, nil
 				}
@@ -493,6 +496,18 @@ func (kd *KeibidropServiceImpl) cancelPendingRemove(path string) {
 	}
 }
 
+// cancelAllPendingRemoves stops every buffered remove (on disconnect). The
+// SyncTracker and FS outlive the session; a timer surviving into the next
+// session would remove a freshly re-synced file.
+func (kd *KeibidropServiceImpl) cancelAllPendingRemoves() {
+	kd.pendingRemovesMu.Lock()
+	defer kd.pendingRemovesMu.Unlock()
+	for _, t := range kd.pendingRemoves {
+		t.Stop()
+	}
+	kd.pendingRemoves = nil
+}
+
 // executeRemove performs the actual REMOVE_FILE logic (previously inline in Notify).
 func (kd *KeibidropServiceImpl) executeRemove(path string, logger *slog.Logger) {
 	if kd.FS != nil && kd.FS.Root != nil {
@@ -602,9 +617,6 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 	logger := kd.Logger.With("method", "server-read")
 
 	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
-		kd.SyncTracker.LocalFilesMu.RLock()
-		defer kd.SyncTracker.LocalFilesMu.RUnlock()
-
 		isOpen := false
 
 		var fh *os.File
@@ -637,17 +649,24 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				// Normalize: FUSE peers send "/filename", no-FUSE uses bare "filename".
 				// LocalFiles keys use bare names (from AddFile's finfo.Name()).
 				lookupPath := strings.TrimPrefix(rec.Path, "/")
+				// Lock only the lookup; copy the path and stream lock-free.
+				kd.SyncTracker.LocalFilesMu.RLock()
 				f, ok := kd.SyncTracker.LocalFiles[lookupPath]
 				if !ok {
 					// Fallback: try original path (e.g. full path stored by PullFile).
 					f, ok = kd.SyncTracker.LocalFiles[rec.Path]
 				}
+				var realPath string
+				if ok {
+					realPath = f.RealPathOfFile
+				}
+				kd.SyncTracker.LocalFilesMu.RUnlock()
 				if !ok {
 					logger.Warn("File not found", "rec", rec)
 					return status.Error(codes.NotFound, "file not found")
 				}
 
-				fh, err = os.Open(f.RealPathOfFile)
+				fh, err = os.Open(realPath)
 				if err != nil {
 					logger.Error("Failed to open real file", "error", err)
 					return status.Error(codes.Internal, "error accessing file")
