@@ -731,6 +731,13 @@ func (api *API) SetPeerDirectAddress(addr string) error {
 	return api.kd.SetPeerDirectAddress(addr)
 }
 
+// DecideLocalRole reports whether this device should create (true) or join (false)
+// a local-mode connection to peerName at peerAddr. Same decider as the desktop, so
+// the two sides break colliding discovery names the same way.
+func (api *API) DecideLocalRole(myName, peerName, peerAddr string) bool {
+	return common.DecideLocalRole(myName, peerName, peerAddr)
+}
+
 // GetConnectionMode returns the current connection mode: "lan", "direct", "bridge", or "" if not connected.
 func (api *API) GetConnectionMode() string {
 	if api.kd == nil {

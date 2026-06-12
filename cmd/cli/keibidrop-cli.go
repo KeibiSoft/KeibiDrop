@@ -591,7 +591,7 @@ func connectPeer(kd *common.KeibiDrop) {
 
 	// In local mode, use name-based tiebreak (same as mobile + Rust UI).
 	if kd.IsLocalMode && cliLocalMyName != "" && cliLocalPeerName != "" {
-		iAmCreator := cliLocalMyName < cliLocalPeerName
+		iAmCreator := common.DecideLocalRole(cliLocalMyName, cliLocalPeerName, kd.PeerIPv6IP)
 		role := "joiner"
 		if iAmCreator {
 			role = "creator"

@@ -903,10 +903,17 @@ fn main() {
                 let my_name = CStr::from_ptr(my_name_ptr).to_string_lossy().to_string();
                 println!("Selected peer: {} ({})", peer_name, addr);
 
-                // Deterministic tiebreaker: lower name = creator (listener), higher = joiner
-                let i_am_creator = my_name < peer_name;
-
+                // One decider in the Go core (same as the CLI + mobile): lower name creates,
+                // colliding names break the tie on LAN IPv4 so both sides never pick join.
+                let my_name_c = CString::new(my_name.clone()).unwrap();
+                let peer_name_c = CString::new(peer_name.clone()).unwrap();
                 let addr_c = CString::new(addr.clone()).unwrap();
+                let i_am_creator = bindings::KD_DecideLocalRole(
+                    my_name_c.as_ptr() as *mut i8,
+                    peer_name_c.as_ptr() as *mut i8,
+                    addr_c.as_ptr() as *mut i8,
+                ) != 0;
+
                 bindings::KD_SetPeerDirectAddress(addr_c.as_ptr() as *mut i8);
 
                 if let Some(app) = weak_peer_sel.upgrade() {

@@ -21,8 +21,8 @@ import (
 )
 
 // preferredLANIfaces lists interface-name prefixes to prefer when choosing a
-// LAN address — physical Wi-Fi/Ethernet ahead of anything else. Shared by
-// GetLinkLocalAddress and GetGlobalIPv6 (intentionally the same order).
+// LAN address: physical Wi-Fi/Ethernet first. Shared by GetLinkLocalAddress,
+// GetGlobalIPv6, and GetDiscoveryLANAddress (intentionally the same order).
 var preferredLANIfaces = []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp"}
 
 // GetLinkLocalAddress finds a link-local IPv6 address on this machine and
@@ -98,95 +98,130 @@ func GetLinkLocalAddress(port int) (string, error) {
 	return "", fmt.Errorf("no link-local or loopback IPv6 address found")
 }
 
-// ParsePeerDirectAddress parses a direct LAN peer address in the format
-// "ip%zone:port" (link-local) or "ip:port" (loopback). Returns the IP,
-// zone identifier, port number, and any error.
+// virtualIfacePrefixes names interface kinds whose address LAN peers never see
+// (Docker/VPN/bridges/AirDrop), so the discovery-address scan skips them.
+var virtualIfacePrefixes = []string{"docker", "veth", "br-", "br0", "tun", "tap", "utun", "virbr", "wg", "awdl", "llw"}
+
+func isVirtualIface(name string) bool {
+	for _, p := range virtualIfacePrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetDiscoveryLANAddress returns this machine's private IPv4 on a preferred LAN
+// interface, in the same form peers see it via discovery. The local-connect
+// tiebreak uses it so equal names compare IPv4-vs-IPv4 (symmetric). Returns ""
+// when no private IPv4 is available.
+func GetDiscoveryLANAddress() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	pick := func(prefix string) string {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+			if isVirtualIface(iface.Name) {
+				continue
+			}
+			if prefix != "" && !strings.HasPrefix(iface.Name, prefix) {
+				continue
+			}
+			addrs, _ := iface.Addrs()
+			for _, addr := range addrs {
+				ip, _, err := net.ParseCIDR(addr.String())
+				if err != nil {
+					continue
+				}
+				if v4 := ip.To4(); v4 != nil && ip.IsPrivate() {
+					return v4.String()
+				}
+			}
+		}
+		return ""
+	}
+	for _, pref := range preferredLANIfaces {
+		if ip := pick(pref); ip != "" {
+			return ip
+		}
+	}
+	return pick("")
+}
+
+// ParsePeerDirectAddress parses a direct LAN peer address in any form the
+// codebase produces or stores: "ip", "ip:port", "ip%zone", "ip%zone:port",
+// "[ip]:port", or "[ip%zone]:port". Returns the bare IP with the zone always
+// split off into zone ("" when absent) and the port (0 when absent). The IP
+// must be link-local, loopback, or private; IPv6 link-local requires a zone.
 func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err error) {
 	if addr == "" {
 		return "", "", 0, fmt.Errorf("empty address")
 	}
 
-	// If there is a zone (%...), the format is: ip%zone:port
-	// Split on % first to detect zone presence.
-	if idx := strings.Index(addr, "%"); idx != -1 {
-		ipPart := addr[:idx]
-		rest := addr[idx+1:] // "zone:port"
-
-		lastColon := strings.LastIndex(rest, ":")
-		if lastColon == -1 {
+	host := addr
+	portStr := ""
+	pct := strings.Index(addr, "%")
+	colon := strings.LastIndex(addr, ":")
+	switch {
+	case strings.HasPrefix(addr, "["):
+		// Bracketed "[ip]:port" or "[ip%zone]:port".
+		host, portStr, err = net.SplitHostPort(addr)
+		if err != nil {
+			return "", "", 0, fmt.Errorf("invalid address %q: %w", addr, err)
+		}
+	case net.ParseIP(addr) != nil:
+		// Bare IP, no zone, no port.
+	case colon > pct:
+		// "ipv4:port", "ip%zone:port", or unbracketed "ipv6:port" such as
+		// "::1:26431": zones hold no colons, so the last colon splits the port.
+		if colon == 0 {
+			return "", "", 0, fmt.Errorf("invalid address format %q", addr)
+		}
+		host, portStr = addr[:colon], addr[colon+1:]
+		if portStr == "" {
 			return "", "", 0, fmt.Errorf("missing port in address %q", addr)
 		}
-		zone = rest[:lastColon]
-		portStr := rest[lastColon+1:]
+	case pct != -1:
+		// "ip%zone" without port, as stored by SetPeerDirectAddress.
+	default:
+		return "", "", 0, fmt.Errorf("invalid address format %q", addr)
+	}
 
+	// Split the zone off the host, if any.
+	var zoned bool
+	ip, zone, zoned = strings.Cut(host, "%")
+	if zoned && zone == "" {
+		return "", "", 0, fmt.Errorf("empty zone in address %q", addr)
+	}
+
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return "", "", 0, fmt.Errorf("invalid IP %q", ip)
+	}
+	// IPv4 with zone makes no sense, but accept for consistency.
+	if !parsedIP.IsLinkLocalUnicast() && !parsedIP.IsLoopback() && !parsedIP.IsPrivate() {
+		return "", "", 0, fmt.Errorf("address must be link-local, loopback, or private: %q", ip)
+	}
+	// A zoneless IPv6 link-local is ambiguous and undialable.
+	if parsedIP.To4() == nil && parsedIP.IsLinkLocalUnicast() && zone == "" {
+		return "", "", 0, fmt.Errorf("link-local address requires zone ID (%%iface): %q", addr)
+	}
+
+	if portStr != "" {
 		port, err = strconv.Atoi(portStr)
 		if err != nil {
 			return "", "", 0, fmt.Errorf("invalid port %q: %w", portStr, err)
 		}
-
-		parsedIP := net.ParseIP(ipPart)
-		if parsedIP == nil {
-			return "", "", 0, fmt.Errorf("invalid IP %q", ipPart)
-		}
-		// IPv4 with zone makes no sense, but accept for consistency.
-		if !parsedIP.IsLinkLocalUnicast() && !parsedIP.IsLoopback() && !parsedIP.IsPrivate() {
-			return "", "", 0, fmt.Errorf("address must be link-local, loopback, or private: %q", ipPart)
-		}
-
 		if !config.ValidPeerPort(port) {
 			return "", "", 0, fmt.Errorf("port %d out of range %d-%d", port, config.MinPeerPort, config.MaxPeerPort)
 		}
-
-		return ipPart, zone, port, nil
 	}
 
-	// No zone: could be IPv4 (192.168.x.x:port), loopback (::1:port),
-	// or ambiguous link-local.
-	// For fe80, require a zone — reject as ambiguous.
-	if strings.HasPrefix(addr, "fe80") {
-		return "", "", 0, fmt.Errorf("link-local address requires zone ID (%%iface): %q", addr)
-	}
-
-	lastColon := strings.LastIndex(addr, ":")
-	if lastColon == -1 || lastColon == 0 {
-		return "", "", 0, fmt.Errorf("invalid address format %q", addr)
-	}
-
-	ipPart := addr[:lastColon]
-	portStr := addr[lastColon+1:]
-
-	if portStr == "" {
-		return "", "", 0, fmt.Errorf("missing port in address %q", addr)
-	}
-
-	port, err = strconv.Atoi(portStr)
-	if err != nil {
-		return "", "", 0, fmt.Errorf("invalid port %q: %w", portStr, err)
-	}
-
-	parsedIP := net.ParseIP(ipPart)
-	if parsedIP == nil {
-		return "", "", 0, fmt.Errorf("invalid IP %q", ipPart)
-	}
-	// Accept IPv4 private addresses for LAN discovery
-	if parsedIP.To4() != nil {
-		if !parsedIP.IsPrivate() && !parsedIP.IsLoopback() {
-			return "", "", 0, fmt.Errorf("IPv4 address must be private or loopback: %q", ipPart)
-		}
-		if !config.ValidPeerPort(port) {
-			return "", "", 0, fmt.Errorf("port %d out of range %d-%d", port, config.MinPeerPort, config.MaxPeerPort)
-		}
-		return ipPart, "", port, nil
-	}
-	if !parsedIP.IsLoopback() {
-		return "", "", 0, fmt.Errorf("non-loopback address without zone ID: %q", ipPart)
-	}
-
-	if !config.ValidPeerPort(port) {
-		return "", "", 0, fmt.Errorf("port %d out of range %d-%d", port, config.MinPeerPort, config.MaxPeerPort)
-	}
-
-	return ipPart, "", port, nil
+	return ip, zone, port, nil
 }
 
 func GetLocalIPv6() (string, error) {
