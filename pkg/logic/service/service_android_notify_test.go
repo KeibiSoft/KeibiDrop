@@ -1,5 +1,5 @@
-// ABOUTME: Tests for Android Notify handler: EDIT create-on-miss, RENAME
-// ABOUTME: resilience (size update + create-on-miss), and OnEvent emission.
+// ABOUTME: Tests for the Android Notify handler: ADD stale-guard, REMOVE
+// ABOUTME: debounce, EDIT/RENAME resilience, and OnEvent emission.
 
 //go:build android
 
@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
@@ -82,6 +83,44 @@ func TestNotify_EditFile_UpdatesExistingEntry(t *testing.T) {
 	require.NotNil(t, f)
 	assert.Equal(t, uint64(200), f.Size)
 	assert.Equal(t, uint64(2000), f.LastEditTime)
+}
+
+func TestNotify_Remove_BufferedThenCancelledByAdd(t *testing.T) {
+	svc := newTestService()
+	svc.SyncTracker.RemoteFiles["f.txt"] = &synctracker.File{Name: "f.txt", RelativePath: "f.txt", Size: 100}
+
+	// REMOVE is buffered, not applied immediately.
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{Type: bindings.NotifyType_REMOVE_FILE, Path: "f.txt"})
+	require.NoError(t, err)
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	_, ok := svc.SyncTracker.RemoteFiles["f.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+	assert.True(t, ok, "REMOVE should be buffered, file still present")
+
+	// An ADD for the same path within the window cancels the buffered remove.
+	_, err = svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: "f.txt", Name: "f.txt",
+		Attr: &bindings.Attr{Size: 100, ModificationTime: 1},
+	})
+	require.NoError(t, err)
+	time.Sleep(1200 * time.Millisecond)
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	_, ok = svc.SyncTracker.RemoteFiles["f.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+	assert.True(t, ok, "ADD within the window must cancel the buffered remove")
+}
+
+func TestNotify_Remove_ExecutesAfterWindow(t *testing.T) {
+	svc := newTestService()
+	svc.SyncTracker.RemoteFiles["g.txt"] = &synctracker.File{Name: "g.txt", RelativePath: "g.txt", Size: 100}
+
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{Type: bindings.NotifyType_REMOVE_FILE, Path: "g.txt"})
+	require.NoError(t, err)
+	time.Sleep(1200 * time.Millisecond)
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	_, ok := svc.SyncTracker.RemoteFiles["g.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+	assert.False(t, ok, "buffered remove must execute after the window")
 }
 
 func TestNotify_RenameFile_UpdatesSizeFromAttr(t *testing.T) {
@@ -215,4 +254,48 @@ func TestNotify_EditFile_EmitsFileArrivedEvent(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "file_arrived:doc.txt:200", received)
+}
+
+func TestNotify_AddFile_RejectsStaleSmallerOlder(t *testing.T) {
+	svc := newTestService()
+	svc.SyncTracker.RemoteFiles["f.txt"] = &synctracker.File{
+		Name: "f.txt", RelativePath: "f.txt", Size: 100, LastEditTime: 2000,
+	}
+
+	// A stale temp-file ADD: smaller AND older than what we have. Reject it.
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: "f.txt", Name: "f.txt",
+		Attr: &bindings.Attr{Size: 50, ModificationTime: 1000},
+	})
+	require.NoError(t, err)
+
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	f := svc.SyncTracker.RemoteFiles["f.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+
+	require.NotNil(t, f)
+	assert.Equal(t, uint64(100), f.Size, "stale smaller+older ADD must be ignored")
+	assert.Equal(t, uint64(2000), f.LastEditTime)
+}
+
+func TestNotify_AddFile_AcceptsSmallerNewer(t *testing.T) {
+	svc := newTestService()
+	svc.SyncTracker.RemoteFiles["f.txt"] = &synctracker.File{
+		Name: "f.txt", RelativePath: "f.txt", Size: 100, LastEditTime: 1000,
+	}
+
+	// A real shrink (e.g. git HEAD 100->50) carries a newer mtime. Accept it.
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_ADD_FILE, Path: "f.txt", Name: "f.txt",
+		Attr: &bindings.Attr{Size: 50, ModificationTime: 2000},
+	})
+	require.NoError(t, err)
+
+	svc.SyncTracker.RemoteFilesMu.RLock()
+	f := svc.SyncTracker.RemoteFiles["f.txt"]
+	svc.SyncTracker.RemoteFilesMu.RUnlock()
+
+	require.NotNil(t, f)
+	assert.Equal(t, uint64(50), f.Size, "real shrink with newer mtime must be accepted")
+	assert.Equal(t, uint64(2000), f.LastEditTime)
 }
