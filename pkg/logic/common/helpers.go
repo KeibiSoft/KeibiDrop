@@ -192,12 +192,10 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 	}
 
 	// Split the zone off the host, if any.
-	ip = host
-	if i := strings.Index(host, "%"); i != -1 {
-		ip, zone = host[:i], host[i+1:]
-		if zone == "" {
-			return "", "", 0, fmt.Errorf("empty zone in address %q", addr)
-		}
+	var zoned bool
+	ip, zone, zoned = strings.Cut(host, "%")
+	if zoned && zone == "" {
+		return "", "", 0, fmt.Errorf("empty zone in address %q", addr)
 	}
 
 	parsedIP := net.ParseIP(ip)
