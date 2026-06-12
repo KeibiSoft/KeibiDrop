@@ -30,6 +30,9 @@ ios/
 android/
 KeibiDrop.xcframework/
 keibidrop.aar
+keibidrop-sources.jar
+go.mod.bak
+go.sum.bak
 
 # IDE
 .idea/

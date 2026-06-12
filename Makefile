@@ -217,15 +217,17 @@ MOBILE_REPO ?= ../KeibiDropMobile
 # go.mod transiently (restored after) so the committed go.mod stays in sync with origin.
 GO_MOD_VERSION := $(shell awk '/^go /{print $$2; exit}' go.mod)
 MOBILE_GOTOOLCHAIN ?= go$(GO_MOD_VERSION)
-MOBILE_PREP = cp go.mod go.mod.bak && cp go.sum go.sum.bak && trap 'mv -f go.mod.bak go.mod; mv -f go.sum.bak go.sum' EXIT && GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go mod edit -tool=golang.org/x/mobile/cmd/gobind
+MOBILE_PREP = cp go.mod go.mod.bak && cp go.sum go.sum.bak && trap '[ -f go.mod.bak ] && mv -f go.mod.bak go.mod; [ -f go.sum.bak ] && mv -f go.sum.bak go.sum; :' EXIT INT TERM && GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go mod edit -tool=golang.org/x/mobile/cmd/gobind
 
-# Install gomobile (run once, or when 'gomobile version' says it's out of date).
+# Install gomobile + gobind (run once, or when 'gomobile version' says it's out of date).
 mobile-tools:
 	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go install golang.org/x/mobile/cmd/gomobile@latest
+	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go install golang.org/x/mobile/cmd/gobind@latest
 
 build-ios:
 	@$(MOBILE_PREP) && \
 	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) GOFLAGS="-mod=mod" \
+	PATH="$$PATH:$$(go env GOPATH)/bin" \
 	gomobile bind -target=ios -o KeibiDrop.xcframework ./mobile
 	rm -rf ios/KeibiDrop/KeibiDrop.xcframework
 	cp -r KeibiDrop.xcframework ios/KeibiDrop/KeibiDrop.xcframework
@@ -242,6 +244,7 @@ build-android:
 	@$(MOBILE_PREP) && \
 	ANDROID_HOME=$(ANDROID_HOME) ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) \
 	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) GOFLAGS="-mod=mod" \
+	PATH="$$PATH:$$(go env GOPATH)/bin" \
 	gomobile bind -target=android -androidapi 28 -o keibidrop.aar ./mobile
 
 # Sync mobile app source + frameworks to the private KeibiDropMobile repo.
@@ -384,6 +387,7 @@ help:
 	@echo "  make checksums              SHA256SUMS for dist/"
 	@echo ""
 	@echo "Mobile:"
+	@echo "  make mobile-tools           Install gomobile + gobind (once)"
 	@echo "  make build-ios              Build iOS framework (.xcframework)"
 	@echo "  make build-android          Build Android library (.aar)"
 	@echo "  make run-ios-sim            Build + run on iOS Simulator"
@@ -444,6 +448,6 @@ android-deploy: build-android
         run-cli-alice run-cli-bob \
         run-kd-alice run-kd-bob \
         run-bridge-alice run-bridge-bob run-bridge-alice-fuse run-bridge-bob-fuse \
-        build-ios build-android run-ios-sim run-android-emu sync-mobile \
+        mobile-tools build-ios build-android run-ios-sim run-android-emu sync-mobile \
         wan-deploy wan-clean wan-start wan-benchmark wan-test help \
         android-push-clip android-pull-clip android-deploy
