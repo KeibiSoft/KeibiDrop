@@ -85,6 +85,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	// Handle DISCONNECT before FS checks — it doesn't need a mounted filesystem.
 	if req.Type == bindings.NotifyType_DISCONNECT {
 		logger.Info("Peer requested graceful disconnect")
+		kd.cancelAllPendingRemoves()
 		if kd.OnEvent != nil {
 			kd.OnEvent("peer_disconnected:")
 		}
@@ -493,6 +494,18 @@ func (kd *KeibidropServiceImpl) cancelPendingRemove(path string) {
 		delete(kd.pendingRemoves, path)
 		kd.Logger.Info("Cancelled buffered remove (ADD/RENAME arrived)", "path", path)
 	}
+}
+
+// cancelAllPendingRemoves stops every buffered remove (on disconnect). The
+// SyncTracker and FS outlive the session; a timer surviving into the next
+// session would remove a freshly re-synced file.
+func (kd *KeibidropServiceImpl) cancelAllPendingRemoves() {
+	kd.pendingRemovesMu.Lock()
+	defer kd.pendingRemovesMu.Unlock()
+	for _, t := range kd.pendingRemoves {
+		t.Stop()
+	}
+	kd.pendingRemoves = nil
 }
 
 // executeRemove performs the actual REMOVE_FILE logic (previously inline in Notify).

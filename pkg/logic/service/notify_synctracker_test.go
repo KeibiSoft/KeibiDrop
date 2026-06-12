@@ -347,3 +347,36 @@ func TestRemoveFile_NoFUSE_ExecutesAfterWindow(t *testing.T) {
 		return !ok
 	}, 5*time.Second, 25*time.Millisecond, "buffered remove must execute after the window")
 }
+
+// TestRemoveFile_NoFUSE_DisconnectCancelsPendingRemoves: a graceful DISCONNECT
+// cancels buffered removes; the tracker outlives the session, so a surviving
+// timer would delete a file re-synced by the next session.
+func TestRemoveFile_NoFUSE_DisconnectCancelsPendingRemoves(t *testing.T) {
+	st := synctracker.NewSyncTracker()
+	const filePath = "h.txt"
+	st.RemoteFilesMu.Lock()
+	st.RemoteFiles[filePath] = &synctracker.File{Name: filePath, RelativePath: filePath, Size: 100}
+	st.RemoteFilesMu.Unlock()
+
+	svc := &KeibidropServiceImpl{
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		FS:          nil, // non-FUSE path
+		SyncTracker: st,
+	}
+
+	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_REMOVE_FILE, Path: filePath,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.Notify(context.Background(), &bindings.NotifyRequest{
+		Type: bindings.NotifyType_DISCONNECT,
+	})
+	require.NoError(t, err)
+
+	time.Sleep(1200 * time.Millisecond)
+	st.RemoteFilesMu.RLock()
+	_, ok := st.RemoteFiles[filePath]
+	st.RemoteFilesMu.RUnlock()
+	assert.True(t, ok, "DISCONNECT must cancel the buffered remove")
+}
