@@ -105,6 +105,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			// A smaller size is usually a stale temp-file ADD arriving after a
 			// rename set the real size; those carry an older mtime, so reject
 			// only when older. A real shrink (git HEAD 25->21) is newer: accept.
+			// Strict <: equal-mtime shrink is accepted; reject only provably stale ADDs.
 			if uint64(req.Attr.Size) < existing.Size &&
 				req.Attr.ModificationTime < existing.LastEditTime {
 				logger.Info("Ignoring stale ADD_FILE (smaller, older mtime)",
@@ -172,6 +173,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 	case bindings.NotifyType_REMOVE_FILE:
 		// Buffer the remove; a quick ADD/RENAME for the same path cancels it.
+		logger.Info("Buffering remove (1000ms)", "path", req.Path)
 		kd.bufferRemove(req.Path, logger)
 
 	case bindings.NotifyType_RENAME_FILE:
@@ -220,6 +222,8 @@ func (kd *KeibidropServiceImpl) bufferRemove(path string, logger *slog.Logger) {
 		kd.pendingRemovesMu.Lock()
 		delete(kd.pendingRemoves, path)
 		kd.pendingRemovesMu.Unlock()
+
+		logger.Info("Executing buffered remove (no ADD/RENAME arrived)", "path", path)
 		kd.executeRemove(path, logger)
 	})
 }
@@ -232,6 +236,7 @@ func (kd *KeibidropServiceImpl) cancelPendingRemove(path string) {
 	if t, ok := kd.pendingRemoves[path]; ok {
 		t.Stop()
 		delete(kd.pendingRemoves, path)
+		kd.Logger.Info("Cancelled buffered remove (ADD/RENAME arrived)", "path", path)
 	}
 }
 
@@ -247,6 +252,9 @@ func (kd *KeibidropServiceImpl) cancelAllPendingRemoves() {
 
 // executeRemove drops the file from the sync tracker (android has no FUSE).
 func (kd *KeibidropServiceImpl) executeRemove(path string, logger *slog.Logger) {
+	if kd.SyncTracker == nil {
+		return
+	}
 	kd.SyncTracker.RemoteFilesMu.Lock()
 	delete(kd.SyncTracker.RemoteFiles, path)
 	kd.SyncTracker.RemoteFilesMu.Unlock()
