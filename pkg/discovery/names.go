@@ -51,3 +51,10 @@ func generateName() string {
 	noun := nouns[rand.IntN(len(nouns))]          // #nosec G404
 	return fmt.Sprintf("%s %s", adj, noun)
 }
+
+// generateInstanceID returns a random 128-bit per-session id as 32 hex chars. It
+// only needs to be unique on the LAN, not unpredictable, so it shares the name
+// generator's non-crypto source.
+func generateInstanceID() string {
+	return fmt.Sprintf("%016x%016x", rand.Uint64(), rand.Uint64()) // #nosec G404
+}
