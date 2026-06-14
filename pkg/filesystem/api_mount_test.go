@@ -38,3 +38,21 @@ func TestMount_TrailingSlashCleansToDot_ReturnsError(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestIsWindowsDirMountPoint(t *testing.T) {
+	cases := []struct {
+		goos, p string
+		want    bool
+	}{
+		{"windows", `C:\kd\mnt`, true}, // directory mount point: must be absent for WinFSP
+		{"windows", "K:", false},       // bare drive letter: leave alone
+		{"windows", "Z:", false},
+		{"linux", "/home/u/mnt", false}, // non-Windows: not handled here
+		{"darwin", "/Users/u/mnt", false},
+	}
+	for _, c := range cases {
+		if got := isWindowsDirMountPoint(c.goos, c.p); got != c.want {
+			t.Errorf("isWindowsDirMountPoint(%q, %q) = %v, want %v", c.goos, c.p, got, c.want)
+		}
+	}
+}

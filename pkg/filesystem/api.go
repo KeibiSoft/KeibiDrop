@@ -98,6 +98,14 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		return fmt.Errorf("invalid mount point %q", mountPoint)
 	}
 
+	// WinFSP rejects an existing mount path; clear a stale empty dir left by a crash or
+	// older build. os.Remove only deletes an empty dir, so no data is lost.
+	if isWindowsDirMountPoint(runtime.GOOS, cleanMountPoint) {
+		if fi, statErr := os.Stat(cleanMountPoint); statErr == nil && fi.IsDir() {
+			_ = os.Remove(cleanMountPoint)
+		}
+	}
+
 	root := &Dir{
 		logger: fs.logger.With("mount", "root"),
 		Inode:  0,
@@ -157,10 +165,19 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		fs.host = nil
 		fs.Root = nil
 		fs.logger.Error("FUSE Mount failed", "mountPoint", cleanMountPoint)
-		return fmt.Errorf("FUSE mount failed for %s: ensure user_allow_other is set in /etc/fuse.conf, or run with KD_NO_FUSE=1", cleanMountPoint)
+		hint := "ensure user_allow_other is set in /etc/fuse.conf, or run with KD_NO_FUSE=1"
+		if runtime.GOOS == "windows" {
+			hint = "ensure WinFSP is installed and the mount point does not already exist, or run with KD_NO_FUSE=1"
+		}
+		return fmt.Errorf("FUSE mount failed for %s: %s", cleanMountPoint, hint)
 	}
 	fs.logger.Warn("FUSE Mount completed", "mountPoint", cleanMountPoint)
 	return nil
+}
+
+// isWindowsDirMountPoint is true for a Windows mount path that is a dir, not a drive ("K:").
+func isWindowsDirMountPoint(goos, p string) bool {
+	return goos == "windows" && (len(p) != 2 || p[1] != ':')
 }
 
 func (fs *FS) Unmount() {
