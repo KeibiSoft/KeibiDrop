@@ -84,3 +84,17 @@ func TestSaveLoad_PrefetchOnOpenPersists(t *testing.T) {
 		t.Errorf("prefetch_auto_mb did not persist: got %d want 250", got.PrefetchAutoMB)
 	}
 }
+
+func TestDirectoriesToEnsure_SkipsMountPathOnWindows(t *testing.T) {
+	cfg := Config{SavePath: "/save", MountPath: "/mnt", LogFile: "/logs/kd.log"}
+
+	win := directoriesToEnsure(cfg, "windows")
+	for _, d := range win {
+		if d == cfg.MountPath {
+			t.Fatalf("windows must not pre-create mount_path: %v", win)
+		}
+	}
+	if other := directoriesToEnsure(cfg, "linux"); other[len(other)-1] != cfg.MountPath {
+		t.Fatalf("non-windows must create mount_path: %v", other)
+	}
+}

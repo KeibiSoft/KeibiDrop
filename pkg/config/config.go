@@ -113,10 +113,11 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// EnsureDirectories creates save_path, mount_path, and log directory if they don't exist.
+// EnsureDirectories creates save_path, the log dir, and (except on Windows) mount_path:
+// WinFSP makes the mount point itself and rejects an existing path, while libfuse and
+// macFUSE require it to exist.
 func EnsureDirectories(cfg Config) error {
-	dirs := []string{cfg.SavePath, cfg.MountPath, filepath.Dir(cfg.LogFile)}
-	for _, d := range dirs {
+	for _, d := range directoriesToEnsure(cfg, runtime.GOOS) {
 		if d == "" {
 			continue
 		}
@@ -125,6 +126,15 @@ func EnsureDirectories(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+// directoriesToEnsure returns the dirs to create; mount_path is excluded on Windows.
+func directoriesToEnsure(cfg Config, goos string) []string {
+	dirs := []string{cfg.SavePath, filepath.Dir(cfg.LogFile)}
+	if goos != "windows" {
+		dirs = append(dirs, cfg.MountPath)
+	}
+	return dirs
 }
 
 // WriteDefault creates a default config file with comments at the standard path.
