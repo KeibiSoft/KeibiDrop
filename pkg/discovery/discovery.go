@@ -33,6 +33,7 @@ type Beacon struct {
 	Name string `json:"n"`           // random two-word name (e.g., "Cosmic Waffle")
 	Port int    `json:"p"`           // TCP listening port for KeibiDrop
 	Ver  int    `json:"v,omitempty"` // protocol version (1)
+	ID   string `json:"i,omitempty"` // random per-session id; self-filter uses this, not Name
 }
 
 // Peer represents a discovered peer on the LAN.
@@ -44,9 +45,10 @@ type Peer struct {
 
 // Service handles both advertising and browsing for KeibiDrop peers.
 type Service struct {
-	name   string
-	port   int
-	logger *slog.Logger
+	name       string
+	instanceID string
+	port       int
+	logger     *slog.Logger
 
 	mu      sync.RWMutex
 	peers   map[string]*Peer // keyed by addr
@@ -57,10 +59,11 @@ type Service struct {
 // New creates a discovery service with a random two-word name.
 func New(port int, logger *slog.Logger) *Service {
 	return &Service{
-		name:   generateName(),
-		port:   port,
-		logger: logger.With("component", "discovery"),
-		peers:  make(map[string]*Peer),
+		name:       generateName(),
+		instanceID: generateInstanceID(),
+		port:       port,
+		logger:     logger.With("component", "discovery"),
+		peers:      make(map[string]*Peer),
 	}
 }
 
@@ -137,6 +140,11 @@ func (s *Service) Peers() []Peer {
 	return result
 }
 
+// beacon returns the advertisement this service broadcasts on the LAN.
+func (s *Service) beacon() Beacon {
+	return Beacon{Name: s.name, Port: s.port, Ver: 1, ID: s.instanceID}
+}
+
 func (s *Service) advertise(ctx context.Context) {
 	addr, err := net.ResolveUDPAddr("udp4", multicastAddr)
 	if err != nil {
@@ -151,8 +159,7 @@ func (s *Service) advertise(ctx context.Context) {
 	}
 	defer conn.Close()
 
-	beacon := Beacon{Name: s.name, Port: s.port, Ver: 1}
-	data, _ := json.Marshal(beacon)
+	data, _ := json.Marshal(s.beacon())
 
 	ticker := time.NewTicker(beaconInterval)
 	defer ticker.Stop()
@@ -168,6 +175,12 @@ func (s *Service) advertise(ctx context.Context) {
 			_, _ = conn.Write(data)
 		}
 	}
+}
+
+// isSelfBeacon reports whether a received beacon came from this service. The ID is
+// a random per-session value, so a same-named peer (different ID) is not self.
+func isSelfBeacon(b Beacon, myID string) bool {
+	return b.ID != "" && b.ID == myID
 }
 
 func (s *Service) listen(ctx context.Context) {
@@ -208,8 +221,9 @@ func (s *Service) listen(ctx context.Context) {
 			continue
 		}
 
-		// Skip our own beacons.
-		if beacon.Name == s.name {
+		// Skip our own beacons (matched by stable per-session id, not name, so a
+		// peer that randomly picked the same name is still discovered).
+		if isSelfBeacon(beacon, s.instanceID) {
 			continue
 		}
 

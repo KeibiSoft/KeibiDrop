@@ -155,3 +155,49 @@ func TestClearPeers_FreshBeaconsAppear(t *testing.T) {
 		t.Errorf("expected name 'Fresh Otter', got %q", peers[0].Name)
 	}
 }
+
+func TestIsSelfBeacon(t *testing.T) {
+	const myID = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+	cases := []struct {
+		desc string
+		b    Beacon
+		want bool
+	}{
+		{"own beacon, same id", Beacon{Name: "Cosmic Waffle", ID: myID}, true},
+		// Same display name but a different id is a real peer, not self. This is
+		// the collision the name-only filter used to drop.
+		{"same name, different id", Beacon{Name: "Cosmic Waffle", ID: "ffffffffffffffffffffffffffffffff"}, false},
+		{"legacy peer, no id", Beacon{Name: "Cosmic Waffle", ID: ""}, false},
+		{"different name and id", Beacon{Name: "Swift Penguin", ID: "ffffffffffffffffffffffffffffffff"}, false},
+	}
+	for _, c := range cases {
+		if got := isSelfBeacon(c.b, myID); got != c.want {
+			t.Errorf("%s: isSelfBeacon = %v, want %v", c.desc, got, c.want)
+		}
+	}
+}
+
+func TestGenerateInstanceID(t *testing.T) {
+	id := generateInstanceID()
+	if len(id) != 32 {
+		t.Errorf("len(id) = %d, want 32 hex chars", len(id))
+	}
+	if id == generateInstanceID() {
+		t.Error("two calls returned the same id")
+	}
+}
+
+func TestServiceBeaconCarriesInstanceID(t *testing.T) {
+	s := New(26001, slog.Default())
+	b := s.beacon()
+	if b.Name != s.name || b.Port != s.port {
+		t.Errorf("beacon = %+v, want name=%q port=%d", b, s.name, s.port)
+	}
+	if b.ID == "" || b.ID != s.instanceID {
+		t.Errorf("beacon.ID = %q, want service instanceID %q", b.ID, s.instanceID)
+	}
+	// A second service must advertise a different id so same-named peers differ.
+	if s2 := New(26001, slog.Default()); s2.beacon().ID == b.ID {
+		t.Error("two services share an instance id")
+	}
+}
