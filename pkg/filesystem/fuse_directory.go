@@ -1916,6 +1916,68 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	return n
 }
 
+// errBlockFetchIncomplete settles a read-ahead block whose leader exited without
+// caching it (panic, early return, or write failure), so waiters re-fetch.
+var errBlockFetchIncomplete = errors.New("read-ahead block fetch did not complete")
+
+// blockFetch coalesces concurrent on-demand fetches of the same read-ahead
+// block. The leader fetches the block and writes it to cache, then settles;
+// waiters read the cached block instead of fetching it over the network again.
+type blockFetch struct {
+	done chan struct{}
+	err  error // Published by settle(); read only via wait(), after done.
+	once sync.Once
+}
+
+// settle records the result and wakes waiters, exactly once. Idempotent, so the
+// normal finish and a panic backstop can both call it without double-closing done.
+func (bf *blockFetch) settle(err error) {
+	bf.once.Do(func() {
+		bf.err = err
+		close(bf.done)
+	})
+}
+
+// wait blocks until the block is settled or ctx is cancelled. err is read only
+// after done is observed (closed by settle), so it needs no lock; settled is
+// false when ctx cancelled first.
+func (bf *blockFetch) wait(ctx context.Context) (settled bool, err error) {
+	select {
+	case <-bf.done:
+		return true, bf.err
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
+// beginBlockFetch registers the caller as the leader for the block at start, or
+// returns the existing in-flight fetch to wait on. Caller must hold no other lock.
+func (f *File) beginBlockFetch(start int64) (bf *blockFetch, leader bool) {
+	f.fetchMu.Lock()
+	defer f.fetchMu.Unlock()
+	if f.inflight == nil {
+		f.inflight = make(map[int64]*blockFetch)
+	}
+	if bf = f.inflight[start]; bf != nil {
+		return bf, false
+	}
+	bf = &blockFetch{done: make(chan struct{})}
+	f.inflight[start] = bf
+	return bf, true
+}
+
+// finishBlockFetch settles the block and drops its in-flight entry. The delete is
+// conditional so a late or backstop call cannot evict a newer leader's entry, and
+// settle is idempotent, so calling this more than once for the same block is safe.
+func (f *File) finishBlockFetch(start int64, bf *blockFetch, err error) {
+	f.fetchMu.Lock()
+	if f.inflight[start] == bf {
+		delete(f.inflight, start)
+	}
+	f.fetchMu.Unlock()
+	bf.settle(err)
+}
+
 func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Read", &errCode)
 	logger := d.logger.With("method", "read", "path", path, "fh", fh, "offset", offset)
@@ -1989,15 +2051,30 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 		// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "remote")
 
-		// CHUNK-ALIGNED on-demand fetch. We fetch the whole ChunkSize block(s)
-		// covering the request so the cache holds — and the bitmap only ever
-		// marks — COMPLETE chunks. Fetching a sub-chunk range and marking the
-		// whole 512 KiB chunk "present" was the random-seek corruption bug: a
-		// later read elsewhere in that chunk took the HasRange fast path and
-		// served sparse-hole zeros from the pre-allocated cache file.
+		// On-demand READ-AHEAD. A miss fetches a whole ReadAheadBlock (16 MiB),
+		// aligned to a fixed grid, in one round trip and caches it; the next reads
+		// in that block are then served locally. Block bounds are multiples of
+		// ChunkSize, so the cache holds, and the bitmap only ever marks, COMPLETE
+		// chunks. Marking a partially-written chunk "present" was the random-seek
+		// corruption bug: a later read in that chunk took the HasRange fast path
+		// and served sparse-hole zeros from the pre-allocated cache file.
 		cs := int64(ChunkSize)
-		fetchStart := (offset / cs) * cs
-		fetchEnd := ((offset + int64(len(buff)) + cs - 1) / cs) * cs
+		ra := int64(ReadAheadBlock)
+		reqEnd := offset + int64(len(buff))
+
+		// Fetch the block containing this read. A read that straddles the block
+		// boundary (rare: only within one read of a 16 MiB edge) falls back to a
+		// chunk-aligned fetch of just the request, so we never short-read mid-file
+		// and never split the response across two gRPC messages.
+		blockStart := (offset / ra) * ra
+		fetchStart := blockStart
+		fetchEnd := blockStart + ra
+		coalesce := true
+		if reqEnd > fetchEnd {
+			fetchStart = (offset / cs) * cs
+			fetchEnd = ((reqEnd + cs - 1) / cs) * cs
+			coalesce = false
+		}
 		if remoteFileSize > 0 && fetchEnd > remoteFileSize {
 			fetchEnd = remoteFileSize
 		}
@@ -2006,12 +2083,61 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			return 0
 		}
 
+		// Singleflight: concurrent and follow-on reads of the same block wait for
+		// the leader's fetch to land in cache instead of each re-fetching 16 MiB.
+		var bf *blockFetch
+		isLeader := false
+		if coalesce && cacheFD != nil {
+			var leader bool
+			bf, leader = f.beginBlockFetch(blockStart)
+			if !leader {
+				settled, err := bf.wait(d.FsCtx)
+				// Serve from cache only if the leader actually cached our exact
+				// span. A short block (remote truncation / EOF race) leaves the
+				// tail unmarked, so HasRange catches it and we fetch it ourselves
+				// rather than read a sparse hole.
+				if settled && err == nil && bitmap != nil && bitmap.HasRange(offset, len(buff)) {
+					n, preadErr := platPread(fd, buff, offset)
+					if preadErr != nil {
+						logger.Error("Local pread failed after block-fetch wait", "error", preadErr)
+						return int(convertOsErrToSyscallErrno("pread", preadErr))
+					}
+					if remoteFileSize > 0 && offset+int64(n) > remoteFileSize {
+						n = int(remoteFileSize - offset)
+						if n < 0 {
+							n = 0
+						}
+					}
+					return n
+				}
+				if !settled {
+					return 0 // Context cancelled while waiting.
+				}
+				// Leader failed or returned a short block; fetch it ourselves.
+			} else {
+				isLeader = true
+			}
+		}
+
+		// A leader must release its waiters on every exit. settle() is idempotent,
+		// so the normal finish (below, or in the async writer) wins; this backstop
+		// only fires on a panic or an unforeseen early return, so waiters re-fetch
+		// instead of hanging until unmount.
+		asyncWriterScheduled := false
+		if isLeader {
+			defer func() {
+				if !asyncWriterScheduled {
+					f.finishBlockFetch(blockStart, bf, errBlockFetchIncomplete)
+				}
+			}()
+		}
+
 		// Retry loop for resilience against transient failures.
 		var data []byte
 		var readErr error
 		for attempt := 0; attempt < 3; attempt++ {
 			if d.FsCtx.Err() != nil {
-				return 0
+				return 0 // The deferred backstop releases any waiters.
 			}
 			// Read the aligned block from the stream pool with a timeout.
 			ctx, cancel := context.WithTimeout(d.FsCtx, 10*time.Second)
@@ -2066,8 +2192,8 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		if readErr != nil {
 			logger.Warn("Remote read failed, returning EOF", "error", readErr, "path", path)
 			// The file may have been deleted on the remote peer (e.g. git's
-			// temporary .keep files). Return 0 (EOF) so callers see an
-			// empty file instead of aborting.
+			// temporary .keep files). Return 0 (EOF) so callers see an empty
+			// file. The deferred backstop releases any waiters to re-fetch.
 			return 0
 		}
 
@@ -2085,38 +2211,54 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		}
 
 		// Persist the WHOLE block and mark only the chunks fully present in it
-		// (handles a short read and the final EOF chunk). Done async, off the
-		// read path; CacheWg is waited on in Release() before closing the FD.
+		// (handles a short read and the final EOF chunk). Done async, off the read
+		// path; CacheWg is waited on in Release() before closing the FD. On a
+		// leader this write also releases the block's waiters, after the bytes are
+		// in cache, so a waiter never reads a sparse hole.
 		if cacheFD != nil && len(data) > 0 {
 			block := data
 			base := fetchStart
 			fsz := remoteFileSize
 			bm := bitmap
+			leaderBf := bf
+			leader := isLeader
+			asyncWriterScheduled = true // The writer now owns releasing waiters.
 			f.CacheWg.Add(1)
 			go func() {
 				defer f.CacheWg.Done()
+				if leader {
+					// Backstop: release waiters even on panic (settle is idempotent).
+					defer f.finishBlockFetch(blockStart, leaderBf, errBlockFetchIncomplete)
+				}
 				if _, werr := cacheFD.WriteAt(block, base); werr != nil {
 					logger.Error("Async cache write failed", "error", werr)
+					if leader {
+						f.finishBlockFetch(blockStart, leaderBf, werr)
+					}
 					return
 				}
-				if bm == nil {
-					return
+				if bm != nil {
+					end := base + int64(len(block))
+					for c := int(base / cs); ; c++ {
+						chunkBegin := int64(c) * cs
+						chunkEnd := chunkBegin + cs
+						if fsz > 0 && chunkEnd > fsz {
+							chunkEnd = fsz
+						}
+						// Stop once a chunk isn't fully covered by the written block.
+						if chunkBegin >= end || chunkEnd > end {
+							break
+						}
+						bm.Set(c)
+					}
 				}
-				end := base + int64(len(block))
-				for c := int(base / cs); ; c++ {
-					chunkBegin := int64(c) * cs
-					chunkEnd := chunkBegin + cs
-					if fsz > 0 && chunkEnd > fsz {
-						chunkEnd = fsz
-					}
-					// Stop once a chunk isn't fully covered by the written block.
-					if chunkBegin >= end || chunkEnd > end {
-						break
-					}
-					bm.Set(c)
+				if leader {
+					f.finishBlockFetch(blockStart, leaderBf, nil)
 				}
 			}()
 		}
+		// An empty fetch (len(data)==0) caches nothing; the deferred backstop
+		// releases waiters, and the bitmap gate makes them re-fetch.
 
 		// logger.Debug("Read completed", "bytes", n, "progress", f.Download.Progress())
 		return n
