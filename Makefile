@@ -76,8 +76,13 @@ cross-macos-dmg: cross-macos $(DIST)
 
 # ── Test & Lint ────────────────────────────────────────────
 
+# Heavy throughput benchmarks (run them explicitly) and the slow git-clone
+# integration are skipped in the default suite. Single source of truth: CI
+# (.github/workflows/ci.yml) runs `make test`, so this list stays in sync.
+TEST_SKIP := BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency|PullFileThroughput|EncryptedGRPC|TransferThroughput|SecureConnThroughput|RoundTripFUSETransfer|FUSEtoFUSE_GitClone
+
 test:
-	go test -v -count=1 -timeout 180s ./tests/...
+	go test -v -count=1 -timeout 180s -skip '$(TEST_SKIP)' ./tests/...
 
 lint:
 	golangci-lint run ./...

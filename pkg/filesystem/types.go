@@ -244,6 +244,12 @@ type File struct {
 	CacheFD        *os.File           // Persistent cache file descriptor for on-demand writes.
 	CacheWg        sync.WaitGroup     // Tracks in-flight async cache writes; waited on in Release.
 
+	// fetchMu guards inflight: in-flight read-ahead block fetches keyed by block
+	// start offset. Concurrent reads of the same block coalesce onto the leader's
+	// single fetch instead of each pulling the whole block over the network.
+	fetchMu  sync.Mutex
+	inflight map[int64]*blockFetch
+
 	// Download resumption state.
 	Download DownloadState
 

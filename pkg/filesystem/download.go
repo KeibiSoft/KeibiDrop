@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"sync"
+
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 )
 
 // .kdbitmap file format (binary, little-endian):
@@ -46,6 +48,12 @@ const ChunkSize = 512 * 1024 // 512 KiB
 // StreamPoolSize is the number of parallel gRPC streams per file.
 // Matches typical FUSE readahead parallelism on Linux.
 const StreamPoolSize = 4
+
+// ReadAheadBlock is how much an on-demand read miss fetches in one round trip;
+// capped at the gRPC frame size so the block lands in a single message. The
+// whole block is cached so subsequent reads within it are served locally,
+// turning ~32 round trips per 16 MiB into one.
+const ReadAheadBlock = config.GRPCStreamBuffer // 16 MiB
 
 // ChunkBitmap tracks which chunks of a file have been downloaded.
 // Thread-safe: Has() uses RLock, Set() uses Lock.
