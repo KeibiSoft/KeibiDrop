@@ -262,9 +262,10 @@ type File struct {
 	// through DIFFERENT map locks (AllFileMap/AfmLock vs OpenFileHandlers/
 	// OpenMapLock) — which therefore do NOT mutually exclude: the *stat struct
 	// (Getattr mutates it in place while Read/OpenEx read Size/Mode) and the
-	// sync-state bools IsLocalPresent/LocalNewer/NotLocalSynced. Confirmed by
-	// the race detector. Always taken INNERMOST: after any map lock, and never
-	// acquire a map lock while holding it (so it cannot deadlock).
+	// sync-state bools IsLocalPresent/LocalNewer/NotLocalSynced/NotRemoteSynced/
+	// HadEdits. Confirmed by the race detector. Always taken INNERMOST: after any
+	// map lock, and never acquire a map lock while holding it (so it cannot
+	// deadlock).
 	metaMu sync.RWMutex
 }
 

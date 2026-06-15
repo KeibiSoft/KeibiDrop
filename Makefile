@@ -79,6 +79,14 @@ cross-macos-dmg: cross-macos $(DIST)
 test:
 	go test -v -count=1 -timeout 180s ./tests/...
 
+# Deterministic concurrency-race guards under the race detector. Scoped to the
+# in-process filesystem unit tests (no FUSE mount) so it is fast (~3s) and cannot
+# trip the unrelated cgofuse mount-teardown race that end-to-end FUSE tests hit
+# under -race. Covers the Release async-notify race plus the handle-reuse and
+# prefetch-rename guards.
+test-race:
+	go test -race -count=1 -timeout 90s ./pkg/filesystem/
+
 lint:
 	golangci-lint run ./...
 
@@ -442,7 +450,7 @@ android-deploy: build-android
 	adb shell am start -n com.keibisoft.keibidrop/.MainActivity
 
 .PHONY: build-cli build-kd build-static-rust-bridge build-rust build-all \
-        test lint sec install-proto protoc rust-bindings slint-preview \
+        test test-race lint sec install-proto protoc rust-bindings slint-preview \
         package-macos package-tar package-deb package-windows package-choco checksums clean-dist clean \
         run-alice run-bob \
         run-cli-alice run-cli-bob \
