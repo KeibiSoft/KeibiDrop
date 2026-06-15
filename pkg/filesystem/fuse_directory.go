@@ -138,14 +138,21 @@ func (d *Dir) Chmod(path string, mode uint32) (errCode int) {
 
 	d.AfmLock.Lock()
 	if f, ok := d.AllFileMap[path]; ok && f.stat != nil {
+		// Guard the stat write under metaMu: OpenEx/prefetch read f.stat.Mode on the
+		// same *File via metaMu (a different lock than AfmLock), so a bare write here
+		// races their reads. metaMu is innermost; AfmLock stays held. Take a value
+		// snapshot of the stat under metaMu so the notify below builds its Attr from a
+		// stable copy, without holding either lock across StatToAttr's allocation.
+		f.metaMu.Lock()
 		applyMode(f.stat)
-		stat := f.stat
+		statSnap := *f.stat
+		f.metaMu.Unlock()
 		d.AfmLock.Unlock()
 		if d.OnLocalChange != nil {
 			d.OnLocalChange(types.FileEvent{
 				Path:   path,
 				Action: types.EditFile,
-				Attr:   types.StatToAttr(stat),
+				Attr:   types.StatToAttr(&statSnap),
 			})
 		}
 		return 0
@@ -170,7 +177,9 @@ func (d *Dir) Chmod(path string, mode uint32) (errCode int) {
 
 	d.RemoteFilesLock.Lock()
 	if rf, ok := d.RemoteFiles[path]; ok && rf.stat != nil {
+		rf.metaMu.Lock()
 		applyMode(rf.stat)
+		rf.metaMu.Unlock()
 	}
 	d.RemoteFilesLock.Unlock()
 
@@ -216,7 +225,10 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
 
 	d.AfmLock.Lock()
 	if f, ok := d.AllFileMap[path]; ok && f.stat != nil {
+		// metaMu guards f.stat against the OpenEx/prefetch metaMu readers (see Chmod).
+		f.metaMu.Lock()
 		applyOwner(f.stat)
+		f.metaMu.Unlock()
 	}
 	d.AfmLock.Unlock()
 
@@ -228,7 +240,9 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
 
 	d.RemoteFilesLock.Lock()
 	if rf, ok := d.RemoteFiles[path]; ok && rf.stat != nil {
+		rf.metaMu.Lock()
 		applyOwner(rf.stat)
+		rf.metaMu.Unlock()
 	}
 	d.RemoteFilesLock.Unlock()
 
