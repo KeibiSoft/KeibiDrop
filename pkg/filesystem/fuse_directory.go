@@ -609,8 +609,8 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fh.openFileCounter.Open()
 		fh.metaMu.Lock()
 		fh.IsLocalPresent = true
-		fh.metaMu.Unlock()
 		fh.NotRemoteSynced = true
+		fh.metaMu.Unlock()
 		handleID := allocHandleID()
 		fh.CurrentHandleID = handleID
 		d.OpenFileHandlers[handleID] = &HandleEntry{FD: fd, File: fh}
@@ -1273,7 +1273,11 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		delete(d.OpenFileHandlers, fh)
 
 		// SINGLE notification path: notify peer if file was created OR edited locally
-		needsNotify := (f.NotRemoteSynced || f.HadEdits) && d.OnLocalChange != nil
+		f.metaMu.RLock()
+		notRemoteSynced := f.NotRemoteSynced
+		hadEdits := f.HadEdits
+		f.metaMu.RUnlock()
+		needsNotify := (notRemoteSynced || hadEdits) && d.OnLocalChange != nil
 
 		if needsNotify {
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -1285,7 +1289,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 
 			// logger.Info("Release lstat result", "path", path, "size", stgo.Size)
 
-			if !f.HadEdits {
+			if !hadEdits {
 				// No FUSE Write calls seen. Data arrived via fcopyfile (Finder
 				// drag-and-drop) which bypasses FUSE Write entirely. The lstat
 				// size may be partial because fcopyfile is still flushing.
@@ -1317,8 +1321,10 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 									Action: types.AddFile,
 									Attr:   types.StatToAttr(&recheckStat),
 								})
+								f.metaMu.Lock()
 								f.NotRemoteSynced = false
 								f.HadEdits = false
+								f.metaMu.Unlock()
 								return
 							}
 						} else {
@@ -1336,8 +1342,10 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 						Action: types.AddFile,
 						Attr:   types.StatToAttr(&finalStat),
 					})
+					f.metaMu.Lock()
 					f.NotRemoteSynced = false
 					f.HadEdits = false
+					f.metaMu.Unlock()
 				}()
 			} else {
 				d.OnLocalChange(types.FileEvent{
@@ -1346,8 +1354,10 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 					Attr:   types.StatToAttr(&stgo),
 				})
 
+				f.metaMu.Lock()
 				f.NotRemoteSynced = false
 				f.HadEdits = false
+				f.metaMu.Unlock()
 			}
 		}
 
@@ -1852,10 +1862,12 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		return n
 	}
 	f := entry.File
+	f.metaMu.Lock()
 	f.HadEdits = true
 	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
 	f.NotRemoteSynced = true // File content changed - notify peer on Release with new size
 	f.LocalNewer = true
+	f.metaMu.Unlock()
 
 	startPwrite := time.Now()
 	n, err := platPwrite(entry.FD, buff, offset)
@@ -1892,8 +1904,12 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	startRemote := time.Now()
 	d.RemoteFilesLock.Lock()
 	if rf, exists := d.RemoteFiles[path]; exists {
+		// Guard under metaMu: Read/OpenEx read these on the same *File via a
+		// different lock (metaMu). metaMu is innermost; RemoteFilesLock stays held.
+		rf.metaMu.Lock()
 		rf.NotLocalSynced = false
 		rf.LocalNewer = true
+		rf.metaMu.Unlock()
 	}
 	d.RemoteFilesLock.Unlock()
 	remoteTime := time.Since(startRemote)

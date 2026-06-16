@@ -33,6 +33,10 @@ jobs:
       - name: Run tests
         run: make test
 
+      # Fast deterministic race guards in the SAME job (no extra runner) so CI stays cheap.
+      - name: Concurrency tests under -race
+        run: make test-race
+
   lint:
     runs-on: ubuntu-22.04
     steps:
