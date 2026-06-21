@@ -30,10 +30,11 @@ type FS struct {
 	OpenStreamProvider func() types.FileStreamProvider
 
 	// Collab sync options (set from env before Mount).
-	PrefetchOnOpen bool // If true, fetch entire file on Open() and write to local disk.
-	PrefetchAutoMB int  // files >= this many MB auto-prefetch on open (0=off; PrefetchOnOpen forces any size)
-	PushOnWrite    bool // If true, async push deltas to peer on Write().
-	AutoCache      bool // If true (live_collab), add the macFUSE auto_cache mount option so a peer's same-size in-place edit is seen live. Trades off mmap-write integrity (git) on macOS; no-op on Linux/Windows.
+	PrefetchOnOpen    bool // If true, fetch entire file on Open() and write to local disk.
+	PrefetchAutoMB    int  // files >= this many MB auto-prefetch on open (0=off; PrefetchOnOpen forces any size)
+	ReadAheadWindowMB int  // cap (MB) for predictive sequential read-ahead on on-demand reads (0=off). Converted to blocks per Dir.
+	PushOnWrite       bool // If true, async push deltas to peer on Write().
+	AutoCache         bool // If true (live_collab), add the macFUSE auto_cache mount option so a peer's same-size in-place edit is seen live. Trades off mmap-write integrity (git) on macOS; no-op on Linux/Windows.
 
 	// Host.
 	host *winfuse.FileSystemHost
@@ -133,9 +134,10 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		OnLocalChange:      fs.OnLocalChange,
 		OpenStreamProvider: fs.OpenStreamProvider,
 
-		PrefetchOnOpen: fs.PrefetchOnOpen,
-		PrefetchAutoMB: fs.PrefetchAutoMB,
-		PushOnWrite:    fs.PushOnWrite,
+		PrefetchOnOpen:        fs.PrefetchOnOpen,
+		PrefetchAutoMB:        fs.PrefetchAutoMB,
+		ReadAheadWindowBlocks: readAheadWindowBlocks(fs.ReadAheadWindowMB),
+		PushOnWrite:           fs.PushOnWrite,
 
 		FsCtx: fs.ctx,
 

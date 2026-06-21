@@ -24,6 +24,7 @@ type FS struct {
 	OpenStreamProvider func() types.FileStreamProvider
 	PrefetchOnOpen     bool
 	PrefetchAutoMB     int
+	ReadAheadWindowMB  int // Unused on Android (no FUSE); present so shared setup code compiles.
 	PushOnWrite        bool
 	AutoCache          bool // Unused on Android (no FUSE); present so shared setup code compiles.
 }

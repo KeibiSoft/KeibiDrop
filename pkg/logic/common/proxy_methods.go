@@ -16,7 +16,21 @@ import (
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+// mapReadErr translates a gRPC stream error from a remote read into a typed
+// sentinel the filesystem layer can act on without importing gRPC. A NotFound
+// status means the peer no longer has the file (e.g. git's transient .keep
+// files) and must surface as EOF; everything else (timeout, Unavailable, server
+// Internal) is a transient/real failure that must surface as an I/O error.
+func mapReadErr(err error) error {
+	if status.Code(err) == codes.NotFound {
+		return types.ErrRemoteFileNotFound
+	}
+	return err
+}
 
 // Proxy methods to avoid import cycles between the filesystem and the duplex server.
 
@@ -52,12 +66,18 @@ func (rfs *ImplRemoteFileStream) ReadAt(ctx context.Context, offset int64, size 
 
 	err := rfs.stream.Send(&bindings.ReadRequest{Handle: rfs.handle, Path: rfs.path, Offset: uint64(offset), Size: uint32(size)})
 	if err != nil {
-		return nil, err
+		// A Send error (commonly io.EOF) means the server closed the stream,
+		// usually after returning a status; Recv surfaces the real status (e.g.
+		// NotFound when the peer deleted the file).
+		if _, rerr := rfs.stream.Recv(); rerr != nil {
+			return nil, mapReadErr(rerr)
+		}
+		return nil, mapReadErr(err)
 	}
 
 	resp, err := rfs.stream.Recv()
 	if err != nil {
-		return nil, err
+		return nil, mapReadErr(err)
 	}
 
 	return resp.Data, nil

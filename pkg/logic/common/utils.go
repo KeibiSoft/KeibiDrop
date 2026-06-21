@@ -334,6 +334,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs.PushOnWrite = kd.PushOnWrite
 	fs.AutoCache = kd.AutoCache // live_collab → macFUSE auto_cache (set before Mount)
 	fs.PrefetchAutoMB = kd.PrefetchAutoMB
+	fs.ReadAheadWindowMB = kd.ReadAheadWindowMB
 
 	// Notification worker with per-path debounce and batching.
 	//

@@ -677,17 +677,22 @@ fn main() {
     let mut ctx = ClipboardContext::new().unwrap();
 
     let _log_file = env::var("LOG_FILE").unwrap_or_default();
-    let to_save = env::var("TO_SAVE_PATH").unwrap_or_default();
+    let mut to_save = env::var("TO_SAVE_PATH").unwrap_or_default();
     let to_mount = env::var("TO_MOUNT_PATH").unwrap_or_default();
-    let relay = env::var("KEIBIDROP_RELAY").unwrap_or("http://0.0.0.0:54321".to_string());
+    // Empty => the engine resolves the relay from its config (the production
+    // default), which is the single source of truth. Only an explicit
+    // KEIBIDROP_RELAY overrides it. (Previously this hardcoded a dev loopback
+    // relay that broke internet mode on a fresh install.)
+    let relay = env::var("KEIBIDROP_RELAY").unwrap_or_default();
+    // 0 => the engine fills the port from its config (single source of truth).
     let inbound: i32 = env::var("INBOUND_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(26001);
+        .unwrap_or(0);
     let outbound: i32 = env::var("OUTBOUND_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(26002);
+        .unwrap_or(0);
 
     // Determine if FUSE should be used (mirrors Go CLI logic).
     // ON by default if FUSE is present, OFF if NO_FUSE env is set.
@@ -705,17 +710,13 @@ fn main() {
         .unwrap_or(false);
     println!("Local mode: {}", local_mode_env);
 
-    // Collab sync: auto-enabled with FUSE, can be overridden via env vars.
-    let prefetch_on_open = env::var("KEIBIDROP_PREFETCH_ON_OPEN")
-        .map(|v| !v.is_empty())
-        .unwrap_or(use_fuse);
-    let push_on_write = env::var("KEIBIDROP_PUSH_ON_WRITE")
-        .map(|v| !v.is_empty())
-        .unwrap_or(use_fuse);
-    println!(
-        "Collab sync: prefetch_on_open={}, push_on_write={}",
-        prefetch_on_open, push_on_write
-    );
+    // Collab-sync flags (prefetch_on_open, push_on_write) are owned by the engine
+    // config — the single source of truth — so the UI does NOT compute a default
+    // here. It passes -1 ("use config") to KD_Initialize; KEIBIDROP_PREFETCH_ON_OPEN
+    // and KEIBIDROP_PUSH_ON_WRITE are honored engine-side (config.applyEnvOverrides).
+    // This removes the old divergence where the UI forced prefetch_on_open=true
+    // whenever FUSE was on, downloading whole files on every Open (the Explorer/
+    // Photos freeze on folder scans).
 
     // Convert to CString
     let relay_c = CString::new(relay).unwrap();
@@ -737,8 +738,8 @@ fn main() {
             to_mount_c.as_ptr() as *mut i8,
             to_save_c.as_ptr() as *mut i8,
             if use_fuse { 1 } else { 0 },
-            if prefetch_on_open { 1 } else { 0 },
-            if push_on_write { 1 } else { 0 },
+            -1, // prefetch_on_open: -1 = use engine config (single source of truth)
+            -1, // push_on_write: -1 = use engine config (single source of truth)
         );
 
         if result != 0 {
@@ -797,6 +798,18 @@ fn main() {
                 }
             }
         }
+
+        // Adopt the engine-resolved save path (the single source of truth) so
+        // every UI save-folder operation below uses it, not an empty/unresolved
+        // env default. KD_Initialize above already received the env value (if
+        // any); here we read back what the engine actually resolved from config.
+        {
+            let resolved = app.get_cfg_save_path().to_string();
+            if !resolved.is_empty() {
+                to_save = resolved;
+            }
+        }
+
         let cfg_path_ptr = bindings::KD_GetConfigPath();
         if !cfg_path_ptr.is_null() {
             app.set_cfg_config_path(slint::SharedString::from(
@@ -1154,9 +1167,23 @@ fn main() {
             });
         });
 
-        // Handle Open Folder (FUSE mode)
-        let mount_path = env::var("TO_MOUNT_PATH").unwrap_or_else(|_| ".".to_string());
+        // Handle Open Folder (FUSE mode). Use the engine-resolved mount path from
+        // KD_GetConfig (the single source of truth), not a re-derived env default:
+        // opening "." (the working dir) instead of the real mount was a fresh-
+        // install bug. Fall back to TO_MOUNT_PATH only if the engine reported none.
+        let mount_path = {
+            let resolved = app.get_cfg_mount_path().to_string();
+            if resolved.is_empty() {
+                env::var("TO_MOUNT_PATH").unwrap_or_default()
+            } else {
+                resolved
+            }
+        };
         app.on_open_folder_pressed(move || {
+            if mount_path.is_empty() {
+                eprintln!("Open Folder: no mount path resolved from engine config");
+                return;
+            }
             println!("Opening folder: {}", mount_path);
             #[cfg(target_os = "macos")]
             let _ = Command::new("open").arg(&mount_path).spawn();

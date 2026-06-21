@@ -31,7 +31,8 @@ type Config struct {
 	NoFUSE            bool   `toml:"no_fuse"`
 	Incognito         bool   `toml:"incognito"`
 	PrefetchOnOpen    bool   `toml:"prefetch_on_open"`
-	PrefetchAutoMB    int    `toml:"prefetch_auto_mb"` // auto-prefetch files >= this many MB (sequential fill + on-demand jumps). Default 0 = off (pure on-demand) — aggressive prefetch saturates constrained/relay links and starves seeks. Set >0 only on a fat link. prefetch_on_open=true forces prefetch for any size.
+	PrefetchAutoMB    int    `toml:"prefetch_auto_mb"`     // auto-prefetch files >= this many MB (sequential fill + on-demand jumps). Default 0 = off (pure on-demand) — aggressive prefetch saturates constrained/relay links and starves seeks. Set >0 only on a fat link. prefetch_on_open=true forces prefetch for any size.
+	ReadAheadWindowMB int    `toml:"read_ahead_window_mb"` // cap for predictive sequential read-ahead on on-demand reads: keep up to this many MB of upcoming blocks in flight so a high-RTT link does not stall at each 16 MiB block boundary (video playback, sequential reads). The in-use window self-tunes by hit/miss feedback and never exceeds this; a slow consumer settles well below it. Default 64. Set 0 to disable (pure on-demand, no look-ahead).
 	PushOnWrite       bool   `toml:"push_on_write"`
 	LiveCollab        bool   `toml:"live_collab"`        // prioritize seeing peers' same-size in-place edits live (macFUSE auto_cache); trades off local mmap-write integrity (git). See note in template.
 	PassphraseProtect bool   `toml:"passphrase_protect"` // opt into Tier 2 (Argon2id passphrase) for identity at-rest encryption
@@ -44,13 +45,14 @@ const DefaultBridge = "bridge.keibisoft.com:26600"
 func DefaultConfig() Config {
 	home, _ := os.UserHomeDir()
 	cfg := Config{
-		Relay:          DefaultRelay,
-		SavePath:       filepath.Join(home, "KeibiDrop", "Received"),
-		MountPath:      filepath.Join(home, "KeibiDrop", "Mount"),
-		InboundPort:    InboundPort,
-		OutboundPort:   OutboundPort,
-		BridgeAddr:     DefaultBridge,
-		PrefetchAutoMB: 0, // default off: pure on-demand (instant open, fetch only what's read). Aggressive prefetch saturates constrained/relay links and freezes seeks; opt in (>0) only on a fat link.
+		Relay:             DefaultRelay,
+		SavePath:          filepath.Join(home, "KeibiDrop", "Received"),
+		MountPath:         filepath.Join(home, "KeibiDrop", "Mount"),
+		InboundPort:       InboundPort,
+		OutboundPort:      OutboundPort,
+		BridgeAddr:        DefaultBridge,
+		PrefetchAutoMB:    0,  // default off: pure on-demand (instant open, fetch only what's read). Aggressive prefetch saturates constrained/relay links and freezes seeks; opt in (>0) only on a fat link.
+		ReadAheadWindowMB: 64, // default on: bounded predictive read-ahead so on-demand sequential reads (video) do not stall at each 16 MiB boundary over a high-RTT link. Self-tuning under this cap; 0 disables.
 	}
 	switch runtime.GOOS {
 	case "darwin":
@@ -240,6 +242,12 @@ incognito = %v
 prefetch_auto_mb = %v
 prefetch_on_open = %v
 
+# Predictive read-ahead window (MB) for on-demand reads: keep up to this many MB of
+# upcoming 16 MiB blocks in flight on sequential access so streaming/video over a
+# high-RTT link does not stall at each block boundary. Self-tuning under this cap
+# (a slow reader stays well below it; a bulk reader pipelines the link); 0 disables.
+read_ahead_window_mb = %v
+
 # Prioritize live collaboration over local mmap-write integrity (default false).
 # false = git-safe: mmap writes (git's index) stay intact; on macOS a peer's
 # same-size in-place edit is not seen live until the next size change.
@@ -249,7 +257,7 @@ prefetch_on_open = %v
 live_collab = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
-		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.PrefetchAutoMB, cfg.PrefetchOnOpen, cfg.LiveCollab)
+		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.PrefetchAutoMB, cfg.PrefetchOnOpen, cfg.ReadAheadWindowMB, cfg.LiveCollab)
 
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }
@@ -298,6 +306,11 @@ func applyEnvOverrides(cfg *Config) {
 	if v := envFirst("KEIBIDROP_PREFETCH_AUTO_MB", "PREFETCH_AUTO_MB_ENV"); v != "" {
 		if mb, err := strconv.Atoi(v); err == nil {
 			cfg.PrefetchAutoMB = mb
+		}
+	}
+	if v := envFirst("KEIBIDROP_READ_AHEAD_WINDOW_MB", "READ_AHEAD_WINDOW_MB_ENV"); v != "" {
+		if mb, err := strconv.Atoi(v); err == nil {
+			cfg.ReadAheadWindowMB = mb
 		}
 	}
 	if b, ok := envBool("KEIBIDROP_PUSH_ON_WRITE", "PUSH_ON_WRITE_ENV"); ok {

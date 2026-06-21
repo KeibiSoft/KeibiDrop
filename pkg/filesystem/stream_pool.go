@@ -40,10 +40,16 @@ func NewStreamPool(provider types.FileStreamProvider, ctx context.Context, inode
 	return &StreamPool{streams: streams, size: n}, nil
 }
 
-// ReadAt routes the request to a stream selected by chunk index.
-// Different chunks hit different streams for true parallelism.
+// ReadAt routes the request to a stream selected by READ-AHEAD BLOCK index, so
+// consecutive 16 MiB blocks land on different streams and a multi-block read-ahead
+// window pipelines across the pool in parallel. (Sharding by chunk index instead
+// would map every block-aligned fetch — the only kind the on-demand path issues —
+// to stream 0, serializing the whole window on one stream.) Any stream can serve
+// any offset, so this is purely load distribution. Concurrent reads of the SAME
+// block are already collapsed by singleflight above this layer, so co-locating
+// them on one stream adds no contention.
 func (p *StreamPool) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
-	idx := int(offset/ChunkSize) % p.size
+	idx := int(offset/ReadAheadBlock) % p.size
 	return p.streams[idx].ReadAt(ctx, offset, size)
 }
 

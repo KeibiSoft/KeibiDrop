@@ -55,6 +55,20 @@ const StreamPoolSize = 4
 // turning ~32 round trips per 16 MiB into one.
 const ReadAheadBlock = config.GRPCStreamBuffer // 16 MiB
 
+// readAheadWindowBlocks converts a predictive read-ahead window expressed in MB
+// (config read_ahead_window_mb) into a count of ReadAheadBlock-sized blocks. A
+// positive sub-block value rounds up to one block; <=0 means read-ahead is off.
+func readAheadWindowBlocks(mb int) int {
+	if mb <= 0 {
+		return 0
+	}
+	blocks := mb * 1024 * 1024 / ReadAheadBlock
+	if blocks < 1 {
+		blocks = 1
+	}
+	return blocks
+}
+
 // ChunkBitmap tracks which chunks of a file have been downloaded.
 // Thread-safe: Has() uses RLock, Set() uses Lock.
 type ChunkBitmap struct {

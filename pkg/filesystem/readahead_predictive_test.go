@@ -1,0 +1,645 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2026 KeibiSoft S.R.L.
+// Tests for predictive sequential read-ahead (fetch the next block(s) before the
+// read head arrives, self-tuning by hit/miss feedback, reset on seek) and for the
+// on-demand read failure classification (NotFound -> EOF, stall -> EIO).
+
+package filesystem
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
+	winfuse "github.com/winfsp/cgofuse/fuse"
+)
+
+// waitFor polls cond until it is true or the timeout elapses; it fails the test
+// on timeout. Used to await asynchronous prefetch goroutines deterministically.
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !cond() {
+		t.Fatalf("condition not met within %v", timeout)
+	}
+}
+
+// errorStream / errorProvider serve every ReadAt with a fixed error, to exercise
+// the on-demand fetch-failure classification in Read.
+type errorStream struct{ err error }
+
+func (s *errorStream) ReadAt(_ context.Context, _ int64, _ int64) ([]byte, error) {
+	return nil, s.err
+}
+func (s *errorStream) Close() error { return nil }
+
+type errorProvider struct{ err error }
+
+func (p *errorProvider) OpenRemoteFile(_ context.Context, _ uint64, _ string) (types.RemoteFileStream, error) {
+	return &errorStream{err: p.err}, nil
+}
+func (p *errorProvider) StreamFile(_ context.Context, _ string, _ uint64) (types.StreamFileReceiver, error) {
+	return nil, p.err
+}
+
+// With read-ahead enabled, reading only block 0 (past its midpoint) must fetch
+// block 1 ahead of time, even though the test never reads block 1.
+func TestReadAhead_PrefetchesNextBlockAhead(t *testing.T) {
+	fileSize := 3 * ReadAheadBlock
+	content := makePattern(fileSize)
+	root, fh, prov, cleanup := newReadAheadFile(t, content)
+	defer cleanup()
+	root.ReadAheadWindowBlocks = 4 // enable read-ahead (64 MiB cap)
+	f := root.OpenFileHandlers[fh].File
+
+	// Read all of block 0 (crossing its midpoint) in small steps. Never read block 1.
+	buf := make([]byte, 128*1024)
+	for off := int64(0); off < int64(ReadAheadBlock); off += int64(len(buf)) {
+		if n := root.Read("/f.bin", buf, off, fh); n <= 0 {
+			t.Fatalf("read at %d returned %d", off, n)
+		}
+	}
+
+	// Predictive read-ahead must bring block 1 into cache without it being read.
+	waitFor(t, 3*time.Second, func() bool {
+		return f.Bitmap.HasRange(int64(ReadAheadBlock), ChunkSize)
+	})
+
+	// Wait for every in-flight fetch to settle, then confirm block 1 is present
+	// and that reading it now is served locally and byte-correct.
+	waitFor(t, 3*time.Second, func() bool { return inflightEmpty(f) })
+	got := make([]byte, 128*1024)
+	n := root.Read("/f.bin", got, int64(ReadAheadBlock), fh)
+	if n != len(got) {
+		t.Fatalf("read of prefetched block 1 returned %d, want %d", n, len(got))
+	}
+	want := content[ReadAheadBlock : ReadAheadBlock+len(got)]
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("prefetched block 1 byte %d mismatch", i)
+		}
+	}
+	_ = prov
+}
+
+// Read-ahead must fire SPARSELY: a steady sequential pass in tiny reads issues a
+// prefetch at most about once per 16 MiB block the head crosses, NOT once per
+// 512 KiB/64 KiB read. Re-issuing per small read is the bug this guards against.
+func TestReadAhead_SparseTrigger(t *testing.T) {
+	const blocks = 6
+	fileSize := blocks * ReadAheadBlock
+	content := makePattern(fileSize)
+	root, fh, prov, cleanup := newReadAheadFile(t, content)
+	defer cleanup()
+	root.ReadAheadWindowBlocks = 4
+	f := root.OpenFileHandlers[fh].File
+
+	const stepKiB = 64
+	got := readSeq(root, fh, fileSize, stepKiB)
+	if len(got) != fileSize {
+		t.Fatalf("short read: %d of %d", len(got), fileSize)
+	}
+	waitFor(t, 3*time.Second, func() bool { return inflightEmpty(f) })
+
+	numReads := int64(fileSize / (stepKiB * 1024)) // = blocks*256, the per-read count
+	calls := root.raPrefetchCalls.Load()
+	t.Logf("read-ahead issued %d prefetch calls for %d blocks over %d reads", calls, blocks, numReads)
+
+	// Sparse: bounded by blocks (+ the initial window burst), nowhere near per-read.
+	if maxCalls := int64(2 * (blocks + root.ReadAheadWindowBlocks)); calls > maxCalls {
+		t.Fatalf("read-ahead not sparse: %d prefetch calls (> %d) for %d blocks", calls, maxCalls, blocks)
+	}
+	// Hard guard on the regression: must be an order of magnitude below the reads.
+	if calls*10 >= numReads {
+		t.Fatalf("read-ahead fires per-read: %d calls vs %d reads (must be <<)", calls, numReads)
+	}
+	// And still correct: each block fetched exactly once.
+	if prov.reads.Load() != int64(blocks) {
+		t.Fatalf("fetches=%d want %d", prov.reads.Load(), blocks)
+	}
+}
+
+// A whole-file sequential pass with read-ahead enabled must still fetch each
+// block exactly once: prefetch and on-demand reads coalesce via singleflight, so
+// no block is fetched twice.
+func TestReadAhead_NoDoubleFetchWithPrefetch(t *testing.T) {
+	const blocks = 4
+	fileSize := blocks * ReadAheadBlock
+	content := makePattern(fileSize)
+	root, fh, prov, cleanup := newReadAheadFile(t, content)
+	defer cleanup()
+	root.ReadAheadWindowBlocks = 4
+	f := root.OpenFileHandlers[fh].File
+
+	got := readSeq(root, fh, fileSize, 128)
+	if len(got) != fileSize {
+		t.Fatalf("read %d bytes, want %d", len(got), fileSize)
+	}
+	for i := range got {
+		if got[i] != content[i] {
+			t.Fatalf("content mismatch at %d", i)
+		}
+	}
+	waitFor(t, 3*time.Second, func() bool { return inflightEmpty(f) })
+
+	if reads := prov.reads.Load(); reads != int64(blocks) {
+		t.Fatalf("fetches = %d, want %d (one per block; prefetch must not duplicate)", reads, blocks)
+	}
+}
+
+// With read-ahead disabled (window 0), reading block 0 must NOT prefetch block 1:
+// behavior is identical to pure on-demand. This guards the off switch.
+func TestReadAhead_DisabledDoesNotPrefetch(t *testing.T) {
+	fileSize := 3 * ReadAheadBlock
+	content := makePattern(fileSize)
+	root, fh, prov, cleanup := newReadAheadFile(t, content)
+	defer cleanup()
+	root.ReadAheadWindowBlocks = 0 // disabled
+	f := root.OpenFileHandlers[fh].File
+
+	buf := make([]byte, 128*1024)
+	for off := int64(0); off < int64(ReadAheadBlock); off += int64(len(buf)) {
+		if n := root.Read("/f.bin", buf, off, fh); n <= 0 {
+			t.Fatalf("read at %d returned %d", off, n)
+		}
+	}
+	waitFor(t, 2*time.Second, func() bool { return inflightEmpty(f) })
+
+	if reads := prov.reads.Load(); reads != 1 {
+		t.Fatalf("disabled read-ahead fetched %d blocks, want 1 (block 0 only)", reads)
+	}
+	if f.Bitmap.HasRange(int64(ReadAheadBlock), ChunkSize) {
+		t.Fatalf("disabled read-ahead prefetched block 1")
+	}
+}
+
+// raState reads maybeReadAhead's detector state under its lock.
+func raState(f *File) (window int, frontier int64) {
+	f.raMu.Lock()
+	defer f.raMu.Unlock()
+	return f.raWindowBlocks, f.raPrefetchedTo
+}
+
+// raPool builds a stream pool for driving maybeReadAhead directly.
+func raPool(t *testing.T, prov *countingProvider, fh uint64) *StreamPool {
+	t.Helper()
+	p, err := NewStreamPool(prov, context.Background(), fh, "/f.bin", StreamPoolSize)
+	if err != nil {
+		t.Fatalf("new stream pool: %v", err)
+	}
+	return p
+}
+
+// White-box: the read-ahead lead scales with sequential CONFIDENCE — each block
+// the head crosses past its midpoint doubles the window, capped at
+// ReadAheadWindowBlocks — while reads before a midpoint or inside an already
+// covered block issue nothing (sparse).
+func TestReadAhead_WindowRampsWithSequentialConfidence(t *testing.T) {
+	const capW = 4
+	fileSize := 16 * ReadAheadBlock
+	root, fh, prov, cleanup := newReadAheadFile(t, makePattern(fileSize))
+	defer cleanup()
+	root.ReadAheadWindowBlocks = capW
+	f := root.OpenFileHandlers[fh].File
+	ra := int64(ReadAheadBlock)
+	pool := raPool(t, prov, fh)
+	defer func() { _ = pool.Close() }()
+	rd := func(off int64) { root.maybeReadAhead(f, pool, f.CacheFD, f.Bitmap, off, 64*1024, int64(fileSize)) }
+
+	// Pre-midpoint reads in block 0 must NOT prefetch.
+	rd(0)
+	rd(ra / 4)
+	if c := root.raPrefetchCalls.Load(); c != 0 {
+		t.Fatalf("pre-midpoint reads prefetched (%d calls)", c)
+	}
+	if w, _ := raState(f); w > 1 {
+		t.Fatalf("window grew before any block crossing: %d", w)
+	}
+	// Cross block 0 midpoint -> window doubles to 2, frontier reaches block 3.
+	rd(ra / 2)
+	if w, fr := raState(f); w != 2 || fr != 3 {
+		t.Fatalf("after block0 midpoint: window=%d frontier=%d, want 2,3", w, fr)
+	}
+	// Another read inside block 0 is sparse: no new prefetch.
+	before := root.raPrefetchCalls.Load()
+	rd(ra/2 + ra/4)
+	if root.raPrefetchCalls.Load() != before {
+		t.Fatalf("within-block read issued prefetch (not sparse)")
+	}
+	// Cross block 1 midpoint -> window doubles to 4 (the cap).
+	rd(ra)
+	rd(ra + ra/2)
+	if w, _ := raState(f); w != 4 {
+		t.Fatalf("after block1 midpoint: window=%d, want 4", w)
+	}
+	// Cross block 2 midpoint -> window holds at the cap.
+	rd(2 * ra)
+	rd(2*ra + ra/2)
+	if w, _ := raState(f); w != 4 {
+		t.Fatalf("window must cap at %d, got %d", capW, w)
+	}
+	waitFor(t, 3*time.Second, func() bool { return inflightEmpty(f) })
+}
+
+// A non-sequential jump resets the window to 1 and restarts the frontier just
+// past the new position, and prefetches NOTHING on the jump read itself (so a
+// mispredicted random access wastes no bandwidth).
+func TestReadAhead_JumpResetsAndPrefetchesNothing(t *testing.T) {
+	fileSize := 64 * ReadAheadBlock
+	root, fh, prov, cleanup := newReadAheadFile(t, makePattern(fileSize))
+	defer cleanup()
+	root.ReadAheadWindowBlocks = 4
+	f := root.OpenFileHandlers[fh].File
+	ra := int64(ReadAheadBlock)
+	pool := raPool(t, prov, fh)
+	defer func() { _ = pool.Close() }()
+	rd := func(off int64) { root.maybeReadAhead(f, pool, f.CacheFD, f.Bitmap, off, 64*1024, int64(fileSize)) }
+
+	// A sequential run ramps the window up.
+	for _, off := range []int64{0, ra / 2, ra, ra + ra/2, 2 * ra, 2*ra + ra/2} {
+		rd(off)
+	}
+	if w, _ := raState(f); w < 2 {
+		t.Fatalf("window did not ramp on a sequential run: %d", w)
+	}
+	waitFor(t, 3*time.Second, func() bool { return inflightEmpty(f) })
+
+	// A big jump far past the frontier: reset, and no prefetch on the jump read.
+	before := root.raPrefetchCalls.Load()
+	const jumpBlock = 40
+	rd(jumpBlock * ra)
+	if w, fr := raState(f); w != 1 || fr != jumpBlock+1 {
+		t.Fatalf("after jump: window=%d frontier=%d, want 1,%d", w, fr, jumpBlock+1)
+	}
+	if root.raPrefetchCalls.Load() != before {
+		t.Fatalf("jump read issued prefetch; it must prefetch nothing")
+	}
+}
+
+// A lone small read at the start (a thumbnailer probing a header) must not
+// trigger any read-ahead.
+func TestReadAhead_HeaderProbeNoPrefetch(t *testing.T) {
+	fileSize := 8 * ReadAheadBlock
+	root, fh, prov, cleanup := newReadAheadFile(t, makePattern(fileSize))
+	defer cleanup()
+	root.ReadAheadWindowBlocks = 4
+	f := root.OpenFileHandlers[fh].File
+	pool := raPool(t, prov, fh)
+	defer func() { _ = pool.Close() }()
+
+	root.maybeReadAhead(f, pool, f.CacheFD, f.Bitmap, 0, 64*1024, int64(fileSize))
+	if c := root.raPrefetchCalls.Load(); c != 0 {
+		t.Fatalf("header probe prefetched (%d calls), want 0", c)
+	}
+}
+
+// A transient fetch failure (not NotFound) after retries must surface as EIO, not
+// a false EOF that a media player would read as end-of-file mid-stream.
+func TestReadAhead_StallReturnsEIO(t *testing.T) {
+	declared := int64(ReadAheadBlock)
+	prov := &errorProvider{err: errors.New("transient network stall")}
+	root, fh, cleanup := newReadAheadFileWith(t, declared, prov)
+	defer cleanup()
+
+	buf := make([]byte, 64*1024)
+	n := root.Read("/f.bin", buf, 0, fh)
+	if n != -winfuse.EIO {
+		t.Fatalf("stalled read returned %d, want -EIO (%d)", n, -winfuse.EIO)
+	}
+}
+
+// When the peer reports the file is gone (NotFound), the read returns EOF (0),
+// preserving the long-standing behavior for transient files (e.g. git .keep).
+func TestReadAhead_NotFoundReturnsEOF(t *testing.T) {
+	declared := int64(ReadAheadBlock)
+	prov := &errorProvider{err: types.ErrRemoteFileNotFound}
+	root, fh, cleanup := newReadAheadFileWith(t, declared, prov)
+	defer cleanup()
+
+	buf := make([]byte, 64*1024)
+	n := root.Read("/f.bin", buf, 0, fh)
+	if n != 0 {
+		t.Fatalf("read of a not-found file returned %d, want 0 (EOF)", n)
+	}
+}
+
+// inflightEmpty reports whether all single-flight block fetches have settled, so
+// a test can wait for async prefetch goroutines to finish before asserting.
+func inflightEmpty(f *File) bool {
+	f.fetchMu.Lock()
+	defer f.fetchMu.Unlock()
+	return len(f.inflight) == 0
+}
+
+// delayProvider serves content but adds a fixed latency to every fetch, modeling
+// a high-RTT link so a test can show read-ahead hides that latency.
+type delayProvider struct {
+	content []byte
+	delay   time.Duration
+	reads   atomic.Int64
+}
+
+func (p *delayProvider) OpenRemoteFile(_ context.Context, _ uint64, _ string) (types.RemoteFileStream, error) {
+	return &delayStream{p: p}, nil
+}
+func (p *delayProvider) StreamFile(_ context.Context, _ string, _ uint64) (types.StreamFileReceiver, error) {
+	return nil, errors.New("unused")
+}
+
+type delayStream struct{ p *delayProvider }
+
+func (s *delayStream) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
+	select {
+	case <-time.After(s.p.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	s.p.reads.Add(1)
+	content := s.p.content
+	if offset > int64(len(content)) {
+		offset = int64(len(content))
+	}
+	end := offset + size
+	if end > int64(len(content)) {
+		end = int64(len(content))
+	}
+	out := make([]byte, end-offset)
+	copy(out, content[offset:end])
+	return out, nil
+}
+func (s *delayStream) Close() error { return nil }
+
+// genProvider serves a large synthetic file WITHOUT a full in-memory buffer
+// (bytes generated by offset), so a test can model a 600 MB media file cheaply.
+// It counts on-demand fetches and bytes, and counts (and refuses) any whole-file
+// StreamFile prefetch, which is the behavior the thumbnail scenario must avoid.
+// An optional delay models link latency.
+type genProvider struct {
+	size            int64
+	delay           time.Duration
+	reads           atomic.Int64
+	bytesIn         atomic.Int64
+	streamFileCalls atomic.Int64
+}
+
+func (p *genProvider) OpenRemoteFile(_ context.Context, _ uint64, _ string) (types.RemoteFileStream, error) {
+	return &genStream{p: p}, nil
+}
+func (p *genProvider) StreamFile(_ context.Context, _ string, _ uint64) (types.StreamFileReceiver, error) {
+	p.streamFileCalls.Add(1)
+	return nil, errors.New("whole-file prefetch must not run during a thumbnail scan")
+}
+
+type genStream struct{ p *genProvider }
+
+func (s *genStream) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
+	if s.p.delay > 0 {
+		select {
+		case <-time.After(s.p.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	s.p.reads.Add(1)
+	if offset >= s.p.size {
+		return []byte{}, nil
+	}
+	if offset+size > s.p.size {
+		size = s.p.size - offset
+	}
+	s.p.bytesIn.Add(size)
+	out := make([]byte, size)
+	for i := range out {
+		out[i] = byte((offset+int64(i))%251) + 1
+	}
+	return out, nil
+}
+func (s *genStream) Close() error { return nil }
+
+// newThumbnailDir builds one root holding on-demand files of the given (mixed)
+// sizes with sparse caches, modeling a folder of variable-size media shared
+// on-demand. Works with *testing.T and *testing.B.
+func newThumbnailDir(tb testing.TB, sizes []int64, delay time.Duration) (*Dir, []uint64, []*genProvider, func()) {
+	tb.Helper()
+	saveDir := tb.TempDir()
+	root := &Dir{
+		RelativePath:        "/",
+		LocalDownloadFolder: saveDir,
+		OpenFileHandlers:    make(map[uint64]*HandleEntry),
+		FsCtx:               context.Background(),
+	}
+	root.Root = root
+	root.logger = nopLogger()
+	root.ReadAheadWindowBlocks = readAheadWindowBlocks(64) // default read-ahead on
+
+	var fhs []uint64
+	var provs []*genProvider
+	var fds []*os.File
+	for i, size := range sizes {
+		cacheFD, err := os.OpenFile(filepath.Join(saveDir, fmt.Sprintf("f%d.bin", i)), os.O_RDWR|os.O_CREATE, 0600)
+		if err != nil {
+			tb.Fatalf("create cache file: %v", err)
+		}
+		if err := cacheFD.Truncate(size); err != nil { // sparse: no real disk until written
+			tb.Fatalf("truncate cache file: %v", err)
+		}
+		prov := &genProvider{size: size, delay: delay}
+		f := &File{
+			logger:         nopLogger(),
+			Root:           root,
+			Parent:         root,
+			NotLocalSynced: true,
+			Bitmap:         NewChunkBitmap(size),
+			CacheFD:        cacheFD,
+			StreamProvider: prov,
+			stat:           &winfuse.Stat_t{Size: size},
+		}
+		fh := allocHandleID()
+		root.OpenFileHandlers[fh] = &HandleEntry{FD: int(cacheFD.Fd()), File: f}
+		fhs = append(fhs, fh)
+		provs = append(provs, prov)
+		fds = append(fds, cacheFD)
+	}
+	return root, fhs, provs, func() {
+		for _, fd := range fds {
+			_ = fd.Close()
+		}
+	}
+}
+
+// thumbnailSpots returns the offsets a media thumbnailer touches for a file of
+// the given size: the header, plus (for larger files) an interior frame and the
+// tail (some container formats keep the index/moov atom near the end). All small
+// reads, never a sequential pass. Offsets are valid in-file positions.
+func thumbnailSpots(size int64) []int64 {
+	if size <= 0 {
+		return nil
+	}
+	spots := []int64{0} // header
+	if size > int64(ReadAheadBlock) {
+		spots = append(spots, size/2) // an interior frame, in a different block
+	}
+	if size > 128*1024 {
+		spots = append(spots, size-64*1024) // index / moov atom near the end
+	}
+	return spots
+}
+
+// The Windows scenario: Explorer + Photos open a folder of variable-size media
+// shared on-demand and read scattered small ranges to make thumbnails. This must
+// NOT turn into a whole-file download per file (the freeze the user hit). With the
+// default config (prefetch off) and bounded read-ahead, each file fetches only the
+// few blocks it touches, no StreamFile prefetch runs, and the scan finishes fast.
+func TestThumbnailScan_OnDemandStaysSmall(t *testing.T) {
+	const MB = 1024 * 1024
+	// A realistic mixed folder of 25 variable-size media files shared on-demand:
+	// big videos, medium clips, large/RAW photos, photos, and small photos. The
+	// caches are sparse, so the large declared sizes cost no disk until a block is
+	// actually fetched.
+	var sizes []int64
+	for k := 0; k < 5; k++ {
+		sizes = append(sizes, 600*MB) // big videos
+	}
+	for k := 0; k < 6; k++ {
+		sizes = append(sizes, 100*MB) // medium clips
+	}
+	for k := 0; k < 6; k++ {
+		sizes = append(sizes, 20*MB) // short clips / RAW photos
+	}
+	for k := 0; k < 5; k++ {
+		sizes = append(sizes, 2*MB) // photos
+	}
+	for k := 0; k < 3; k++ {
+		sizes = append(sizes, 500*1024) // small photos
+	}
+	// 25 files total.
+	root, fhs, provs, cleanup := newThumbnailDir(t, sizes, 0)
+	defer cleanup()
+
+	// Open and probe every file at once, as Explorer + Photos do for a folder.
+	var wg sync.WaitGroup
+	for i := range sizes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			buf := make([]byte, 64*1024)
+			for _, off := range thumbnailSpots(sizes[i]) {
+				if n := root.Read("/f.bin", buf, off, fhs[i]); n <= 0 {
+					t.Errorf("file %d (size %d) thumbnail read at %d returned %d", i, sizes[i], off, n)
+					return
+				}
+			}
+		}(i)
+	}
+	// A whole-file download of any big file would hang this; the whole concurrent
+	// scan must finish promptly.
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("concurrent thumbnail scan hung — opening a file likely triggered a whole-file download")
+	}
+
+	for i, prov := range provs {
+		size := sizes[i]
+		f := root.OpenFileHandlers[fhs[i]].File
+		waitFor(t, 5*time.Second, func() bool { return inflightEmpty(f) })
+
+		if c := prov.streamFileCalls.Load(); c != 0 {
+			t.Fatalf("file %d (size %d): whole-file prefetch ran %d times during a thumbnail scan", i, size, c)
+		}
+		fetched := prov.bytesIn.Load()
+		// Fetch is bounded by the few blocks the thumbnailer touched, regardless of
+		// file size (random access must not grow the read-ahead window).
+		spots := int64(len(thumbnailSpots(size)))
+		if maxBytes := (spots + 1) * int64(ReadAheadBlock); fetched > maxBytes {
+			t.Fatalf("file %d (size %d): over-fetched %d bytes (> %d) — random access not bounded", i, size, fetched, maxBytes)
+		}
+		// For genuinely large (multi-block) files, a thumbnail must read far less
+		// than the whole file — that is the freeze this fix prevents.
+		if size > int64(4)*int64(ReadAheadBlock) && fetched >= size {
+			t.Fatalf("file %d (size %d): thumbnail downloaded the whole file (%d bytes)", i, size, fetched)
+		}
+	}
+}
+
+// BenchmarkThumbnailScan measures a cold thumbnail scan of a large on-demand file
+// over a simulated high-latency link. The scan time must scale with the few ranges
+// touched (a handful of fetches), NOT with the file size — proving opening a 640 MB
+// file to make a thumbnail does not download it.
+func BenchmarkThumbnailScan(b *testing.B) {
+	fileSize := int64(40) * int64(ReadAheadBlock) // 640 MiB, sparse
+	delay := 5 * time.Millisecond                 // simulated per-fetch RTT
+	buf := make([]byte, 64*1024)
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		b.StopTimer()
+		root, fhs, provs, cleanup := newThumbnailDir(b, []int64{fileSize}, delay)
+		b.StartTimer()
+		for _, off := range thumbnailSpots(fileSize) {
+			if got := root.Read("/f.bin", buf, off, fhs[0]); got <= 0 {
+				b.Fatalf("thumbnail read at %d returned %d", off, got)
+			}
+		}
+		b.StopTimer()
+		if provs[0].streamFileCalls.Load() != 0 {
+			b.Fatalf("whole-file prefetch ran during thumbnail benchmark")
+		}
+		cleanup()
+		b.StartTimer()
+	}
+}
+
+// Under injected per-fetch latency, read-ahead must make a sequential pass
+// faster than pure on-demand by fetching upcoming blocks while earlier ones are
+// served from cache. This is the in-process analogue of the WAN benchmark; the
+// real run toggles KEIBIDROP_READ_AHEAD_WINDOW_MB between 0 and 64 over the link.
+func TestReadAhead_LatencyHidingSpeedup(t *testing.T) {
+	const blocks = 8
+	fileSize := blocks * ReadAheadBlock
+	content := makePattern(fileSize)
+	delay := 30 * time.Millisecond
+
+	run := func(window int) (time.Duration, int64) {
+		prov := &delayProvider{content: content, delay: delay}
+		root, fh, cleanup := newReadAheadFileWith(t, int64(fileSize), prov)
+		defer cleanup()
+		root.ReadAheadWindowBlocks = window
+		f := root.OpenFileHandlers[fh].File
+		start := time.Now()
+		got := readSeq(root, fh, fileSize, 512)
+		elapsed := time.Since(start)
+		if len(got) != fileSize {
+			t.Fatalf("short read: %d of %d", len(got), fileSize)
+		}
+		// Drain async prefetch before the deferred cleanup closes the cache FD.
+		waitFor(t, 10*time.Second, func() bool { return inflightEmpty(f) })
+		return elapsed, prov.reads.Load()
+	}
+
+	offTime, offReads := run(0)
+	onTime, onReads := run(4)
+	t.Logf("read-ahead OFF: %v (%d fetches); ON(window=4): %v (%d fetches); speedup %.2fx",
+		offTime, offReads, onTime, onReads, float64(offTime)/float64(onTime))
+
+	if onReads != int64(blocks) || offReads != int64(blocks) {
+		t.Fatalf("expected exactly %d fetches each (no duplicates): off=%d on=%d", blocks, offReads, onReads)
+	}
+	if onTime >= offTime {
+		t.Fatalf("read-ahead did not hide latency: off=%v on=%v (delay=%v)", offTime, onTime, delay)
+	}
+}

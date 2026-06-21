@@ -24,6 +24,7 @@ func TestShouldPrefetchOnOpen(t *testing.T) {
 		{"force toggle prefetches a 1MB file", true, 100, 1 * MB, true},
 		{"force toggle even with auto disabled", true, 0, 1 * MB, true},
 		{"auto disabled (0) -> always on-demand", false, 0, 10000 * MB, false},
+		{"600MB media on default config -> on-demand (no thumbnail freeze)", false, 0, 600 * MB, false},
 		{"custom 300MB threshold: 200MB on-demand", false, 300, 200 * MB, false},
 		{"custom 300MB threshold: 400MB prefetch", false, 300, 400 * MB, true},
 		{"zero-size file -> on-demand", false, 100, 0, false},

@@ -8,9 +8,19 @@ package types
 
 import (
 	"context"
+	"errors"
 
 	keibidrop "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 )
+
+// ErrRemoteFileNotFound is returned by RemoteFileStream.ReadAt when the peer
+// reports the file no longer exists (gRPC NotFound), as opposed to a transient
+// fetch failure (timeout, connection loss, server I/O error). The on-demand read
+// path uses this to distinguish a genuinely gone file (surface EOF, e.g. git's
+// transient .keep files) from a stall (surface EIO, so a media player does not
+// see a false end-of-file mid-stream). Defined here, in the shared types package,
+// so the filesystem package can check it without importing gRPC.
+var ErrRemoteFileNotFound = errors.New("remote file not found")
 
 // FileAction maps local FS events
 type FileAction int

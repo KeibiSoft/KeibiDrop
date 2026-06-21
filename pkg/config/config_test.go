@@ -85,6 +85,54 @@ func TestSaveLoad_PrefetchOnOpenPersists(t *testing.T) {
 	}
 }
 
+// TestReadAheadWindowMB_DefaultAndOverride verifies the predictive read-ahead
+// window: on by default (so video does not stall over a high-RTT link), overrideable
+// by env (the WAN-benchmark A/B knob), and disableable with 0.
+func TestReadAheadWindowMB_DefaultAndOverride(t *testing.T) {
+	if got := DefaultConfig().ReadAheadWindowMB; got != 64 {
+		t.Fatalf("default ReadAheadWindowMB = %d, want 64 (read-ahead on)", got)
+	}
+
+	// Env override to a larger window (e.g. a fat link).
+	t.Run("override", func(t *testing.T) {
+		t.Setenv("KEIBIDROP_READ_AHEAD_WINDOW_MB", "128")
+		cfg := DefaultConfig()
+		applyEnvOverrides(&cfg)
+		if cfg.ReadAheadWindowMB != 128 {
+			t.Fatalf("ReadAheadWindowMB = %d, want 128 from env", cfg.ReadAheadWindowMB)
+		}
+	})
+
+	// Env override to 0 disables read-ahead (the benchmark baseline).
+	t.Run("disable", func(t *testing.T) {
+		t.Setenv("KEIBIDROP_READ_AHEAD_WINDOW_MB", "0")
+		cfg := DefaultConfig()
+		applyEnvOverrides(&cfg)
+		if cfg.ReadAheadWindowMB != 0 {
+			t.Fatalf("ReadAheadWindowMB = %d, want 0 (disabled) from env", cfg.ReadAheadWindowMB)
+		}
+	})
+}
+
+// TestSaveLoad_ReadAheadWindowPersists verifies the read-ahead window survives a
+// Save->Load round-trip (Save must WRITE it, not just Load read it).
+func TestSaveLoad_ReadAheadWindowPersists(t *testing.T) {
+	t.Setenv("KEIBIDROP_CONFIG_DIR", t.TempDir())
+
+	cfg := DefaultConfig()
+	cfg.ReadAheadWindowMB = 96
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.ReadAheadWindowMB != 96 {
+		t.Errorf("read_ahead_window_mb did not persist: got %d want 96", got.ReadAheadWindowMB)
+	}
+}
+
 func TestDirectoriesToEnsure_SkipsMountPathOnWindows(t *testing.T) {
 	cfg := Config{SavePath: "/save", MountPath: "/mnt", LogFile: "/logs/kd.log"}
 

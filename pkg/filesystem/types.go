@@ -185,6 +185,19 @@ type Dir struct {
 	PrefetchAutoMB int  // files >= this many MB auto-prefetch on open (0=off)
 	PushOnWrite    bool // If true, async push deltas to peer on Write().
 
+	// ReadAheadWindowBlocks caps predictive sequential read-ahead: on sequential
+	// reads, up to this many ReadAheadBlock-sized blocks are fetched ahead of the
+	// read head so a high-RTT link does not stall at each block boundary. The
+	// in-use window self-tunes by hit/miss feedback and never exceeds this cap; a
+	// slow consumer (e.g. video) settles well below it. 0 = off (pure on-demand,
+	// the prior behavior). Derived from config read_ahead_window_mb.
+	ReadAheadWindowBlocks int
+
+	// raPrefetchCalls counts read-ahead prefetch issuances (one per block the read
+	// head crosses, NOT per read) — an observability counter; tests assert it stays
+	// sparse (proportional to blocks, not to the number of small reads).
+	raPrefetchCalls atomic.Int64
+
 	RemoteFilesLock sync.RWMutex
 	RemoteFiles     map[string]*File
 
@@ -249,6 +262,21 @@ type File struct {
 	// single fetch instead of each pulling the whole block over the network.
 	fetchMu  sync.Mutex
 	inflight map[int64]*blockFetch
+
+	// Predictive read-ahead detector state, guarded by raMu. raMu is a leaf lock:
+	// held only for these few field updates, never across I/O or another lock.
+	// raLastReadEnd is the end offset of the previous read, used to detect a
+	// sequential stride versus a seek; raWindowBlocks is the current number of
+	// ReadAheadBlock-sized blocks to keep ahead, self-tuned by hit/miss feedback
+	// (grow on a sequential miss, hold on a hit, reset on a jump); raPrefetchedTo
+	// is the prefetch frontier (the next block index not yet prefetched), which
+	// makes read-ahead fire at most once per block the head crosses rather than on
+	// every small read. None are derived from DownloadState.LastReadOffset, which
+	// is a monotonic max and so cannot detect a backward seek.
+	raMu           sync.Mutex
+	raLastReadEnd  int64
+	raWindowBlocks int
+	raPrefetchedTo int64
 
 	// Download resumption state.
 	Download DownloadState
