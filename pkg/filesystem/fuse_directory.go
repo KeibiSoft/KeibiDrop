@@ -2167,26 +2167,32 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 	if f.raWindowBlocks < 1 {
 		f.raWindowBlocks = 1
 	}
+	// The frontier can never lag the read head: if the reader outran the prefetched
+	// region (a miss), restart the frontier just past the head (reset on miss).
 	if f.raPrefetchedTo < curBlock+1 {
 		f.raPrefetchedTo = curBlock + 1
 	}
-	if curBlock+1+int64(f.raWindowBlocks) <= f.raPrefetchedTo {
-		// The frontier already holds `window` blocks ahead of the head: nothing to
-		// do. This is the steady within-block case, so a stream of small reads
-		// inside one block issues ZERO prefetch — read-ahead fires at most once per
-		// block the head crosses.
+	// Refill only when the buffer ahead of the head has drained to half the window
+	// (the trigger distance scales with the window: 1 block at window 2, 2 at 4,
+	// ... so bigger leads refill earlier and less often). Otherwise do nothing —
+	// a stream of small reads inside the buffered region issues ZERO prefetch.
+	blocksAhead := f.raPrefetchedTo - (curBlock + 1)
+	half := int64(f.raWindowBlocks) / 2
+	if half < 1 {
+		half = 1
+	}
+	if blocksAhead > half {
 		f.raMu.Unlock()
 		return
 	}
-	// Crossing into new territory (~once per block): grow the lead with sequential
-	// confidence (double, capped), then extend the frontier and issue only the
-	// newly uncovered blocks. ReadAheadBlock-aligned: one block == one gRPC message.
-	if f.raWindowBlocks < maxWin {
-		f.raWindowBlocks *= 2
-		if f.raWindowBlocks > maxWin {
-			f.raWindowBlocks = maxWin
-		}
-	}
+	// Buffer half-drained on a confirmed sequential run: prime straight to the FULL
+	// window in ONE burst (no slow doubling), so smooth playback is reached fast
+	// right after the first block — the "fast TTFB (one 16 MiB frame) then fast
+	// smooth" goal — and the deep buffer also rides out the link's bandwidth dips.
+	// The burst's blocks fetch in parallel across the bounded stream pool (+ the
+	// prefetch semaphore), so the shared bridge wire is not flooded; a mispredicted
+	// jump wastes only a bounded window, and a seek resets it.
+	f.raWindowBlocks = maxWin
 	from := f.raPrefetchedTo
 	target := curBlock + 1 + int64(f.raWindowBlocks)
 	f.raPrefetchedTo = target

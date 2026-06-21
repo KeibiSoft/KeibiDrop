@@ -203,11 +203,11 @@ func raPool(t *testing.T, prov *countingProvider, fh uint64) *StreamPool {
 	return p
 }
 
-// White-box: the read-ahead lead scales with sequential CONFIDENCE — each block
-// the head crosses past its midpoint doubles the window, capped at
-// ReadAheadWindowBlocks — while reads before a midpoint or inside an already
-// covered block issue nothing (sparse).
-func TestReadAhead_WindowRampsWithSequentialConfidence(t *testing.T) {
+// White-box: on a confirmed sequential run the read-ahead primes STRAIGHT to the
+// full window (no slow ramp) so smooth playback is reached fast; reads before a
+// block midpoint or inside the already-buffered region issue nothing (sparse);
+// and a refill tops the buffer back up once it drains past half the window.
+func TestReadAhead_PrimesFullWindowOnSequential(t *testing.T) {
 	const capW = 4
 	fileSize := 16 * ReadAheadBlock
 	root, fh, prov, cleanup := newReadAheadFile(t, makePattern(fileSize))
@@ -225,31 +225,22 @@ func TestReadAhead_WindowRampsWithSequentialConfidence(t *testing.T) {
 	if c := root.raPrefetchCalls.Load(); c != 0 {
 		t.Fatalf("pre-midpoint reads prefetched (%d calls)", c)
 	}
-	if w, _ := raState(f); w > 1 {
-		t.Fatalf("window grew before any block crossing: %d", w)
-	}
-	// Cross block 0 midpoint -> window doubles to 2, frontier reaches block 3.
+	// Cross block 0 midpoint -> prime straight to the full window; frontier covers it.
 	rd(ra / 2)
-	if w, fr := raState(f); w != 2 || fr != 3 {
-		t.Fatalf("after block0 midpoint: window=%d frontier=%d, want 2,3", w, fr)
+	if w, fr := raState(f); w != capW || fr != 1+int64(capW) {
+		t.Fatalf("after block0 midpoint: window=%d frontier=%d, want %d,%d", w, fr, capW, 1+capW)
 	}
-	// Another read inside block 0 is sparse: no new prefetch.
+	// Reads inside the buffered region (still > half the window ahead) are sparse.
 	before := root.raPrefetchCalls.Load()
 	rd(ra/2 + ra/4)
-	if root.raPrefetchCalls.Load() != before {
-		t.Fatalf("within-block read issued prefetch (not sparse)")
-	}
-	// Cross block 1 midpoint -> window doubles to 4 (the cap).
-	rd(ra)
 	rd(ra + ra/2)
-	if w, _ := raState(f); w != 4 {
-		t.Fatalf("after block1 midpoint: window=%d, want 4", w)
+	if root.raPrefetchCalls.Load() != before {
+		t.Fatalf("reads inside the buffer issued prefetch (not sparse)")
 	}
-	// Cross block 2 midpoint -> window holds at the cap.
-	rd(2 * ra)
+	// Drain past half the window -> a refill tops back up to a full window.
 	rd(2*ra + ra/2)
-	if w, _ := raState(f); w != 4 {
-		t.Fatalf("window must cap at %d, got %d", capW, w)
+	if w, fr := raState(f); w != capW || fr != 2+1+int64(capW) {
+		t.Fatalf("after drain refill: window=%d frontier=%d, want %d,%d", w, fr, capW, 2+1+capW)
 	}
 	waitFor(t, 3*time.Second, func() bool { return inflightEmpty(f) })
 }
