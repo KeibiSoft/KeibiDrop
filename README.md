@@ -174,6 +174,14 @@ Full protocol description: [Security.md](./Security.md)
 
 See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
 
+## Code signing
+
+KeibiDrop signs its release binaries: Windows via SignPath, macOS via Apple
+Developer ID. See [CODE_SIGNING_POLICY.md](./CODE_SIGNING_POLICY.md).
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by
+[SignPath Foundation](https://signpath.org).
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md).

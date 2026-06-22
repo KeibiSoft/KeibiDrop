@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  actions: read       # SignPath pulls the uploaded artifact by id
 
 jobs:
   build:
@@ -43,6 +44,10 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: Build ${{ matrix.name }}
+    env:
+      # secrets can't be used in `if:`, so expose presence as a string env var.
+      # Signing is skipped on forks and before the SignPath secret is set.
+      HAS_SIGNPATH: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -178,6 +183,43 @@ jobs:
         if: matrix.package == 'zip'
         shell: bash
         run: make package-windows VERSION=${{ steps.version.outputs.version }}
+
+      # Sign the zip in place: after packaging, before the Chocolatey SHA256 and
+      # the release upload, so the signed checksum flows to choco and the Release.
+      - name: Upload unsigned zip for signing (Windows)
+        id: upload-unsigned-windows
+        if: matrix.package == 'zip' && env.HAS_SIGNPATH == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-${{ matrix.goarch }}
+          path: dist/keibidrop-${{ steps.version.outputs.version }}-windows-amd64.zip
+          if-no-files-found: error
+
+      # The three slugs below are placeholders; set them to the values from the
+      # SignPath console once the Foundation application is approved.
+      - name: Sign Windows zip with SignPath (Windows)
+        if: matrix.package == 'zip' && env.HAS_SIGNPATH == 'true'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: keibidrop
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-zip
+          github-artifact-id: ${{ steps.upload-unsigned-windows.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 600
+          output-artifact-directory: dist/signed
+
+      - name: Replace unsigned zip with signed (Windows)
+        if: matrix.package == 'zip' && env.HAS_SIGNPATH == 'true'
+        shell: bash
+        run: |
+          SIGNED=dist/signed/keibidrop-${{ steps.version.outputs.version }}-windows-amd64.zip
+          test -f "$SIGNED" || { echo "ERROR: signed zip not found at $SIGNED"; ls -R dist/signed; exit 1; }
+          mv -f "$SIGNED" dist/keibidrop-${{ steps.version.outputs.version }}-windows-amd64.zip
+          rm -rf dist/signed
+          echo "Replaced dist zip with SignPath-signed artifact"
 
       - name: Package .deb (Linux)
         if: matrix.package == 'deb'
