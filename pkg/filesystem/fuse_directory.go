@@ -2138,20 +2138,35 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 	}
 	ra := int64(ReadAheadBlock)
 	curBlock := offset / ra
+	readEnd := offset + int64(n)
 
 	f.raMu.Lock()
-	delta := offset - f.raLastReadEnd
-	sequential := delta >= 0 && delta < ra
-	f.raLastReadEnd = offset + int64(n)
-	if !sequential {
-		// Seek/jump: forget the lead and re-learn. Cancel any in-flight prefetch —
-		// it is fetching the now-stale forward region and would otherwise steal
-		// bandwidth from the new position's on-demand read. The seek read itself is
-		// served on demand; we prefetch NOTHING here (a random jump never wastes
-		// bandwidth on a mispredicted lead). raCancel is non-blocking; the prefetch
-		// goroutine clears raPrefetching from its own defer.
-		f.raWindowBlocks = 1
+	headBlock := f.raHeadOffset / ra
+	// FUSE delivers a sequential scan as PARALLEL, out-of-order reads (one read per
+	// worker thread), so a stride test against the previous read sees constant
+	// backward jumps and never fires. Classify by DISTANCE from the read head's
+	// high-water mark instead: a read within +/- maxWin blocks of the head belongs to
+	// this stream (parallel laggards and kernel look-ahead included); farther away is
+	// a real seek. Order-independent.
+	inStream := f.raStreamActive &&
+		curBlock <= headBlock+int64(maxWin) &&
+		curBlock >= headBlock-int64(maxWin)
+
+	dbg := raDbgN.Add(1) <= 80 // TEMP DEBUG
+	if dbg {
+		d.logger.Info("RA-read", "off", offset, "n", n, "curBlk", curBlock, "headBlk", headBlock,
+			"inStream", inStream, "active", f.raStreamActive, "frontier", f.raPrefetchedTo) // TEMP DEBUG
+	}
+
+	if !inStream {
+		// Fresh file, or a seek: (re)start the stream here and prefetch NOTHING — a
+		// mispredicted jump wastes no bandwidth, and a thumbnailer's scattered probes
+		// each land here and never fetch. Cancel any now-stale in-flight prefetch.
+		f.raStreamActive = true
+		f.raStreamBytes = int64(n)
+		f.raHeadOffset = readEnd
 		f.raPrefetchedTo = curBlock + 1
+		f.raWindowBlocks = 1
 		if f.raCancel != nil {
 			f.raCancel()
 			f.raCancel = nil
@@ -2159,25 +2174,26 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 		f.raMu.Unlock()
 		return
 	}
-	// Optimistic threshold: commit to read-ahead only once the head is past the
-	// midpoint of its block, so a header-only probe triggers no fetch.
-	if offset < curBlock*ra+ra/2 {
+	f.raStreamBytes += int64(n)
+	if readEnd > f.raHeadOffset {
+		f.raHeadOffset = readEnd
+	}
+	headBlock = f.raHeadOffset / ra
+	// Thumbnail gate: fire read-ahead only after the stream has actually CONSUMED at
+	// least half a block of bytes. A scattered probe (thumbnailer) advances the head
+	// but reads almost nothing, so raStreamBytes stays tiny and it never prefetches;
+	// a real player streaming through the file crosses the threshold quickly.
+	if f.raStreamBytes < ra/2 {
 		f.raMu.Unlock()
 		return
 	}
-	if f.raWindowBlocks < 1 {
-		f.raWindowBlocks = 1
+	// The frontier can never lag the read head (reset on miss).
+	if f.raPrefetchedTo < headBlock+1 {
+		f.raPrefetchedTo = headBlock + 1
 	}
-	// The frontier can never lag the read head: if the reader outran the prefetched
-	// region (a miss), restart the frontier just past the head (reset on miss).
-	if f.raPrefetchedTo < curBlock+1 {
-		f.raPrefetchedTo = curBlock + 1
-	}
-	// Refill only when the buffer ahead of the head has drained to half the window
-	// (the trigger distance scales with the window: 1 block at window 2, 2 at 4,
-	// ... so bigger leads refill earlier and less often). Otherwise do nothing —
-	// a stream of small reads inside the buffered region issues ZERO prefetch.
-	blocksAhead := f.raPrefetchedTo - (curBlock + 1)
+	// Refill only when the buffered lead ahead of the head has drained to half the
+	// window; otherwise do nothing — reads inside the buffered region issue ZERO work.
+	blocksAhead := f.raPrefetchedTo - (headBlock + 1)
 	half := int64(f.raWindowBlocks) / 2
 	if half < 1 {
 		half = 1
@@ -2186,22 +2202,18 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 		f.raMu.Unlock()
 		return
 	}
-	// One sequential prefetch in flight per file: if a previous refill is still
-	// running it is already fetching this same forward region in order, so let it
-	// finish rather than start a second fetch that would split the wire.
+	// One sequential prefetch in flight per file: a previous refill still running is
+	// already fetching this forward region in order, so let it finish.
 	if f.raPrefetching {
 		f.raMu.Unlock()
 		return
 	}
-	// Buffer half-drained on a confirmed sequential run: prime straight to the FULL
-	// window (no slow doubling) so smooth playback is reached fast right after the
-	// first block — "fast TTFB (one 16 MiB frame) then fast smooth" — and the deep
-	// buffer rides out the link's bandwidth dips. prefetchRange fetches the blocks
-	// SEQUENTIALLY in order at full bandwidth (nearest first), not as a parallel
-	// burst that would split the shared wire and delay the next-needed block.
+	// Prime straight to the full window; prefetchRange fetches the blocks SEQUENTIALLY
+	// in order at full bandwidth (nearest first), never a parallel burst that would
+	// split the shared wire and delay the next-needed block.
 	f.raWindowBlocks = maxWin
 	from := f.raPrefetchedTo
-	target := curBlock + 1 + int64(f.raWindowBlocks)
+	target := headBlock + 1 + int64(maxWin)
 	f.raPrefetchedTo = target
 	f.raPrefetching = true
 	if f.raCancel != nil {
@@ -2210,6 +2222,8 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 	pctx, pcancel := context.WithCancel(d.FsCtx)
 	f.raCancel = pcancel
 	f.raMu.Unlock()
+
+	d.logger.Info("RA-SPAWN", "headBlk", headBlock, "from", from, "target", target, "win", maxWin) // TEMP DEBUG
 
 	f.CacheWg.Add(1) // paired with prefetchRange's deferred CacheWg.Done()
 	go d.prefetchRange(f, pool, cacheFD, bitmap, from, target, remoteFileSize, pctx)

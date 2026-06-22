@@ -215,36 +215,41 @@ func TestReadAhead_PrimesFullWindowOnSequential(t *testing.T) {
 	root.ReadAheadWindowBlocks = capW
 	f := root.OpenFileHandlers[fh].File
 	ra := int64(ReadAheadBlock)
+	chunk := int64(ChunkSize)
 	pool := raPool(t, prov, fh)
 	defer func() { _ = pool.Close() }()
-	rd := func(off int64) { root.maybeReadAhead(f, pool, f.CacheFD, f.Bitmap, off, 64*1024, int64(fileSize)) }
+	// stream consumes [from,to) in realistic on-demand-sized chunks, like a player
+	// reading sequentially — the detector keys off bytes CONSUMED, not a single call.
+	stream := func(from, to int64) {
+		for o := from; o < to; o += chunk {
+			root.maybeReadAhead(f, pool, f.CacheFD, f.Bitmap, o, int(chunk), int64(fileSize))
+		}
+	}
 
-	// Pre-midpoint reads in block 0 must NOT prefetch (frontier stays put).
-	rd(0)
-	rd(ra / 4)
+	// Consuming less than half a block must NOT commit to read-ahead (frontier put).
+	stream(0, ra/2-chunk)
 	if _, fr := raState(f); fr > 1 {
-		t.Fatalf("pre-midpoint reads advanced the frontier to %d", fr)
+		t.Fatalf("early (<half block) reads advanced the frontier to %d", fr)
 	}
 	if c := root.raPrefetchCalls.Load(); c != 0 {
-		t.Fatalf("pre-midpoint reads prefetched (%d calls)", c)
+		t.Fatalf("early (<half block) reads prefetched (%d calls)", c)
 	}
-	// Cross block 0 midpoint -> prime straight to the full window; frontier covers it.
-	rd(ra / 2)
+	// Crossing half a block of real consumption -> prime straight to the full window.
+	stream(ra/2-chunk, ra/2+chunk)
 	if w, fr := raState(f); w != capW || fr != 1+int64(capW) {
-		t.Fatalf("after block0 midpoint: window=%d frontier=%d, want %d,%d", w, fr, capW, 1+capW)
+		t.Fatalf("after half a block consumed: window=%d frontier=%d, want %d,%d", w, fr, capW, 1+capW)
 	}
 	waitFor(t, 3*time.Second, func() bool { return inflightEmpty(f) }) // let the sequential prefetch finish
 
-	// Reads inside the buffered region (still > half the window ahead) are sparse:
+	// Reads still inside the buffered region (> half the window ahead) are sparse:
 	// the frontier does not advance, so no new prefetch is issued.
 	_, frBefore := raState(f)
-	rd(ra/2 + ra/4)
-	rd(ra + ra/2)
+	stream(ra/2+chunk, ra+chunk)
 	if _, fr := raState(f); fr != frBefore {
 		t.Fatalf("reads inside the buffer advanced the frontier %d -> %d (not sparse)", frBefore, fr)
 	}
-	// Drain past half the window -> a refill tops back up to a full window.
-	rd(2*ra + ra/2)
+	// Draining past half the window -> a refill tops back up to a full window.
+	stream(ra+chunk, 2*ra+chunk)
 	if w, fr := raState(f); w != capW || fr != 2+1+int64(capW) {
 		t.Fatalf("after drain refill: window=%d frontier=%d, want %d,%d", w, fr, capW, 2+1+capW)
 	}
@@ -261,13 +266,14 @@ func TestReadAhead_JumpResetsAndPrefetchesNothing(t *testing.T) {
 	root.ReadAheadWindowBlocks = 4
 	f := root.OpenFileHandlers[fh].File
 	ra := int64(ReadAheadBlock)
+	chunk := int64(ChunkSize)
 	pool := raPool(t, prov, fh)
 	defer func() { _ = pool.Close() }()
 	rd := func(off int64) { root.maybeReadAhead(f, pool, f.CacheFD, f.Bitmap, off, 64*1024, int64(fileSize)) }
 
-	// A sequential run ramps the window up.
-	for _, off := range []int64{0, ra / 2, ra, ra + ra/2, 2 * ra, 2*ra + ra/2} {
-		rd(off)
+	// A sequential run that consumes enough commits to read-ahead and primes the window.
+	for o := int64(0); o < ra/2+chunk; o += chunk {
+		root.maybeReadAhead(f, pool, f.CacheFD, f.Bitmap, o, int(chunk), int64(fileSize))
 	}
 	if w, _ := raState(f); w < 2 {
 		t.Fatalf("window did not ramp on a sequential run: %d", w)
@@ -606,42 +612,97 @@ func BenchmarkThumbnailScan(b *testing.B) {
 	}
 }
 
-// Under injected per-fetch latency, read-ahead must make a sequential pass
-// faster than pure on-demand by fetching upcoming blocks while earlier ones are
-// served from cache. This is the in-process analogue of the WAN benchmark; the
-// real run toggles KEIBIDROP_READ_AHEAD_WINDOW_MB between 0 and 64 over the link.
+// Under injected per-fetch latency and a PACED consumer (a real player at a fixed
+// bitrate, the case that matters — a memory-speed greedy reader outruns any
+// sequential prefetch and is not a real workload), read-ahead must keep the buffer
+// full so block boundaries stop stalling. This is the in-process analogue of the
+// WAN benchmark; the real run toggles KEIBIDROP_READ_AHEAD_WINDOW_MB 0 vs 64.
 func TestReadAhead_LatencyHidingSpeedup(t *testing.T) {
 	const blocks = 8
+	const chunk = int64(512 * 1024)
 	fileSize := blocks * ReadAheadBlock
 	content := makePattern(fileSize)
-	delay := 30 * time.Millisecond
+	delay := 20 * time.Millisecond
+	const paceMBps = 80.0 // block plays for ~200ms >> the 20ms fetch, so a working prefetch stays ahead
 
-	run := func(window int) (time.Duration, int64) {
+	run := func(window int) (stalls int, reads int64) {
 		prov := &delayProvider{content: content, delay: delay}
 		root, fh, cleanup := newReadAheadFileWith(t, int64(fileSize), prov)
 		defer cleanup()
 		root.ReadAheadWindowBlocks = window
 		f := root.OpenFileHandlers[fh].File
+		budget := time.Duration(float64(chunk) / (paceMBps * 1e6) * float64(time.Second))
+		buf := make([]byte, chunk)
 		start := time.Now()
-		got := readSeq(root, fh, fileSize, 512)
-		elapsed := time.Since(start)
-		if len(got) != fileSize {
-			t.Fatalf("short read: %d of %d", len(got), fileSize)
+		for off := int64(0); off < int64(fileSize); off += chunk {
+			target := start.Add(time.Duration(off/chunk) * budget)
+			if dwell := time.Until(target); dwell > 0 {
+				time.Sleep(dwell)
+			}
+			tc := time.Now()
+			if n := root.Read("/f.bin", buf, off, fh); n <= 0 {
+				t.Fatalf("read at %d returned %d", off, n)
+			}
+			if time.Since(tc) > budget { // the read blocked past the play budget: a stall the viewer feels
+				stalls++
+			}
 		}
-		// Drain async prefetch before the deferred cleanup closes the cache FD.
 		waitFor(t, 10*time.Second, func() bool { return inflightEmpty(f) })
-		return elapsed, prov.reads.Load()
+		return stalls, prov.reads.Load()
 	}
 
-	offTime, offReads := run(0)
-	onTime, onReads := run(4)
-	t.Logf("read-ahead OFF: %v (%d fetches); ON(window=4): %v (%d fetches); speedup %.2fx",
-		offTime, offReads, onTime, onReads, float64(offTime)/float64(onTime))
+	offStalls, offReads := run(0)
+	onStalls, onReads := run(4)
+	t.Logf("paced %gMB/s, fetch delay %v: OFF stalls=%d (%d fetches); ON(window=4) stalls=%d (%d fetches)",
+		paceMBps, delay, offStalls, offReads, onStalls, onReads)
 
 	if onReads != int64(blocks) || offReads != int64(blocks) {
 		t.Fatalf("expected exactly %d fetches each (no duplicates): off=%d on=%d", blocks, offReads, onReads)
 	}
-	if onTime >= offTime {
-		t.Fatalf("read-ahead did not hide latency: off=%v on=%v (delay=%v)", offTime, onTime, delay)
+	if offStalls < 5 {
+		t.Fatalf("expected OFF to stall at most block boundaries (>=5), got %d", offStalls)
+	}
+	if onStalls > 2 {
+		t.Fatalf("read-ahead did not hide latency under paced playback: ON stalls=%d (OFF=%d)", onStalls, offStalls)
+	}
+}
+
+// FUSE delivers a single sequential scan as PARALLEL, out-of-order reads (one per
+// worker thread). Read-ahead must detect the stream regardless of arrival order.
+// This is the regression test for the bug that made read-ahead a no-op on WinFsp:
+// a "is this read right after the previous one?" stride test saw every out-of-order
+// read as a backward seek and never prefetched. The high-water-mark detector keys
+// off distance from the read head and total bytes consumed, so order does not matter.
+func TestReadAhead_ParallelOutOfOrderReadsStillPrefetch(t *testing.T) {
+	fileSize := 8 * ReadAheadBlock
+	root, fh, prov, cleanup := newReadAheadFile(t, makePattern(fileSize))
+	defer cleanup()
+	root.ReadAheadWindowBlocks = 4
+	f := root.OpenFileHandlers[fh].File
+	pool := raPool(t, prov, fh)
+	defer func() { _ = pool.Close() }()
+	ra := int64(ReadAheadBlock)
+	cs := int64(128 * 1024)
+
+	// Walk the first 1.5 blocks but swap adjacent offsets so they arrive
+	// NON-monotonically — the pattern a stride detector misreads as constant seeks,
+	// while the scan still advances overall.
+	var offs []int64
+	for o := int64(0); o < ra+ra/2; o += cs {
+		offs = append(offs, o)
+	}
+	for i := 0; i+1 < len(offs); i += 2 {
+		offs[i], offs[i+1] = offs[i+1], offs[i]
+	}
+	for _, o := range offs {
+		root.maybeReadAhead(f, pool, f.CacheFD, f.Bitmap, o, int(cs), int64(fileSize))
+	}
+	waitFor(t, 5*time.Second, func() bool { return inflightEmpty(f) })
+
+	if _, fr := raState(f); fr <= 1 {
+		t.Fatalf("out-of-order (parallel) reads did not trigger read-ahead: frontier=%d (the WinFsp no-op bug)", fr)
+	}
+	if root.raPrefetchCalls.Load() == 0 {
+		t.Fatalf("no blocks prefetched under parallel/out-of-order reads")
 	}
 }
