@@ -219,9 +219,12 @@ func TestReadAhead_PrimesFullWindowOnSequential(t *testing.T) {
 	defer func() { _ = pool.Close() }()
 	rd := func(off int64) { root.maybeReadAhead(f, pool, f.CacheFD, f.Bitmap, off, 64*1024, int64(fileSize)) }
 
-	// Pre-midpoint reads in block 0 must NOT prefetch.
+	// Pre-midpoint reads in block 0 must NOT prefetch (frontier stays put).
 	rd(0)
 	rd(ra / 4)
+	if _, fr := raState(f); fr > 1 {
+		t.Fatalf("pre-midpoint reads advanced the frontier to %d", fr)
+	}
 	if c := root.raPrefetchCalls.Load(); c != 0 {
 		t.Fatalf("pre-midpoint reads prefetched (%d calls)", c)
 	}
@@ -230,12 +233,15 @@ func TestReadAhead_PrimesFullWindowOnSequential(t *testing.T) {
 	if w, fr := raState(f); w != capW || fr != 1+int64(capW) {
 		t.Fatalf("after block0 midpoint: window=%d frontier=%d, want %d,%d", w, fr, capW, 1+capW)
 	}
-	// Reads inside the buffered region (still > half the window ahead) are sparse.
-	before := root.raPrefetchCalls.Load()
+	waitFor(t, 3*time.Second, func() bool { return inflightEmpty(f) }) // let the sequential prefetch finish
+
+	// Reads inside the buffered region (still > half the window ahead) are sparse:
+	// the frontier does not advance, so no new prefetch is issued.
+	_, frBefore := raState(f)
 	rd(ra/2 + ra/4)
 	rd(ra + ra/2)
-	if root.raPrefetchCalls.Load() != before {
-		t.Fatalf("reads inside the buffer issued prefetch (not sparse)")
+	if _, fr := raState(f); fr != frBefore {
+		t.Fatalf("reads inside the buffer advanced the frontier %d -> %d (not sparse)", frBefore, fr)
 	}
 	// Drain past half the window -> a refill tops back up to a full window.
 	rd(2*ra + ra/2)
@@ -327,12 +333,17 @@ func TestReadAhead_NotFoundReturnsEOF(t *testing.T) {
 	}
 }
 
-// inflightEmpty reports whether all single-flight block fetches have settled, so
-// a test can wait for async prefetch goroutines to finish before asserting.
+// inflightEmpty reports whether read-ahead is idle: no single-flight block fetch
+// is outstanding AND the sequential prefetch goroutine has finished. Tests wait on
+// this before asserting, so async prefetch cannot race the assertions.
 func inflightEmpty(f *File) bool {
 	f.fetchMu.Lock()
-	defer f.fetchMu.Unlock()
-	return len(f.inflight) == 0
+	n := len(f.inflight)
+	f.fetchMu.Unlock()
+	f.raMu.Lock()
+	prefetching := f.raPrefetching
+	f.raMu.Unlock()
+	return n == 0 && !prefetching
 }
 
 // delayProvider serves content but adds a fixed latency to every fetch, modeling

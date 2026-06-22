@@ -2025,97 +2025,91 @@ func (f *File) finishBlockFetch(start int64, bf *blockFetch, err error) {
 	bf.settle(err)
 }
 
-// prefetchBlock fetches one ReadAheadBlock-aligned block ahead of the read head
-// and caches it, asynchronously, so a later sequential read finds it locally
-// instead of stalling a full round trip. It is the read-ahead twin of the
-// on-demand miss path in Read: it reuses the same single-flight coalescing
-// (beginBlockFetch), the same prefetch semaphore bound, the same async cache
-// write tracked by CacheWg, and the same chunk-completeness invariant (mark a
-// chunk present only once it is FULLY written, never a partial/EOF chunk). It is
-// idempotent and cheap to re-issue: a block already present (bitmap) or already
-// in flight (singleflight) is skipped. blockStart must be ReadAheadBlock-aligned.
-func (d *Dir) prefetchBlock(f *File, pool *StreamPool, cacheFD *os.File, bitmap *ChunkBitmap, blockStart, remoteFileSize int64, logger *slog.Logger) {
-	d.raPrefetchCalls.Add(1) // observability: counts issuances (sparse — ~once per block)
-	if pool == nil || cacheFD == nil || bitmap == nil || blockStart < 0 {
+// prefetchRange fetches blocks [fromBlock, toBlock) ahead of the read head and
+// caches them, in ONE goroutine, SEQUENTIALLY and in order — the nearest block
+// first, each at full link bandwidth. It deliberately does NOT fetch the blocks
+// in parallel: on a single shared wire whose bandwidth-delay product is smaller
+// than one 16 MiB block, parallel fetches of consecutive blocks just split the
+// bandwidth and DELAY the block the reader needs next; in-order fetching delivers
+// that block soonest. The goroutine holds one prefetch-semaphore slot for the
+// whole range (one prefetch stream per file -> the shared bridge wire stays
+// balanced) and is cancellable via ctx (a seek cancels the now-stale range).
+// Each block is single-flighted (a read that catches up coalesces instead of
+// re-fetching) and only fully-written chunks are marked present (the chunk-
+// completeness invariant: never mark a partial/EOF chunk, or a later read there
+// would serve sparse-hole zeros).
+func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap *ChunkBitmap, fromBlock, toBlock, remoteFileSize int64, ctx context.Context) {
+	defer func() {
+		f.raMu.Lock()
+		f.raPrefetching = false
+		f.raMu.Unlock()
+		f.CacheWg.Done() // Release waits on this before closing cacheFD/pool.
+	}()
+	if pool == nil || cacheFD == nil || bitmap == nil {
 		return
 	}
-	if remoteFileSize > 0 && blockStart >= remoteFileSize {
-		return // Past EOF: nothing to prefetch.
-	}
-	ra := int64(ReadAheadBlock)
-	cs := int64(ChunkSize)
-	fetchEnd := blockStart + ra
-	if remoteFileSize > 0 && fetchEnd > remoteFileSize {
-		fetchEnd = remoteFileSize
-	}
-	fetchLen := fetchEnd - blockStart
-	if fetchLen <= 0 {
-		return
-	}
-	if bitmap.HasRange(blockStart, int(fetchLen)) {
-		return // Already cached.
-	}
-
-	bf, leader := f.beginBlockFetch(blockStart)
-	if !leader {
-		return // A read or another prefetch already owns this block; do not duplicate.
-	}
-
-	// Bound concurrency with the shared prefetch semaphore, but acquire it
-	// non-blocking: read-ahead is best-effort, so when the link is already
-	// saturated we drop the prefetch (a real read will fetch the block) rather
-	// than queue and make a slow link slower.
 	sem := d.Root.PrefetchSem
 	if sem != nil {
 		select {
 		case sem <- struct{}{}:
-		default:
-			f.finishBlockFetch(blockStart, bf, errBlockFetchIncomplete)
+			defer func() { <-sem }()
+		case <-ctx.Done():
 			return
 		}
 	}
-
-	f.CacheWg.Add(1) // Release waits on this before closing cacheFD/pool.
-	go func() {
-		defer f.CacheWg.Done()
-		if sem != nil {
-			defer func() { <-sem }()
+	ra := int64(ReadAheadBlock)
+	cs := int64(ChunkSize)
+	for b := fromBlock; b < toBlock; b++ {
+		if ctx.Err() != nil {
+			return // shutdown or a seek cancelled this now-stale range
 		}
-		// Backstop: release any reader coalesced on this block on every exit.
-		// settle() is idempotent, so the success path's finish wins and this is a
-		// no-op then.
-		defer f.finishBlockFetch(blockStart, bf, errBlockFetchIncomplete)
-
-		if d.FsCtx.Err() != nil {
+		blockStart := b * ra
+		if blockStart < 0 || (remoteFileSize > 0 && blockStart >= remoteFileSize) {
+			return // past EOF
+		}
+		end := blockStart + ra
+		if remoteFileSize > 0 && end > remoteFileSize {
+			end = remoteFileSize
+		}
+		if end-blockStart <= 0 {
 			return
 		}
-		ctx, cancel := context.WithTimeout(d.FsCtx, 10*time.Second)
-		data, err := pool.ReadAt(ctx, blockStart, fetchLen)
+		if bitmap.HasRange(blockStart, int(end-blockStart)) {
+			continue // already cached
+		}
+		bf, leader := f.beginBlockFetch(blockStart)
+		if !leader {
+			continue // a read or earlier prefetch already owns this block
+		}
+		d.raPrefetchCalls.Add(1) // observability: blocks actually fetched by read-ahead
+		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		data, err := pool.ReadAt(rctx, blockStart, end-blockStart)
 		cancel()
 		if err != nil || len(data) == 0 {
-			return // A real read will retry on demand; waiters are released above.
-		}
-		if _, werr := cacheFD.WriteAt(data, blockStart); werr != nil {
-			logger.Warn("Read-ahead cache write failed", "error", werr)
+			// Best-effort: release this block's waiters and stop the range (a real
+			// read will fetch on demand). Bailing also makes teardown prompt when
+			// Release closes the pool out from under us.
+			f.finishBlockFetch(blockStart, bf, errBlockFetchIncomplete)
 			return
 		}
-		// Mark only chunks FULLY covered by the written block (chunk-completeness
-		// invariant): a short block at EOF must not mark its trailing partial
-		// chunk present, or a later read there would serve sparse-hole zeros.
-		end := blockStart + int64(len(data))
+		if _, werr := cacheFD.WriteAt(data, blockStart); werr != nil {
+			f.finishBlockFetch(blockStart, bf, werr)
+			return
+		}
+		dataEnd := blockStart + int64(len(data))
 		for c := int(blockStart / cs); ; c++ {
 			chunkBegin := int64(c) * cs
 			chunkEnd := chunkBegin + cs
 			if remoteFileSize > 0 && chunkEnd > remoteFileSize {
 				chunkEnd = remoteFileSize
 			}
-			if chunkBegin >= end || chunkEnd > end {
+			if chunkBegin >= dataEnd || chunkEnd > dataEnd {
 				break
 			}
 			bitmap.Set(c)
 		}
-		f.finishBlockFetch(blockStart, bf, nil) // Release waiters after the bytes are in cache.
-	}()
+		f.finishBlockFetch(blockStart, bf, nil) // release waiters after the bytes are in cache
+	}
 }
 
 // maybeReadAhead is the predictive read-ahead detector, called on every read of a
@@ -2150,11 +2144,18 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 	sequential := delta >= 0 && delta < ra
 	f.raLastReadEnd = offset + int64(n)
 	if !sequential {
-		// Seek/jump: forget the lead and re-learn. The seek read is served on
-		// demand; we prefetch NOTHING here, so a random jump never wastes
-		// bandwidth on a mispredicted lead.
+		// Seek/jump: forget the lead and re-learn. Cancel any in-flight prefetch —
+		// it is fetching the now-stale forward region and would otherwise steal
+		// bandwidth from the new position's on-demand read. The seek read itself is
+		// served on demand; we prefetch NOTHING here (a random jump never wastes
+		// bandwidth on a mispredicted lead). raCancel is non-blocking; the prefetch
+		// goroutine clears raPrefetching from its own defer.
 		f.raWindowBlocks = 1
 		f.raPrefetchedTo = curBlock + 1
+		if f.raCancel != nil {
+			f.raCancel()
+			f.raCancel = nil
+		}
 		f.raMu.Unlock()
 		return
 	}
@@ -2185,22 +2186,33 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 		f.raMu.Unlock()
 		return
 	}
+	// One sequential prefetch in flight per file: if a previous refill is still
+	// running it is already fetching this same forward region in order, so let it
+	// finish rather than start a second fetch that would split the wire.
+	if f.raPrefetching {
+		f.raMu.Unlock()
+		return
+	}
 	// Buffer half-drained on a confirmed sequential run: prime straight to the FULL
-	// window in ONE burst (no slow doubling), so smooth playback is reached fast
-	// right after the first block — the "fast TTFB (one 16 MiB frame) then fast
-	// smooth" goal — and the deep buffer also rides out the link's bandwidth dips.
-	// The burst's blocks fetch in parallel across the bounded stream pool (+ the
-	// prefetch semaphore), so the shared bridge wire is not flooded; a mispredicted
-	// jump wastes only a bounded window, and a seek resets it.
+	// window (no slow doubling) so smooth playback is reached fast right after the
+	// first block — "fast TTFB (one 16 MiB frame) then fast smooth" — and the deep
+	// buffer rides out the link's bandwidth dips. prefetchRange fetches the blocks
+	// SEQUENTIALLY in order at full bandwidth (nearest first), not as a parallel
+	// burst that would split the shared wire and delay the next-needed block.
 	f.raWindowBlocks = maxWin
 	from := f.raPrefetchedTo
 	target := curBlock + 1 + int64(f.raWindowBlocks)
 	f.raPrefetchedTo = target
+	f.raPrefetching = true
+	if f.raCancel != nil {
+		f.raCancel() // release the previous (finished) refill's context
+	}
+	pctx, pcancel := context.WithCancel(d.FsCtx)
+	f.raCancel = pcancel
 	f.raMu.Unlock()
 
-	for b := from; b < target; b++ {
-		d.prefetchBlock(f, pool, cacheFD, bitmap, b*ra, remoteFileSize, f.logger)
-	}
+	f.CacheWg.Add(1) // paired with prefetchRange's deferred CacheWg.Done()
+	go d.prefetchRange(f, pool, cacheFD, bitmap, from, target, remoteFileSize, pctx)
 }
 
 func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode int) {

@@ -277,6 +277,8 @@ type File struct {
 	raLastReadEnd  int64
 	raWindowBlocks int
 	raPrefetchedTo int64
+	raPrefetching  bool               // a sequential prefetch goroutine is in flight (one per file)
+	raCancel       context.CancelFunc // cancels the in-flight prefetch range (called on a seek)
 
 	// Download resumption state.
 	Download DownloadState
