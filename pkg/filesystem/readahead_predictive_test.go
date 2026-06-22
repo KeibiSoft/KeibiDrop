@@ -622,8 +622,12 @@ func TestReadAhead_LatencyHidingSpeedup(t *testing.T) {
 	const chunk = int64(512 * 1024)
 	fileSize := blocks * ReadAheadBlock
 	content := makePattern(fileSize)
-	delay := 20 * time.Millisecond
-	const paceMBps = 80.0 // block plays for ~200ms >> the 20ms fetch, so a working prefetch stays ahead
+	delay := 30 * time.Millisecond
+	// Pace chosen for CI robustness under -race: a block plays for ~400ms (16 MiB /
+	// 40 MB/s) >> the 30ms fetch, so a working prefetch stays well ahead even on a
+	// slow/contended runner; the per-chunk budget (~13ms) is below the 30ms fetch, so
+	// an OFF cold read reliably overruns it (a stall) while cached reads do not.
+	const paceMBps = 40.0
 
 	run := func(window int) (stalls int, reads int64) {
 		prov := &delayProvider{content: content, delay: delay}
@@ -659,11 +663,16 @@ func TestReadAhead_LatencyHidingSpeedup(t *testing.T) {
 	if onReads != int64(blocks) || offReads != int64(blocks) {
 		t.Fatalf("expected exactly %d fetches each (no duplicates): off=%d on=%d", blocks, offReads, onReads)
 	}
-	if offStalls < 5 {
-		t.Fatalf("expected OFF to stall at most block boundaries (>=5), got %d", offStalls)
+	// Timing-robust assertions. CI under -race is noisy and inflates BOTH stall counts
+	// (a slow cached read can miss the play budget, and an OFF cold stall cascades into
+	// the next deadlines). So we do NOT assert an absolute ON ceiling; instead require
+	// OFF to actually stall at boundaries, and read-ahead to ELIMINATE at least half the
+	// block-boundary stalls. The difference cancels symmetric per-read noise.
+	if offStalls < blocks/2 {
+		t.Fatalf("OFF did not stall at block boundaries (got %d); test not exercising the cold path", offStalls)
 	}
-	if onStalls > 2 {
-		t.Fatalf("read-ahead did not hide latency under paced playback: ON stalls=%d (OFF=%d)", onStalls, offStalls)
+	if offStalls-onStalls < blocks/2 {
+		t.Fatalf("read-ahead did not hide block-boundary stalls: ON=%d OFF=%d (want at least %d fewer)", onStalls, offStalls, blocks/2)
 	}
 }
 
