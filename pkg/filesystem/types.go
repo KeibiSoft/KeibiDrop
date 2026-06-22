@@ -21,8 +21,6 @@ import (
 	"github.com/zeebo/xxh3"
 )
 
-var raDbgN atomic.Int64 // TEMP DEBUG: samples the first read-ahead calls to prove parallel arrival + prefetch firing
-
 // HandleEntry maps an opaque FUSE file handle to the actual kernel fd and File metadata.
 // Opaque handles prevent fd-recycling races: the kernel reuses fd numbers after close(),
 // but handle IDs are monotonically increasing and never reused.

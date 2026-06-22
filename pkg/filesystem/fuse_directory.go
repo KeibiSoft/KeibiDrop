@@ -2152,12 +2152,6 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 		curBlock <= headBlock+int64(maxWin) &&
 		curBlock >= headBlock-int64(maxWin)
 
-	dbg := raDbgN.Add(1) <= 80 // TEMP DEBUG
-	if dbg {
-		d.logger.Info("RA-read", "off", offset, "n", n, "curBlk", curBlock, "headBlk", headBlock,
-			"inStream", inStream, "active", f.raStreamActive, "frontier", f.raPrefetchedTo) // TEMP DEBUG
-	}
-
 	if !inStream {
 		// Fresh file, or a seek: (re)start the stream here and prefetch NOTHING — a
 		// mispredicted jump wastes no bandwidth, and a thumbnailer's scattered probes
@@ -2222,8 +2216,6 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 	pctx, pcancel := context.WithCancel(d.FsCtx)
 	f.raCancel = pcancel
 	f.raMu.Unlock()
-
-	d.logger.Info("RA-SPAWN", "headBlk", headBlock, "from", from, "target", target, "win", maxWin) // TEMP DEBUG
 
 	f.CacheWg.Add(1) // paired with prefetchRange's deferred CacheWg.Done()
 	go d.prefetchRange(f, pool, cacheFD, bitmap, from, target, remoteFileSize, pctx)
