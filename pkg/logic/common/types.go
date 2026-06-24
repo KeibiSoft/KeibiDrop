@@ -101,6 +101,12 @@ type KeibiDrop struct {
 	// Event callback (wired by FFI layer to push events to the UI).
 	OnEvent func(string)
 
+	// OnPeerVerified fires with the peer's verified fingerprint the instant the
+	// handshake confirms identity, before any files sync. The handshake only EMITS
+	// this; it knows nothing of what reacts. Wired in setupFilesystem to scope the
+	// FUSE cache to the peer (drop a different peer's view, keep the same peer's).
+	OnPeerVerified func(fp string)
+
 	// Connection resilience.
 	HealthMonitor    *session.HealthMonitor
 	ReconnectManager *session.ReconnectManager

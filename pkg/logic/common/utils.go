@@ -264,6 +264,13 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	}
 
 	kd.session.PeerPubKeys = peerKeys
+
+	// Identity confirmed: emit it. Whatever reacts (the FUSE cache scoper, wired in
+	// setupFilesystem) is none of this verifier's business — it just announces the fact.
+	if kd.OnPeerVerified != nil {
+		kd.OnPeerVerified(computedFp)
+	}
+
 	if !config.ValidPeerPort(peerReg.Listen.Port) {
 		logger.Warn("Provided outbound port is out of known range, defaulting to config", "provided-port", peerReg.Listen.Port, "default-to", config.OutboundPort)
 		peerReg.Listen.Port = config.OutboundPort
@@ -335,6 +342,16 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs.AutoCache = kd.AutoCache // live_collab → macFUSE auto_cache (set before Mount)
 	fs.PrefetchAutoMB = kd.PrefetchAutoMB
 	fs.ReadAheadWindowMB = kd.ReadAheadWindowMB
+
+	// Composition point: the handshake EMITS OnPeerVerified; the FUSE cache REACTS by
+	// scoping itself to that peer. A different peer drops the prior cache (no cross-peer
+	// leak); the same peer reconnecting or resuming keeps it (files still there, no
+	// re-fetch). Neither side knows the other — they meet only on this line.
+	kd.OnPeerVerified = func(fp string) {
+		if kd.FS != nil {
+			kd.FS.EnsurePeerScope(fp)
+		}
+	}
 
 	// Notification worker with per-path debounce and batching.
 	//
@@ -607,11 +624,13 @@ func (kd *KeibiDrop) handleNotifyDisconnect() {
 	if kd.FS != nil {
 		// Keep the FUSE mount alive across the disconnect — cgofuse allows only
 		// one mount per process, so a fresh remount on reconnect is fragile and
-		// can fail (leaving the mount point dead). ClearFiles drops the peer's
-		// file view and cancels in-flight reads but leaves the mount up; Run()'s
-		// Start handler then reuses it on reconnect (it returns via the ctx.Done
-		// select, not by Mount() unblocking). Full Unmount stays on app exit.
-		kd.FS.ClearFiles()
+		// can fail (leaving the mount point dead). CancelInFlight cancels in-flight
+		// reads but PRESERVES the peer's file view, so a same-peer reconnect or a
+		// resumed session finds its files still there with NO re-fetch; a DIFFERENT
+		// peer drops them at its next handshake (EnsurePeerScope). Run()'s Start
+		// handler reuses the mount on reconnect (it returns via the ctx.Done select,
+		// not by Mount() unblocking). Full Unmount stays on app exit.
+		kd.FS.CancelInFlight()
 	}
 	time.Sleep(grpcDisconnectGraceDelay)
 	kd.cancelContext()
