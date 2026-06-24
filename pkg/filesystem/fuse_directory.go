@@ -15,6 +15,7 @@
 package filesystem
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	// "fmt"
@@ -32,6 +33,7 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/pkg/xattr"
 	winfuse "github.com/winfsp/cgofuse/fuse"
+	"github.com/zeebo/xxh3"
 )
 
 // recoverPanic recovers from panics in FUSE handlers and logs the error.
@@ -1716,7 +1718,32 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		return int(convertOsErrToSyscallErrno("truncate", err))
 	}
 
-	d.refreshFileStat(path)
+	// Re-stat and propagate the new SIZE to the peer. A truncate has no Write/Release
+	// to ride, so without this a shrink never reaches the peer: it keeps the old larger
+	// size and serves stale bytes past the new EOF (integrity violation). refreshFileStat
+	// only refreshes timestamps, so update Size here too, snapshot under metaMu, then
+	// notify EDIT_FILE outside the locks (same discipline as Chmod).
+	st, statErr := platLstat(cleanPath)
+	var statSnap winfuse.Stat_t
+	haveSnap, sizeChanged := false, false
+	d.AfmLock.Lock()
+	if f, ok := d.AllFileMap[path]; ok && f.stat != nil && statErr == nil {
+		f.metaMu.Lock()
+		sizeChanged = st.Size != f.stat.Size
+		f.stat.Size = st.Size
+		f.stat.Ctim = st.Ctim
+		f.stat.Mtim = st.Mtim
+		statSnap = *f.stat
+		haveSnap = true
+		f.metaMu.Unlock()
+	}
+	d.AfmLock.Unlock()
+	// Only emit on an actual size change. Windows re-opens an O_TRUNC file by calling
+	// Truncate even when the size is unchanged; a no-op truncate must not churn the peer
+	// with a redundant EDIT_FILE. A genuine grow/shrink/overwrite always changes the size.
+	if haveSnap && sizeChanged && d.OnLocalChange != nil {
+		d.OnLocalChange(types.FileEvent{Path: path, Action: types.EditFile, Attr: types.StatToAttr(&statSnap)})
+	}
 	return 0
 }
 
@@ -3052,10 +3079,88 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 		f.PrefetchCancel()
 		f.PrefetchCancel = nil
 	}
-	f.Bitmap = NewChunkBitmap(stat.Size)
+	// Safe-by-default reset: the new bitmap is all-missing, i.e. today's behavior
+	// (re-fetch the whole file on the next read). Capture the OLD bitmap + cache path
+	// so an async region-diff can ADD back present-marks for the chunks that did NOT
+	// change, so only the edited regions actually move. Purely additive — any failure
+	// (old peer's Unimplemented, RPC/IO error) leaves the full re-fetch intact.
+	oldBitmap := f.Bitmap
+	realPath := f.RealPathOfFile
+	provider := f.StreamProvider
+	newBitmap := NewChunkBitmap(stat.Size)
+	f.Bitmap = newBitmap
 	d.RemoteFilesLock.Unlock()
 	d.AfmLock.Lock()
 	d.AllFileMap[path] = f
 	d.AfmLock.Unlock()
+
+	if ch, ok := provider.(chunkHashProvider); ok {
+		d.deltaRemarkUnchanged(path, realPath, oldBitmap, newBitmap, ch, stat.Size)
+	}
 	return nil
+}
+
+// chunkHashProvider is the optional capability a StreamProvider exposes when the
+// peer implements the GetChunkHashes RPC (rsync-style edit diff). A provider that
+// lacks it — or a peer that returns codes.Unimplemented — falls back to a full
+// re-fetch, so it stays compatible with older peers and no-FUSE (iOS) peers.
+type chunkHashProvider interface {
+	GetChunkHashes(ctx context.Context, path string, chunkSize int64) (int64, []byte, error)
+}
+
+// deltaRemarkUnchanged is the rsync-style region diff run right after an edit reset
+// the bitmap to all-missing. It fetches the peer's per-chunk xxh3-128 hashes for the
+// NEW content, hashes our own cached chunks, and re-marks present ONLY the chunks we
+// already had whose hash still matches — so the next reads re-fetch just the changed
+// regions instead of the whole file. It handles truncate/shrink/grow/region edits
+// uniformly (a fresh bitmap at the new size; only chunks within it that we cached and
+// that match survive). It runs async so it never blocks notify processing, opens its
+// OWN fd to the cache file (decoupled from Release closing f.CacheFD), and is purely
+// additive: it can only ADD verified-identical present-marks, never remove or fake one.
+func (d *Dir) deltaRemarkUnchanged(path, realPath string, oldBitmap, newBitmap *ChunkBitmap, ch chunkHashProvider, newSize int64) {
+	if ch == nil || oldBitmap == nil || newBitmap == nil || realPath == "" || newSize <= 0 {
+		return
+	}
+	cs := int64(ChunkSize)
+	go func() {
+		ctx, cancel := context.WithTimeout(d.FsCtx, 20*time.Second)
+		defer cancel()
+		peerSize, hashes, err := ch.GetChunkHashes(ctx, strings.TrimPrefix(path, "/"), cs)
+		// Only trust hashes that describe the exact post-edit size we recorded; a
+		// mismatch means the file moved again — keep the safe full re-fetch.
+		if err != nil || len(hashes) < 16 || peerSize != newSize {
+			return
+		}
+		fh, err := os.Open(realPath)
+		if err != nil {
+			return
+		}
+		defer fh.Close()
+		newChunks := int((newSize + cs - 1) / cs)
+		buf := make([]byte, cs)
+		kept := 0
+		for i := 0; i < newChunks && (i+1)*16 <= len(hashes); i++ {
+			if ctx.Err() != nil {
+				return
+			}
+			if !oldBitmap.Has(i) {
+				continue // we never cached this chunk — it must be fetched anyway.
+			}
+			off := int64(i) * cs
+			n := cs
+			if off+n > newSize {
+				n = newSize - off
+			}
+			r, rerr := fh.ReadAt(buf[:n], off)
+			if (rerr != nil && !errors.Is(rerr, io.EOF)) || int64(r) != n {
+				continue // short/failed read — treat as changed, re-fetch it.
+			}
+			local := xxh3.Hash128(buf[:r]).Bytes()
+			if bytes.Equal(local[:], hashes[i*16:i*16+16]) {
+				newBitmap.Set(i) // identical content: keep it cached, skip the re-fetch.
+				kept++
+			}
+		}
+		d.logger.Info("edit region-diff", "path", path, "chunks", newChunks, "kept", kept)
+	}()
 }

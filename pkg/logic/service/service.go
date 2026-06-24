@@ -26,6 +26,7 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/winfsp/cgofuse/fuse"
+	"github.com/zeebo/xxh3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -873,6 +874,79 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 
 	logger.Info("StreamFile complete", "bytesSent", offset-req.StartOffset)
 	return nil
+}
+
+// GetChunkHashes returns a fast non-cryptographic (xxh3-128) digest for each
+// chunk_size block of the requested file's CURRENT content, concatenated in
+// chunk order. On an edit, the peer keeps the chunks it already cached whose
+// hash still matches and re-fetches only the changed regions (rsync-style),
+// instead of re-downloading the whole file. Peers are mutually authenticated,
+// so a fast non-crypto hash is sufficient; an old peer that does not implement
+// this returns Unimplemented and the caller falls back to a full re-fetch.
+func (kd *KeibidropServiceImpl) GetChunkHashes(_ context.Context, req *bindings.GetChunkHashesRequest) (*bindings.GetChunkHashesResponse, error) {
+	logger := kd.Logger.With("method", "get-chunk-hashes", "path", req.Path)
+
+	chunkSize := req.ChunkSize
+	if chunkSize == 0 || chunkSize > uint64(config.GRPCStreamBuffer) {
+		chunkSize = uint64(filesystem.ChunkSize)
+	}
+
+	// Resolve the path exactly like StreamFile/Read, for both FUSE and no-FUSE.
+	var realPath string
+	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+		lookupPath := strings.TrimPrefix(req.Path, "/")
+		kd.SyncTracker.LocalFilesMu.RLock()
+		f, ok := kd.SyncTracker.LocalFiles[lookupPath]
+		if !ok {
+			f, ok = kd.SyncTracker.LocalFiles[req.Path]
+		}
+		kd.SyncTracker.LocalFilesMu.RUnlock()
+		if ok {
+			realPath = f.RealPathOfFile
+		}
+	} else if kd.FS != nil && kd.FS.Root != nil {
+		realPath = kd.resolveFUSEPath(req.Path)
+	}
+	if realPath == "" {
+		return nil, status.Error(codes.NotFound, "file not found")
+	}
+
+	fh, err := os.Open(realPath)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "error accessing file")
+	}
+	defer fh.Close()
+	finfo, err := fh.Stat()
+	if err != nil {
+		return nil, status.Error(codes.Internal, "error stat file")
+	}
+	fileSize := uint64(finfo.Size())
+
+	buf := make([]byte, chunkSize)
+	hashes := make([]byte, 0, (fileSize/chunkSize+1)*16)
+	for off := uint64(0); off < fileSize; {
+		n := chunkSize
+		if off+n > fileSize {
+			n = fileSize - off
+		}
+		r, rerr := fh.ReadAt(buf[:n], int64(off))
+		if rerr != nil && !errors.Is(rerr, io.EOF) {
+			return nil, status.Error(codes.Internal, "error reading file")
+		}
+		if r == 0 {
+			break
+		}
+		d := xxh3.Hash128(buf[:r]).Bytes()
+		hashes = append(hashes, d[:]...)
+		off += uint64(r)
+	}
+
+	logger.Info("GetChunkHashes", "fileSize", fileSize, "chunkSize", chunkSize, "chunks", len(hashes)/16)
+	return &bindings.GetChunkHashesResponse{
+		TotalSize: fileSize,
+		ChunkSize: chunkSize,
+		Hashes:    hashes,
+	}, nil
 }
 
 // Rekey handles key rotation requests for forward secrecy.

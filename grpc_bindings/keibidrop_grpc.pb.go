@@ -25,17 +25,18 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	KeibiService_Open_FullMethodName        = "/keibidrop.KeibiService/Open"
-	KeibiService_Write_FullMethodName       = "/keibidrop.KeibiService/Write"
-	KeibiService_Read_FullMethodName        = "/keibidrop.KeibiService/Read"
-	KeibiService_Fsync_FullMethodName       = "/keibidrop.KeibiService/Fsync"
-	KeibiService_Close_FullMethodName       = "/keibidrop.KeibiService/Close"
-	KeibiService_Notify_FullMethodName      = "/keibidrop.KeibiService/Notify"
-	KeibiService_BatchNotify_FullMethodName = "/keibidrop.KeibiService/BatchNotify"
-	KeibiService_StreamFile_FullMethodName  = "/keibidrop.KeibiService/StreamFile"
-	KeibiService_Debug_FullMethodName       = "/keibidrop.KeibiService/Debug"
-	KeibiService_Rekey_FullMethodName       = "/keibidrop.KeibiService/Rekey"
-	KeibiService_Heartbeat_FullMethodName   = "/keibidrop.KeibiService/Heartbeat"
+	KeibiService_Open_FullMethodName           = "/keibidrop.KeibiService/Open"
+	KeibiService_Write_FullMethodName          = "/keibidrop.KeibiService/Write"
+	KeibiService_Read_FullMethodName           = "/keibidrop.KeibiService/Read"
+	KeibiService_Fsync_FullMethodName          = "/keibidrop.KeibiService/Fsync"
+	KeibiService_Close_FullMethodName          = "/keibidrop.KeibiService/Close"
+	KeibiService_Notify_FullMethodName         = "/keibidrop.KeibiService/Notify"
+	KeibiService_BatchNotify_FullMethodName    = "/keibidrop.KeibiService/BatchNotify"
+	KeibiService_StreamFile_FullMethodName     = "/keibidrop.KeibiService/StreamFile"
+	KeibiService_GetChunkHashes_FullMethodName = "/keibidrop.KeibiService/GetChunkHashes"
+	KeibiService_Debug_FullMethodName          = "/keibidrop.KeibiService/Debug"
+	KeibiService_Rekey_FullMethodName          = "/keibidrop.KeibiService/Rekey"
+	KeibiService_Heartbeat_FullMethodName      = "/keibidrop.KeibiService/Heartbeat"
 )
 
 // KeibiServiceClient is the client API for KeibiService service.
@@ -52,6 +53,14 @@ type KeibiServiceClient interface {
 	// Push-based file streaming: client sends one request, server pushes
 	// all chunks sequentially. No per-chunk round-trip overhead.
 	StreamFile(ctx context.Context, in *StreamFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamFileResponse], error)
+	// Region-diff on edit (rsync-style): the caller fetches per-chunk hashes of
+	// the server's CURRENT file and keeps the chunks whose hash matches its own
+	// cached copy, re-fetching only the changed regions instead of the whole
+	// file. The hash is a fast NON-cryptographic digest (xxh3-128) — peers are
+	// mutually authenticated, so per-file collision odds are negligible. A peer
+	// that does not implement this returns Unimplemented and the caller falls
+	// back to a full re-fetch (today's behavior); backward compatible.
+	GetChunkHashes(ctx context.Context, in *GetChunkHashesRequest, opts ...grpc.CallOption) (*GetChunkHashesResponse, error)
 	Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error)
 	// Re-keying for forward secrecy during long sessions.
 	Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error)
@@ -162,6 +171,16 @@ func (c *keibiServiceClient) StreamFile(ctx context.Context, in *StreamFileReque
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type KeibiService_StreamFileClient = grpc.ServerStreamingClient[StreamFileResponse]
 
+func (c *keibiServiceClient) GetChunkHashes(ctx context.Context, in *GetChunkHashesRequest, opts ...grpc.CallOption) (*GetChunkHashesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetChunkHashesResponse)
+	err := c.cc.Invoke(ctx, KeibiService_GetChunkHashes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keibiServiceClient) Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DebugResponse)
@@ -206,6 +225,14 @@ type KeibiServiceServer interface {
 	// Push-based file streaming: client sends one request, server pushes
 	// all chunks sequentially. No per-chunk round-trip overhead.
 	StreamFile(*StreamFileRequest, grpc.ServerStreamingServer[StreamFileResponse]) error
+	// Region-diff on edit (rsync-style): the caller fetches per-chunk hashes of
+	// the server's CURRENT file and keeps the chunks whose hash matches its own
+	// cached copy, re-fetching only the changed regions instead of the whole
+	// file. The hash is a fast NON-cryptographic digest (xxh3-128) — peers are
+	// mutually authenticated, so per-file collision odds are negligible. A peer
+	// that does not implement this returns Unimplemented and the caller falls
+	// back to a full re-fetch (today's behavior); backward compatible.
+	GetChunkHashes(context.Context, *GetChunkHashesRequest) (*GetChunkHashesResponse, error)
 	Debug(context.Context, *DebugRequest) (*DebugResponse, error)
 	// Re-keying for forward secrecy during long sessions.
 	Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error)
@@ -244,6 +271,9 @@ func (UnimplementedKeibiServiceServer) BatchNotify(context.Context, *BatchNotify
 }
 func (UnimplementedKeibiServiceServer) StreamFile(*StreamFileRequest, grpc.ServerStreamingServer[StreamFileResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamFile not implemented")
+}
+func (UnimplementedKeibiServiceServer) GetChunkHashes(context.Context, *GetChunkHashesRequest) (*GetChunkHashesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetChunkHashes not implemented")
 }
 func (UnimplementedKeibiServiceServer) Debug(context.Context, *DebugRequest) (*DebugResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Debug not implemented")
@@ -390,6 +420,24 @@ func _KeibiService_StreamFile_Handler(srv interface{}, stream grpc.ServerStream)
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type KeibiService_StreamFileServer = grpc.ServerStreamingServer[StreamFileResponse]
 
+func _KeibiService_GetChunkHashes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetChunkHashesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeibiServiceServer).GetChunkHashes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeibiService_GetChunkHashes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeibiServiceServer).GetChunkHashes(ctx, req.(*GetChunkHashesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeibiService_Debug_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DebugRequest)
 	if err := dec(in); err != nil {
@@ -470,6 +518,10 @@ var KeibiService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BatchNotify",
 			Handler:    _KeibiService_BatchNotify_Handler,
+		},
+		{
+			MethodName: "GetChunkHashes",
+			Handler:    _KeibiService_GetChunkHashes_Handler,
 		},
 		{
 			MethodName: "Debug",

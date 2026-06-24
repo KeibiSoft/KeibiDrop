@@ -27,6 +27,15 @@ service KeibiService {
   // all chunks sequentially. No per-chunk round-trip overhead.
   rpc StreamFile (StreamFileRequest) returns (stream StreamFileResponse);
 
+  // Region-diff on edit (rsync-style): the caller fetches per-chunk hashes of
+  // the server's CURRENT file and keeps the chunks whose hash matches its own
+  // cached copy, re-fetching only the changed regions instead of the whole
+  // file. The hash is a fast NON-cryptographic digest (xxh3-128) — peers are
+  // mutually authenticated, so per-file collision odds are negligible. A peer
+  // that does not implement this returns Unimplemented and the caller falls
+  // back to a full re-fetch (today's behavior); backward compatible.
+  rpc GetChunkHashes (GetChunkHashesRequest) returns (GetChunkHashesResponse);
+
   rpc Debug (DebugRequest) returns (DebugResponse);
 
   // Re-keying for forward secrecy during long sessions.
@@ -90,6 +99,17 @@ message StreamFileResponse {
   bytes data = 1;
   uint64 offset = 2;      // Byte offset where this chunk belongs.
   uint64 total_size = 3;  // Total file size (sent with every chunk for progress).
+}
+
+message GetChunkHashesRequest {
+  string path = 1;
+  uint64 chunk_size = 2;  // hash granularity in bytes (the caller's chunk size)
+}
+
+message GetChunkHashesResponse {
+  uint64 total_size = 1;  // the server's CURRENT file size
+  uint64 chunk_size = 2;  // echo of the granularity the hashes cover
+  bytes hashes = 3;       // concatenated xxh3-128 digests (16 bytes each), in chunk order
 }
 
 message FsyncRequest {

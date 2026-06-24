@@ -108,6 +108,23 @@ func (sp *ImplFileStreamProvider) StreamFile(ctx context.Context, path string, s
 	return &implStreamFileReceiver{stream: stream}, nil
 }
 
+// GetChunkHashes fetches per-chunk xxh3-128 digests of the peer's CURRENT file
+// content (rsync-style edit diff): the caller keeps the cached chunks whose hash
+// still matches and re-fetches only the changed regions. Returns the peer's
+// current size and the concatenated 16-byte digests. A peer that does not
+// implement the RPC returns a codes.Unimplemented error, and the caller falls
+// back to a full re-fetch.
+func (sp *ImplFileStreamProvider) GetChunkHashes(ctx context.Context, path string, chunkSize int64) (int64, []byte, error) {
+	resp, err := sp.cli.GetChunkHashes(ctx, &bindings.GetChunkHashesRequest{
+		Path:      path,
+		ChunkSize: uint64(chunkSize),
+	})
+	if err != nil {
+		return 0, nil, err
+	}
+	return int64(resp.TotalSize), resp.Hashes, nil
+}
+
 type implStreamFileReceiver struct {
 	stream bindings.KeibiService_StreamFileClient
 }
