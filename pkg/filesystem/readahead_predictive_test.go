@@ -565,7 +565,10 @@ func TestThumbnailScan_OnDemandStaysSmall(t *testing.T) {
 	for i, prov := range provs {
 		size := sizes[i]
 		f := root.OpenFileHandlers[fhs[i]].File
-		waitFor(t, 5*time.Second, func() bool { return inflightEmpty(f) })
+		// 15s, not 5s: Windows/WinFsp drains the async cache writes more slowly, and a
+		// too-tight wait flaked here ("condition not met within 5s"). The assertion below
+		// (no whole-file prefetch) is what matters, not how fast in-flight ops settle.
+		waitFor(t, 15*time.Second, func() bool { return inflightEmpty(f) })
 
 		if c := prov.streamFileCalls.Load(); c != 0 {
 			t.Fatalf("file %d (size %d): whole-file prefetch ran %d times during a thumbnail scan", i, size, c)
