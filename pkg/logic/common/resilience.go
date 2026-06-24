@@ -61,6 +61,11 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		}
 	}
 	kd.ReconnectManager.AcceptConn = func(timeout time.Duration) (net.Conn, error) {
+		// Latent nil-deref (Andrei flagged it): if a prior bridge fallback closed+nil'd the
+		// listener and we returned before reopening, Accept() on a nil interface panics.
+		if kd.listener == nil {
+			return nil, fmt.Errorf("accept-conn: inbound listener not open")
+		}
 		if tcpL, ok := kd.listener.(*net.TCPListener); ok {
 			_ = tcpL.SetDeadline(time.Now().Add(timeout))
 			return tcpL.Accept()

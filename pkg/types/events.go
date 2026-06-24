@@ -64,3 +64,15 @@ type StreamFileReceiver interface {
 	// Recv returns the next chunk. Returns io.EOF when the stream ends.
 	Recv() (data []byte, offset uint64, totalSize uint64, err error)
 }
+
+// ChunkHashReceiver streams (chunkIndex, hash) pairs from a peer's GetChunkHashes RPC.
+type ChunkHashReceiver interface {
+	Recv() (chunkIndex uint64, hash uint64, err error)
+}
+
+// ChunkHasher is implemented by providers that support the GetChunkHashes RPC. A
+// provider that does not implement it (older peer, test fake) signals via the failed
+// type assertion at the call site that the caller must fall back.
+type ChunkHasher interface {
+	GetChunkHashes(ctx context.Context, path string, chunkSize, fromChunk, count uint64) (ChunkHashReceiver, error)
+}

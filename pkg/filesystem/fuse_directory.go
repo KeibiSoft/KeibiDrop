@@ -15,7 +15,6 @@
 package filesystem
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	// "fmt"
@@ -1718,11 +1717,11 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		return int(convertOsErrToSyscallErrno("truncate", err))
 	}
 
-	// Re-stat and propagate the new SIZE to the peer. A truncate has no Write/Release
-	// to ride, so without this a shrink never reaches the peer: it keeps the old larger
-	// size and serves stale bytes past the new EOF (integrity violation). refreshFileStat
-	// only refreshes timestamps, so update Size here too, snapshot under metaMu, then
-	// notify EDIT_FILE outside the locks (same discipline as Chmod).
+	// Re-stat and propagate the new SIZE to the peer. A truncate has no Write/Release to ride,
+	// so without this a shrink never reaches the peer: it keeps the old (larger) size and serves
+	// stale bytes past the new EOF (integrity violation). refreshFileStat only refreshes
+	// timestamps, so update Size here too, snapshot under metaMu, then notify EDIT_FILE outside
+	// the locks (same discipline as Chmod).
 	st, statErr := platLstat(cleanPath)
 	var statSnap winfuse.Stat_t
 	haveSnap, sizeChanged := false, false
@@ -1738,9 +1737,9 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		f.metaMu.Unlock()
 	}
 	d.AfmLock.Unlock()
-	// Only emit on an actual size change. Windows re-opens an O_TRUNC file by calling
-	// Truncate even when the size is unchanged; a no-op truncate must not churn the peer
-	// with a redundant EDIT_FILE. A genuine grow/shrink/overwrite always changes the size.
+	// Only emit on an actual size change. Windows re-opens an O_TRUNC file by calling Truncate
+	// even when the size is unchanged; a no-op truncate must not churn the peer with a redundant
+	// EDIT_FILE. A genuine grow/shrink/overwrite always changes the size.
 	if haveSnap && sizeChanged && d.OnLocalChange != nil {
 		d.OnLocalChange(types.FileEvent{Path: path, Action: types.EditFile, Attr: types.StatToAttr(&statSnap)})
 	}
@@ -2134,8 +2133,111 @@ func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap 
 				break
 			}
 			bitmap.Set(c)
+			bitmap.SetHash(c, xxh3.Hash(data[chunkBegin-blockStart:chunkEnd-blockStart]))
 		}
 		f.finishBlockFetch(blockStart, bf, nil) // release waiters after the bytes are in cache
+	}
+}
+
+// reconcileMinSize is the file-size floor below which a remote edit is not worth
+// reconciling: re-pulling a small file on demand is cheaper than a GetChunkHashes
+// round trip. 16 MiB (one ReadAheadBlock).
+const reconcileMinSize = int64(ReadAheadBlock)
+
+// maybeReconcileEdit is the eligibility gate the edit reset sites call. The site has
+// ALREADY done today's full reset (newBitmap is the fresh, valid "re-fetch everything"
+// state). This only ADDS a background optimization: when the pre-edit bitmap carried
+// per-chunk fingerprints and the file is large enough, spawn reconcileEditAsync to
+// re-mark the unchanged chunks present so reads serve them from cache instead of
+// re-fetching. On any failure or ineligibility the full reset simply stands.
+//
+// oldBitmap/oldSize are captured at the call site BEFORE the reset (oldBitmap before
+// f.Bitmap is reassigned, oldSize before f.stat is overwritten). newBitmap is the live
+// post-reset f.Bitmap; newSize is the incoming notify size. Takes no RemoteFilesLock.
+func (d *Dir) maybeReconcileEdit(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64) {
+	if oldBitmap == nil || newBitmap == nil || !oldBitmap.HasHashes() || newSize < reconcileMinSize {
+		return
+	}
+	hasher, ok := d.OpenStreamProvider().(types.ChunkHasher)
+	if !ok || hasher == nil {
+		return // older peer / no RPC: full reset stands.
+	}
+	go d.reconcileEditAsync(path, f, oldBitmap, newBitmap, oldSize, newSize)
+}
+
+// reconcileEditAsync runs in its own goroutine after a remote-edit full reset and marks
+// the chunks proven unchanged (our cached hash == the peer's new hash) present again on
+// the LIVE bitmap captured at spawn. It is lock-free with respect to RemoteFilesLock,
+// never waits on CacheWg, never writes the cache file, and never swaps f.Bitmap: the
+// hash-matched chunks' bytes are already in cache (in-place edits leave the cache; the
+// size-change site truncates, preserving the common prefix), so marking them present is
+// correct. On ANY error or non-match it does nothing extra and the full reset stands.
+//
+// newBitmap is a specific object: if a later edit swaps f.Bitmap again, this job's Set
+// calls land on an orphaned bitmap (harmless) and the newer edit spawns its own job.
+// This job never re-reads f.Bitmap.
+func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64) {
+	if oldBitmap == nil || newBitmap == nil {
+		return
+	}
+	// Bound concurrency with the same semaphore prefetch uses; abort on unmount/disconnect.
+	ctx := d.FsCtx
+	sem := d.Root.PrefetchSem
+	if sem != nil {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	cs := int64(newBitmap.ChunkSizeBytes())
+	if cs <= 0 {
+		return
+	}
+	commonEnd := min(oldSize, newSize)
+	count := uint64(commonEnd / cs) // only fully-covered common-prefix chunks are eligible
+	if count == 0 {
+		return
+	}
+
+	hasher, ok := d.OpenStreamProvider().(types.ChunkHasher)
+	if !ok || hasher == nil {
+		return
+	}
+	receiver, err := hasher.GetChunkHashes(ctx, path, uint64(cs), 0, count)
+	if err != nil || receiver == nil {
+		return // includes codes.Unimplemented: full reset stands.
+	}
+
+	peerHashes := make(map[int]uint64, count)
+	for {
+		idx, h, recvErr := receiver.Recv()
+		if recvErr != nil {
+			if errors.Is(recvErr, io.EOF) {
+				break
+			}
+			return // transient failure: full reset stands.
+		}
+		peerHashes[int(idx)] = h
+	}
+
+	decided, ok := reconcileBitmap(oldBitmap, oldSize, newSize, peerHashes)
+	if !ok {
+		return
+	}
+
+	for c := 0; c < int(count); c++ {
+		if !decided.Has(c) {
+			continue
+		}
+		if newBitmap.Has(c) {
+			continue // a concurrent read already fetched (new content) and marked it.
+		}
+		h, _ := decided.Hash(c)
+		newBitmap.Set(c)
+		newBitmap.SetHash(c, h)
 	}
 }
 
@@ -2555,6 +2657,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 							break
 						}
 						bm.Set(c)
+						bm.SetHash(c, xxh3.Hash(block[chunkBegin-base:chunkEnd-base]))
 					}
 				}
 				if leader {
@@ -2745,7 +2848,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 				existing.PrefetchCancel()
 				existing.PrefetchCancel = nil
 			}
+			// Capture the pre-reset bitmap (hashes to compare) before swapping it,
+			// and the fresh live bitmap reads will now use, for async reconcile.
+			oldBitmap := existing.Bitmap
 			existing.Bitmap = NewChunkBitmap(stat.Size)
+			newBitmap := existing.Bitmap
 			d.RemoteFilesLock.Unlock()
 
 			// Only truncate if size actually changed — truncating to the same size
@@ -2757,6 +2864,10 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 					logger.Warn("Failed to truncate cache file to new size", "path", existing.RealPathOfFile, "size", newSize, "error", truncErr)
 				}
 			}
+
+			// Truncate preserved the common prefix, so cached prefix bytes still match
+			// their stored hashes: re-mark the proven-unchanged chunks present async.
+			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, oldSize, newSize)
 
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
@@ -2772,6 +2883,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			// cancel any in-flight prefetch so reads re-fetch the new bytes
 			// on-demand, mirroring EditRemoteFile. Without this, a peer that
 			// already fully cached the file keeps serving stale content.
+			var oldBitmap, newBitmap *ChunkBitmap
 			if incomingMtime > existingMtime {
 				existing.metaMu.Lock()
 				existing.NotLocalSynced = true
@@ -2781,7 +2893,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 					existing.PrefetchCancel()
 					existing.PrefetchCancel = nil
 				}
+				// In-place edit: same byte length, cache left intact, so prefix bytes
+				// still match their stored hashes. Capture for async reconcile.
+				oldBitmap = existing.Bitmap
 				existing.Bitmap = NewChunkBitmap(stat.Size)
+				newBitmap = existing.Bitmap
 			} else if existing.Bitmap != nil && !existing.Bitmap.IsComplete() {
 				// Same mtime, still incomplete — keep fetching the rest on-demand.
 				existing.metaMu.Lock()
@@ -2789,6 +2905,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 				existing.metaMu.Unlock()
 			}
 			d.RemoteFilesLock.Unlock()
+			// No-op unless the in-place reset branch above ran (oldBitmap stays nil for
+			// the same-mtime keep-cache path); then re-mark unchanged chunks present.
+			// Same size here, so old==new==newSize (the unaliased snapshot, not
+			// existing.stat which Getattr may now be mutating).
+			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, newSize, newSize)
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
 			d.AfmLock.Unlock()
@@ -3005,7 +3126,26 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 			continue
 		}
 
-		bitmap.Set(chunkIdx)
+		// StreamFile sends in config.BlockSize (4 MiB) units while the bitmap
+		// tracks 512 KiB chunks, so one Recv covers several chunks. Mark and hash
+		// each chunk over this block (same span convention as the read-ahead path)
+		// so a later SetHash never leaves a prefetch-only chunk reporting Hash==0.
+		cs := int64(bitmap.ChunkSizeBytes())
+		blockStart := int64(offset)
+		dataEnd := blockStart + int64(len(data))
+		fileSize := bitmap.FileSize()
+		for c := int(blockStart / cs); ; c++ {
+			chunkBegin := int64(c) * cs
+			chunkEnd := chunkBegin + cs
+			if fileSize > 0 && chunkEnd > fileSize {
+				chunkEnd = fileSize
+			}
+			if chunkBegin >= dataEnd || chunkEnd > dataEnd {
+				break
+			}
+			bitmap.Set(c)
+			bitmap.SetHash(c, xxh3.Hash(data[chunkBegin-blockStart:chunkEnd-blockStart]))
+		}
 		f.Download.UpdateProgress(int64(offset), len(data))
 	}
 
@@ -3068,6 +3208,10 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	// Content changed: mark unsynced and reset bitmap + cancel prefetch so reads
 	// re-fetch on-demand. The field stores go under metaMu (innermost); the
 	// PrefetchCancel/Download/Bitmap resets stay outside it.
+	// Snapshot sizes as unaliased locals before f.stat = stat: afterwards f.stat is
+	// the same struct Getattr may mutate, so reading it post-unlock would race.
+	oldSize := f.stat.Size
+	newSize := stat.Size
 	f.metaMu.Lock()
 	f.stat = stat
 	f.LocalNewer = false    // Remote has newer content.
@@ -3079,88 +3223,17 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 		f.PrefetchCancel()
 		f.PrefetchCancel = nil
 	}
-	// Safe-by-default reset: the new bitmap is all-missing, i.e. today's behavior
-	// (re-fetch the whole file on the next read). Capture the OLD bitmap + cache path
-	// so an async region-diff can ADD back present-marks for the chunks that did NOT
-	// change, so only the edited regions actually move. Purely additive — any failure
-	// (old peer's Unimplemented, RPC/IO error) leaves the full re-fetch intact.
+	// Capture the pre-reset bitmap (hashes to compare) and the fresh live bitmap;
+	// the cache is left intact here, so common-prefix bytes still match their hashes.
 	oldBitmap := f.Bitmap
-	realPath := f.RealPathOfFile
-	provider := f.StreamProvider
-	newBitmap := NewChunkBitmap(stat.Size)
-	f.Bitmap = newBitmap
+	f.Bitmap = NewChunkBitmap(stat.Size)
+	newBitmap := f.Bitmap
 	d.RemoteFilesLock.Unlock()
+	// Re-mark the proven-unchanged chunks present in the background (full reset stands
+	// on any failure or ineligibility).
+	d.maybeReconcileEdit(path, f, oldBitmap, newBitmap, oldSize, newSize)
 	d.AfmLock.Lock()
 	d.AllFileMap[path] = f
 	d.AfmLock.Unlock()
-
-	if ch, ok := provider.(chunkHashProvider); ok {
-		d.deltaRemarkUnchanged(path, realPath, oldBitmap, newBitmap, ch, stat.Size)
-	}
 	return nil
-}
-
-// chunkHashProvider is the optional capability a StreamProvider exposes when the
-// peer implements the GetChunkHashes RPC (rsync-style edit diff). A provider that
-// lacks it — or a peer that returns codes.Unimplemented — falls back to a full
-// re-fetch, so it stays compatible with older peers and no-FUSE (iOS) peers.
-type chunkHashProvider interface {
-	GetChunkHashes(ctx context.Context, path string, chunkSize int64) (int64, []byte, error)
-}
-
-// deltaRemarkUnchanged is the rsync-style region diff run right after an edit reset
-// the bitmap to all-missing. It fetches the peer's per-chunk xxh3-128 hashes for the
-// NEW content, hashes our own cached chunks, and re-marks present ONLY the chunks we
-// already had whose hash still matches — so the next reads re-fetch just the changed
-// regions instead of the whole file. It handles truncate/shrink/grow/region edits
-// uniformly (a fresh bitmap at the new size; only chunks within it that we cached and
-// that match survive). It runs async so it never blocks notify processing, opens its
-// OWN fd to the cache file (decoupled from Release closing f.CacheFD), and is purely
-// additive: it can only ADD verified-identical present-marks, never remove or fake one.
-func (d *Dir) deltaRemarkUnchanged(path, realPath string, oldBitmap, newBitmap *ChunkBitmap, ch chunkHashProvider, newSize int64) {
-	if ch == nil || oldBitmap == nil || newBitmap == nil || realPath == "" || newSize <= 0 {
-		return
-	}
-	cs := int64(ChunkSize)
-	go func() {
-		ctx, cancel := context.WithTimeout(d.FsCtx, 20*time.Second)
-		defer cancel()
-		peerSize, hashes, err := ch.GetChunkHashes(ctx, strings.TrimPrefix(path, "/"), cs)
-		// Only trust hashes that describe the exact post-edit size we recorded; a
-		// mismatch means the file moved again — keep the safe full re-fetch.
-		if err != nil || len(hashes) < 16 || peerSize != newSize {
-			return
-		}
-		fh, err := os.Open(realPath)
-		if err != nil {
-			return
-		}
-		defer fh.Close()
-		newChunks := int((newSize + cs - 1) / cs)
-		buf := make([]byte, cs)
-		kept := 0
-		for i := 0; i < newChunks && (i+1)*16 <= len(hashes); i++ {
-			if ctx.Err() != nil {
-				return
-			}
-			if !oldBitmap.Has(i) {
-				continue // we never cached this chunk — it must be fetched anyway.
-			}
-			off := int64(i) * cs
-			n := cs
-			if off+n > newSize {
-				n = newSize - off
-			}
-			r, rerr := fh.ReadAt(buf[:n], off)
-			if (rerr != nil && !errors.Is(rerr, io.EOF)) || int64(r) != n {
-				continue // short/failed read — treat as changed, re-fetch it.
-			}
-			local := xxh3.Hash128(buf[:r]).Bytes()
-			if bytes.Equal(local[:], hashes[i*16:i*16+16]) {
-				newBitmap.Set(i) // identical content: keep it cached, skip the re-fetch.
-				kept++
-			}
-		}
-		d.logger.Info("edit region-diff", "path", path, "chunks", newChunks, "kept", kept)
-	}()
 }

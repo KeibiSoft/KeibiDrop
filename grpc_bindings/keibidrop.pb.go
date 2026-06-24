@@ -671,7 +671,9 @@ func (x *StreamFileResponse) GetTotalSize() uint64 {
 type GetChunkHashesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	ChunkSize     uint64                 `protobuf:"varint,2,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"` // hash granularity in bytes (the caller's chunk size)
+	ChunkSize     uint64                 `protobuf:"varint,2,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"` // requester's chunk size in bytes; server hashes at this granularity
+	FromChunk     uint64                 `protobuf:"varint,3,opt,name=from_chunk,json=fromChunk,proto3" json:"from_chunk,omitempty"` // first chunk index to return
+	Count         uint64                 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`                          // number of chunks; 0 means to EOF
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -720,11 +722,24 @@ func (x *GetChunkHashesRequest) GetChunkSize() uint64 {
 	return 0
 }
 
+func (x *GetChunkHashesRequest) GetFromChunk() uint64 {
+	if x != nil {
+		return x.FromChunk
+	}
+	return 0
+}
+
+func (x *GetChunkHashesRequest) GetCount() uint64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
 type GetChunkHashesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	TotalSize     uint64                 `protobuf:"varint,1,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"` // the server's CURRENT file size
-	ChunkSize     uint64                 `protobuf:"varint,2,opt,name=chunk_size,json=chunkSize,proto3" json:"chunk_size,omitempty"` // echo of the granularity the hashes cover
-	Hashes        []byte                 `protobuf:"bytes,3,opt,name=hashes,proto3" json:"hashes,omitempty"`                         // concatenated xxh3-128 digests (16 bytes each), in chunk order
+	ChunkIndex    uint64                 `protobuf:"varint,1,opt,name=chunk_index,json=chunkIndex,proto3" json:"chunk_index,omitempty"`
+	Hash          uint64                 `protobuf:"varint,2,opt,name=hash,proto3" json:"hash,omitempty"` // xxh3-64 of bytes [chunk_index*chunk_size, min((chunk_index+1)*chunk_size, fileSize))
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -759,25 +774,18 @@ func (*GetChunkHashesResponse) Descriptor() ([]byte, []int) {
 	return file_keibidrop_proto_rawDescGZIP(), []int{11}
 }
 
-func (x *GetChunkHashesResponse) GetTotalSize() uint64 {
+func (x *GetChunkHashesResponse) GetChunkIndex() uint64 {
 	if x != nil {
-		return x.TotalSize
+		return x.ChunkIndex
 	}
 	return 0
 }
 
-func (x *GetChunkHashesResponse) GetChunkSize() uint64 {
+func (x *GetChunkHashesResponse) GetHash() uint64 {
 	if x != nil {
-		return x.ChunkSize
+		return x.Hash
 	}
 	return 0
-}
-
-func (x *GetChunkHashesResponse) GetHashes() []byte {
-	if x != nil {
-		return x.Hashes
-	}
-	return nil
 }
 
 type FsyncRequest struct {
@@ -1562,17 +1570,18 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x04R\x06offset\x12\x1d\n" +
 	"\n" +
-	"total_size\x18\x03 \x01(\x04R\ttotalSize\"J\n" +
+	"total_size\x18\x03 \x01(\x04R\ttotalSize\"\x7f\n" +
 	"\x15GetChunkHashesRequest\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1d\n" +
 	"\n" +
-	"chunk_size\x18\x02 \x01(\x04R\tchunkSize\"n\n" +
-	"\x16GetChunkHashesResponse\x12\x1d\n" +
+	"chunk_size\x18\x02 \x01(\x04R\tchunkSize\x12\x1d\n" +
 	"\n" +
-	"total_size\x18\x01 \x01(\x04R\ttotalSize\x12\x1d\n" +
-	"\n" +
-	"chunk_size\x18\x02 \x01(\x04R\tchunkSize\x12\x16\n" +
-	"\x06hashes\x18\x03 \x01(\fR\x06hashes\":\n" +
+	"from_chunk\x18\x03 \x01(\x04R\tfromChunk\x12\x14\n" +
+	"\x05count\x18\x04 \x01(\x04R\x05count\"M\n" +
+	"\x16GetChunkHashesResponse\x12\x1f\n" +
+	"\vchunk_index\x18\x01 \x01(\x04R\n" +
+	"chunkIndex\x12\x12\n" +
+	"\x04hash\x18\x02 \x01(\x04R\x04hash\":\n" +
 	"\fFsyncRequest\x12\x16\n" +
 	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\"\x0f\n" +
@@ -1645,7 +1654,7 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\n" +
 	"DISCONNECT\x10\t\x12\x0f\n" +
 	"\vCHECK_FILES\x10\n" +
-	"2\xab\x06\n" +
+	"2\xad\x06\n" +
 	"\fKeibiService\x127\n" +
 	"\x04Open\x12\x16.keibidrop.OpenRequest\x1a\x17.keibidrop.OpenResponse\x12<\n" +
 	"\x05Write\x12\x17.keibidrop.WriteRequest\x1a\x18.keibidrop.WriteResponse(\x01\x12;\n" +
@@ -1655,8 +1664,8 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\x06Notify\x12\x18.keibidrop.NotifyRequest\x1a\x19.keibidrop.NotifyResponse\x12L\n" +
 	"\vBatchNotify\x12\x1d.keibidrop.BatchNotifyRequest\x1a\x1e.keibidrop.BatchNotifyResponse\x12K\n" +
 	"\n" +
-	"StreamFile\x12\x1c.keibidrop.StreamFileRequest\x1a\x1d.keibidrop.StreamFileResponse0\x01\x12U\n" +
-	"\x0eGetChunkHashes\x12 .keibidrop.GetChunkHashesRequest\x1a!.keibidrop.GetChunkHashesResponse\x12:\n" +
+	"StreamFile\x12\x1c.keibidrop.StreamFileRequest\x1a\x1d.keibidrop.StreamFileResponse0\x01\x12W\n" +
+	"\x0eGetChunkHashes\x12 .keibidrop.GetChunkHashesRequest\x1a!.keibidrop.GetChunkHashesResponse0\x01\x12:\n" +
 	"\x05Debug\x12\x17.keibidrop.DebugRequest\x1a\x18.keibidrop.DebugResponse\x12:\n" +
 	"\x05Rekey\x12\x17.keibidrop.RekeyRequest\x1a\x18.keibidrop.RekeyResponse\x12F\n" +
 	"\tHeartbeat\x12\x1b.keibidrop.HeartbeatRequest\x1a\x1c.keibidrop.HeartbeatResponseB8Z6github.com/KeibiSoft/KeibiDrop/grpc_bindings;keibidropb\x06proto3"

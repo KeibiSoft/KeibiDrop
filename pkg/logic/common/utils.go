@@ -507,9 +507,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		}
 	}
 
-	fs.OpenStreamProvider = func() types.FileStreamProvider {
-		return NewImplStreamProvider(kd.session.GRPCClient)
-	}
+	fs.OpenStreamProvider = kd.openStreamProvider
 
 	fs.RefreshCallbacks()
 
@@ -520,6 +518,22 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	}
 
 	return nil
+}
+
+// openStreamProvider is the FUSE OpenStreamProvider callback. It snapshots the
+// session under kd.mu and returns nil if the session (or its gRPC client) is
+// gone. During Shutdown, Run() nils kd.session before FsCtx is cancelled, so a
+// goroutine waking from PrefetchSem in that window must not deref a nil session.
+// Callers handle a nil return: reconcileEditAsync's ChunkHasher assertion fails
+// (ok == false) and prefetchFile's "if fsp == nil" guard fires.
+func (kd *KeibiDrop) openStreamProvider() types.FileStreamProvider {
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.GRPCClient == nil {
+		return nil
+	}
+	return NewImplStreamProvider(s.GRPCClient)
 }
 
 // connectGRPCClientWithRetry waits until the gRPC server is ready and then creates the client.

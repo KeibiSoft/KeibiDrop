@@ -69,6 +69,35 @@ func TestResumePartialDownloads_NilRegistry_NoPanic(t *testing.T) {
 	kd.resumePartialDownloads(kd.logger)
 }
 
+// TestOpenStreamProvider_NilSession_NoPanic verifies the FUSE OpenStreamProvider
+// callback is nil-safe during a Shutdown race. Run() nils kd.session before FsCtx
+// is cancelled; a goroutine waking from PrefetchSem (reconcileEditAsync /
+// prefetchFile) then calls this. It must return a nil provider, not deref a nil
+// session and crash the process.
+func TestOpenStreamProvider_NilSession_NoPanic(t *testing.T) {
+	kd := newNilGuardTestKD()
+	defer kd.Cancel()
+
+	// session is nil on a freshly-built test KeibiDrop.
+	fsp := kd.openStreamProvider()
+	if fsp != nil {
+		t.Fatalf("expected nil provider when session is nil, got %T", fsp)
+	}
+}
+
+// TestOpenStreamProvider_NilGRPCClient_NoPanic verifies a session present but with
+// no gRPC client (a window during connect/teardown) also yields a nil provider.
+func TestOpenStreamProvider_NilGRPCClient_NoPanic(t *testing.T) {
+	kd := newNilGuardTestKD()
+	defer kd.Cancel()
+
+	kd.session = &session.Session{} // GRPCClient is nil
+	fsp := kd.openStreamProvider()
+	if fsp != nil {
+		t.Fatalf("expected nil provider when GRPCClient is nil, got %T", fsp)
+	}
+}
+
 // TestNilSessionGuard_SkipsCachedPeerUpdate verifies the guard pattern used in
 // onReconnected (resilience.go:198). Calling onReconnected directly requires full
 // gRPC infrastructure, so this tests the guard inline. If the guard is removed

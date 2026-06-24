@@ -876,23 +876,24 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 	return nil
 }
 
-// GetChunkHashes returns a fast non-cryptographic (xxh3-128) digest for each
-// chunk_size block of the requested file's CURRENT content, concatenated in
-// chunk order. On an edit, the peer keeps the chunks it already cached whose
-// hash still matches and re-fetches only the changed regions (rsync-style),
-// instead of re-downloading the whole file. Peers are mutually authenticated,
-// so a fast non-crypto hash is sufficient; an old peer that does not implement
-// this returns Unimplemented and the caller falls back to a full re-fetch.
-func (kd *KeibidropServiceImpl) GetChunkHashes(_ context.Context, req *bindings.GetChunkHashesRequest) (*bindings.GetChunkHashesResponse, error) {
+// GetChunkHashes streams per-chunk xxh3-64 fingerprints for a file. Path
+// resolution and authorization mirror StreamFile exactly.
+func (kd *KeibidropServiceImpl) GetChunkHashes(req *bindings.GetChunkHashesRequest, stream bindings.KeibiService_GetChunkHashesServer) error {
 	logger := kd.Logger.With("method", "get-chunk-hashes", "path", req.Path)
 
-	chunkSize := req.ChunkSize
-	if chunkSize == 0 || chunkSize > uint64(config.GRPCStreamBuffer) {
-		chunkSize = uint64(filesystem.ChunkSize)
+	if req.ChunkSize == 0 {
+		return status.Error(codes.InvalidArgument, "chunk_size must be non-zero")
+	}
+	// Reject an out-of-range chunk_size before allocating: a peer-supplied value
+	// near MaxUint64 (or several GiB) would otherwise make([]byte, cs) OOM/panic
+	// the whole process. The legitimate caller passes 512 KiB, far under the cap.
+	if req.ChunkSize > config.GRPCStreamBuffer {
+		return status.Error(codes.InvalidArgument, "chunk_size too large")
 	}
 
-	// Resolve the path exactly like StreamFile/Read, for both FUSE and no-FUSE.
+	// Resolve path using the same logic as StreamFile.
 	var realPath string
+
 	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
 		lookupPath := strings.TrimPrefix(req.Path, "/")
 		kd.SyncTracker.LocalFilesMu.RLock()
@@ -907,46 +908,65 @@ func (kd *KeibidropServiceImpl) GetChunkHashes(_ context.Context, req *bindings.
 	} else if kd.FS != nil && kd.FS.Root != nil {
 		realPath = kd.resolveFUSEPath(req.Path)
 	}
+
 	if realPath == "" {
-		return nil, status.Error(codes.NotFound, "file not found")
+		logger.Warn("File not found", "path", req.Path)
+		return status.Error(codes.NotFound, "file not found")
 	}
 
-	fh, err := os.Open(realPath)
+	fh, err := os.Open(realPath) // #nosec G304
 	if err != nil {
-		return nil, status.Error(codes.Internal, "error accessing file")
+		logger.Error("Failed to open file", "error", err)
+		return status.Error(codes.Internal, "error accessing file")
 	}
 	defer fh.Close()
+
 	finfo, err := fh.Stat()
 	if err != nil {
-		return nil, status.Error(codes.Internal, "error stat file")
+		logger.Error("Failed to stat file", "error", err)
+		return status.Error(codes.Internal, "error stat file")
 	}
 	fileSize := uint64(finfo.Size())
 
-	buf := make([]byte, chunkSize)
-	hashes := make([]byte, 0, (fileSize/chunkSize+1)*16)
-	for off := uint64(0); off < fileSize; {
-		n := chunkSize
-		if off+n > fileSize {
-			n = fileSize - off
-		}
-		r, rerr := fh.ReadAt(buf[:n], int64(off))
-		if rerr != nil && !errors.Is(rerr, io.EOF) {
-			return nil, status.Error(codes.Internal, "error reading file")
-		}
-		if r == 0 {
+	cs := req.ChunkSize
+	from := req.FromChunk
+	count := req.Count
+	buf := make([]byte, cs)
+
+	logger.Info("GetChunkHashes starting", "fileSize", fileSize, "fromChunk", from, "count", count, "chunkSize", cs)
+
+	for c := from; ; c++ {
+		if count != 0 && c >= from+count {
 			break
 		}
-		d := xxh3.Hash128(buf[:r]).Bytes()
-		hashes = append(hashes, d[:]...)
-		off += uint64(r)
+		offset := c * cs
+		if offset >= fileSize {
+			break
+		}
+		size := cs
+		if offset+size > fileSize {
+			size = fileSize - offset
+		}
+		n, readErr := fh.ReadAt(buf[:size], int64(offset))
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			logger.Error("Failed to read chunk", "chunk", c, "error", readErr)
+			return status.Error(codes.Internal, "error reading file")
+		}
+		if n == 0 {
+			break
+		}
+		h := xxh3.Hash(buf[:n])
+		if sendErr := stream.Send(&bindings.GetChunkHashesResponse{
+			ChunkIndex: c,
+			Hash:       h,
+		}); sendErr != nil {
+			logger.Info("GetChunkHashes send ended", "chunk", c, "error", sendErr)
+			return sendErr
+		}
 	}
 
-	logger.Info("GetChunkHashes", "fileSize", fileSize, "chunkSize", chunkSize, "chunks", len(hashes)/16)
-	return &bindings.GetChunkHashesResponse{
-		TotalSize: fileSize,
-		ChunkSize: chunkSize,
-		Hashes:    hashes,
-	}, nil
+	logger.Info("GetChunkHashes complete")
+	return nil
 }
 
 // Rekey handles key rotation requests for forward secrecy.

@@ -71,9 +71,11 @@ func readAheadWindowBlocks(mb int) int {
 
 // ChunkBitmap tracks which chunks of a file have been downloaded.
 // Thread-safe: Has() uses RLock, Set() uses Lock.
+// hashes is nil until the first SetHash call (no fingerprints, e.g. fresh load).
 type ChunkBitmap struct {
 	mu        sync.RWMutex
 	bits      []uint64
+	hashes    []uint64 // per-chunk xxh3-64 fingerprints; nil means no fingerprints
 	total     int
 	have      int
 	fileSize  int64
@@ -159,9 +161,83 @@ func (b *ChunkBitmap) HasRange(offset int64, size int) bool {
 	return true
 }
 
+// SetHash stores a per-chunk content fingerprint. Lazily allocates hashes on first use.
+func (b *ChunkBitmap) SetHash(chunkIdx int, h uint64) {
+	if chunkIdx < 0 || chunkIdx >= b.total {
+		return
+	}
+	b.mu.Lock()
+	if b.hashes == nil {
+		b.hashes = make([]uint64, b.total)
+	}
+	b.hashes[chunkIdx] = h
+	b.mu.Unlock()
+}
+
+// Hash returns the stored fingerprint for a chunk. Returns (0, false) when hashes
+// were never set (nil slice), the chunk index is out of range, or the chunk is absent.
+// A zero hash value is not treated as absent; only the bit and alloc matter.
+func (b *ChunkBitmap) Hash(chunkIdx int) (uint64, bool) {
+	if chunkIdx < 0 || chunkIdx >= b.total {
+		return 0, false
+	}
+	word := chunkIdx / 64
+	bit := uint(chunkIdx % 64) // #nosec G115
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.hashes == nil {
+		return 0, false
+	}
+	if b.bits[word]&(1<<bit) == 0 {
+		return 0, false
+	}
+	return b.hashes[chunkIdx], true
+}
+
+// Clear clears the bit for chunkIdx and decrements have. Zeroes hashes[chunkIdx]
+// if hashes is allocated. Idempotent for already-clear chunks.
+func (b *ChunkBitmap) Clear(chunkIdx int) {
+	if chunkIdx < 0 || chunkIdx >= b.total {
+		return
+	}
+	word := chunkIdx / 64
+	bit := uint(chunkIdx % 64) // #nosec G115
+	b.mu.Lock()
+	if b.bits[word]&(1<<bit) != 0 {
+		b.bits[word] &^= 1 << bit
+		b.have--
+	}
+	if b.hashes != nil {
+		b.hashes[chunkIdx] = 0
+	}
+	b.mu.Unlock()
+}
+
+// ClearRange clears all chunks covering [offset, offset+size). Mirrors SetRange.
+func (b *ChunkBitmap) ClearRange(offset int64, size int) {
+	if size <= 0 {
+		return
+	}
+	cs := int64(b.chunkSize)
+	startChunk := int(offset / cs)
+	endChunk := int((offset + int64(size) - 1) / cs)
+	for i := startChunk; i <= endChunk; i++ {
+		b.Clear(i)
+	}
+}
+
 // ChunkSizeBytes returns the chunk size used by this bitmap.
 func (b *ChunkBitmap) ChunkSizeBytes() int {
 	return b.chunkSize
+}
+
+// HasHashes reports whether per-chunk fingerprints have been stored on this bitmap.
+// A freshly created or disk-loaded bitmap has no hashes until SetHash is called.
+func (b *ChunkBitmap) HasHashes() bool {
+	b.mu.RLock()
+	v := b.hashes != nil
+	b.mu.RUnlock()
+	return v
 }
 
 // IsComplete returns true if all chunks have been downloaded.
