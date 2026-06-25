@@ -26,6 +26,7 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/winfsp/cgofuse/fuse"
+	"github.com/zeebo/xxh3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -872,6 +873,99 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 	}
 
 	logger.Info("StreamFile complete", "bytesSent", offset-req.StartOffset)
+	return nil
+}
+
+// GetChunkHashes streams per-chunk xxh3-64 fingerprints for a file. Path
+// resolution and authorization mirror StreamFile exactly.
+func (kd *KeibidropServiceImpl) GetChunkHashes(req *bindings.GetChunkHashesRequest, stream bindings.KeibiService_GetChunkHashesServer) error {
+	logger := kd.Logger.With("method", "get-chunk-hashes", "path", req.Path)
+
+	if req.ChunkSize == 0 {
+		return status.Error(codes.InvalidArgument, "chunk_size must be non-zero")
+	}
+	// Reject an out-of-range chunk_size before allocating: a peer-supplied value
+	// near MaxUint64 (or several GiB) would otherwise make([]byte, cs) OOM/panic
+	// the whole process. The legitimate caller passes 512 KiB, far under the cap.
+	if req.ChunkSize > config.GRPCStreamBuffer {
+		return status.Error(codes.InvalidArgument, "chunk_size too large")
+	}
+
+	// Resolve path using the same logic as StreamFile.
+	var realPath string
+
+	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+		lookupPath := strings.TrimPrefix(req.Path, "/")
+		kd.SyncTracker.LocalFilesMu.RLock()
+		f, ok := kd.SyncTracker.LocalFiles[lookupPath]
+		if !ok {
+			f, ok = kd.SyncTracker.LocalFiles[req.Path]
+		}
+		kd.SyncTracker.LocalFilesMu.RUnlock()
+		if ok {
+			realPath = f.RealPathOfFile
+		}
+	} else if kd.FS != nil && kd.FS.Root != nil {
+		realPath = kd.resolveFUSEPath(req.Path)
+	}
+
+	if realPath == "" {
+		logger.Warn("File not found", "path", req.Path)
+		return status.Error(codes.NotFound, "file not found")
+	}
+
+	fh, err := os.Open(realPath) // #nosec G304
+	if err != nil {
+		logger.Error("Failed to open file", "error", err)
+		return status.Error(codes.Internal, "error accessing file")
+	}
+	defer fh.Close()
+
+	finfo, err := fh.Stat()
+	if err != nil {
+		logger.Error("Failed to stat file", "error", err)
+		return status.Error(codes.Internal, "error stat file")
+	}
+	fileSize := uint64(finfo.Size())
+
+	cs := req.ChunkSize
+	from := req.FromChunk
+	count := req.Count
+	buf := make([]byte, cs)
+
+	logger.Info("GetChunkHashes starting", "fileSize", fileSize, "fromChunk", from, "count", count, "chunkSize", cs)
+
+	for c := from; ; c++ {
+		if count != 0 && c >= from+count {
+			break
+		}
+		offset := c * cs
+		if offset >= fileSize {
+			break
+		}
+		size := cs
+		if offset+size > fileSize {
+			size = fileSize - offset
+		}
+		n, readErr := fh.ReadAt(buf[:size], int64(offset))
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			logger.Error("Failed to read chunk", "chunk", c, "error", readErr)
+			return status.Error(codes.Internal, "error reading file")
+		}
+		if n == 0 {
+			break
+		}
+		h := xxh3.Hash(buf[:n])
+		if sendErr := stream.Send(&bindings.GetChunkHashesResponse{
+			ChunkIndex: c,
+			Hash:       h,
+		}); sendErr != nil {
+			logger.Info("GetChunkHashes send ended", "chunk", c, "error", sendErr)
+			return sendErr
+		}
+	}
+
+	logger.Info("GetChunkHashes complete")
 	return nil
 }
 

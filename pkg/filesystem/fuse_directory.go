@@ -32,6 +32,7 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/pkg/xattr"
 	winfuse "github.com/winfsp/cgofuse/fuse"
+	"github.com/zeebo/xxh3"
 )
 
 // recoverPanic recovers from panics in FUSE handlers and logs the error.
@@ -1434,19 +1435,26 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		if pool != nil || cacheFD != nil {
 			d.OpenMapLock.Unlock()
 			unlocked = true
-			if cacheFD != nil {
-				f.CacheWg.Wait() // Wait for in-flight async cache writes to finish.
-				if closeErr := cacheFD.Close(); closeErr != nil {
-					logger.Error("Failed to close cache FD", "error", closeErr)
-				}
+			// Abort in-flight network reads FIRST so CacheWg.Wait() below cannot
+			// block on a read-ahead goroutine stuck in a 16 MiB fetch. Cancelling
+			// the stream context and closing the pool make any in-flight
+			// pool.ReadAt return promptly (mirrors drainInFlightOperations); the
+			// read-ahead goroutine then bails and calls CacheWg.Done(). The async
+			// cache writer touches only cacheFD, not the pool, so closing the pool
+			// before waiting is safe for it.
+			if streamCancel != nil {
+				streamCancel()
 			}
 			if pool != nil {
 				if closeErr := pool.Close(); closeErr != nil {
 					logger.Error("Failed to close stream pool", "error", closeErr)
 				}
 			}
-			if streamCancel != nil {
-				streamCancel()
+			if cacheFD != nil {
+				f.CacheWg.Wait() // Wait for in-flight async cache writes to finish.
+				if closeErr := cacheFD.Close(); closeErr != nil {
+					logger.Error("Failed to close cache FD", "error", closeErr)
+				}
 			}
 			return 0 // Already unlocked, just return
 		}
@@ -1709,7 +1717,32 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		return int(convertOsErrToSyscallErrno("truncate", err))
 	}
 
-	d.refreshFileStat(path)
+	// Re-stat and propagate the new SIZE to the peer. A truncate has no Write/Release to ride,
+	// so without this a shrink never reaches the peer: it keeps the old (larger) size and serves
+	// stale bytes past the new EOF (integrity violation). refreshFileStat only refreshes
+	// timestamps, so update Size here too, snapshot under metaMu, then notify EDIT_FILE outside
+	// the locks (same discipline as Chmod).
+	st, statErr := platLstat(cleanPath)
+	var statSnap winfuse.Stat_t
+	haveSnap, sizeChanged := false, false
+	d.AfmLock.Lock()
+	if f, ok := d.AllFileMap[path]; ok && f.stat != nil && statErr == nil {
+		f.metaMu.Lock()
+		sizeChanged = st.Size != f.stat.Size
+		f.stat.Size = st.Size
+		f.stat.Ctim = st.Ctim
+		f.stat.Mtim = st.Mtim
+		statSnap = *f.stat
+		haveSnap = true
+		f.metaMu.Unlock()
+	}
+	d.AfmLock.Unlock()
+	// Only emit on an actual size change. Windows re-opens an O_TRUNC file by calling Truncate
+	// even when the size is unchanged; a no-op truncate must not churn the peer with a redundant
+	// EDIT_FILE. A genuine grow/shrink/overwrite always changes the size.
+	if haveSnap && sizeChanged && d.OnLocalChange != nil {
+		d.OnLocalChange(types.FileEvent{Path: path, Action: types.EditFile, Attr: types.StatToAttr(&statSnap)})
+	}
 	return 0
 }
 
@@ -2018,6 +2051,305 @@ func (f *File) finishBlockFetch(start int64, bf *blockFetch, err error) {
 	bf.settle(err)
 }
 
+// prefetchRange fetches blocks [fromBlock, toBlock) ahead of the read head and
+// caches them, in ONE goroutine, SEQUENTIALLY and in order — the nearest block
+// first, each at full link bandwidth. It deliberately does NOT fetch the blocks
+// in parallel: on a single shared wire whose bandwidth-delay product is smaller
+// than one 16 MiB block, parallel fetches of consecutive blocks just split the
+// bandwidth and DELAY the block the reader needs next; in-order fetching delivers
+// that block soonest. The goroutine holds one prefetch-semaphore slot for the
+// whole range (one prefetch stream per file -> the shared bridge wire stays
+// balanced) and is cancellable via ctx (a seek cancels the now-stale range).
+// Each block is single-flighted (a read that catches up coalesces instead of
+// re-fetching) and only fully-written chunks are marked present (the chunk-
+// completeness invariant: never mark a partial/EOF chunk, or a later read there
+// would serve sparse-hole zeros).
+func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap *ChunkBitmap, fromBlock, toBlock, remoteFileSize int64, ctx context.Context) {
+	defer func() {
+		f.raMu.Lock()
+		f.raPrefetching = false
+		f.raMu.Unlock()
+		f.CacheWg.Done() // Release waits on this before closing cacheFD/pool.
+	}()
+	if pool == nil || cacheFD == nil || bitmap == nil {
+		return
+	}
+	sem := d.Root.PrefetchSem
+	if sem != nil {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		case <-ctx.Done():
+			return
+		}
+	}
+	ra := int64(ReadAheadBlock)
+	cs := int64(ChunkSize)
+	for b := fromBlock; b < toBlock; b++ {
+		if ctx.Err() != nil {
+			return // shutdown or a seek cancelled this now-stale range
+		}
+		blockStart := b * ra
+		if blockStart < 0 || (remoteFileSize > 0 && blockStart >= remoteFileSize) {
+			return // past EOF
+		}
+		end := blockStart + ra
+		if remoteFileSize > 0 && end > remoteFileSize {
+			end = remoteFileSize
+		}
+		if end-blockStart <= 0 {
+			return
+		}
+		if bitmap.HasRange(blockStart, int(end-blockStart)) {
+			continue // already cached
+		}
+		bf, leader := f.beginBlockFetch(blockStart)
+		if !leader {
+			continue // a read or earlier prefetch already owns this block
+		}
+		d.raPrefetchCalls.Add(1) // observability: blocks actually fetched by read-ahead
+		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		data, err := pool.ReadAt(rctx, blockStart, end-blockStart)
+		cancel()
+		if err != nil || len(data) == 0 {
+			// Best-effort: release this block's waiters and stop the range (a real
+			// read will fetch on demand). Bailing also makes teardown prompt when
+			// Release closes the pool out from under us.
+			f.finishBlockFetch(blockStart, bf, errBlockFetchIncomplete)
+			return
+		}
+		if _, werr := cacheFD.WriteAt(data, blockStart); werr != nil {
+			f.finishBlockFetch(blockStart, bf, werr)
+			return
+		}
+		dataEnd := blockStart + int64(len(data))
+		for c := int(blockStart / cs); ; c++ {
+			chunkBegin := int64(c) * cs
+			chunkEnd := chunkBegin + cs
+			if remoteFileSize > 0 && chunkEnd > remoteFileSize {
+				chunkEnd = remoteFileSize
+			}
+			if chunkBegin >= dataEnd || chunkEnd > dataEnd {
+				break
+			}
+			bitmap.Set(c)
+			bitmap.SetHash(c, xxh3.Hash(data[chunkBegin-blockStart:chunkEnd-blockStart]))
+		}
+		f.finishBlockFetch(blockStart, bf, nil) // release waiters after the bytes are in cache
+	}
+}
+
+// reconcileMinSize is the file-size floor below which a remote edit is not worth
+// reconciling: re-pulling a small file on demand is cheaper than a GetChunkHashes
+// round trip. 16 MiB (one ReadAheadBlock).
+const reconcileMinSize = int64(ReadAheadBlock)
+
+// maybeReconcileEdit is the eligibility gate the edit reset sites call. The site has
+// ALREADY done today's full reset (newBitmap is the fresh, valid "re-fetch everything"
+// state). This only ADDS a background optimization: when the pre-edit bitmap carried
+// per-chunk fingerprints and the file is large enough, spawn reconcileEditAsync to
+// re-mark the unchanged chunks present so reads serve them from cache instead of
+// re-fetching. On any failure or ineligibility the full reset simply stands.
+//
+// oldBitmap/oldSize are captured at the call site BEFORE the reset (oldBitmap before
+// f.Bitmap is reassigned, oldSize before f.stat is overwritten). newBitmap is the live
+// post-reset f.Bitmap; newSize is the incoming notify size. Takes no RemoteFilesLock.
+func (d *Dir) maybeReconcileEdit(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64) {
+	if oldBitmap == nil || newBitmap == nil || !oldBitmap.HasHashes() || newSize < reconcileMinSize {
+		return
+	}
+	hasher, ok := d.OpenStreamProvider().(types.ChunkHasher)
+	if !ok || hasher == nil {
+		return // older peer / no RPC: full reset stands.
+	}
+	go d.reconcileEditAsync(path, f, oldBitmap, newBitmap, oldSize, newSize)
+}
+
+// reconcileEditAsync runs in its own goroutine after a remote-edit full reset and marks
+// the chunks proven unchanged (our cached hash == the peer's new hash) present again on
+// the LIVE bitmap captured at spawn. It is lock-free with respect to RemoteFilesLock,
+// never waits on CacheWg, never writes the cache file, and never swaps f.Bitmap: the
+// hash-matched chunks' bytes are already in cache (in-place edits leave the cache; the
+// size-change site truncates, preserving the common prefix), so marking them present is
+// correct. On ANY error or non-match it does nothing extra and the full reset stands.
+//
+// newBitmap is a specific object: if a later edit swaps f.Bitmap again, this job's Set
+// calls land on an orphaned bitmap (harmless) and the newer edit spawns its own job.
+// This job never re-reads f.Bitmap.
+func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64) {
+	if oldBitmap == nil || newBitmap == nil {
+		return
+	}
+	// Bound concurrency with the same semaphore prefetch uses; abort on unmount/disconnect.
+	ctx := d.FsCtx
+	sem := d.Root.PrefetchSem
+	if sem != nil {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	cs := int64(newBitmap.ChunkSizeBytes())
+	if cs <= 0 {
+		return
+	}
+	commonEnd := min(oldSize, newSize)
+	count := uint64(commonEnd / cs) // only fully-covered common-prefix chunks are eligible
+	if count == 0 {
+		return
+	}
+
+	hasher, ok := d.OpenStreamProvider().(types.ChunkHasher)
+	if !ok || hasher == nil {
+		return
+	}
+	receiver, err := hasher.GetChunkHashes(ctx, path, uint64(cs), 0, count)
+	if err != nil || receiver == nil {
+		return // includes codes.Unimplemented: full reset stands.
+	}
+
+	peerHashes := make(map[int]uint64, count)
+	for {
+		idx, h, recvErr := receiver.Recv()
+		if recvErr != nil {
+			if errors.Is(recvErr, io.EOF) {
+				break
+			}
+			return // transient failure: full reset stands.
+		}
+		peerHashes[int(idx)] = h
+	}
+
+	decided, ok := reconcileBitmap(oldBitmap, oldSize, newSize, peerHashes)
+	if !ok {
+		return
+	}
+
+	for c := 0; c < int(count); c++ {
+		if !decided.Has(c) {
+			continue
+		}
+		if newBitmap.Has(c) {
+			continue // a concurrent read already fetched (new content) and marked it.
+		}
+		h, _ := decided.Hash(c)
+		newBitmap.Set(c)
+		newBitmap.SetHash(c, h)
+	}
+}
+
+// maybeReadAhead is the predictive read-ahead detector, called on every read of a
+// remote file but designed to ISSUE prefetches sparsely — at most once per
+// ReadAheadBlock the read head crosses, never on every small read. It keeps a
+// frontier, raPrefetchedTo (the next block index not yet prefetched), and extends
+// it only when the head advances into a new block, so a stream of 512 KiB reads
+// inside one 16 MiB block triggers ZERO work (the bug that defeats the purpose).
+//
+// The lead scales with sequential CONFIDENCE: each new block the head crosses
+// sequentially doubles the window (16 -> 32 -> 64 ... blocks ahead), capped at
+// ReadAheadWindowBlocks. The longer the confirmed sequential run, the further
+// ahead it fetches; a slow consumer (video) and a fast bulk reader both converge
+// to keeping ~window blocks resident. The design is deliberately optimistic:
+//
+//   - A non-sequential jump (seek) resets the window to 1 and restarts the
+//     frontier at the new position; the jump read itself prefetches NOTHING, so a
+//     mispredict wastes nothing. Worst case after a long run is one capped window
+//     of blocks fetched that a sudden jump won't use — bounded by the cap.
+//   - Read-ahead is withheld until the head is past the midpoint of its block, so
+//     a header-only probe (a thumbnailer) never triggers a fetch.
+func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap *ChunkBitmap, offset int64, n int, remoteFileSize int64) {
+	maxWin := d.ReadAheadWindowBlocks
+	if maxWin <= 0 || pool == nil || cacheFD == nil || bitmap == nil {
+		return
+	}
+	ra := int64(ReadAheadBlock)
+	curBlock := offset / ra
+	readEnd := offset + int64(n)
+
+	f.raMu.Lock()
+	headBlock := f.raHeadOffset / ra
+	// FUSE delivers a sequential scan as PARALLEL, out-of-order reads (one read per
+	// worker thread), so a stride test against the previous read sees constant
+	// backward jumps and never fires. Classify by DISTANCE from the read head's
+	// high-water mark instead: a read within +/- maxWin blocks of the head belongs to
+	// this stream (parallel laggards and kernel look-ahead included); farther away is
+	// a real seek. Order-independent.
+	inStream := f.raStreamActive &&
+		curBlock <= headBlock+int64(maxWin) &&
+		curBlock >= headBlock-int64(maxWin)
+
+	if !inStream {
+		// Fresh file, or a seek: (re)start the stream here and prefetch NOTHING — a
+		// mispredicted jump wastes no bandwidth, and a thumbnailer's scattered probes
+		// each land here and never fetch. Cancel any now-stale in-flight prefetch.
+		f.raStreamActive = true
+		f.raStreamBytes = int64(n)
+		f.raHeadOffset = readEnd
+		f.raPrefetchedTo = curBlock + 1
+		f.raWindowBlocks = 1
+		if f.raCancel != nil {
+			f.raCancel()
+			f.raCancel = nil
+		}
+		f.raMu.Unlock()
+		return
+	}
+	f.raStreamBytes += int64(n)
+	if readEnd > f.raHeadOffset {
+		f.raHeadOffset = readEnd
+	}
+	headBlock = f.raHeadOffset / ra
+	// Thumbnail gate: fire read-ahead only after the stream has actually CONSUMED at
+	// least half a block of bytes. A scattered probe (thumbnailer) advances the head
+	// but reads almost nothing, so raStreamBytes stays tiny and it never prefetches;
+	// a real player streaming through the file crosses the threshold quickly.
+	if f.raStreamBytes < ra/2 {
+		f.raMu.Unlock()
+		return
+	}
+	// The frontier can never lag the read head (reset on miss).
+	if f.raPrefetchedTo < headBlock+1 {
+		f.raPrefetchedTo = headBlock + 1
+	}
+	// Refill only when the buffered lead ahead of the head has drained to half the
+	// window; otherwise do nothing — reads inside the buffered region issue ZERO work.
+	blocksAhead := f.raPrefetchedTo - (headBlock + 1)
+	half := int64(f.raWindowBlocks) / 2
+	if half < 1 {
+		half = 1
+	}
+	if blocksAhead > half {
+		f.raMu.Unlock()
+		return
+	}
+	// One sequential prefetch in flight per file: a previous refill still running is
+	// already fetching this forward region in order, so let it finish.
+	if f.raPrefetching {
+		f.raMu.Unlock()
+		return
+	}
+	// Prime straight to the full window; prefetchRange fetches the blocks SEQUENTIALLY
+	// in order at full bandwidth (nearest first), never a parallel burst that would
+	// split the shared wire and delay the next-needed block.
+	f.raWindowBlocks = maxWin
+	from := f.raPrefetchedTo
+	target := headBlock + 1 + int64(maxWin)
+	f.raPrefetchedTo = target
+	f.raPrefetching = true
+	if f.raCancel != nil {
+		f.raCancel() // release the previous (finished) refill's context
+	}
+	pctx, pcancel := context.WithCancel(d.FsCtx)
+	f.raCancel = pcancel
+	f.raMu.Unlock()
+
+	f.CacheWg.Add(1) // paired with prefetchRange's deferred CacheWg.Done()
+	go d.prefetchRange(f, pool, cacheFD, bitmap, from, target, remoteFileSize, pctx)
+}
+
 func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Read", &errCode)
 	logger := d.logger.With("method", "read", "path", path, "fh", fh, "offset", offset)
@@ -2072,7 +2404,16 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		// HYBRID READ: Check bitmap to decide local vs remote.
 		// If all chunks for this range are already downloaded (by prefetch or prior read),
 		// serve from local cache. Otherwise fetch on-demand from remote.
-		if bitmap != nil && bitmap.HasRange(offset, len(buff)) {
+		hit := bitmap != nil && bitmap.HasRange(offset, len(buff))
+
+		// Predictive read-ahead: on sequential access, fetch upcoming blocks
+		// before the read head reaches them so a high-RTT link does not stall at
+		// each block boundary. Bounded, single-flighted, self-tuning, and a no-op
+		// when disabled (ReadAheadWindowBlocks == 0). Runs on both hit and miss so
+		// the frontier keeps advancing while reads are served from cache.
+		d.maybeReadAhead(f, pool, cacheFD, bitmap, offset, len(buff), remoteFileSize)
+
+		if hit {
 			// Fast path: all chunks available locally.
 			// d.logger.Info("FUSE read", "path", path, "offset", offset, "len", len(buff), "src", "bitmap")
 			n, preadErr := platPread(fd, buff, offset)
@@ -2177,6 +2518,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		// Retry loop for resilience against transient failures.
 		var data []byte
 		var readErr error
+		waitBegin := time.Now() // The reader is blocked here until the fetch lands.
 		for attempt := 0; attempt < 3; attempt++ {
 			if d.FsCtx.Err() != nil {
 				return 0 // The deferred backstop releases any waiters.
@@ -2232,11 +2574,34 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		}
 
 		if readErr != nil {
-			logger.Warn("Remote read failed, returning EOF", "error", readErr, "path", path)
-			// The file may have been deleted on the remote peer (e.g. git's
-			// temporary .keep files). Return 0 (EOF) so callers see an empty
-			// file. The deferred backstop releases any waiters to re-fetch.
-			return 0
+			// Shutting down (unmount/disconnect cancelled FsCtx): stop quietly,
+			// this is not a read error. The deferred backstop releases any waiters.
+			if d.FsCtx.Err() != nil {
+				return 0
+			}
+			// The peer genuinely no longer has the file (e.g. git's transient
+			// .keep files): surface EOF so callers see an empty/absent file, as
+			// before. The proxy maps a gRPC NotFound status to this sentinel.
+			if errors.Is(readErr, types.ErrRemoteFileNotFound) {
+				logger.Warn("Remote file not found, returning EOF", "error", readErr, "path", path)
+				return 0
+			}
+			// Transient fetch failure after exhausting retries (timeout, connection
+			// loss, or a server-side I/O error). Return EIO, NOT a short read: a
+			// false EOF makes a media player believe the file ended mid-stream. No
+			// portable errno asks the kernel or a blocking reader to retry (EAGAIN
+			// is for non-blocking fds, EINTR for signals — read(2)), so EIO is the
+			// correct cross-platform signal. The deferred backstop releases waiters.
+			logger.Warn("Remote read stalled, returning EIO", "error", readErr, "path", path)
+			return -winfuse.EIO
+		}
+
+		// The reader blocked on this synchronous fetch (a cache miss). At
+		// intercontinental RTT this is a user-visible stall; log slow ones at
+		// debug so a benchmark can count reader stalls without spamming normal
+		// operation. Read-ahead should make these rare on sequential access.
+		if waited := time.Since(waitBegin); waited > 50*time.Millisecond {
+			logger.Debug("on-demand read blocked on fetch", "offset", offset, "block", blockStart, "waited", waited)
 		}
 
 		// Serve the requested [offset, offset+len(buff)) slice out of the block.
@@ -2292,6 +2657,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 							break
 						}
 						bm.Set(c)
+						bm.SetHash(c, xxh3.Hash(block[chunkBegin-base:chunkEnd-base]))
 					}
 				}
 				if leader {
@@ -2482,7 +2848,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 				existing.PrefetchCancel()
 				existing.PrefetchCancel = nil
 			}
+			// Capture the pre-reset bitmap (hashes to compare) before swapping it,
+			// and the fresh live bitmap reads will now use, for async reconcile.
+			oldBitmap := existing.Bitmap
 			existing.Bitmap = NewChunkBitmap(stat.Size)
+			newBitmap := existing.Bitmap
 			d.RemoteFilesLock.Unlock()
 
 			// Only truncate if size actually changed — truncating to the same size
@@ -2494,6 +2864,10 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 					logger.Warn("Failed to truncate cache file to new size", "path", existing.RealPathOfFile, "size", newSize, "error", truncErr)
 				}
 			}
+
+			// Truncate preserved the common prefix, so cached prefix bytes still match
+			// their stored hashes: re-mark the proven-unchanged chunks present async.
+			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, oldSize, newSize)
 
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
@@ -2509,6 +2883,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			// cancel any in-flight prefetch so reads re-fetch the new bytes
 			// on-demand, mirroring EditRemoteFile. Without this, a peer that
 			// already fully cached the file keeps serving stale content.
+			var oldBitmap, newBitmap *ChunkBitmap
 			if incomingMtime > existingMtime {
 				existing.metaMu.Lock()
 				existing.NotLocalSynced = true
@@ -2518,7 +2893,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 					existing.PrefetchCancel()
 					existing.PrefetchCancel = nil
 				}
+				// In-place edit: same byte length, cache left intact, so prefix bytes
+				// still match their stored hashes. Capture for async reconcile.
+				oldBitmap = existing.Bitmap
 				existing.Bitmap = NewChunkBitmap(stat.Size)
+				newBitmap = existing.Bitmap
 			} else if existing.Bitmap != nil && !existing.Bitmap.IsComplete() {
 				// Same mtime, still incomplete — keep fetching the rest on-demand.
 				existing.metaMu.Lock()
@@ -2526,6 +2905,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 				existing.metaMu.Unlock()
 			}
 			d.RemoteFilesLock.Unlock()
+			// No-op unless the in-place reset branch above ran (oldBitmap stays nil for
+			// the same-mtime keep-cache path); then re-mark unchanged chunks present.
+			// Same size here, so old==new==newSize (the unaliased snapshot, not
+			// existing.stat which Getattr may now be mutating).
+			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, newSize, newSize)
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
 			d.AfmLock.Unlock()
@@ -2742,7 +3126,26 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 			continue
 		}
 
-		bitmap.Set(chunkIdx)
+		// StreamFile sends in config.BlockSize (4 MiB) units while the bitmap
+		// tracks 512 KiB chunks, so one Recv covers several chunks. Mark and hash
+		// each chunk over this block (same span convention as the read-ahead path)
+		// so a later SetHash never leaves a prefetch-only chunk reporting Hash==0.
+		cs := int64(bitmap.ChunkSizeBytes())
+		blockStart := int64(offset)
+		dataEnd := blockStart + int64(len(data))
+		fileSize := bitmap.FileSize()
+		for c := int(blockStart / cs); ; c++ {
+			chunkBegin := int64(c) * cs
+			chunkEnd := chunkBegin + cs
+			if fileSize > 0 && chunkEnd > fileSize {
+				chunkEnd = fileSize
+			}
+			if chunkBegin >= dataEnd || chunkEnd > dataEnd {
+				break
+			}
+			bitmap.Set(c)
+			bitmap.SetHash(c, xxh3.Hash(data[chunkBegin-blockStart:chunkEnd-blockStart]))
+		}
 		f.Download.UpdateProgress(int64(offset), len(data))
 	}
 
@@ -2805,6 +3208,10 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	// Content changed: mark unsynced and reset bitmap + cancel prefetch so reads
 	// re-fetch on-demand. The field stores go under metaMu (innermost); the
 	// PrefetchCancel/Download/Bitmap resets stay outside it.
+	// Snapshot sizes as unaliased locals before f.stat = stat: afterwards f.stat is
+	// the same struct Getattr may mutate, so reading it post-unlock would race.
+	oldSize := f.stat.Size
+	newSize := stat.Size
 	f.metaMu.Lock()
 	f.stat = stat
 	f.LocalNewer = false    // Remote has newer content.
@@ -2816,8 +3223,15 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 		f.PrefetchCancel()
 		f.PrefetchCancel = nil
 	}
+	// Capture the pre-reset bitmap (hashes to compare) and the fresh live bitmap;
+	// the cache is left intact here, so common-prefix bytes still match their hashes.
+	oldBitmap := f.Bitmap
 	f.Bitmap = NewChunkBitmap(stat.Size)
+	newBitmap := f.Bitmap
 	d.RemoteFilesLock.Unlock()
+	// Re-mark the proven-unchanged chunks present in the background (full reset stands
+	// on any failure or ineligibility).
+	d.maybeReconcileEdit(path, f, oldBitmap, newBitmap, oldSize, newSize)
 	d.AfmLock.Lock()
 	d.AllFileMap[path] = f
 	d.AfmLock.Unlock()

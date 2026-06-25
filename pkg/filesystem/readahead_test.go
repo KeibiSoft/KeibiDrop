@@ -301,3 +301,38 @@ func TestReadAhead_PartialLastBlockEOF(t *testing.T) {
 		t.Fatalf("read at EOF returned %d, want 0", n)
 	}
 }
+
+// Opening a folder makes Windows Explorer / macOS Photos fire Open+tiny-read+Close
+// on many files at once to build previews. The thumbnail gate must keep each file to
+// the block(s) it actually probes and NEVER trigger the read-ahead window — otherwise
+// a folder scan pulls every file and saturates the link. This is the 25+-files-at-once
+// case: each thumbnailer reads a small header + trailer (the moov-atom pattern) far below
+// the half-block gate, so no file may fetch more than its two probed blocks.
+func TestReadAhead_ThumbnailStormNoWholeFilePrefetch(t *testing.T) {
+	const nFiles = 25
+	fileSize := 6 * ReadAheadBlock // 6 blocks: a 4-block prefetch window would be unmistakable
+	probe := 256 * 1024            // 256 KiB probe, far below the half-block (8 MiB) consume gate
+	content := makePattern(fileSize)
+	buf := make([]byte, probe)
+
+	for i := 0; i < nFiles; i++ {
+		root, fh, prov, cleanup := newReadAheadFile(t, content)
+		// thumbnailer: header read, then a trailer read, then "close".
+		if n := root.Read("/f.bin", buf, 0, fh); n <= 0 {
+			t.Fatalf("file %d header read: %d", i, n)
+		}
+		if n := root.Read("/f.bin", buf, int64(fileSize-probe), fh); n <= 0 {
+			t.Fatalf("file %d trailer read: %d", i, n)
+		}
+		// Each probe pulls only its own 16 MiB block on the miss; the gate must add
+		// NOTHING. At most two blocks (header + trailer), never the 4-block window.
+		if got := prov.reads.Load(); got > 2 {
+			t.Fatalf("file %d: thumbnail probe fetched %d blocks -> read-ahead window fired (gate failed); want <=2 (header+trailer only)", i, got)
+		}
+		// And it must never have pulled the whole file.
+		if got := prov.bytesIn.Load(); got > int64(3*ReadAheadBlock) {
+			t.Fatalf("file %d: thumbnail pulled %d bytes (~%d blocks) of a %d-block file -- whole-file prefetch", i, got, got/int64(ReadAheadBlock), fileSize/ReadAheadBlock)
+		}
+		cleanup()
+	}
+}

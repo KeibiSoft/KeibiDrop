@@ -92,6 +92,18 @@ test:
 test-race:
 	go test -race -count=1 -timeout 90s ./pkg/filesystem/
 
+# ── Fleet: build + test across the whole REAL fleet (local Mac + Timisoara Linux +
+# Singapore Windows) from ONE call. Encodes each env's quirks once (go PATH, source dir,
+# buildvcs stamping, Windows cgo/WinFsp 8.3 short-path, PowerShell binding) so we stop
+# stumbling on the same setup every time. Prints a loud per-host identity banner.
+#   make fleet                    # unit suites on all three hosts
+#   make fleet SCOPE=full         # + ./tests integration suite (needs FUSE per host)
+#   make fleet WHERE=timisoara    # a single host
+#   make fleet RUN=TestEnsurePeerScope   # filter by -run pattern
+.PHONY: fleet
+fleet:
+	@KD_RUN='$(RUN)' bash fleet/run.sh '$(or $(WHERE),all)' '$(or $(SCOPE),unit)'
+
 lint:
 	golangci-lint run ./...
 

@@ -94,8 +94,18 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	m := C.GoString(toMount)
 	s := C.GoString(toSave)
 	fuse := useFUSE != 0
-	prefetch := prefetchOnOpen != 0
-	push := pushOnWrite != 0
+	// Tri-state for the two collab-sync flags: a negative value means "use the
+	// config" (the single source of truth), so the UI passes -1 and the engine's
+	// config value wins (config.Load above already applied any env override). A
+	// 0 or 1 from older callers is still honored, so the C ABI is unchanged.
+	prefetch := cfg.PrefetchOnOpen
+	if prefetchOnOpen >= 0 {
+		prefetch = prefetchOnOpen != 0
+	}
+	push := cfg.PushOnWrite
+	if pushOnWrite >= 0 {
+		push = pushOnWrite != 0
+	}
 
 	// Fill in defaults for empty values.
 	if r == "" {
@@ -173,6 +183,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	}
 	kd.AutoCache = cfg.LiveCollab // live_collab → macFUSE auto_cache (same-size live edits, macOS)
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
+	kd.ReadAheadWindowMB = cfg.ReadAheadWindowMB
 	for _, warn := range cfg.Warnings() {
 		logger.Warn("config flag note", "note", warn)
 	}

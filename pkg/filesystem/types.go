@@ -185,6 +185,19 @@ type Dir struct {
 	PrefetchAutoMB int  // files >= this many MB auto-prefetch on open (0=off)
 	PushOnWrite    bool // If true, async push deltas to peer on Write().
 
+	// ReadAheadWindowBlocks caps predictive sequential read-ahead: on sequential
+	// reads, up to this many ReadAheadBlock-sized blocks are fetched ahead of the
+	// read head so a high-RTT link does not stall at each block boundary. The
+	// in-use window self-tunes by hit/miss feedback and never exceeds this cap; a
+	// slow consumer (e.g. video) settles well below it. 0 = off (pure on-demand,
+	// the prior behavior). Derived from config read_ahead_window_mb.
+	ReadAheadWindowBlocks int
+
+	// raPrefetchCalls counts read-ahead prefetch issuances (one per block the read
+	// head crosses, NOT per read) — an observability counter; tests assert it stays
+	// sparse (proportional to blocks, not to the number of small reads).
+	raPrefetchCalls atomic.Int64
+
 	RemoteFilesLock sync.RWMutex
 	RemoteFiles     map[string]*File
 
@@ -249,6 +262,36 @@ type File struct {
 	// single fetch instead of each pulling the whole block over the network.
 	fetchMu  sync.Mutex
 	inflight map[int64]*blockFetch
+
+	// Predictive read-ahead detector state, guarded by raMu. raMu is a leaf lock:
+	// held only for these few field updates, never across I/O or another lock.
+	//
+	// CRITICAL: FUSE delivers the reads of one sequential scan IN PARALLEL across
+	// worker threads, so they arrive at this handler OUT OF ORDER. A "is this read
+	// right after the previous one?" stride test therefore sees constant backward
+	// jumps and classifies every read as a seek — read-ahead would never fire. So we
+	// track the read head as a HIGH-WATER MARK (raHeadOffset = max end offset seen)
+	// and classify each read by its DISTANCE from that mark: within +/- a window it
+	// belongs to the current stream (parallel laggards included); far away it is a
+	// real seek. Order-independent by construction.
+	//
+	// raStreamActive: a stream is established (false on a fresh file / right after a
+	// seek). raStreamBytes: bytes actually read since the stream began (reset on
+	// seek) — the thumbnail gate fires read-ahead only once REAL consumption passes a
+	// threshold, so a scattered probe (which advances the head but reads almost
+	// nothing) never prefetches. raHeadOffset: the stream's leading edge (high-water
+	// mark). raWindowBlocks: blocks to keep ahead (1 after a seek, primed to the cap
+	// on a confirmed stream). raPrefetchedTo: the prefetch frontier (next block index
+	// not yet prefetched), so read-ahead fires at most once per block the head crosses,
+	// not on every small read.
+	raMu           sync.Mutex
+	raStreamActive bool
+	raStreamBytes  int64
+	raHeadOffset   int64
+	raWindowBlocks int
+	raPrefetchedTo int64
+	raPrefetching  bool               // a sequential prefetch goroutine is in flight (one per file)
+	raCancel       context.CancelFunc // cancels the in-flight prefetch range (called on a seek)
 
 	// Download resumption state.
 	Download DownloadState

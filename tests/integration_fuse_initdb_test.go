@@ -42,6 +42,11 @@ func TestFUSEtoFUSE_InitdbPeerCompleteness(t *testing.T) {
 	if initdb == "" {
 		t.Skip("initdb not found")
 	}
+	// postgres' initdb refuses to run as root; the test box (and the test fleet) SSH as
+	// root, so skip there rather than fail. Covered on any non-root host (e.g. the Mac).
+	if os.Geteuid() == 0 {
+		t.Skip("initdb refuses to run as root")
+	}
 
 	tp := SetupFUSEPeerPair(t, 180*time.Second)
 	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)

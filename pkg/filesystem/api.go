@@ -30,10 +30,11 @@ type FS struct {
 	OpenStreamProvider func() types.FileStreamProvider
 
 	// Collab sync options (set from env before Mount).
-	PrefetchOnOpen bool // If true, fetch entire file on Open() and write to local disk.
-	PrefetchAutoMB int  // files >= this many MB auto-prefetch on open (0=off; PrefetchOnOpen forces any size)
-	PushOnWrite    bool // If true, async push deltas to peer on Write().
-	AutoCache      bool // If true (live_collab), add the macFUSE auto_cache mount option so a peer's same-size in-place edit is seen live. Trades off mmap-write integrity (git) on macOS; no-op on Linux/Windows.
+	PrefetchOnOpen    bool // If true, fetch entire file on Open() and write to local disk.
+	PrefetchAutoMB    int  // files >= this many MB auto-prefetch on open (0=off; PrefetchOnOpen forces any size)
+	ReadAheadWindowMB int  // cap (MB) for predictive sequential read-ahead on on-demand reads (0=off). Converted to blocks per Dir.
+	PushOnWrite       bool // If true, async push deltas to peer on Write().
+	AutoCache         bool // If true (live_collab), add the macFUSE auto_cache mount option so a peer's same-size in-place edit is seen live. Trades off mmap-write integrity (git) on macOS; no-op on Linux/Windows.
 
 	// Host.
 	host *winfuse.FileSystemHost
@@ -43,6 +44,13 @@ type FS struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	mountPoint string
+
+	// cacheOwnerFP is the actual fingerprint of the peer whose files are currently
+	// cached/shown. Connecting to a DIFFERENT peer drops the cache first (so a
+	// peer's artifacts never leak to the next), while the SAME peer reconnecting or
+	// resuming a session keeps the cache — no re-fetch, files still there.
+	cacheOwnerFP string
+	cacheOwnerMu sync.Mutex
 }
 
 func NewFS(logger *slog.Logger) *FS {
@@ -133,9 +141,10 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		OnLocalChange:      fs.OnLocalChange,
 		OpenStreamProvider: fs.OpenStreamProvider,
 
-		PrefetchOnOpen: fs.PrefetchOnOpen,
-		PrefetchAutoMB: fs.PrefetchAutoMB,
-		PushOnWrite:    fs.PushOnWrite,
+		PrefetchOnOpen:        fs.PrefetchOnOpen,
+		PrefetchAutoMB:        fs.PrefetchAutoMB,
+		ReadAheadWindowBlocks: readAheadWindowBlocks(fs.ReadAheadWindowMB),
+		PushOnWrite:           fs.PushOnWrite,
 
 		FsCtx: fs.ctx,
 
@@ -252,6 +261,44 @@ func (fs *FS) ClearFiles() {
 	if fs.Root != nil {
 		fs.Root.FsCtx = fs.ctx
 	}
+}
+
+// CancelInFlight cancels in-flight reads/prefetches and resets the FUSE context but
+// PRESERVES the cached file view (maps + bitmaps). Used on a disconnect from a peer we
+// may reconnect to or resume with: the same peer reconnecting finds its files still
+// there and resumes on-demand with no re-fetch. The full ClearFiles wipe is reserved
+// for switching to a DIFFERENT peer (see EnsurePeerScope).
+func (fs *FS) CancelInFlight() {
+	fs.cancel()
+	if fs.Root != nil {
+		fs.drainInFlightOperations()
+	}
+	// Fresh context so the next session's reads aren't born cancelled.
+	fs.ctx, fs.cancel = context.WithCancel(context.Background())
+	if fs.Root != nil {
+		fs.Root.FsCtx = fs.ctx
+	}
+}
+
+// EnsurePeerScope binds the cached file view to a peer identity. Connecting to a
+// DIFFERENT peer than the one whose files are cached drops the cache first, so one
+// peer's artifacts never leak to the next; the SAME peer (reconnect, or a later
+// session) keeps it, so files are still there with no re-fetch. The first peer adopts
+// the (empty) cache without clearing. Idempotent and cheap on repeat calls. fp is the
+// peer's ACTUAL verified fingerprint, so this is correct in TOFU mode too.
+func (fs *FS) EnsurePeerScope(fp string) {
+	if fp == "" {
+		return // unknown identity — never risk a spurious wipe
+	}
+	fs.cacheOwnerMu.Lock()
+	defer fs.cacheOwnerMu.Unlock()
+	if fs.cacheOwnerFP == fp {
+		return // same peer — keep the cache
+	}
+	if fs.cacheOwnerFP != "" {
+		fs.ClearFiles() // different peer — drop the previous peer's view
+	}
+	fs.cacheOwnerFP = fp
 }
 
 func (fs *FS) forceUnmount() {

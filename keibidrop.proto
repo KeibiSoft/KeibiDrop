@@ -27,6 +27,9 @@ service KeibiService {
   // all chunks sequentially. No per-chunk round-trip overhead.
   rpc StreamFile (StreamFileRequest) returns (stream StreamFileResponse);
 
+  // Per-chunk xxh3-64 fingerprints for partial re-fetch on edit.
+  rpc GetChunkHashes (GetChunkHashesRequest) returns (stream GetChunkHashesResponse);
+
   rpc Debug (DebugRequest) returns (DebugResponse);
 
   // Re-keying for forward secrecy during long sessions.
@@ -90,6 +93,18 @@ message StreamFileResponse {
   bytes data = 1;
   uint64 offset = 2;      // Byte offset where this chunk belongs.
   uint64 total_size = 3;  // Total file size (sent with every chunk for progress).
+}
+
+message GetChunkHashesRequest {
+  string path       = 1;
+  uint64 chunk_size = 2; // requester's chunk size in bytes; server hashes at this granularity
+  uint64 from_chunk = 3; // first chunk index to return
+  uint64 count      = 4; // number of chunks; 0 means to EOF
+}
+
+message GetChunkHashesResponse {
+  uint64 chunk_index = 1;
+  uint64 hash        = 2; // xxh3-64 of bytes [chunk_index*chunk_size, min((chunk_index+1)*chunk_size, fileSize))
 }
 
 message FsyncRequest {

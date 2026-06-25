@@ -960,6 +960,16 @@ func (kd *KeibiDrop) CreateRoom() error {
 	{
 		useBridge := false
 
+		// kd.listener is nil if a prior bridge fallback closed it and we returned
+		// before reopening it; use the bridge (reopened below) instead of nil-derefing.
+		if kd.listener == nil {
+			if kd.BridgeAddr == "" {
+				return fmt.Errorf("create-room: inbound listener not open and no bridge configured")
+			}
+			logger.Warn("Inbound listener not open (prior bridge fallback), using bridge")
+			useBridge = true
+		}
+
 		if kd.LocalIPv6IP == "" && kd.BridgeAddr != "" {
 			logger.Info("No IPv6, skipping direct P2P, using bridge")
 			useBridge = true

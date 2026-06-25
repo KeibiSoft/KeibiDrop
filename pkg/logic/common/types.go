@@ -75,8 +75,9 @@ type KeibiDrop struct {
 	// AutoCache (live_collab) enables the macFUSE auto_cache mount option so a
 	// peer's same-size in-place edit is seen live. Set by the caller from
 	// config.LiveCollab (not a constructor arg). Default false = git-safe.
-	AutoCache      bool
-	PrefetchAutoMB int // files >= this many MB auto-prefetch on open; set from config.PrefetchAutoMB (0=off)
+	AutoCache         bool
+	PrefetchAutoMB    int // files >= this many MB auto-prefetch on open; set from config.PrefetchAutoMB (0=off)
+	ReadAheadWindowMB int // cap (MB) for predictive sequential read-ahead on on-demand reads; set from config.ReadAheadWindowMB (0=off)
 
 	// Signals for loop management.
 	signals      chan TaskSignal
@@ -99,6 +100,12 @@ type KeibiDrop struct {
 
 	// Event callback (wired by FFI layer to push events to the UI).
 	OnEvent func(string)
+
+	// OnPeerVerified fires with the peer's verified fingerprint the instant the
+	// handshake confirms identity, before any files sync. The handshake only EMITS
+	// this; it knows nothing of what reacts. Wired in setupFilesystem to scope the
+	// FUSE cache to the peer (drop a different peer's view, keep the same peer's).
+	OnPeerVerified func(fp string)
 
 	// Connection resilience.
 	HealthMonitor    *session.HealthMonitor

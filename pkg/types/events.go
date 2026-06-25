@@ -8,9 +8,19 @@ package types
 
 import (
 	"context"
+	"errors"
 
 	keibidrop "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 )
+
+// ErrRemoteFileNotFound is returned by RemoteFileStream.ReadAt when the peer
+// reports the file no longer exists (gRPC NotFound), as opposed to a transient
+// fetch failure (timeout, connection loss, server I/O error). The on-demand read
+// path uses this to distinguish a genuinely gone file (surface EOF, e.g. git's
+// transient .keep files) from a stall (surface EIO, so a media player does not
+// see a false end-of-file mid-stream). Defined here, in the shared types package,
+// so the filesystem package can check it without importing gRPC.
+var ErrRemoteFileNotFound = errors.New("remote file not found")
 
 // FileAction maps local FS events
 type FileAction int
@@ -53,4 +63,16 @@ type RemoteFileStream interface {
 type StreamFileReceiver interface {
 	// Recv returns the next chunk. Returns io.EOF when the stream ends.
 	Recv() (data []byte, offset uint64, totalSize uint64, err error)
+}
+
+// ChunkHashReceiver streams (chunkIndex, hash) pairs from a peer's GetChunkHashes RPC.
+type ChunkHashReceiver interface {
+	Recv() (chunkIndex uint64, hash uint64, err error)
+}
+
+// ChunkHasher is implemented by providers that support the GetChunkHashes RPC. A
+// provider that does not implement it (older peer, test fake) signals via the failed
+// type assertion at the call site that the caller must fall back.
+type ChunkHasher interface {
+	GetChunkHashes(ctx context.Context, path string, chunkSize, fromChunk, count uint64) (ChunkHashReceiver, error)
 }
