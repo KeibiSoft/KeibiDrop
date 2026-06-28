@@ -10,15 +10,22 @@
   <a href="https://keibidrop.com">Website</a> · <a href="https://github.com/KeibiSoft/KeibiDrop/releases">Download</a> · <a href="https://keibisoft.com/blog.html">Blog</a>
 </p>
 
-Share files between devices. They show up as a folder on your computer.
+<h2 align="center">Work on shared files instantly.<br>No more upload or download waiting.</h2>
 
-- End-to-end encrypted (post-quantum). The relay cannot read your files.
-- On the same network, devices find each other automatically. One click to connect.
-- Over the internet, exchange fingerprints once. Save contacts for future sessions.
-- Peer files appear as a native folder (FUSE). Open, edit, git clone, anything.
-- Works through firewalls. Automatic fallback to an encrypted relay.
-- macOS, Linux, Windows. iOS and Android coming soon.
-- Open source (MPL-2.0).
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=9Wt0NMx2_I8">
+    <img src="demo-photos/keibidrop-demo.gif" alt="KeibiDrop demo, Mac and Windows side by side. Click to watch on YouTube with sound." width="900">
+  </a>
+  <br><sub><b>&#9654; Click to watch on YouTube</b> (with sound)</sub>
+</p>
+
+Another computer's files show up as a folder on yours. Open and edit them in your own apps, with nothing to download first.
+
+- Open a 40 GB file and start working instantly. Your edits sync back.
+- End-to-end encrypted (post-quantum). No cloud, and the relay never reads your files.
+- Same network: one click. Over the internet: swap a code once, then save the contact.
+- Their files become a real folder on your machine. Open, edit, `git clone`, anything.
+- macOS, Linux, Windows. iOS and Android coming soon. Open source (MPL-2.0).
 
 <p align="center">
   <img src="demo-photos/initial-screen.png" alt="KeibiDrop connection screen" width="700">
