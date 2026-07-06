@@ -110,8 +110,8 @@ func TestSecureConnThroughput(t *testing.T) {
 			_, err := rand.Read(key)
 			require.NoError(t, err)
 
-			writer := session.NewSecureConn(c1, key, kbc.CipherAES256)
-			reader := session.NewSecureConn(c2, key, kbc.CipherAES256)
+			writer := session.NewSecureConn(c1, key, kbc.CipherAES256, session.NoncePrefixOutbound)
+			reader := session.NewSecureConn(c2, key, kbc.CipherAES256, session.NoncePrefixInbound)
 
 			buf := make([]byte, bs)
 			_, err = rand.Read(buf)

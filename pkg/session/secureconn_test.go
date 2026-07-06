@@ -42,7 +42,9 @@ func newConnPair(t *testing.T, key []byte, suite kbc.CipherSuite) (writer, reade
 		c1.Close()
 		c2.Close()
 	})
-	return NewSecureConn(c1, key, suite), NewSecureConn(c2, key, suite)
+	// Model the two roles of a real socket: the writer is the outbound endpoint,
+	// the reader is the inbound endpoint, so they carry opposite nonce prefixes.
+	return NewSecureConn(c1, key, suite, NoncePrefixOutbound), NewSecureConn(c2, key, suite, NoncePrefixInbound)
 }
 
 var cipherSuites = []kbc.CipherSuite{kbc.CipherChaCha20, kbc.CipherAES256}

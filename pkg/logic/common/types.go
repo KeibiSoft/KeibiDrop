@@ -116,6 +116,19 @@ type KeibiDrop struct {
 	// during large clones. A single worker drains and sends sequentially.
 	notifyCh chan *bindings.NotifyRequest
 
+	// pendingNotifies counts REMOVE/RENAME/ADD_DIR notifies that are queued or in
+	// flight but not yet delivered. The notify worker has no retry queue and
+	// notifyRestoredFiles replays only ADD_FILE, so a proactive rekey that dropped
+	// the socket while this is non-zero would silently lose the delete/rename and
+	// diverge the peers. onRekeyNeeded defers while it is > 0. See #6.
+	pendingNotifies atomic.Int64
+
+	// tearingDown is set at the top of Run's ctx.Done teardown so the reconnect goroutine
+	// (onReconnected) bails instead of rebuilding the session/gRPC stack that teardown is
+	// concurrently niling. Serializes the reconnect-vs-teardown lifecycle. See the
+	// SESSION-TEARDOWN-RACE report.
+	tearingDown atomic.Bool
+
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc
 	activeBitmaps     map[string]*filesystem.ChunkBitmap
@@ -265,7 +278,9 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 
 	kd.Identity = id
 	kd.AddressBook = ab
+	kd.mu.Lock()
 	kd.session = sess
+	kd.mu.Unlock()
 	kd.identityOpts = opts
 	kd.identityConfig = configDir
 	regKey := opts.ExternalMaster
@@ -308,7 +323,9 @@ func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, 
 		if err != nil {
 			return "", fmt.Errorf("init ephemeral session: %w", err)
 		}
+		kd.mu.Lock()
 		kd.session = sess
+		kd.mu.Unlock()
 		kd.refreshSession = func() *session.Session {
 			s, err := session.InitSession(kd.logger, outPort, inPort)
 			if err != nil {
@@ -467,28 +484,51 @@ func (kd *KeibiDrop) Run() {
 		select {
 		case <-kd.ctx.Done():
 			logger.Info("Stopping KeibiDrop run instance (ctx cancelled)")
+			// Signal teardown before joining the resilience goroutines so a still-running
+			// onReconnected bails instead of rebuilding the stack we are about to nil.
+			kd.tearingDown.Store(true)
 			kd.StopConnectionResilience()
+			// Nil the resilience handles under kd.mu: onDisconnect and onRekeyNeeded snapshot
+			// kd.ReconnectManager / kd.RelayKeepalive, so these writes must pair with them.
+			// Bare assignments only, so kd.mu is never held across a blocking call.
+			kd.mu.Lock()
 			kd.HealthMonitor = nil
 			kd.ReconnectManager = nil
 			kd.RelayKeepalive = nil
+			kd.mu.Unlock()
+			// Swap out the gRPC stack under kd.mu so the reconnect-rebuild path
+			// (onReconnected / startGRPCServer / connectGRPCClientWithRetry), which
+			// publishes these same fields, gets a happens-before instead of racing this
+			// teardown. Stop()/Close() run on the locals OUTSIDE the lock so kd.mu is
+			// never held across a blocking call.
+			kd.mu.Lock()
+			oldServer := kd.grpcServer
+			oldConn := kd.grpcClientConn
+			kd.grpcServer = nil
+			kd.grpcClientConn = nil
+			kd.KDClient = nil
+			kd.KDSvc = nil
+			kd.mu.Unlock()
 			// Safe to Stop()/Close() here: handleNotifyDisconnect waits
 			// grpcDisconnectGraceDelay before cancelling the context, so the
 			// in-flight DISCONNECT RPC response has flushed. See #122.
-			if kd.grpcServer != nil {
-				kd.grpcServer.Stop()
-				kd.grpcServer = nil
+			if oldServer != nil {
+				oldServer.Stop()
 			}
-			if kd.grpcClientConn != nil {
-				kd.grpcClientConn.Close()
-				kd.grpcClientConn = nil
+			if oldConn != nil {
+				oldConn.Close()
 			}
-			kd.KDClient = nil
-			kd.KDSvc = nil
+			// Nil the session under kd.mu so the detached reconnect-resume goroutine
+			// (onReconnected spawns resumePartialDownloads) and onRekeyNeeded, which
+			// snapshot kd.session under kd.mu, get a real happens-before and never race
+			// this teardown write.
 			prevPeerFP := ""
+			kd.mu.Lock()
 			if kd.session != nil {
 				prevPeerFP = kd.session.ExpectedPeerFingerprint
 			}
 			kd.session = nil
+			kd.mu.Unlock()
 			kd.PeerIPv6IP = ""
 
 			// Permanent shutdown — close listener and exit.
@@ -518,7 +558,13 @@ func (kd *KeibiDrop) Run() {
 			// Preserve LocalFiles tagged with peer identity so they're only
 			// served back to the SAME peer on reconnect, not leaked to others.
 			prevLocal := kd.SyncTracker.LocalFiles
-			kd.session = kd.refreshSession()
+			// Compute the fresh session outside kd.mu (keygen), then swap under the lock so
+			// background readers (notify flush, relay keepalive, pull workers) snapshot a
+			// consistent pointer instead of racing this write.
+			newSess := kd.refreshSession()
+			kd.mu.Lock()
+			kd.session = newSess
+			kd.mu.Unlock()
 			kd.SyncTracker = synctracker.NewSyncTracker()
 			kd.lastSharedPeerFP = prevPeerFP
 			kd.lastSharedFiles = prevLocal

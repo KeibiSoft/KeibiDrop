@@ -30,7 +30,12 @@ const (
 type HealthMonitor struct {
 	session    *Session
 	grpcClient bindings.KeibiServiceClient
-	logger     *slog.Logger
+	// inbound/outbound are captured at creation and immutable for this monitor's
+	// lifetime (a fresh monitor is built after a reconnect swaps the sockets), so reading
+	// their byte stats needs no lock even while a reconnect rewrites session.Session.
+	inbound  *SecureConn
+	outbound *SecureConn
+	logger   *slog.Logger
 
 	// State
 	health           atomic.Int32 // ConnectionHealth
@@ -39,6 +44,7 @@ type HealthMonitor struct {
 	consecutiveFails atomic.Int32
 	seq              atomic.Uint64
 	activeTransfers  atomic.Int32
+	rekeyBytesMark   uint64 // session byte total at the previous tick; detects serving activity for the rekey idle gate
 
 	// Configuration
 	Interval    time.Duration // heartbeat interval (default 5s)
@@ -49,6 +55,14 @@ type HealthMonitor struct {
 	// Callbacks
 	OnHealthChange func(old, new ConnectionHealth)
 	OnDisconnect   func()
+	// OnRekeyNeeded fires on an idle heartbeat tick when the session has passed its
+	// rekey threshold, so the resilience layer can rotate keys via a re-handshake. It
+	// returns true only when it actually initiated a rotation; when it returns false
+	// (disabled, not the initiator, on cooldown, already reconnecting) the tick falls
+	// through to a normal heartbeat, so liveness detection is never starved. Fires only
+	// when RekeyEnabled is set, so the default heartbeat behavior is unchanged.
+	OnRekeyNeeded func() bool
+	RekeyEnabled  bool
 
 	// Control
 	ctx    context.Context
@@ -58,7 +72,7 @@ type HealthMonitor struct {
 
 // NewHealthMonitor creates a new health monitor with default settings.
 func NewHealthMonitor(session *Session, client bindings.KeibiServiceClient, logger *slog.Logger) *HealthMonitor {
-	return &HealthMonitor{
+	m := &HealthMonitor{
 		session:     session,
 		grpcClient:  client,
 		logger:      logger.With("component", "health-monitor"),
@@ -67,6 +81,11 @@ func NewHealthMonitor(session *Session, client bindings.KeibiServiceClient, logg
 		DegradedRTT: 500 * time.Millisecond,
 		MaxFailures: 5,
 	}
+	if session != nil && session.Session != nil {
+		m.inbound = session.Session.Inbound
+		m.outbound = session.Session.Outbound
+	}
+	return m
 }
 
 // Start begins the heartbeat monitoring loop in a goroutine.
@@ -125,14 +144,73 @@ func (m *HealthMonitor) runLoop() {
 		case <-m.ctx.Done():
 			return
 		case <-ticker.C:
-			if m.activeTransfers.Load() > 0 {
-				m.consecutiveFails.Store(0)
-				continue
-			}
-			if err := m.sendHeartbeat(); err != nil {
-				m.handleFailure(err)
-			}
+			m.tick()
 		}
+	}
+}
+
+// rekeyIdleByteDelta is the most a truly-idle session's byte counters may grow between
+// two ticks (heartbeat and keepalive scale). More than this means a transfer is in
+// flight in EITHER direction (including the serving side, which activeTransfers does not
+// track), so a rekey must not drop the connection.
+const rekeyIdleByteDelta = 32 * 1024
+
+// sessionBytes sums the bytes moved across both of the session's sockets. It is the idle
+// signal for the proactive rekey: an in-progress serving transfer grows these counters
+// even though activeTransfers (pull-side only) stays zero.
+func (m *HealthMonitor) sessionBytes() uint64 {
+	var total uint64
+	if m.inbound != nil {
+		bs, br, _, _ := m.inbound.GetStats()
+		total += bs + br
+	}
+	if m.outbound != nil {
+		bs, br, _, _ := m.outbound.GetStats()
+		total += bs + br
+	}
+	return total
+}
+
+// shouldRekey reports whether either captured socket has passed the rekey threshold. It
+// reads the captured pointers, not session.Session, so it does not race a reconnect.
+func (m *HealthMonitor) shouldRekey() bool {
+	return (m.inbound != nil && m.inbound.ShouldRekey()) ||
+		(m.outbound != nil && m.outbound.ShouldRekey())
+}
+
+// maybeRekey advances the idle byte mark and, when the session is genuinely idle (no
+// serving traffic since the last tick) and past the rekey threshold, asks the resilience
+// layer to rotate keys. It returns true only when a rotation was actually initiated.
+func (m *HealthMonitor) maybeRekey() bool {
+	cur := m.sessionBytes()
+	idle := cur >= m.rekeyBytesMark && cur-m.rekeyBytesMark <= rekeyIdleByteDelta
+	m.rekeyBytesMark = cur
+	if idle && m.OnRekeyNeeded != nil && m.shouldRekey() {
+		return m.OnRekeyNeeded()
+	}
+	return false
+}
+
+// tick runs one monitor cycle: skip while a pull is active; otherwise, when the session
+// is genuinely idle and past the rekey threshold, trigger a proactive rekey instead of a
+// heartbeat this tick; otherwise send a heartbeat.
+func (m *HealthMonitor) tick() {
+	if m.activeTransfers.Load() > 0 {
+		m.consecutiveFails.Store(0)
+		if m.RekeyEnabled {
+			m.rekeyBytesMark = m.sessionBytes()
+		}
+		return
+	}
+	// A rotation skips the heartbeat this tick; anything else (disabled, not the initiator,
+	// on cooldown, already reconnecting, or not yet idle) falls through so liveness
+	// detection is never starved. Byte-work runs only when the feature is enabled, so a
+	// default (disabled) peer never touches session.Session on the tick path.
+	if m.RekeyEnabled && m.maybeRekey() {
+		return
+	}
+	if err := m.sendHeartbeat(); err != nil {
+		m.handleFailure(err)
 	}
 }
 

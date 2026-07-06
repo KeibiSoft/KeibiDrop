@@ -970,22 +970,14 @@ func (kd *KeibidropServiceImpl) GetChunkHashes(req *bindings.GetChunkHashesReque
 }
 
 // Rekey handles key rotation requests for forward secrecy.
-func (kd *KeibidropServiceImpl) Rekey(_ context.Context, req *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
-	logger := kd.Logger.With("method", "rekey", "epoch", req.Epoch)
-
-	if kd.Session == nil {
-		logger.Warn("Session not initialized")
-		return nil, status.Error(codes.FailedPrecondition, "session not initialized")
-	}
-
-	resp, err := kd.Session.HandleRekeyRequest(req)
-	if err != nil {
-		logger.Error("Failed to process rekey request", "error", err)
-		return nil, status.Error(codes.Internal, "rekey failed")
-	}
-
-	logger.Info("Rekey request processed successfully")
-	return resp, nil
+// Rekey previously performed an in-band key swap on the live SecureConn. That was
+// unsafe: with no on-wire key epoch, a stray, replayed, or forged Rekey RPC from the
+// untrusted relay could swap the key mid-stream and brick the connection. Key rotation
+// is now done out of band by an idle re-handshake, so this RPC no longer touches the
+// connection; it reports the in-band path as unimplemented so callers fall back safely.
+func (kd *KeibidropServiceImpl) Rekey(_ context.Context, _ *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
+	kd.Logger.Info("in-band Rekey RPC is disabled; key rotation uses re-handshake", "method", "rekey")
+	return nil, status.Error(codes.Unimplemented, "in-band rekey disabled; rotation is via re-handshake")
 }
 
 // Heartbeat responds to connection health checks.

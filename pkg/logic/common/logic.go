@@ -125,8 +125,12 @@ func (kd *KeibiDrop) UnshareFile(name string) error {
 		return fmt.Errorf("file %q not shared", name)
 	}
 
-	if kd.session != nil && kd.KDClient != nil {
-		_, _ = kd.KDClient.Notify(context.Background(), &bindings.NotifyRequest{
+	kd.mu.Lock()
+	sess := kd.session
+	client := kd.KDClient
+	kd.mu.Unlock()
+	if sess != nil && client != nil {
+		_, _ = client.Notify(context.Background(), &bindings.NotifyRequest{
 			Type: bindings.NotifyType(types.RemoveFile),
 			Path: name,
 		})
@@ -328,9 +332,15 @@ updateTracker:
 // Intended for benchmarking; production code uses PullFile with defaults.
 func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize, nWorkers int) error {
 	logger := kd.logger.With("method", "pull-file-with-params")
-	if kd.session == nil || kd.session.GRPCClient == nil {
+	// Snapshot the session/client under kd.mu once; the worker goroutines below must
+	// not re-read kd.session, which teardown can nil mid-transfer.
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.GRPCClient == nil {
 		return ErrInvalidSession
 	}
+	client := s.GRPCClient
 	if kd.HealthMonitor != nil {
 		kd.HealthMonitor.TransferStarted()
 		defer kd.HealthMonitor.TransferEnded()
@@ -395,7 +405,7 @@ func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize,
 			wg.Add(1)
 			go func(workerID int) {
 				defer wg.Done()
-				stream, err := kd.session.GRPCClient.Read(dlCtx)
+				stream, err := client.Read(dlCtx)
 				if err != nil {
 					errCh <- fmt.Errorf("worker %d: open stream: %w", workerID, err)
 					dlCancel()
@@ -622,6 +632,13 @@ func (kd *KeibiDrop) waitForPeerFingerprint() error {
 // CreateRoom: start the gRPC server, dial the client with retry, init
 // connection resilience, then either signal ready (no-FUSE) or mount FUSE.
 func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
+	// Clear the teardown latch: a prior Stop() set tearingDown to make an in-flight
+	// reconnect bail, but this is a fresh CreateRoom/JoinRoom (the previous teardown has
+	// already completed, since Stop() blocks on it), so the gRPC-stack publishes below
+	// must not be gated off. The auto-reconnect path (onReconnected) does not run through
+	// finishConnect, so it stays gated during a live teardown.
+	kd.tearingDown.Store(false)
+
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
 	kd.Start()

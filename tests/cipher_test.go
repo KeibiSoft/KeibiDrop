@@ -70,8 +70,8 @@ func TestSecureConnBothCiphers(t *testing.T) {
 			defer serverConn.Close()
 			defer clientConn.Close()
 
-			server := session.NewSecureConn(serverConn, key, suite)
-			client := session.NewSecureConn(clientConn, key, suite)
+			server := session.NewSecureConn(serverConn, key, suite, session.NoncePrefixInbound)
+			client := session.NewSecureConn(clientConn, key, suite, session.NoncePrefixOutbound)
 
 			// Test: client writes, server reads.
 			testData := []byte("Hello from encrypted connection using " + string(suite))

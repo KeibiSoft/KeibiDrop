@@ -28,11 +28,48 @@ const lengthHeaderSize = 4 // uint32 prefix
 // malicious length header on the raw TCP stream.
 const MaxSecureMessageSize = 20 * 1024 * 1024 // 20 MiB
 
-// Re-keying thresholds for forward secrecy.
+// Default rotation thresholds and the floors the debug override clamps to.
 const (
-	RekeyBytesThreshold = 1 << 30 // 1 GB
-	RekeyMsgsThreshold  = 1 << 20 // ~1M messages
+	defaultRekeyBytes uint64 = 1 << 30 // 1 GB
+	defaultRekeyMsgs  uint64 = 1 << 20 // ~1M messages
+	// Floors for the KD_REKEY_BYTES/KD_REKEY_MSGS debug override: it may only make
+	// rotation fire sooner, never disable it or turn a tiny value into a per-tick storm.
+	minRekeyBytes uint64 = 1 << 20 // 1 MiB
+	minRekeyMsgs  uint64 = 1 << 10 // 1024
 )
+
+// Re-keying thresholds for forward secrecy. Vars, not consts, so tests can shrink
+// them to exercise the rekey path without moving a gigabyte; production always uses
+// these values unless the debug override below is applied.
+var (
+	RekeyBytesThreshold = defaultRekeyBytes
+	RekeyMsgsThreshold  = defaultRekeyMsgs
+)
+
+// ApplyRekeyThresholdOverride lowers the rekey thresholds for testing and benchmarking.
+// A zero argument leaves that threshold unchanged; a non-zero value is clamped to
+// [floor, default], so the override can only make rotation fire sooner, never disable it.
+// It returns the applied values. Call once at startup, gated on the proactive-rekey
+// flag, before the HealthMonitor goroutine starts reading the thresholds.
+func ApplyRekeyThresholdOverride(bytes, msgs uint64) (uint64, uint64) {
+	if bytes != 0 {
+		RekeyBytesThreshold = clampUint64(bytes, minRekeyBytes, defaultRekeyBytes)
+	}
+	if msgs != 0 {
+		RekeyMsgsThreshold = clampUint64(msgs, minRekeyMsgs, defaultRekeyMsgs)
+	}
+	return RekeyBytesThreshold, RekeyMsgsThreshold
+}
+
+func clampUint64(v, lo, hi uint64) uint64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
 
 // Nonce prefixes for direction separation (prevents nonce reuse with same key).
 const (
@@ -54,19 +91,10 @@ type SecureWriter struct {
 	nonce *kbc.NonceGenerator
 }
 
-func NewSecureWriter(w io.Writer, kek []byte, suite kbc.CipherSuite) *SecureWriter {
-	aead, err := kbc.NewAEAD(suite, kek)
-	if err != nil {
-		panic("secureconn: invalid key: " + err.Error())
-	}
-	return &SecureWriter{
-		w:     w,
-		aead:  aead,
-		nonce: kbc.NewNonceGenerator(NoncePrefixOutbound),
-	}
-}
-
-// NewSecureWriterWithPrefix creates a writer with a custom nonce prefix.
+// NewSecureWriterWithPrefix creates a writer with the given direction nonce prefix.
+// The prefix is required (there is no default) so that a socket's two endpoints must
+// choose different prefixes; a shared default is what caused the nonce reuse this
+// replaces.
 func NewSecureWriterWithPrefix(w io.Writer, kek []byte, suite kbc.CipherSuite, prefix uint32) *SecureWriter {
 	aead, err := kbc.NewAEAD(suite, kek)
 	if err != nil {
@@ -154,17 +182,19 @@ func (s *SecureReader) Read() ([]byte, error) {
 
 // SecureConn wraps a net.Conn with separate inbound/outbound encryption.
 type SecureConn struct {
-	conn  net.Conn
-	suite kbc.CipherSuite
-	r     *SecureReader
-	w     *SecureWriter
+	conn         net.Conn
+	suite        kbc.CipherSuite
+	writerPrefix uint32 // direction nonce prefix for this endpoint's writer; persisted across rekeys
+	r            *SecureReader
+	w            *SecureWriter
 
 	// leftover holds decrypted plaintext that didn't fit in the caller's buffer on a
 	// previous Read. Not goroutine-safe: Read must be called from a single goroutine
 	// (gRPC's transport guarantees this for its connections).
-	leftover []byte
-	done     bool
-	closed   chan struct{}
+	leftover  []byte
+	done      atomic.Bool
+	closeOnce sync.Once
+	closed    chan struct{}
 
 	// Re-keying support: track bytes/messages for forward secrecy.
 	bytesSent    atomic.Uint64
@@ -175,13 +205,19 @@ type SecureConn struct {
 	keyMu        sync.RWMutex // protects key updates
 }
 
-func NewSecureConn(conn net.Conn, kek []byte, suite kbc.CipherSuite) *SecureConn {
+// NewSecureConn wraps conn with AEAD encryption. writerPrefix selects this endpoint's
+// direction nonce prefix (NoncePrefixOutbound for the dialing/outbound side,
+// NoncePrefixInbound for the accepting/inbound side). It is required precisely so the
+// two endpoints of a socket, which share one key, cannot both default to the same
+// prefix and reuse nonces.
+func NewSecureConn(conn net.Conn, kek []byte, suite kbc.CipherSuite, writerPrefix uint32) *SecureConn {
 	return &SecureConn{
-		conn:   conn,
-		suite:  suite,
-		r:      NewSecureReader(conn, kek, suite),
-		w:      NewSecureWriter(conn, kek, suite),
-		closed: make(chan struct{}),
+		conn:         conn,
+		suite:        suite,
+		writerPrefix: writerPrefix,
+		r:            NewSecureReader(conn, kek, suite),
+		w:            NewSecureWriterWithPrefix(conn, kek, suite, writerPrefix),
+		closed:       make(chan struct{}),
 	}
 }
 
@@ -196,19 +232,21 @@ func (s *SecureConn) WriteMessage(msg []byte) error {
 	return err
 }
 
-// Close closes the underlying connection.
+// Close closes the underlying connection. It is idempotent and race-safe: the proactive
+// rekey drop (resilience.onRekeyNeeded) and gRPC's transport can both close the same
+// *SecureConn. sync.Once collapses the double close so close(s.closed) never panics, and
+// the atomic done keeps Accept's read race-free. Only the first close reports the
+// underlying conn's error; later closes return net.ErrClosed.
 func (s *SecureConn) Close() error {
-	if s.done {
-		return net.ErrClosed
-	}
-	if s.conn != nil {
-		s.done = true
-		close(s.closed)
-		return s.conn.Close()
-	}
-
-	s.done = true
-	return net.ErrClosed
+	err := net.ErrClosed
+	s.closeOnce.Do(func() {
+		s.done.Store(true)
+		if s.conn != nil {
+			close(s.closed)
+			err = s.conn.Close()
+		}
+	})
+	return err
 }
 
 // RemoteAddr returns the remote network address.
@@ -276,7 +314,7 @@ func (s *SecureConn) SetWriteDeadline(t time.Time) error {
 }
 
 func (s *SecureConn) Accept() (net.Conn, error) {
-	if s.done {
+	if s.done.Load() {
 		return nil, io.EOF
 	}
 	return s.conn, nil
@@ -288,10 +326,15 @@ func (l *SecureConn) Addr() net.Addr {
 
 // ========== RE-KEYING SUPPORT ==========
 
-// ShouldRekey returns true if key rotation is recommended.
+// ShouldRekey returns true if key rotation is recommended. It considers BOTH
+// directions: a bulk transfer bumps the sender's bytesSent and the receiver's
+// bytesRecv, and either peer may be the one that drives the rekey, so both must be
+// able to observe that the threshold was crossed.
 func (s *SecureConn) ShouldRekey() bool {
 	return s.bytesSent.Load() >= RekeyBytesThreshold ||
-		s.msgsSent.Load() >= RekeyMsgsThreshold
+		s.bytesRecv.Load() >= RekeyBytesThreshold ||
+		s.msgsSent.Load() >= RekeyMsgsThreshold ||
+		s.msgsRecv.Load() >= RekeyMsgsThreshold
 }
 
 // UpdateKey atomically updates the encryption key (reuses negotiated cipher suite).
@@ -300,7 +343,7 @@ func (s *SecureConn) UpdateKey(newKek []byte) {
 	defer s.keyMu.Unlock()
 
 	s.r = NewSecureReader(s.conn, newKek, s.suite)
-	s.w = NewSecureWriter(s.conn, newKek, s.suite)
+	s.w = NewSecureWriterWithPrefix(s.conn, newKek, s.suite, s.writerPrefix)
 	s.ResetStats()
 	s.currentEpoch.Add(1)
 }

@@ -174,7 +174,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	*/
 
 	// Upgrade to SecureConn
-	secure := NewSecureConn(conn, session.SEKInbound, suite)
+	secure := NewSecureConn(conn, session.SEKInbound, suite, NoncePrefixInbound)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
@@ -356,7 +356,7 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 	logger.Info("Peer confirmed handshake upgrading to encrypted connection")
 
 	// Upgrade to SecureConn
-	secure := NewSecureConn(conn, session.SEKOutbound, suite)
+	secure := NewSecureConn(conn, session.SEKOutbound, suite, NoncePrefixOutbound)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
@@ -425,7 +425,7 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	session.SEKInbound = sek
 
 	// === Step 4: Upgrade connection to SecureConn ===
-	secure := NewSecureConn(conn, sek, suite)
+	secure := NewSecureConn(conn, sek, suite, NoncePrefixInbound)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}

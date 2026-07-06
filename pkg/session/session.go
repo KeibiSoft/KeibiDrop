@@ -70,12 +70,11 @@ type Session struct {
 	// Internal timeout deadline
 	Deadline time.Time
 
-	// Re-keying state for forward secrecy.
-	RekeyMu       sync.Mutex
-	LastRekeyAt   time.Time
-	CurrentEpoch  uint64
-	RekeyPending  bool
-	PendingNewKey []byte // awaiting ACK
+	// Re-keying state. Rotation is performed by an idle re-handshake (see the resilience
+	// layer), not an in-band key swap, so these only track the last rotation for gating.
+	RekeyMu      sync.Mutex
+	LastRekeyAt  time.Time
+	CurrentEpoch uint64
 
 	logger *slog.Logger
 }
@@ -162,17 +161,12 @@ func (s *Session) ResetInboundCrypto() {
 	s.SEKInbound = nil
 }
 
-// SessionSockets holds a duplex connection for peer communication.
+// SessionSockets holds a duplex connection for peer communication. The two ends are
+// built by the handshake with opposite nonce prefixes (Inbound uses NoncePrefixInbound,
+// Outbound uses NoncePrefixOutbound) so a socket's shared key never reuses a nonce.
 type SessionSockets struct {
 	Inbound  *SecureConn // Bob -> Alice
 	Outbound *SecureConn // Alice -> Bob
-}
-
-func NewSessionSockets(connIn, connOut net.Conn, sekIn, sekOut []byte, suite kbc.CipherSuite) *SessionSockets {
-	return &SessionSockets{
-		Inbound:  NewSecureConn(connIn, sekIn, suite),
-		Outbound: NewSecureConn(connOut, sekOut, suite),
-	}
 }
 
 // NewSession initializes a new session with a timeout deadline.
@@ -238,76 +232,10 @@ func (s *Session) ShouldRekey() bool {
 	return false
 }
 
-// HandleRekeyRequest processes an incoming RekeyRequest from peer.
-// Updates inbound key and returns response for peer.
-func (s *Session) HandleRekeyRequest(req *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
-	s.RekeyMu.Lock()
-	defer s.RekeyMu.Unlock()
-
-	if s.OwnKeys == nil || s.PeerPubKeys == nil {
-		return nil, fmt.Errorf("session keys not initialized")
-	}
-
-	resp, newInboundKey, err := ProcessRekeyRequest(req, s.OwnKeys, s.PeerPubKeys, s.CipherSuite)
-	if err != nil {
-		return nil, fmt.Errorf("process rekey request: %w", err)
-	}
-
-	// Update inbound key immediately.
-	s.SEKInbound = newInboundKey
-	if s.Session != nil && s.Session.Inbound != nil {
-		s.Session.Inbound.UpdateKey(newInboundKey)
-	}
-
-	s.CurrentEpoch = req.Epoch
-	s.LastRekeyAt = time.Now()
-	s.logger.Info("Rekey request processed", "epoch", req.Epoch)
-
-	return resp, nil
-}
-
-// HandleRekeyResponse processes an incoming RekeyResponse from peer.
-// Updates outbound key after peer acknowledged our rekey request.
-func (s *Session) HandleRekeyResponse(resp *bindings.RekeyResponse) error {
-	s.RekeyMu.Lock()
-	defer s.RekeyMu.Unlock()
-
-	if !s.RekeyPending {
-		return fmt.Errorf("unexpected rekey response, no request pending")
-	}
-
-	if s.OwnKeys == nil || s.PeerPubKeys == nil {
-		return fmt.Errorf("session keys not initialized")
-	}
-
-	// Process peer's seeds for our inbound direction.
-	newInboundKey, err := ProcessRekeyResponse(resp, s.OwnKeys, s.PeerPubKeys, s.CipherSuite)
-	if err != nil {
-		return fmt.Errorf("process rekey response: %w", err)
-	}
-
-	// Activate pending outbound key.
-	if s.PendingNewKey != nil {
-		s.SEKOutbound = s.PendingNewKey
-		if s.Session != nil && s.Session.Outbound != nil {
-			s.Session.Outbound.UpdateKey(s.PendingNewKey)
-		}
-		s.PendingNewKey = nil
-	}
-
-	// Update inbound with peer's new key.
-	s.SEKInbound = newInboundKey
-	if s.Session != nil && s.Session.Inbound != nil {
-		s.Session.Inbound.UpdateKey(newInboundKey)
-	}
-
-	s.RekeyPending = false
-	s.CurrentEpoch = resp.Epoch
-	s.LastRekeyAt = time.Now()
-	s.logger.Info("Rekey completed", "epoch", resp.Epoch)
-
-	return nil
-}
+// The in-band rekey handlers (HandleRekeyRequest/HandleRekeyResponse) were removed:
+// swapping a live SecureConn key mid-stream with no on-wire key epoch was unsafe, since
+// a stray, replayed, or forged Rekey RPC from the untrusted relay could brick the
+// connection. Key rotation is performed out of band by an idle re-handshake instead.
 
 // GetRekeyEpoch returns the current key epoch.
 func (s *Session) GetRekeyEpoch() uint64 {
