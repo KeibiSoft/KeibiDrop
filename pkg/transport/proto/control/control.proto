@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package control;
+
+option go_package = "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control;control";
+
+// Control is the transport's own service, independent of any app. The Manager uses
+// Ping as a heartbeat to measure RTT and detect a dead link; it rides the QUIC channel
+// alongside whatever services the application registers. Keeping it separate is what
+// lets the connection manager be used with any gRPC service, not just the benchmark's.
+service Control {
+  rpc Ping(PingRequest) returns (PingReply);
+}
+
+message PingRequest {}
+message PingReply {}

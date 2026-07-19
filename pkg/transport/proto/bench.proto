@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package bench;
+
+option go_package = "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto;bench";
+
+// BenchService is a minimal service used to prove and measure gRPC over QUIC vs
+// TCP. Echo exercises unary round-trip latency; Download mirrors KeibiDrop's
+// StreamFile (one request -> a stream of chunks) for throughput.
+service BenchService {
+  rpc Echo(EchoRequest) returns (EchoReply);
+  rpc Download(DownloadRequest) returns (stream Chunk);
+  // Read is a fast unary range read: the FUSE cache-miss path. One round trip,
+  // small, latency-sensitive -> it rides the QUIC interactive channel, isolated
+  // from the TCP bulk transfer so a miss lands in ~1 RTT, not seconds.
+  rpc Read(ReadRequest) returns (ReadReply);
+}
+
+message ReadRequest {
+  uint64 offset = 1; // byte offset within the file
+  uint32 length = 2; // bytes to read
+}
+message ReadReply { bytes data = 1; }
+
+message EchoRequest { bytes payload = 1; }
+message EchoReply   { bytes payload = 1; }
+
+message DownloadRequest {
+  uint64 total_bytes  = 1; // total size of the transfer
+  uint32 chunk_size   = 2; // bytes per Chunk (0 -> server default)
+  uint64 start_offset = 3; // resume point: stream from here to total_bytes (0 = from start)
+}
+
+message Chunk {
+  bytes  data   = 1;
+  uint64 offset = 2; // byte offset of this chunk within the stream
+}

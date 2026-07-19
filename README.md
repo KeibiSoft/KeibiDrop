@@ -16,7 +16,7 @@
   <a href="https://www.youtube.com/watch?v=9Wt0NMx2_I8">
     <img src="demo-photos/keibidrop-demo.gif" alt="KeibiDrop demo, Mac and Windows side by side. Click to watch on YouTube with sound." width="900">
   </a>
-  <br><sub><b>&#9654; Click to watch on YouTube</b> (with sound)</sub>
+  <br><sub><b>Click to watch on YouTube</b> (with sound)</sub>
 </p>
 
 Another computer's files show up as a folder on yours. Open and edit them in your own apps, with nothing to download first.
