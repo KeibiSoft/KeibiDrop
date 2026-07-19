@@ -9,6 +9,7 @@ package session
 import (
 	"encoding/binary"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -140,4 +141,60 @@ func TestPerformInboundHandshake_ExactMatch_Succeeds(t *testing.T) {
 
 	err = PerformInboundHandshake(alice, conn)
 	require.NoError(t, err, "Handshake must succeed when fingerprint matches exactly")
+}
+
+// TestHandshakeDerivesQUICChannelKeys runs a real outbound->inbound handshake over a
+// pipe and proves the extra QUIC seeds in the same payload yield a matching, INDEPENDENT
+// key on each side: the QUIC control channel is keyed from the one handshake, with its
+// own key so it never shares key+nonce space with the TCP channel.
+func TestHandshakeDerivesQUICChannelKeys(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	alice, err := InitSession(logger, 26002, 26001)
+	require.NoError(t, err)
+	bob, err := InitSession(logger, 26004, 26003)
+	require.NoError(t, err)
+
+	// Peers already know and validated each other's public keys before this point;
+	// bob (outbound) encapsulates to alice's keys, alice expects bob's fingerprint.
+	alicePeer, err := kbc.ParsePeerKeys(map[string][]byte{
+		"x25519": alice.OwnKeys.X25519Public.Bytes(),
+		"mlkem":  alice.OwnKeys.MlKemPublic.Bytes(),
+	})
+	require.NoError(t, err)
+	bob.PeerPubKeys = alicePeer
+	alice.ExpectedPeerFingerprint, err = bob.OwnKeys.Fingerprint()
+	require.NoError(t, err)
+
+	bobEnd, aliceEnd := net.Pipe()
+	defer bobEnd.Close()
+	defer aliceEnd.Close()
+	errCh := make(chan error, 1)
+	go func() { errCh <- PerformOutboundHandshakeOnConn(bob, bobEnd) }()
+	require.NoError(t, PerformInboundHandshake(alice, aliceEnd))
+	require.NoError(t, <-errCh)
+
+	// The QUIC key derived on each side for this direction must match across peers.
+	require.NotEmpty(t, bob.SEKOutboundQUIC, "outbound side must derive a QUIC key")
+	require.NotEmpty(t, alice.SEKInboundQUIC, "inbound side must derive a QUIC key")
+	require.Equal(t, bob.SEKOutboundQUIC, alice.SEKInboundQUIC, "QUIC channel keys must match across peers")
+
+	// The TCP keys must still match (unchanged behavior).
+	require.Equal(t, bob.SEKOutbound, alice.SEKInbound, "TCP channel keys must match across peers")
+
+	// The QUIC key must be INDEPENDENT of the TCP key: no shared key + nonce space.
+	require.NotEqual(t, bob.SEKOutbound, bob.SEKOutboundQUIC, "QUIC key must differ from the TCP key")
+}
+
+// TestHandshakeQUICSeedsOptional proves backward compatibility: a peer that sends no
+// "*_quic" seeds (older build) still completes the handshake, just with no QUIC key.
+func TestHandshakeQUICSeedsOptional(t *testing.T) {
+	alice, msg := buildHandshakeFixture(t) // fixture builds a payload WITHOUT quic seeds
+	alice.ExpectedPeerFingerprint = "TOFU"
+
+	conn := pipeWithMessage(t, msg)
+	defer conn.Close()
+
+	require.NoError(t, PerformInboundHandshake(alice, conn))
+	require.Empty(t, alice.SEKInboundQUIC, "no QUIC key when the peer sent no QUIC seeds")
 }

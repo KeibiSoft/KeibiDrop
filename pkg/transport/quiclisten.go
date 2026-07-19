@@ -17,14 +17,18 @@ import (
 // would head-of-line block.
 type quicListener struct {
 	ln     *quic.Listener
+	tr     *quic.Transport // owned; Close stops the transport
+	udp    net.PacketConn  // the UDP socket; quic-go does NOT close a user-provided Conn, so we do
 	conns  chan net.Conn
 	errc   chan error
 	closed chan struct{}
 }
 
-func newQUICListener(ln *quic.Listener) net.Listener {
+func newQUICListener(ln *quic.Listener, tr *quic.Transport, udp net.PacketConn) net.Listener {
 	l := &quicListener{
 		ln:     ln,
+		tr:     tr,
+		udp:    udp,
 		conns:  make(chan net.Conn),
 		errc:   make(chan error, 1),
 		closed: make(chan struct{}),
@@ -75,7 +79,14 @@ func (l *quicListener) Close() error {
 	default:
 		close(l.closed)
 	}
-	return l.ln.Close()
+	err := l.ln.Close()
+	if l.tr != nil {
+		_ = l.tr.Close() // stop the transport
+	}
+	if l.udp != nil {
+		_ = l.udp.Close() // release the UDP socket so the port is immediately reusable
+	}
+	return err
 }
 
 func (l *quicListener) Addr() net.Addr { return l.ln.Addr() }

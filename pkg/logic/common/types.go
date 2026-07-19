@@ -62,6 +62,14 @@ type KeibiDrop struct {
 	KDClient       bindings.KeibiServiceClient
 	grpcClientConn *grpc.ClientConn
 
+	// QUIC control channel (0.4.0 Track B) — a UDP gRPC pair mirroring the TCP pair,
+	// for control + metadata + surviving IP changes, while file transfer stays on TCP.
+	// Brought up whenever the peer negotiated QUIC keys (SEK*QUIC from the handshake
+	// payload); fail-soft, so a failure just leaves the session TCP-only. See
+	// docs/transport-architecture.html.
+	quicControlClient *grpc.ClientConn
+	quicControlServer *grpc.Server
+
 	// Non-FUSE fallback.
 	SyncTracker *synctracker.SyncTracker
 
@@ -482,6 +490,7 @@ func (kd *KeibiDrop) Run() {
 				kd.grpcClientConn.Close()
 				kd.grpcClientConn = nil
 			}
+			kd.stopQUICControlChannel()
 			kd.KDClient = nil
 			kd.KDSvc = nil
 			prevPeerFP := ""

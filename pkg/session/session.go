@@ -43,6 +43,14 @@ type Session struct {
 	SEKInbound  []byte
 	SEKOutbound []byte
 
+	// QUIC control-channel keys, derived in the SAME handshake as the TCP keys from
+	// extra seeds carried in the initial payload, so the handshake gains no round trip.
+	// Each channel/direction has its own key, so the QUIC channel never shares key +
+	// nonce space with the TCP channel. Empty when the peer is an older build that sent
+	// no QUIC seeds, in which case the QUIC control channel is simply not brought up.
+	SEKOutboundQUIC []byte
+	SEKInboundQUIC  []byte
+
 	// Negotiated cipher suite for this session.
 	CipherMu    sync.Mutex
 	CipherSuite kbc.CipherSuite
@@ -146,6 +154,18 @@ func (s *Session) GetFingerPrint() string {
 	return s.OwnFingerprint
 }
 
+// NegotiatedSuite returns the cipher suite chosen during the handshake, taken under the
+// cipher lock, defaulting to the first supported suite when unset. The QUIC control
+// channel uses the same suite as the TCP channel.
+func (s *Session) NegotiatedSuite() kbc.CipherSuite {
+	s.CipherMu.Lock()
+	defer s.CipherMu.Unlock()
+	if s.CipherSuite == "" {
+		return kbc.SupportedCiphers()[0]
+	}
+	return s.CipherSuite
+}
+
 // ResetOutboundCrypto clears the outbound shared key and negotiated cipher
 // suite so a fresh outbound handshake can run (e.g. when falling back to the
 // bridge). The caller is responsible for closing any existing outbound conn.
@@ -170,8 +190,8 @@ type SessionSockets struct {
 
 func NewSessionSockets(connIn, connOut net.Conn, sekIn, sekOut []byte, suite kbc.CipherSuite) *SessionSockets {
 	return &SessionSockets{
-		Inbound:  NewSecureConn(connIn, sekIn, suite),
-		Outbound: NewSecureConn(connOut, sekOut, suite),
+		Inbound:  NewSecureConnRole(connIn, sekIn, suite, false), // acceptor -> inbound prefix
+		Outbound: NewSecureConnRole(connOut, sekOut, suite, true), // dialer -> outbound prefix
 	}
 }
 

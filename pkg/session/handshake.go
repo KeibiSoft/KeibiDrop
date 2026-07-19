@@ -161,6 +161,15 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 
 	session.SEKInbound = inboundKey
 
+	// QUIC control-channel key from the extra seeds in the same payload. Optional: an
+	// older peer sends none, and we simply do not bring up the QUIC channel.
+	quicInboundKey, err := deriveQUICInboundKey(session, msg.EncSeeds, suite)
+	if err != nil {
+		logger.Error("Failed to derive quic inbound key", "error", err)
+		return err
+	}
+	session.SEKInboundQUIC = quicInboundKey
+
 	// Wait for user to confirm out-of-band fingerprint
 	logger.Info("Peer fingerprint verified, awaiting user confirmation", "peer-port", session.PeerPort)
 
@@ -173,8 +182,9 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		}
 	*/
 
-	// Upgrade to SecureConn
-	secure := NewSecureConn(conn, session.SEKInbound, suite)
+	// Upgrade to SecureConn. Acceptor role -> inbound nonce prefix, so this end and the
+	// dialer never share nonce space under the shared key.
+	secure := NewSecureConnRole(conn, session.SEKInbound, suite, false)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
@@ -296,14 +306,34 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 
 	session.SEKOutbound = outboundKey
 
+	// Additional seed for the QUIC control channel, encapsulated to the SAME already-
+	// validated peer keys and carried in this SAME payload so the handshake gains no
+	// extra round trip. It derives an independent key, so the QUIC control channel
+	// never shares key + nonce space with the TCP channel.
+	quicSeed1 := kbc.GenerateSeed()
+	encQuicSeed1X25519, err := kbc.X25519Encapsulate(quicSeed1, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
+	if err != nil {
+		logger.Error("Failed to encapsulate x25519 quic seed", "error", err)
+		return err
+	}
+	quicSeed2, encQuicSeed2MLKEM := session.PeerPubKeys.MlKemPublic.Encapsulate()
+	quicOutboundKey, err := kbc.DeriveKey(suite, quicSeed1, quicSeed2)
+	if err != nil {
+		logger.Error("Failed to derive quic outbound key", "error", err)
+		return err
+	}
+	session.SEKOutboundQUIC = quicOutboundKey
+
 	pubKeys := map[string]string{
 		"x25519": encodeBase64(session.OwnKeys.X25519Public.Bytes()),
 		"mlkem":  encodeBase64(session.OwnKeys.MlKemPublic.Bytes()),
 	}
 
 	encSeeds := map[string]string{
-		"mlkem":  encodeBase64(encSeed2MLKEM),
-		"x25519": encodeBase64(encSeed1X25519),
+		"mlkem":       encodeBase64(encSeed2MLKEM),
+		"x25519":      encodeBase64(encSeed1X25519),
+		"mlkem_quic":  encodeBase64(encQuicSeed2MLKEM),
+		"x25519_quic": encodeBase64(encQuicSeed1X25519),
 	}
 
 	// Advertise our supported ciphers to the peer.
@@ -355,14 +385,44 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 	*/
 	logger.Info("Peer confirmed handshake upgrading to encrypted connection")
 
-	// Upgrade to SecureConn
-	secure := NewSecureConn(conn, session.SEKOutbound, suite)
+	// Upgrade to SecureConn. Dialer role -> outbound nonce prefix.
+	secure := NewSecureConnRole(conn, session.SEKOutbound, suite, true)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
 	session.Session.Outbound = secure
 
 	return nil
+}
+
+// deriveQUICInboundKey derives the QUIC control-channel inbound key from the extra
+// "*_quic" seeds an outbound handshake carries in its payload. It reuses the EXACT
+// decapsulation the primary inbound path uses; only the seed fields differ. Returns
+// (nil, nil) when the peer sent no QUIC seeds (an older build), so the caller degrades
+// to a TCP-only session rather than failing.
+func deriveQUICInboundKey(session *Session, encSeeds map[string]string, suite kbc.CipherSuite) ([]byte, error) {
+	x25519b64, ok1 := encSeeds["x25519_quic"]
+	mlkemb64, ok2 := encSeeds["mlkem_quic"]
+	if !ok1 || !ok2 {
+		return nil, nil // older peer: no QUIC control channel
+	}
+	encX, err := decodeBase64(x25519b64)
+	if err != nil {
+		return nil, fmt.Errorf("decode quic x25519 seed: %w", err)
+	}
+	encK, err := decodeBase64(mlkemb64)
+	if err != nil {
+		return nil, fmt.Errorf("decode quic mlkem seed: %w", err)
+	}
+	seed1, err := kbc.X25519Decapsulate(encX, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
+	if err != nil {
+		return nil, fmt.Errorf("decapsulate quic x25519 seed: %w", err)
+	}
+	seed2, err := session.OwnKeys.MlKemPrivate.Decapsulate(encK)
+	if err != nil {
+		return nil, fmt.Errorf("decapsulate quic mlkem seed: %w", err)
+	}
+	return kbc.DeriveKey(suite, seed1, seed2)
 }
 
 // FinalizeInboundSession completes the inbound session setup after peer is verified.
@@ -424,8 +484,16 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	}
 	session.SEKInbound = sek
 
-	// === Step 4: Upgrade connection to SecureConn ===
-	secure := NewSecureConn(conn, sek, suite)
+	// QUIC control-channel key from the extra seeds in the same payload (optional).
+	quicInboundKey, err := deriveQUICInboundKey(session, encSeeds, suite)
+	if err != nil {
+		logger.Error("Failed to derive quic inbound key", "error", err)
+		return err
+	}
+	session.SEKInboundQUIC = quicInboundKey
+
+	// === Step 4: Upgrade connection to SecureConn (acceptor role -> inbound prefix) ===
+	secure := NewSecureConnRole(conn, sek, suite, false)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}

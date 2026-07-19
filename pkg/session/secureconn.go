@@ -154,10 +154,11 @@ func (s *SecureReader) Read() ([]byte, error) {
 
 // SecureConn wraps a net.Conn with separate inbound/outbound encryption.
 type SecureConn struct {
-	conn  net.Conn
-	suite kbc.CipherSuite
-	r     *SecureReader
-	w     *SecureWriter
+	conn        net.Conn
+	suite       kbc.CipherSuite
+	writePrefix uint32 // nonce prefix this end writes with (survives rekey)
+	r           *SecureReader
+	w           *SecureWriter
 
 	// leftover holds decrypted plaintext that didn't fit in the caller's buffer on a
 	// previous Read. Not goroutine-safe: Read must be called from a single goroutine
@@ -177,11 +178,35 @@ type SecureConn struct {
 
 func NewSecureConn(conn net.Conn, kek []byte, suite kbc.CipherSuite) *SecureConn {
 	return &SecureConn{
-		conn:   conn,
-		suite:  suite,
-		r:      NewSecureReader(conn, kek, suite),
-		w:      NewSecureWriter(conn, kek, suite),
-		closed: make(chan struct{}),
+		conn:        conn,
+		suite:       suite,
+		writePrefix: NoncePrefixOutbound,
+		r:           NewSecureReader(conn, kek, suite),
+		w:           NewSecureWriter(conn, kek, suite),
+		closed:      make(chan struct{}),
+	}
+}
+
+// NewSecureConnRole builds a SecureConn whose writer uses a direction-specific nonce
+// prefix, so the two ends of one bidirectional connection never collide on key+nonce
+// even under the same derived key. The dialer (outbound direction) writes with
+// NoncePrefixOutbound, the acceptor (inbound direction) with NoncePrefixInbound; the
+// reader takes the nonce from each frame, so it accepts either and this stays wire-
+// compatible with a plain NewSecureConn peer. This is what keys the QUIC control
+// channel: one key per UDP direction, the prefix says which way, so the two directions
+// never share nonce space.
+func NewSecureConnRole(conn net.Conn, kek []byte, suite kbc.CipherSuite, dialer bool) *SecureConn {
+	prefix := NoncePrefixInbound
+	if dialer {
+		prefix = NoncePrefixOutbound
+	}
+	return &SecureConn{
+		conn:        conn,
+		suite:       suite,
+		writePrefix: prefix,
+		r:           NewSecureReader(conn, kek, suite),
+		w:           NewSecureWriterWithPrefix(conn, kek, suite, prefix),
+		closed:      make(chan struct{}),
 	}
 }
 
@@ -300,7 +325,7 @@ func (s *SecureConn) UpdateKey(newKek []byte) {
 	defer s.keyMu.Unlock()
 
 	s.r = NewSecureReader(s.conn, newKek, s.suite)
-	s.w = NewSecureWriter(s.conn, newKek, s.suite)
+	s.w = NewSecureWriterWithPrefix(s.conn, newKek, s.suite, s.writePrefix)
 	s.ResetStats()
 	s.currentEpoch.Add(1)
 }

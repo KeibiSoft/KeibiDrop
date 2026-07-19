@@ -58,11 +58,25 @@ func (quicTransport) Dial(ctx context.Context, addr string) (net.Conn, error) {
 }
 
 func (quicTransport) Listen(addr string) (net.Listener, error) {
-	ln, err := quic.ListenAddr(addr, serverTLSConfig(), quicConfig())
+	// Own the UDP socket + Transport explicitly (rather than quic.ListenAddr, whose
+	// listener Close does NOT release the internally-created socket), so closing the
+	// listener frees the port immediately — required for reconnect on the same port.
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err
 	}
-	return newQUICListener(ln), nil
+	udp, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return nil, err
+	}
+	tr := &quic.Transport{Conn: udp}
+	ln, err := tr.Listen(serverTLSConfig(), quicConfig())
+	if err != nil {
+		_ = tr.Close()
+		_ = udp.Close()
+		return nil, err
+	}
+	return newQUICListener(ln, tr, udp), nil
 }
 
 // quicConfig is applied to both ends so throughput isn't window-limited and the

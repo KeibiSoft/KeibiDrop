@@ -632,6 +632,9 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 		return err
 	}
 
+	// Bring up the QUIC control channel alongside TCP (fail-soft, non-blocking).
+	kd.startQUICControlChannel()
+
 	// Start health monitoring, reconnection, and relay keepalive.
 	if err := kd.InitConnectionResilience(); err != nil {
 		logger.Warn("Failed to init connection resilience", "error", err)
