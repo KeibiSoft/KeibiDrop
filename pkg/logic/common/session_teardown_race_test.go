@@ -28,7 +28,6 @@ import (
 //
 // Run: go test -race -run TestSessionTeardownRacesNotifyFlush -count=5 ./pkg/logic/common/
 func TestSessionTeardownRacesNotifyFlush(t *testing.T) {
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
 	kd := newTestKD(t)
 
 	// A non-blocking no-op gRPC client so flush passes its nil-check and reaches the

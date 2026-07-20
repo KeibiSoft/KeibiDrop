@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -66,6 +67,10 @@ type Session struct {
 	// Persistent identity flags (learned during handshake).
 	OwnIsPersistent  bool
 	PeerIsPersistent bool
+
+	// PeerSupportsKeyUpdate is learned from the peer's handshake: true if it advertised the
+	// in-band key-update capability. It gates whether the ratchet turns on (see UseKeyUpdate).
+	PeerSupportsKeyUpdate bool
 
 	// Internal timeout deadline
 	Deadline time.Time
@@ -214,6 +219,71 @@ func (s *Session) ReadyForEncryption() bool {
 		s.Session != nil &&
 		s.Session.Inbound != nil &&
 		s.Session.Outbound != nil
+}
+
+// keyUpdateDisabled gates whether this peer advertises the in-band key-update capability.
+// Default enabled (zero value false). It is the single source of truth for the capability.
+var keyUpdateDisabled atomic.Bool
+
+// SetKeyUpdateEnabled toggles the in-band key-update capability advertised on new
+// handshakes. Off makes this peer negotiate the re-handshake fallback instead: an
+// operational off-switch for the ratchet without a rebuild. It affects only handshakes
+// after the call, not an established session.
+func SetKeyUpdateEnabled(on bool) { keyUpdateDisabled.Store(!on) }
+
+// ownSupportsKeyUpdate reports this peer's advertised key-update capability, honouring the
+// SetKeyUpdateEnabled off-switch.
+func ownSupportsKeyUpdate() bool { return !keyUpdateDisabled.Load() }
+
+// UseKeyUpdate reports whether the in-band ratchet may run: only when both peers advertised
+// the capability. A new-to-old pair, or one with the off-switch set, returns false and
+// rotates via the re-handshake fallback.
+func (s *Session) UseKeyUpdate() bool {
+	return ownSupportsKeyUpdate() && s.PeerSupportsKeyUpdate
+}
+
+// maxWriterEpoch returns the higher in-band ratchet epoch across both directions, or 0 if no
+// conns exist. It is the epoch that climbs toward the wrap guard as the ratchet rotates.
+func (s *Session) maxWriterEpoch() uint16 {
+	if s.Session == nil {
+		return 0
+	}
+	var e uint16
+	if s.Session.Inbound != nil {
+		e = s.Session.Inbound.WriterEpoch()
+	}
+	if s.Session.Outbound != nil {
+		if oe := s.Session.Outbound.WriterEpoch(); oe > e {
+			e = oe
+		}
+	}
+	return e
+}
+
+// NearEpochWrap reports whether a key-update session's writer epoch has climbed close enough
+// to the wrap guard that it must re-handshake for a fresh epoch-0 key. Only key-update
+// sessions reach the guard (an old peer already rotates via re-handshake), so this gates on
+// UseKeyUpdate; without it the in-band ratchet would pin its epoch at the guard and stop
+// advancing forward secrecy for good.
+func (s *Session) NearEpochWrap() bool {
+	return s.UseKeyUpdate() && s.maxWriterEpoch() >= epochRehandshakeThreshold
+}
+
+// ApplyKeyUpdateNegotiation turns the ratchet on (or off) on both live conns to match the
+// negotiated capability. It must run after both handshakes complete, so PeerSupportsKeyUpdate
+// is known, and before the gRPC reader goroutine starts, since SetKeyUpdate is not safe to
+// flip under a live reader.
+func (s *Session) ApplyKeyUpdateNegotiation() {
+	if s.Session == nil {
+		return
+	}
+	on := s.UseKeyUpdate()
+	if s.Session.Inbound != nil {
+		s.Session.Inbound.SetKeyUpdate(on)
+	}
+	if s.Session.Outbound != nil {
+		s.Session.Outbound.SetKeyUpdate(on)
+	}
 }
 
 // ========== RE-KEYING ==========

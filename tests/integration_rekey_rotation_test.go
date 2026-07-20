@@ -11,6 +11,7 @@ package tests
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,8 +20,18 @@ import (
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/stretchr/testify/require"
 )
+
+// disableKeyUpdate turns the in-band ratchet off for a test, so a same-build pair negotiates
+// key-update off and exercises the re-handshake fallback (the path the rotation and
+// regression tests assert). Restored on cleanup.
+func disableKeyUpdate(t *testing.T) {
+	t.Helper()
+	session.SetKeyUpdateEnabled(false)
+	t.Cleanup(func() { session.SetKeyUpdateEnabled(true) })
+}
 
 // rekeyRoles returns the pair's deterministic reconnect roles. Exactly one peer
 // (the lexicographically lower fingerprint) is the initiator that drives the
@@ -170,8 +181,9 @@ func rekeyRoundTripToMount(t *testing.T, from *common.KeibiDrop, fromSave, mount
 // still carries data in both directions. The guard (only the initiator rotates)
 // and the load-bearing post-rotation round trips are both asserted.
 func TestRekeyRotation_NoFUSE_RotatesAndDataFlows(t *testing.T) {
-	// Both peers must come up with proactive rekey enabled (read at setup time).
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
+	// Exercise the re-handshake fallback: disable the ratchet so the pair rotates via a
+	// re-handshake (read at setup time, before the pair connects).
+	disableKeyUpdate(t)
 
 	tp := SetupPeerPair(t, false)
 	require := require.New(t)
@@ -202,6 +214,57 @@ func TestRekeyRotation_NoFUSE_RotatesAndDataFlows(t *testing.T) {
 	rekeyRoundTrip(t, tp.Bob, tp.BobSaveDir, tp.Alice, tp.AliceSaveDir, "post-b2a.txt", []byte("bob to alice AFTER rekey"))
 }
 
+// TestRekeyRotation_NoFUSE_RatchetRotatesInBand proves the new-new path: with the in-band
+// ratchet negotiated (the default), the session rotates its keys mid-connection without
+// dropping the sockets. It lowers the ratchet threshold, moves several MiB across it in both
+// directions, and asserts the key epoch advanced with zero reconnect events, so the rotation
+// was in-band, not a re-handshake.
+func TestRekeyRotation_NoFUSE_RatchetRotatesInBand(t *testing.T) {
+	// Ratchet ON (the default: do NOT disableKeyUpdate). Force ratchets on small transfers by
+	// dropping the byte threshold to 1 MiB; restore it so no later test inherits it.
+	origBytes, origMsgs := session.RekeyBytesThreshold, session.RekeyMsgsThreshold
+	session.RekeyBytesThreshold = 1 << 20
+	t.Cleanup(func() { session.RekeyBytesThreshold, session.RekeyMsgsThreshold = origBytes, origMsgs })
+
+	tp := SetupPeerPair(t, false)
+	require := require.New(t)
+	requireResilienceReady(t, tp)
+
+	initiator, responder := rekeyRoles(t, tp)
+
+	// The pair negotiated the ratchet, so the re-handshake fallback is demoted: OnRekeyNeeded
+	// must be a no-op on BOTH peers (it would needlessly drop the sockets).
+	require.False(initiator.HealthMonitor.OnRekeyNeeded(), "ratchet on: initiator must not re-handshake")
+	require.False(responder.HealthMonitor.OnRekeyNeeded(), "ratchet on: responder must not re-handshake")
+
+	watcher := watchReconnect(tp)
+	epochBefore := initiator.HealthMonitor.MaxWriterEpoch()
+
+	// Move several MiB both ways across the 1 MiB threshold. Each transfer survives only if the
+	// writer's mid-stream epoch bump and the reader's follow both work with no socket drop.
+	payload := bytes.Repeat([]byte("ratchet-payload!"), 96*1024) // ~1.5 MiB
+	for i := 0; i < 4; i++ {
+		rekeyRoundTrip(t, tp.Alice, tp.AliceSaveDir, tp.Bob, tp.BobSaveDir,
+			fmt.Sprintf("ratchet-a2b-%d.bin", i), payload)
+		rekeyRoundTrip(t, tp.Bob, tp.BobSaveDir, tp.Alice, tp.AliceSaveDir,
+			fmt.Sprintf("ratchet-b2a-%d.bin", i), payload)
+	}
+
+	// The key epoch advanced mid-connection: the in-band ratchet rotated the keys.
+	require.Greater(initiator.HealthMonitor.MaxWriterEpoch(), epochBefore, "ratchet must advance the epoch")
+
+	// And with no socket drop: neither peer reconnected.
+	select {
+	case <-watcher.alice:
+		t.Fatal("alice reconnected: the ratchet rotation must not drop the sockets")
+	case <-watcher.bob:
+		t.Fatal("bob reconnected: the ratchet rotation must not drop the sockets")
+	default:
+	}
+	require.Equal("connected", tp.Alice.ReconnectionState())
+	require.Equal("connected", tp.Bob.ReconnectionState())
+}
+
 // TestRekeyRotation_FUSE_RotatesAndDataFlows is the FUSE-pair analogue: force one
 // rotation and prove data still flows onto the FUSE peer's mount afterwards.
 func TestRekeyRotation_FUSE_RotatesAndDataFlows(t *testing.T) {
@@ -212,7 +275,7 @@ func TestRekeyRotation_FUSE_RotatesAndDataFlows(t *testing.T) {
 		t.Skip("FUSE rekey test skipped in short mode")
 	}
 
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
+	disableKeyUpdate(t)
 
 	tp := SetupFUSEPeerPair(t, 60*time.Second) // Alice=FUSE, Bob=no-FUSE
 	require := require.New(t)
@@ -249,7 +312,7 @@ const rekeyBigFileSize = 128 * 1024 * 1024
 // must defer; the transfer must complete intact; and only once idle may a rotation
 // succeed and data flow again.
 func TestRekeyRotation_NoFUSE_DefersDuringActiveTransfer(t *testing.T) {
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
+	disableKeyUpdate(t)
 
 	// A large transfer plus a reconnect needs more wall-clock than the 30s default
 	// peer context; give it headroom so the context never tears the peers down

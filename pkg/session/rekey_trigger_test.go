@@ -56,3 +56,29 @@ func TestHealthMonitorProactiveRekeyTrigger(t *testing.T) {
 	require.False(t, m.maybeRekey(), "no rekey below threshold")
 	require.Equal(t, 1, fired)
 }
+
+// The near-wrap disjunct of maybeRekey must fire the re-handshake even when the byte threshold is
+// nowhere near: a key-update conn that ratcheted up to the wrap guard has to rotate on a fresh
+// epoch-0 key. This is the monitor-goroutine trigger that consults the captured-conn epoch. Without
+// it the trigger wiring could be deleted and every decision-level test (NearEpochWrap etc.) stays
+// green.
+func TestHealthMonitorNearWrapTriggersRekey(t *testing.T) {
+	// Byte threshold out of reach so shouldRekey() is false; only near-wrap can fire.
+	old := RekeyBytesThreshold
+	RekeyBytesThreshold = 1 << 62
+	t.Cleanup(func() { RekeyBytesThreshold = old })
+
+	key := randomKey(t)
+	sc := NewSecureConn(&writeSink{}, key, kbc.CipherChaCha20, NoncePrefixOutbound)
+	sc.SetWriterEpochForTest(epochRehandshakeThreshold)
+	require.False(t, sc.ShouldRekey(), "below the byte threshold, so only near-wrap can fire")
+
+	sess := &Session{Session: &SessionSockets{Outbound: sc}}
+	m := &HealthMonitor{session: sess, RekeyEnabled: true, outbound: sc}
+	fired := 0
+	m.OnRekeyNeeded = func() bool { fired++; return true }
+
+	require.True(t, m.maybeRekey(),
+		"a key-update conn near the wrap guard must fire the re-handshake below the byte threshold")
+	require.Equal(t, 1, fired)
+}

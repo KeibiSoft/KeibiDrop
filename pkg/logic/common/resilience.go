@@ -24,6 +24,21 @@ import (
 
 // InitConnectionResilience sets up health monitoring, reconnection, and relay keepalive.
 // Call this after the session is connected and gRPC client is ready.
+// newConfiguredHealthMonitor builds a fully-wired health monitor. BOTH the initial setup and the
+// post-reconnect rebuild go through here so their configuration can never drift: a divergence
+// between the two (an explicit RekeyEnabled override on the rebuild) silently dropped the near-wrap
+// re-handshake once already. RekeyEnabled is the constructor default; onRekeyNeeded owns the
+// actual rotation decision.
+func (kd *KeibiDrop) newConfiguredHealthMonitor(sess *session.Session, client bindings.KeibiServiceClient, logger *slog.Logger) *session.HealthMonitor {
+	hm := session.NewHealthMonitor(sess, client, kd.logger)
+	hm.OnDisconnect = kd.onDisconnect
+	hm.OnRekeyNeeded = kd.onRekeyNeeded
+	hm.OnHealthChange = func(old, cur session.ConnectionHealth) {
+		logger.Info("Connection health changed", "from", old, "to", cur)
+	}
+	return hm
+}
+
 func (kd *KeibiDrop) InitConnectionResilience() error {
 	if kd.session == nil || kd.KDClient == nil {
 		return fmt.Errorf("session or gRPC client not initialized")
@@ -32,24 +47,17 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	logger := kd.logger.With("method", "init-connection-resilience")
 
 	// Debug-only: KD_REKEY_BYTES/KD_REKEY_MSGS lower the rotation thresholds so tests and
-	// benchmarks can force a rekey without moving a gigabyte. Gated on the feature flag,
-	// clamped to a floor (can only fire sooner, never disable), logged once. Env-only,
-	// never persisted.
-	if proactiveRekeyEnabled() {
-		if b, m := envRekeyUint("KD_REKEY_BYTES"), envRekeyUint("KD_REKEY_MSGS"); b != 0 || m != 0 {
-			ab, am := session.ApplyRekeyThresholdOverride(b, m)
-			logger.Warn("DEBUG rekey threshold override active (testing only)", "bytes", ab, "msgs", am)
-		}
+	// benchmarks can force a rekey without moving a gigabyte. Clamped to a floor (can only
+	// fire sooner, never disable), logged once. Env-only, never persisted.
+	if b, m := envRekeyUint("KD_REKEY_BYTES"), envRekeyUint("KD_REKEY_MSGS"); b != 0 || m != 0 {
+		ab, am := session.ApplyRekeyThresholdOverride(b, m)
+		logger.Warn("DEBUG rekey threshold override active (testing only)", "bytes", ab, "msgs", am)
 	}
 
-	// Initialize health monitor
-	kd.HealthMonitor = session.NewHealthMonitor(kd.session, kd.KDClient, kd.logger)
-	kd.HealthMonitor.OnDisconnect = kd.onDisconnect
-	kd.HealthMonitor.OnRekeyNeeded = kd.onRekeyNeeded
-	kd.HealthMonitor.RekeyEnabled = proactiveRekeyEnabled()
-	kd.HealthMonitor.OnHealthChange = func(old, cur session.ConnectionHealth) {
-		logger.Info("Connection health changed", "from", old, "to", cur)
-	}
+	// Initialize health monitor. RekeyEnabled defaults on in NewHealthMonitor (so the monitor
+	// onReconnected rebuilds can't silently drop it); onRekeyNeeded decides whether a proposed
+	// rotation actually fires, deferring to the ratchet except near the epoch-wrap guard.
+	kd.HealthMonitor = kd.newConfiguredHealthMonitor(kd.session, kd.KDClient, logger)
 
 	// Initialize reconnection manager
 	kd.ReconnectManager = session.NewReconnectManager(kd.session, kd.logger)
@@ -182,16 +190,6 @@ func (kd *KeibiDrop) hasActiveTransfers() bool {
 // cannot thrash the connection.
 const rekeyCooldown = 60 * time.Second
 
-// proactiveRekeyEnabled reports whether idle re-handshake rekeying is turned on. It is
-// OFF by default so the shipped default behavior is unchanged; operators enable it once
-// the whole fleet is upgraded, via KD_PROACTIVE_REKEY=1. (An un-upgraded 0.3.x peer that
-// received the old in-band Rekey RPC could be bricked; the re-handshake path here never
-// sends that RPC, but keeping this off until the fleet is patched is the safe default.)
-func proactiveRekeyEnabled() bool {
-	v := os.Getenv("KD_PROACTIVE_REKEY")
-	return v == "1" || strings.EqualFold(v, "true")
-}
-
 // envRekeyUint reads an unsigned-integer env var for the debug rekey threshold override
 // (KD_REKEY_BYTES / KD_REKEY_MSGS). It returns 0 when unset, empty, or unparseable, which
 // leaves the corresponding threshold at its production default.
@@ -215,9 +213,6 @@ func envRekeyUint(name string) uint64 {
 // onRekeyNeeded returns true only when it actually initiates a rotation, so the health
 // monitor knows whether it still owes a heartbeat this tick.
 func (kd *KeibiDrop) onRekeyNeeded() bool {
-	if !proactiveRekeyEnabled() {
-		return false
-	}
 	// F2: snapshot the session and reconnect-manager pointers once (under kd.mu) so a
 	// concurrent teardown (Run's ctx.Done path nils kd.session / kd.ReconnectManager)
 	// cannot flip either to nil between the nil-check and a later deref and panic us.
@@ -232,6 +227,16 @@ func (kd *KeibiDrop) onRekeyNeeded() bool {
 	}
 	if rm.State() == session.ReconnectStateReconnecting {
 		return false // a reconnect is already in flight; do not re-enter it
+	}
+	// The in-band ratchet rotates a new-new pair zero-pause, so the re-handshake rekey is the
+	// fallback for old peers only. Dropping the sockets while the ratchet is on would be a
+	// pointless stall, so defer to it, EXCEPT near the epoch-wrap guard: there the ratchet
+	// stops advancing, so even a key-update pair must re-handshake for a fresh epoch-0 key.
+	// Read after the reconnect-state guard: PeerSupportsKeyUpdate is rewritten by a reconnect
+	// handshake, which only runs while state is Reconnecting, so this read lands in the same
+	// reconnect-excluded zone as onRekeyNeeded's other session reads.
+	if sess.UseKeyUpdate() && !sess.NearEpochWrap() {
+		return false
 	}
 
 	// F3: never rekey while a transfer is in flight. A serving/on-demand transfer can
@@ -398,13 +403,7 @@ func (kd *KeibiDrop) onReconnected() {
 	client := kd.KDClient
 	kd.mu.Unlock()
 	if client != nil && sess2 != nil {
-		hmNew := session.NewHealthMonitor(sess2, client, kd.logger)
-		hmNew.OnDisconnect = kd.onDisconnect
-		hmNew.OnRekeyNeeded = kd.onRekeyNeeded
-		hmNew.RekeyEnabled = proactiveRekeyEnabled()
-		hmNew.OnHealthChange = func(old, cur session.ConnectionHealth) {
-			logger.Info("Connection health changed", "from", old, "to", cur)
-		}
+		hmNew := kd.newConfiguredHealthMonitor(sess2, client, logger)
 		kd.mu.Lock()
 		kd.HealthMonitor = hmNew
 		kd.mu.Unlock()
@@ -413,6 +412,9 @@ func (kd *KeibiDrop) onReconnected() {
 
 	// Auto-resume partial downloads for this peer (receiver-initiated).
 	go kd.resumePartialDownloads(logger)
+
+	// Re-fold on the fresh session key so forward secrecy is restored after the reconnect.
+	kd.maybeStartEagerFold()
 }
 
 // notifyRestoredFiles sends ADD_FILE for each restored LocalFile so the peer
@@ -549,6 +551,18 @@ func (kd *KeibiDrop) ConnectionStatus() string {
 		return "unknown"
 	}
 	return kd.HealthMonitor.Health().String()
+}
+
+// WriterEpoch reports the current in-band ratchet generation (the max writer epoch across both
+// live directions), or 0 before a monitor/connection exists. Pull-based and race-free (it reads
+// the monitor's captured conns), so `kd status` can surface it for smoke tests and kd-bench to
+// watch the ratchet advance without any log spam.
+func (kd *KeibiDrop) WriterEpoch() uint16 {
+	hm := kd.HealthMonitor
+	if hm == nil {
+		return 0
+	}
+	return hm.MaxWriterEpoch()
 }
 
 // ReconnectionState returns the current reconnection state.

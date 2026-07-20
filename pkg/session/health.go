@@ -58,9 +58,10 @@ type HealthMonitor struct {
 	// OnRekeyNeeded fires on an idle heartbeat tick when the session has passed its
 	// rekey threshold, so the resilience layer can rotate keys via a re-handshake. It
 	// returns true only when it actually initiated a rotation; when it returns false
-	// (disabled, not the initiator, on cooldown, already reconnecting) the tick falls
-	// through to a normal heartbeat, so liveness detection is never starved. Fires only
-	// when RekeyEnabled is set, so the default heartbeat behavior is unchanged.
+	// (not the initiator, on cooldown, already reconnecting) the tick falls through to a
+	// normal heartbeat, so liveness detection is never starved. Fires only when
+	// RekeyEnabled is set, which the resilience layer ties to the absence of the in-band
+	// ratchet: the re-handshake is the fallback rotation for peers without key-update.
 	OnRekeyNeeded func() bool
 	RekeyEnabled  bool
 
@@ -80,6 +81,10 @@ func NewHealthMonitor(session *Session, client bindings.KeibiServiceClient, logg
 		Timeout:     5 * time.Second,
 		DegradedRTT: 500 * time.Millisecond,
 		MaxFailures: 5,
+		// The monitor may always propose a rotation; onRekeyNeeded decides whether to act.
+		// Defaulting on here (not at each call site) keeps the monitor onReconnected rebuilds
+		// from silently disabling the near-wrap re-handshake for a key-update pair.
+		RekeyEnabled: true,
 	}
 	if session != nil && session.Session != nil {
 		m.inbound = session.Session.Inbound
@@ -134,6 +139,23 @@ func (m *HealthMonitor) AvgRTT() time.Duration {
 	return time.Duration(m.avgRTT.Load())
 }
 
+// MaxWriterEpoch returns the higher key epoch across both captured conns, or 0 if none. It
+// advances when the in-band ratchet rotates either send direction, so a caller can confirm a
+// rotation happened without a reconnect and without knowing which direction carried the
+// bulk. The captured conns are immutable for this monitor's lifetime.
+func (m *HealthMonitor) MaxWriterEpoch() uint16 {
+	var e uint16
+	if m.inbound != nil {
+		e = m.inbound.WriterEpoch()
+	}
+	if m.outbound != nil {
+		if oe := m.outbound.WriterEpoch(); oe > e {
+			e = oe
+		}
+	}
+	return e
+}
+
 func (m *HealthMonitor) runLoop() {
 	defer close(m.done)
 	ticker := time.NewTicker(m.Interval)
@@ -185,7 +207,10 @@ func (m *HealthMonitor) maybeRekey() bool {
 	cur := m.sessionBytes()
 	idle := cur >= m.rekeyBytesMark && cur-m.rekeyBytesMark <= rekeyIdleByteDelta
 	m.rekeyBytesMark = cur
-	if idle && m.OnRekeyNeeded != nil && m.shouldRekey() {
+	// Near-wrap uses the captured conns' epoch (MaxWriterEpoch), race-free on the monitor
+	// goroutine: only a key-update conn ratchets past epoch 0, so a high epoch already implies
+	// the ratchet is on. Reading the live m.session here would race a reconnect socket swap.
+	if idle && m.OnRekeyNeeded != nil && (m.shouldRekey() || m.MaxWriterEpoch() >= epochRehandshakeThreshold) {
 		return m.OnRekeyNeeded()
 	}
 	return false

@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
+	httppprof "net/http/pprof"
 	"net/url"
 	"os"
 	"os/signal"
@@ -138,6 +140,31 @@ func runDaemon() {
 		}
 	}
 	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "kd")
+
+	// Debug-only: KD_PPROF starts net/http/pprof on the given loopback address (e.g.
+	// 127.0.0.1:6060) for heap/goroutine/allocation profiling during leak hunts and RAM
+	// benchmarks. Off unless set, and refused on any non-loopback address so profiles are never
+	// exposed off-box (tunnel in with `ssh -L` to profile a remote host). Served on its own mux,
+	// so it never leaks onto another listener.
+	if addr := os.Getenv("KD_PPROF"); addr != "" {
+		if isLoopbackAddr(addr) {
+			logger.Warn("DEBUG pprof endpoint active (testing only)", "addr", addr)
+			mux := http.NewServeMux()
+			mux.HandleFunc("/debug/pprof/", httppprof.Index)
+			mux.HandleFunc("/debug/pprof/cmdline", httppprof.Cmdline)
+			mux.HandleFunc("/debug/pprof/profile", httppprof.Profile)
+			mux.HandleFunc("/debug/pprof/symbol", httppprof.Symbol)
+			mux.HandleFunc("/debug/pprof/trace", httppprof.Trace)
+			pprofSrv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+			go func() {
+				if err := pprofSrv.ListenAndServe(); err != nil {
+					logger.Error("pprof server exited", "error", err)
+				}
+			}()
+		} else {
+			logger.Error("KD_PPROF refused: bind a loopback address (127.0.0.1/::1), never off-box", "addr", addr)
+		}
+	}
 
 	// Create KeibiDrop instance
 	ctx, cancel := context.WithCancel(context.Background())
@@ -897,6 +924,7 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"fuse":              kd.IsFUSE,
 		"mount_path":        kd.ToMount,
 		"save_path":         kd.ToSave,
+		"writer_epoch":      kd.WriterEpoch(),
 	}
 
 	// File counts
@@ -934,6 +962,20 @@ func runClient(cmd string, args []string) {
 }
 
 // --- Helpers ---
+
+// isLoopbackAddr reports whether host:port binds only the loopback interface, so the debug pprof
+// endpoint (KD_PPROF) can never be exposed off-box.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 func writeResponse(conn net.Conn, resp Response) {
 	b, _ := json.Marshal(resp)

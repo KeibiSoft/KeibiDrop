@@ -47,6 +47,24 @@ func newConnPair(t *testing.T, key []byte, suite kbc.CipherSuite) (writer, reade
 	return NewSecureConn(c1, key, suite, NoncePrefixOutbound), NewSecureConn(c2, key, suite, NoncePrefixInbound)
 }
 
+// A divergent session key must fail the AEAD open (fail closed), not silently decrypt. This anchors
+// the security claim behind the capability-binding tests (TestKeyUpdateCapabilityBoundIntoSEK,
+// TestKeyUpdateBindingBreaksOldPeerInterop): those prove a tampered relay or an old peer derives a
+// DIFFERENT key; this proves a different key actually kills the connection rather than leaking
+// plaintext, which is what "fail closed" means.
+func TestSecureConn_MismatchedKeyFailsClosed(t *testing.T) {
+	c1, c2 := net.Pipe()
+	t.Cleanup(func() { c1.Close(); c2.Close() })
+	writer := NewSecureConn(c1, randomKey(t), kbc.CipherChaCha20, NoncePrefixOutbound)
+	reader := NewSecureConn(c2, randomKey(t), kbc.CipherChaCha20, NoncePrefixInbound) // divergent key
+
+	go func() { _, _ = writer.Write(randomBytes(t, 64)) }()
+
+	got := make([]byte, 64)
+	_, err := io.ReadFull(reader, got)
+	require.Error(t, err, "a divergent key must fail closed at the AEAD open, not decrypt")
+}
+
 var cipherSuites = []kbc.CipherSuite{kbc.CipherChaCha20, kbc.CipherAES256}
 
 // TestSecureConn_RoundTrip verifies small and large (4 MiB) write/read round-trips.
@@ -241,7 +259,7 @@ func TestSecureReader_RejectsOversizedLength(t *testing.T) {
 		c2.Close()
 	})
 
-	reader := NewSecureReader(c2, key, kbc.CipherChaCha20)
+	reader := NewSecureReader(c2, key, kbc.CipherChaCha20, NoncePrefixOutbound)
 
 	go func() {
 		var header [4]byte

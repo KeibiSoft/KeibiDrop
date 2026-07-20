@@ -106,7 +106,7 @@ func waitRemoteKeyBySuffix(t *testing.T, kd *common.KeibiDrop, suffix string, ti
 // byte-identical data (post-rotation round trip), so the rename is exercised on a
 // genuinely rotated session, not the original one.
 func TestRekeyRegression_NoFUSE_RenameAcrossRotation(t *testing.T) {
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
+	disableKeyUpdate(t)
 
 	tp := SetupPeerPair(t, false)
 	require := require.New(t)
@@ -155,7 +155,7 @@ func TestRekeyRegression_NoFUSE_RenameAcrossRotation(t *testing.T) {
 // rotation, then removes one over the fresh session and asserts the peer drops the
 // removed one and keeps the other, byte-identical.
 func TestRekeyRegression_NoFUSE_RemoveAcrossRotation(t *testing.T) {
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
+	disableKeyUpdate(t)
 
 	tp := SetupPeerPair(t, false)
 	require := require.New(t)
@@ -220,7 +220,7 @@ func TestRekeyRegression_FUSE_NestedDirDeleteAcrossRotation(t *testing.T) {
 		t.Skip("FUSE rekey test skipped in short mode")
 	}
 
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
+	disableKeyUpdate(t)
 
 	tp := SetupFUSEPeerPair(t, 90*time.Second) // Alice=FUSE, Bob=no-FUSE
 	require := require.New(t)
@@ -281,7 +281,7 @@ const rekeyRegressionBigFileSize = 64 * 1024 * 1024
 // identical. This is distinct from the during-transfer F3 defer (already covered): it
 // proves a big transfer stays intact when it runs entirely on a brand-new session.
 func TestRekeyRegression_NoFUSE_LargeFileAfterRotation(t *testing.T) {
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
+	disableKeyUpdate(t)
 
 	// A large transfer plus a reconnect needs headroom so the peer context never tears
 	// the peers down mid-test. Only widens the time budget, not any assertion.
@@ -326,7 +326,7 @@ func TestRekeyRegression_NoFUSE_LargeFileAfterRotation(t *testing.T) {
 // shares several files at once over the fresh session and asserts every one arrives
 // byte-identical. It guards against a rotation corrupting concurrent shares.
 func TestRekeyRegression_NoFUSE_MultiFileConcurrentAcrossRotation(t *testing.T) {
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
+	disableKeyUpdate(t)
 
 	tp := SetupPeerPairWithTimeout(t, false, 60*time.Second)
 	require := require.New(t)

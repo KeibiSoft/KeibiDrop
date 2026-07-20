@@ -202,6 +202,11 @@ func (r *ReconnectManager) reconnectLoop() {
 			r.attempts.Store(0)
 			logger.Info("Reconnection successful")
 
+			// Arm the ratchet on the fresh conns before OnReconnected rebuilds the gRPC
+			// transport: both handshakes are done so the capability is known, and no reader
+			// goroutine touches these conns yet.
+			r.session.ApplyKeyUpdateNegotiation()
+
 			if r.OnReconnected != nil {
 				r.OnReconnected()
 			}

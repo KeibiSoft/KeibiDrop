@@ -49,12 +49,11 @@ func newRecordedSecureConn(t *testing.T, prefix uint32) (*session.SecureConn, *c
 }
 
 // newInitiatorRekeyKD builds a KeibiDrop for which every onRekeyNeeded guard
-// passes: proactive rekey enabled, this peer is the deterministic initiator
-// (lower fingerprint), reconnect state Connected, and no cooldown (LastRekeyAt
-// zero). A test then adds exactly one blocker and asserts the rekey defers.
+// passes: the ratchet is off so the re-handshake fallback is active, this peer is the
+// deterministic initiator (lower fingerprint), reconnect state Connected, and no cooldown
+// (LastRekeyAt zero). A test then adds exactly one blocker and asserts the rekey defers.
 func newInitiatorRekeyKD(t *testing.T) (kd *KeibiDrop, inRec, outRec *closeRecorder) {
 	t.Helper()
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
 	kd = newTestKD(t)
 	kd.session.OwnFingerprint = "aaa"
 	kd.session.ExpectedPeerFingerprint = "zzz" // "aaa" < "zzz" => initiator
@@ -74,7 +73,6 @@ func newInitiatorRekeyKD(t *testing.T) (kd *KeibiDrop, inRec, outRec *closeRecor
 // race-clean (same discipline as reconnect_race_test.go); reverting the snapshot
 // brings back both the DATA RACE and the nil-deref panic.
 func TestOnRekeyNeeded_SessionNilRace_NoPanic(t *testing.T) {
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
 	kd := newTestKD(t)
 	// Keep this session an initiator and hold it past the rekey cooldown so a call
 	// that survives the nil race still returns before any OnDisconnect side effects.
@@ -153,6 +151,27 @@ func TestOnRekeyNeeded_ActiveTransfer_DefersRekey(t *testing.T) {
 	}
 }
 
+// TestOnRekeyNeeded_RatchetOn_DefersRekey covers the T5 demotion: when the in-band ratchet
+// is negotiated, the re-handshake rekey must not fire. The ratchet rotates the keys
+// zero-pause, so dropping the sockets here would be a pointless stall. Removing the
+// UseKeyUpdate guard in onRekeyNeeded makes this fire (epoch bumped, sockets closed).
+func TestOnRekeyNeeded_RatchetOn_DefersRekey(t *testing.T) {
+	kd, inRec, outRec := newInitiatorRekeyKD(t)
+	kd.session.PeerSupportsKeyUpdate = true // both peers advertised: ratchet on
+
+	epochBefore := kd.session.CurrentEpoch
+	if got := kd.onRekeyNeeded(); got {
+		t.Fatal("onRekeyNeeded with the ratchet on = true, want false (the ratchet rotates)")
+	}
+	if kd.session.CurrentEpoch != epochBefore {
+		t.Fatalf("epoch bumped with the ratchet on: %d -> %d", epochBefore, kd.session.CurrentEpoch)
+	}
+	if inRec.closed.Load() || outRec.closed.Load() {
+		t.Fatalf("sockets closed with the ratchet on (inbound=%v outbound=%v)",
+			inRec.closed.Load(), outRec.closed.Load())
+	}
+}
+
 // TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey reproduces #6: a REMOVE notify
 // is in flight over the outbound gRPC client when a proactive rekey wants to drop
 // that socket. The notify worker has no retry queue and notifyRestoredFiles replays
@@ -161,7 +180,6 @@ func TestOnRekeyNeeded_ActiveTransfer_DefersRekey(t *testing.T) {
 // with a client that blocks inside BatchNotify, so the REMOVE is genuinely mid-flight
 // when onRekeyNeeded is called. Removing the gate makes it fire (epoch bumped).
 func TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey(t *testing.T) {
-	t.Setenv("KD_PROACTIVE_REKEY", "1")
 	kd := newTestKD(t)
 	kd.session.OwnFingerprint = "aaa"
 	kd.session.ExpectedPeerFingerprint = "zzz"
@@ -238,6 +256,32 @@ func TestOnRekeyNeeded_QueuedRemoveNotify_DefersRekey(t *testing.T) {
 	}
 	if inRec.closed.Load() || outRec.closed.Load() {
 		t.Fatalf("sockets closed with a REMOVE queued (inbound=%v outbound=%v)",
+			inRec.closed.Load(), outRec.closed.Load())
+	}
+}
+
+// TestOnRekeyNeeded_KeyUpdateNearEpochWrap_Rekeys is the MED-2 escape: a key-update pair
+// normally defers rekey to the ratchet (see TestOnRekeyNeeded_RatchetOn_DefersRekey), but
+// once the writer epoch nears the wrap guard the ratchet stops advancing, so onRekeyNeeded
+// MUST re-handshake for a fresh epoch-0 key. Dropping the near-wrap escape makes this return
+// false and the epoch pins forever (silent loss of forward-secrecy advance).
+func TestOnRekeyNeeded_KeyUpdateNearEpochWrap_Rekeys(t *testing.T) {
+	kd, inRec, outRec := newInitiatorRekeyKD(t)
+	kd.session.PeerSupportsKeyUpdate = true // ratchet on: would normally defer...
+
+	// ...but the writer epoch has reached the guard, where the ratchet stops. 0xFFFF is well
+	// above epochRehandshakeThreshold, so NearEpochWrap() is true.
+	kd.session.Session.Outbound.SetWriterEpochForTest(0xFFFF)
+
+	epochBefore := kd.session.CurrentEpoch
+	if got := kd.onRekeyNeeded(); !got {
+		t.Fatal("onRekeyNeeded near the epoch-wrap guard = false, want true (must re-handshake)")
+	}
+	if kd.session.CurrentEpoch == epochBefore {
+		t.Fatalf("epoch not bumped near the wrap guard: stayed at %d", epochBefore)
+	}
+	if !inRec.closed.Load() || !outRec.closed.Load() {
+		t.Fatalf("sockets not dropped by the near-wrap re-handshake (inbound=%v outbound=%v)",
 			inRec.closed.Load(), outRec.closed.Load())
 	}
 }

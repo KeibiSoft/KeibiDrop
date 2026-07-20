@@ -129,6 +129,12 @@ type KeibiDrop struct {
 	// SESSION-TEARDOWN-RACE report.
 	tearingDown atomic.Bool
 
+	// eagerFoldInFlight is a single-flight guard for the eager entropy fold: the initiator
+	// runs at most one fold round at a time (a duplicate would be superseded by the
+	// SecureConn's single-use staging anyway). Cleared when the round finishes; a reconnect
+	// re-folds on the fresh session key.
+	eagerFoldInFlight atomic.Bool
+
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc
 	activeBitmaps     map[string]*filesystem.ChunkBitmap

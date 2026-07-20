@@ -38,3 +38,27 @@ func TestApplyRekeyThresholdOverride(t *testing.T) {
 		})
 	}
 }
+
+// TestProductionDefaults locks the shipped forward-secrecy posture (Phase 0b): a release build
+// rotates on the production thresholds, the debug override can never be tuned to disable
+// rotation, and the in-band key-update (hence the eager entropy fold) is ON by default. A
+// regression in any of these silently weakens forward secrecy, so they are asserted here; this
+// doubles as the CI guard that fails if a debug default is ever left on. No test toggles
+// keyUpdateDisabled, so reading the process default is stable.
+func TestProductionDefaults(t *testing.T) {
+	if defaultRekeyBytes != 1<<30 {
+		t.Errorf("default rekey bytes = %d, want 1 GiB (1<<30)", defaultRekeyBytes)
+	}
+	if defaultRekeyMsgs != 1<<20 {
+		t.Errorf("default rekey msgs = %d, want ~1M (1<<20)", defaultRekeyMsgs)
+	}
+	// Non-zero floors are what stop KD_REKEY_* from disabling rotation entirely.
+	if minRekeyBytes == 0 || minRekeyMsgs == 0 {
+		t.Fatal("rekey floors must be non-zero so the debug override can never disable rotation")
+	}
+	// Key-update (and thus the eager entropy fold) must ship enabled; the off-switch is a test
+	// seam with no production caller.
+	if !ownSupportsKeyUpdate() {
+		t.Fatal("key-update must be ON by default: the shipped build must offer forward secrecy")
+	}
+}

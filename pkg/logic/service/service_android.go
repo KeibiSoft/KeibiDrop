@@ -447,14 +447,16 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 	return nil
 }
 
-// Rekey previously performed an in-band key swap on the live SecureConn, which a stray,
-// replayed, or forged Rekey RPC from the untrusted relay could abuse to brick the
-// connection (there is no on-wire key epoch). Key rotation is now done out of band by an
-// idle re-handshake; this RPC no longer touches the connection and reports the in-band
-// path as unimplemented so callers fall back safely.
-func (kd *KeibidropServiceImpl) Rekey(_ context.Context, _ *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
-	kd.Logger.Info("in-band Rekey RPC is disabled; key rotation uses re-handshake", "method", "rekey")
-	return nil, status.Error(codes.Unimplemented, "in-band rekey disabled; rotation is via re-handshake")
+// Rekey drives the responder side of the entropy fold: a fresh ephemeral hybrid-KEM
+// exchange whose shared secret is mixed into the session ratchet for post-quantum forward
+// secrecy. Unlike the old in-band key swap this fold self-synchronizes on the wire and swaps
+// no key mid-stream, so a stray or forged Rekey cannot brick the connection: the session
+// responder refuses a not-ready or malformed request cleanly.
+func (kd *KeibidropServiceImpl) Rekey(_ context.Context, req *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
+	if kd.Session == nil {
+		return nil, status.Error(codes.FailedPrecondition, "no active session for rekey")
+	}
+	return kd.Session.RespondToFold(req)
 }
 
 // Heartbeat responds to connection health checks.

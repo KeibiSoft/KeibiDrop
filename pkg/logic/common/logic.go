@@ -641,6 +641,12 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
+
+	// Arm the in-band ratchet on both fresh conns before the gRPC readers start: kd.Start
+	// spawns the server on Inbound and connectGRPCClientWithRetry dials the client on
+	// Outbound. Both handshakes are done, so the negotiated capability is known.
+	kd.session.ApplyKeyUpdateNegotiation()
+
 	kd.Start()
 
 	// Retry dialing until the gRPC server is ready.
@@ -653,6 +659,11 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 	if err := kd.InitConnectionResilience(); err != nil {
 		logger.Warn("Failed to init connection resilience", "error", err)
 	}
+
+	// Eager fold: make the session forward-secret against later identity-key theft in about
+	// one round trip. Best-effort and initiator-only; a no-op on the responder and when the
+	// in-band ratchet is off.
+	kd.maybeStartEagerFold()
 
 	if !kd.IsFUSE {
 		// Unblock Run()'s <-filesystemReady so it can process signals.

@@ -164,7 +164,7 @@ func TestReaderDecryptsInboundPrefixFrame(t *testing.T) {
 	payload := []byte("wire-compat payload")
 	require.NoError(t, sc.WriteMessage(payload))
 
-	rdr := NewSecureReader(bytes.NewReader(sink.buf.Bytes()), key, suite)
+	rdr := NewSecureReader(bytes.NewReader(sink.buf.Bytes()), key, suite, NoncePrefixInbound)
 	got, err := rdr.Read()
 	require.NoError(t, err)
 	require.Equal(t, payload, got)

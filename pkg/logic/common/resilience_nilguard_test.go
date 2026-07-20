@@ -142,3 +142,31 @@ func TestNilSessionGuard_RelayLookupReturnsError(t *testing.T) {
 		t.Fatalf("expected session-nil error, got: %v", err)
 	}
 }
+
+// TestWriterEpoch_NilMonitor_ReturnsZero verifies the kd status writer-epoch accessor is
+// nil-safe: before InitConnectionResilience builds the health monitor (no connection yet), it
+// must surface epoch 0 rather than deref a nil monitor and crash the status command.
+func TestWriterEpoch_NilMonitor_ReturnsZero(t *testing.T) {
+	kd := newNilGuardTestKD()
+	defer kd.Cancel()
+
+	if e := kd.WriterEpoch(); e != 0 {
+		t.Fatalf("WriterEpoch with no health monitor = %d, want 0", e)
+	}
+}
+
+// newConfiguredHealthMonitor is the single wiring path for BOTH the initial monitor and the
+// post-reconnect rebuild. This locks the property whose divergence reintroduced the MED-2 bug:
+// the monitor must always ship rekey-enabled with its callbacks wired, from either site.
+func TestNewConfiguredHealthMonitor_RekeyEnabledAndWired(t *testing.T) {
+	kd := newNilGuardTestKD()
+	defer kd.Cancel()
+
+	hm := kd.newConfiguredHealthMonitor(&session.Session{}, nil, kd.logger)
+	if !hm.RekeyEnabled {
+		t.Fatal("the monitor must ship rekey-enabled from the single wiring path both call sites use")
+	}
+	if hm.OnRekeyNeeded == nil || hm.OnDisconnect == nil || hm.OnHealthChange == nil {
+		t.Fatal("the monitor must have all callbacks wired")
+	}
+}
