@@ -10,7 +10,19 @@ option go_package = "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control;
 // lets the connection manager be used with any gRPC service, not just the benchmark's.
 service Control {
   rpc Ping(PingRequest) returns (PingReply);
+
+  // Announce tells the peer this endpoint moved to a new address (after a QUIC
+  // migration): the control channel survives the move, so it can carry the new
+  // coordinates directly — the receiver re-dials TCP/UDP at the new address instead
+  // of discovering the death by heartbeat timeout and a relay lookup.
+  rpc Announce(AnnounceRequest) returns (AnnounceReply);
 }
 
 message PingRequest {}
 message PingReply {}
+
+message AnnounceRequest {
+  string ip = 1;       // announcer's new address (global IPv6)
+  uint32 tcp_port = 2; // announcer's TCP inbound port (UDP control reuses the number)
+}
+message AnnounceReply {}

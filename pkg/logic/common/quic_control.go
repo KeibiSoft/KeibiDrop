@@ -262,7 +262,7 @@ func (kd *KeibiDrop) serveQUICControl(ln net.Listener, inAddr string) {
 	}
 
 	srv := grpc.NewServer(kdServerOptions()...)
-	cpb.RegisterControlServer(srv, quicControlService{})
+	cpb.RegisterControlServer(srv, quicControlService{kd: kd})
 	if svc != nil {
 		bindings.RegisterKeibiServiceServer(srv, svc)
 	} else {
@@ -337,6 +337,28 @@ func (kd *KeibiDrop) MigrateQUICControl(ctx context.Context) error {
 		kd.demoteQUICControl(err)
 		return fmt.Errorf("quic control post-migration ping: %w", err)
 	}
+
+	// Announce our coordinates over the surviving channel, so on a real IP change the
+	// peer re-dials TCP/UDP at the fresh address immediately — no heartbeat timeout,
+	// no relay lookup. Same-address announces are a no-op on the receiver. Best-effort:
+	// on failure the peer still recovers via the heartbeat path. (On a real change the
+	// caller — the OS network-change signal — updates kd.LocalIPv6IP first and kicks
+	// its own reconnect after; see docs/transport-architecture.html.)
+	kd.mu.Lock()
+	cc := kd.quicControlClient
+	kd.mu.Unlock()
+	if cc != nil && kd.LocalIPv6IP != "" {
+		actx, cancel := context.WithTimeout(ctx, quicMetaTimeout)
+		_, aErr := cpb.NewControlClient(cc).Announce(actx, &cpb.AnnounceRequest{
+			Ip:      kd.LocalIPv6IP,
+			TcpPort: uint32(kd.inboundPort), //nolint:gosec // G115: port validated in 26000-27000
+		})
+		cancel()
+		if aErr != nil {
+			kd.logger.Warn("post-migration announce failed; peer will recover via heartbeat", "error", aErr)
+		}
+	}
+
 	kd.logger.Info("QUIC control channel migrated", "old", oldAddr, "new", newAddr)
 	return nil
 }
@@ -455,10 +477,49 @@ func (kd *KeibiDrop) PingQUICControl(ctx context.Context) error {
 	return err
 }
 
-// quicControlService answers the QUIC control channel's heartbeat (liveness / RTT).
-// KeibiDrop metadata RPC handlers move onto this channel as routing lands.
-type quicControlService struct{ cpb.UnimplementedControlServer }
+// quicControlService answers the QUIC control channel's own RPCs: the heartbeat Ping
+// and the network-change Announce.
+type quicControlService struct {
+	cpb.UnimplementedControlServer
+	kd *KeibiDrop
+}
 
 func (quicControlService) Ping(context.Context, *cpb.PingRequest) (*cpb.PingReply, error) {
 	return &cpb.PingReply{}, nil
+}
+
+// Announce is the receiver side of the network-change signal: the peer moved (its QUIC
+// channel survived by migration and carried this message), so refresh every cached
+// coordinate — TCP reconnect target, UDP control target — and, if the address actually
+// changed, kick reconnection NOW instead of waiting ~25s of heartbeat failures plus a
+// relay lookup that may still hold the stale address. Same-address announces (e.g. a
+// migration between sockets on one host) are a no-op.
+func (s quicControlService) Announce(_ context.Context, req *cpb.AnnounceRequest) (*cpb.AnnounceReply, error) {
+	kd := s.kd
+	if kd == nil || req.Ip == "" || req.TcpPort == 0 {
+		return &cpb.AnnounceReply{}, nil
+	}
+	port := int(req.TcpPort)
+	sess := kd.session
+	changed := kd.PeerIPv6IP != req.Ip || (sess != nil && sess.PeerPort != port)
+	if !changed {
+		return &cpb.AnnounceReply{}, nil
+	}
+
+	kd.logger.Info("peer announced new address over QUIC control", "ip", req.Ip, "tcp-port", port)
+	kd.PeerIPv6IP = req.Ip
+	if kd.ReconnectManager != nil {
+		kd.ReconnectManager.CachedPeerIP = req.Ip
+		kd.ReconnectManager.CachedPeerPort = port
+	}
+	kd.mu.Lock()
+	kd.quicPeerAddr = net.JoinHostPort(req.Ip, strconv.Itoa(port)) // maintainer redials the NEW addr
+	kd.mu.Unlock()
+
+	// The TCP pair to the old address is dead; reconnect immediately with the fresh
+	// coordinates (onDisconnect guards re-entrancy and active transfers itself).
+	if kd.ReconnectManager != nil {
+		go kd.onDisconnect()
+	}
+	return &cpb.AnnounceReply{}, nil
 }

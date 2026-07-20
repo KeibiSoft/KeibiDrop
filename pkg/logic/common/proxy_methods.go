@@ -96,17 +96,41 @@ func (rfs *ImplRemoteFileStream) Close() error {
 	return rfs.stream.CloseSend()
 }
 
-// preferFast is the one provider routing rule: latency-sensitive opens try the QUIC
-// interactive client when present and fall back to the bulk client, so a dead QUIC
-// channel degrades to today's behavior instead of failing the call. Compile-time
+// tryThen is the one routing core: open against primary, fall back to secondary on
+// error. Either side may be nil (skipped); the meaningful error surfaces. Compile-time
 // generic; the concrete open is a parameter.
-func preferFast[T any](sp *ImplFileStreamProvider, open func(bindings.KeibiServiceClient) (T, error)) (T, error) {
-	if sp.fast != nil {
-		if v, err := open(sp.fast); err == nil {
+func tryThen[T any](primary, secondary bindings.KeibiServiceClient, open func(bindings.KeibiServiceClient) (T, error)) (T, error) {
+	var firstErr error
+	if primary != nil {
+		v, err := open(primary)
+		if err == nil {
 			return v, nil
 		}
+		firstErr = err
 	}
-	return open(sp.cli)
+	if secondary != nil {
+		return open(secondary)
+	}
+	if firstErr == nil {
+		firstErr = errors.New("stream provider: no client available")
+	}
+	var zero T
+	return zero, firstErr
+}
+
+// preferFast routes latency-sensitive opens: the QUIC interactive client first, the
+// bulk client as fallback — a dead QUIC channel degrades to today's behavior.
+func preferFast[T any](sp *ImplFileStreamProvider, open func(bindings.KeibiServiceClient) (T, error)) (T, error) {
+	return tryThen(sp.fast, sp.cli, open)
+}
+
+// preferBulk is the mirror image for bulk transfers: TCP first (the measured bulk
+// winner), the QUIC channel as fallback. This is what keeps files flowing when TCP
+// lags or dies mid-session: prefetch and streams continue over QUIC — slower, but
+// alive — until the reconnect rebuilds TCP, at which point new opens (providers are
+// built per open) return to it automatically.
+func preferBulk[T any](sp *ImplFileStreamProvider, open func(bindings.KeibiServiceClient) (T, error)) (T, error) {
+	return tryThen(sp.cli, sp.fast, open)
 }
 
 func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint64, path string) (types.RemoteFileStream, error) {
@@ -121,10 +145,14 @@ func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint
 }
 
 // StreamFile starts a push-based download using the server-streaming StreamFile RPC.
+// Bulk prefers TCP; if TCP is dead it continues over the QUIC channel (preferBulk)
+// until the reconnect brings TCP back.
 func (sp *ImplFileStreamProvider) StreamFile(ctx context.Context, path string, startOffset uint64) (types.StreamFileReceiver, error) {
-	stream, err := sp.cli.StreamFile(ctx, &bindings.StreamFileRequest{
-		Path:        path,
-		StartOffset: startOffset,
+	stream, err := preferBulk(sp, func(c bindings.KeibiServiceClient) (bindings.KeibiService_StreamFileClient, error) {
+		return c.StreamFile(ctx, &bindings.StreamFileRequest{
+			Path:        path,
+			StartOffset: startOffset,
+		})
 	})
 	if err != nil {
 		return nil, err

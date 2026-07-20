@@ -93,15 +93,108 @@ func (*PingReply) Descriptor() ([]byte, []int) {
 	return file_proto_control_control_proto_rawDescGZIP(), []int{1}
 }
 
+type AnnounceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ip            string                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`                           // announcer's new address (global IPv6)
+	TcpPort       uint32                 `protobuf:"varint,2,opt,name=tcp_port,json=tcpPort,proto3" json:"tcp_port,omitempty"` // announcer's TCP inbound port (UDP control reuses the number)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AnnounceRequest) Reset() {
+	*x = AnnounceRequest{}
+	mi := &file_proto_control_control_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnnounceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnnounceRequest) ProtoMessage() {}
+
+func (x *AnnounceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_control_control_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnnounceRequest.ProtoReflect.Descriptor instead.
+func (*AnnounceRequest) Descriptor() ([]byte, []int) {
+	return file_proto_control_control_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *AnnounceRequest) GetIp() string {
+	if x != nil {
+		return x.Ip
+	}
+	return ""
+}
+
+func (x *AnnounceRequest) GetTcpPort() uint32 {
+	if x != nil {
+		return x.TcpPort
+	}
+	return 0
+}
+
+type AnnounceReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AnnounceReply) Reset() {
+	*x = AnnounceReply{}
+	mi := &file_proto_control_control_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnnounceReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnnounceReply) ProtoMessage() {}
+
+func (x *AnnounceReply) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_control_control_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnnounceReply.ProtoReflect.Descriptor instead.
+func (*AnnounceReply) Descriptor() ([]byte, []int) {
+	return file_proto_control_control_proto_rawDescGZIP(), []int{3}
+}
+
 var File_proto_control_control_proto protoreflect.FileDescriptor
 
 const file_proto_control_control_proto_rawDesc = "" +
 	"\n" +
 	"\x1bproto/control/control.proto\x12\acontrol\"\r\n" +
 	"\vPingRequest\"\v\n" +
-	"\tPingReply2;\n" +
+	"\tPingReply\"<\n" +
+	"\x0fAnnounceRequest\x12\x0e\n" +
+	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x19\n" +
+	"\btcp_port\x18\x02 \x01(\rR\atcpPort\"\x0f\n" +
+	"\rAnnounceReply2y\n" +
 	"\aControl\x120\n" +
-	"\x04Ping\x12\x14.control.PingRequest\x1a\x12.control.PingReplyBDZBgithub.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control;controlb\x06proto3"
+	"\x04Ping\x12\x14.control.PingRequest\x1a\x12.control.PingReply\x12<\n" +
+	"\bAnnounce\x12\x18.control.AnnounceRequest\x1a\x16.control.AnnounceReplyBDZBgithub.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control;controlb\x06proto3"
 
 var (
 	file_proto_control_control_proto_rawDescOnce sync.Once
@@ -115,16 +208,20 @@ func file_proto_control_control_proto_rawDescGZIP() []byte {
 	return file_proto_control_control_proto_rawDescData
 }
 
-var file_proto_control_control_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_proto_control_control_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_proto_control_control_proto_goTypes = []any{
-	(*PingRequest)(nil), // 0: control.PingRequest
-	(*PingReply)(nil),   // 1: control.PingReply
+	(*PingRequest)(nil),     // 0: control.PingRequest
+	(*PingReply)(nil),       // 1: control.PingReply
+	(*AnnounceRequest)(nil), // 2: control.AnnounceRequest
+	(*AnnounceReply)(nil),   // 3: control.AnnounceReply
 }
 var file_proto_control_control_proto_depIdxs = []int32{
 	0, // 0: control.Control.Ping:input_type -> control.PingRequest
-	1, // 1: control.Control.Ping:output_type -> control.PingReply
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: control.Control.Announce:input_type -> control.AnnounceRequest
+	1, // 2: control.Control.Ping:output_type -> control.PingReply
+	3, // 3: control.Control.Announce:output_type -> control.AnnounceReply
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -141,7 +238,7 @@ func file_proto_control_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_control_control_proto_rawDesc), len(file_proto_control_control_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

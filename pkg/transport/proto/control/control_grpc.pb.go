@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Control_Ping_FullMethodName = "/control.Control/Ping"
+	Control_Ping_FullMethodName     = "/control.Control/Ping"
+	Control_Announce_FullMethodName = "/control.Control/Announce"
 )
 
 // ControlClient is the client API for Control service.
@@ -32,6 +33,11 @@ const (
 // lets the connection manager be used with any gRPC service, not just the benchmark's.
 type ControlClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingReply, error)
+	// Announce tells the peer this endpoint moved to a new address (after a QUIC
+	// migration): the control channel survives the move, so it can carry the new
+	// coordinates directly — the receiver re-dials TCP/UDP at the new address instead
+	// of discovering the death by heartbeat timeout and a relay lookup.
+	Announce(ctx context.Context, in *AnnounceRequest, opts ...grpc.CallOption) (*AnnounceReply, error)
 }
 
 type controlClient struct {
@@ -52,6 +58,16 @@ func (c *controlClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.
 	return out, nil
 }
 
+func (c *controlClient) Announce(ctx context.Context, in *AnnounceRequest, opts ...grpc.CallOption) (*AnnounceReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AnnounceReply)
+	err := c.cc.Invoke(ctx, Control_Announce_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlServer is the server API for Control service.
 // All implementations must embed UnimplementedControlServer
 // for forward compatibility.
@@ -62,6 +78,11 @@ func (c *controlClient) Ping(ctx context.Context, in *PingRequest, opts ...grpc.
 // lets the connection manager be used with any gRPC service, not just the benchmark's.
 type ControlServer interface {
 	Ping(context.Context, *PingRequest) (*PingReply, error)
+	// Announce tells the peer this endpoint moved to a new address (after a QUIC
+	// migration): the control channel survives the move, so it can carry the new
+	// coordinates directly — the receiver re-dials TCP/UDP at the new address instead
+	// of discovering the death by heartbeat timeout and a relay lookup.
+	Announce(context.Context, *AnnounceRequest) (*AnnounceReply, error)
 	mustEmbedUnimplementedControlServer()
 }
 
@@ -74,6 +95,9 @@ type UnimplementedControlServer struct{}
 
 func (UnimplementedControlServer) Ping(context.Context, *PingRequest) (*PingReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
+}
+func (UnimplementedControlServer) Announce(context.Context, *AnnounceRequest) (*AnnounceReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Announce not implemented")
 }
 func (UnimplementedControlServer) mustEmbedUnimplementedControlServer() {}
 func (UnimplementedControlServer) testEmbeddedByValue()                 {}
@@ -114,6 +138,24 @@ func _Control_Ping_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Control_Announce_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AnnounceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServer).Announce(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Control_Announce_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServer).Announce(ctx, req.(*AnnounceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Control_ServiceDesc is the grpc.ServiceDesc for Control service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -124,6 +166,10 @@ var Control_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _Control_Ping_Handler,
+		},
+		{
+			MethodName: "Announce",
+			Handler:    _Control_Announce_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

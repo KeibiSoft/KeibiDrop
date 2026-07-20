@@ -129,6 +129,38 @@ func TestQUICControlWrongKeyFails(t *testing.T) {
 	require.Error(t, err, "Ping with mismatched QUIC keys must fail, not silently succeed")
 }
 
+// TestAnnounceHandler pins the network-change receiver: a peer's Announce with a NEW
+// address refreshes every cached coordinate (TCP reconnect target, UDP control target);
+// a same-address announce is a strict no-op. Reconnect kicking is nil-guarded here
+// (ReconnectManager unset), exercised by the live-flow tests.
+func TestAnnounceHandler(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s, err := session.InitSession(logger, 26002, 26001)
+	require.NoError(t, err)
+	s.PeerPort = 26400
+
+	kd := &KeibiDrop{logger: logger, session: s, PeerIPv6IP: "fd00::aa", quicPeerAddr: "[fd00::aa]:26400"}
+
+	svc := quicControlService{kd: kd}
+
+	// Same address: strict no-op.
+	_, err = svc.Announce(context.Background(), &cpb.AnnounceRequest{Ip: "fd00::aa", TcpPort: 26400})
+	require.NoError(t, err)
+	require.Equal(t, "fd00::aa", kd.PeerIPv6IP)
+	require.Equal(t, "[fd00::aa]:26400", kd.quicPeerAddr)
+
+	// New address: every cached coordinate moves.
+	_, err = svc.Announce(context.Background(), &cpb.AnnounceRequest{Ip: "fd00::bb", TcpPort: 26400})
+	require.NoError(t, err)
+	require.Equal(t, "fd00::bb", kd.PeerIPv6IP, "TCP reconnect target must move")
+	require.Equal(t, "[fd00::bb]:26400", kd.quicPeerAddr, "UDP control target must move (maintainer redials the new addr)")
+
+	// Garbage announces are ignored.
+	_, err = svc.Announce(context.Background(), &cpb.AnnounceRequest{Ip: "", TcpPort: 0})
+	require.NoError(t, err)
+	require.Equal(t, "fd00::bb", kd.PeerIPv6IP)
+}
+
 // TestQUICControlRefusedWithoutKey proves fail-soft: with no negotiated QUIC key (older
 // peer), bring-up returns an error instead of proceeding insecurely.
 func TestQUICControlRefusedWithoutKey(t *testing.T) {
