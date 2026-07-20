@@ -65,6 +65,28 @@ func TestHybridKeyDerivation(t *testing.T) {
 	req.Equal(kek1, kek2, "KEK derivation is not deterministic")
 }
 
+func TestDeriveFoldSalt_DeterministicAndDistinct(t *testing.T) {
+	req := require.New(t)
+	ikm := randomBytes(t, 2*seedSize) // stands in for two concatenated SEKs
+
+	salt1, err := DeriveFoldSalt(ikm)
+	req.NoError(err, "DeriveFoldSalt failed")
+	req.Len(salt1, KeySize, "fold salt must be 32 bytes")
+
+	salt2, err := DeriveFoldSalt(ikm)
+	req.NoError(err)
+	req.Equal(salt1, salt2, "fold salt derivation is not deterministic")
+
+	// A distinct HKDF label means the same input must not collide with the SEK derivations.
+	cc, err := DeriveChaCha20Key(ikm)
+	req.NoError(err)
+	req.NotEqual(cc, salt1, "fold salt must differ from the ChaCha20 SEK for the same input")
+
+	aes, err := DeriveAES256Key(ikm)
+	req.NoError(err)
+	req.NotEqual(aes, salt1, "fold salt must differ from the AES SEK for the same input")
+}
+
 func TestProtocolEndToEndStream(t *testing.T) {
 	req := require.New(t)
 

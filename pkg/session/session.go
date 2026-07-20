@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -75,15 +76,18 @@ type Session struct {
 	OwnIsPersistent  bool
 	PeerIsPersistent bool
 
+	// PeerSupportsKeyUpdate is learned from the peer's handshake: true if it advertised the
+	// in-band key-update capability. It gates whether the ratchet turns on (see UseKeyUpdate).
+	PeerSupportsKeyUpdate bool
+
 	// Internal timeout deadline
 	Deadline time.Time
 
-	// Re-keying state for forward secrecy.
-	RekeyMu       sync.Mutex
-	LastRekeyAt   time.Time
-	CurrentEpoch  uint64
-	RekeyPending  bool
-	PendingNewKey []byte // awaiting ACK
+	// Re-keying state. Rotation is performed by an idle re-handshake (see the resilience
+	// layer), not an in-band key swap, so these only track the last rotation for gating.
+	RekeyMu      sync.Mutex
+	LastRekeyAt  time.Time
+	CurrentEpoch uint64
 
 	logger *slog.Logger
 }
@@ -182,17 +186,12 @@ func (s *Session) ResetInboundCrypto() {
 	s.SEKInbound = nil
 }
 
-// SessionSockets holds a duplex connection for peer communication.
+// SessionSockets holds a duplex connection for peer communication. The two ends are
+// built by the handshake with opposite nonce prefixes (Inbound uses NoncePrefixInbound,
+// Outbound uses NoncePrefixOutbound) so a socket's shared key never reuses a nonce.
 type SessionSockets struct {
 	Inbound  *SecureConn // Bob -> Alice
 	Outbound *SecureConn // Alice -> Bob
-}
-
-func NewSessionSockets(connIn, connOut net.Conn, sekIn, sekOut []byte, suite kbc.CipherSuite) *SessionSockets {
-	return &SessionSockets{
-		Inbound:  NewSecureConnRole(connIn, sekIn, suite, false), // acceptor -> inbound prefix
-		Outbound: NewSecureConnRole(connOut, sekOut, suite, true), // dialer -> outbound prefix
-	}
 }
 
 // NewSession initializes a new session with a timeout deadline.
@@ -242,6 +241,71 @@ func (s *Session) ReadyForEncryption() bool {
 		s.Session.Outbound != nil
 }
 
+// keyUpdateDisabled gates whether this peer advertises the in-band key-update capability.
+// Default enabled (zero value false). It is the single source of truth for the capability.
+var keyUpdateDisabled atomic.Bool
+
+// SetKeyUpdateEnabled toggles the in-band key-update capability advertised on new
+// handshakes. Off makes this peer negotiate the re-handshake fallback instead: an
+// operational off-switch for the ratchet without a rebuild. It affects only handshakes
+// after the call, not an established session.
+func SetKeyUpdateEnabled(on bool) { keyUpdateDisabled.Store(!on) }
+
+// ownSupportsKeyUpdate reports this peer's advertised key-update capability, honouring the
+// SetKeyUpdateEnabled off-switch.
+func ownSupportsKeyUpdate() bool { return !keyUpdateDisabled.Load() }
+
+// UseKeyUpdate reports whether the in-band ratchet may run: only when both peers advertised
+// the capability. A new-to-old pair, or one with the off-switch set, returns false and
+// rotates via the re-handshake fallback.
+func (s *Session) UseKeyUpdate() bool {
+	return ownSupportsKeyUpdate() && s.PeerSupportsKeyUpdate
+}
+
+// maxWriterEpoch returns the higher in-band ratchet epoch across both directions, or 0 if no
+// conns exist. It is the epoch that climbs toward the wrap guard as the ratchet rotates.
+func (s *Session) maxWriterEpoch() uint16 {
+	if s.Session == nil {
+		return 0
+	}
+	var e uint16
+	if s.Session.Inbound != nil {
+		e = s.Session.Inbound.WriterEpoch()
+	}
+	if s.Session.Outbound != nil {
+		if oe := s.Session.Outbound.WriterEpoch(); oe > e {
+			e = oe
+		}
+	}
+	return e
+}
+
+// NearEpochWrap reports whether a key-update session's writer epoch has climbed close enough
+// to the wrap guard that it must re-handshake for a fresh epoch-0 key. Only key-update
+// sessions reach the guard (an old peer already rotates via re-handshake), so this gates on
+// UseKeyUpdate; without it the in-band ratchet would pin its epoch at the guard and stop
+// advancing forward secrecy for good.
+func (s *Session) NearEpochWrap() bool {
+	return s.UseKeyUpdate() && s.maxWriterEpoch() >= epochRehandshakeThreshold
+}
+
+// ApplyKeyUpdateNegotiation turns the ratchet on (or off) on both live conns to match the
+// negotiated capability. It must run after both handshakes complete, so PeerSupportsKeyUpdate
+// is known, and before the gRPC reader goroutine starts, since SetKeyUpdate is not safe to
+// flip under a live reader.
+func (s *Session) ApplyKeyUpdateNegotiation() {
+	if s.Session == nil {
+		return
+	}
+	on := s.UseKeyUpdate()
+	if s.Session.Inbound != nil {
+		s.Session.Inbound.SetKeyUpdate(on)
+	}
+	if s.Session.Outbound != nil {
+		s.Session.Outbound.SetKeyUpdate(on)
+	}
+}
+
 // ========== RE-KEYING ==========
 
 // ShouldRekey returns true if either connection has exceeded the rekey threshold.
@@ -258,76 +322,10 @@ func (s *Session) ShouldRekey() bool {
 	return false
 }
 
-// HandleRekeyRequest processes an incoming RekeyRequest from peer.
-// Updates inbound key and returns response for peer.
-func (s *Session) HandleRekeyRequest(req *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
-	s.RekeyMu.Lock()
-	defer s.RekeyMu.Unlock()
-
-	if s.OwnKeys == nil || s.PeerPubKeys == nil {
-		return nil, fmt.Errorf("session keys not initialized")
-	}
-
-	resp, newInboundKey, err := ProcessRekeyRequest(req, s.OwnKeys, s.PeerPubKeys, s.CipherSuite)
-	if err != nil {
-		return nil, fmt.Errorf("process rekey request: %w", err)
-	}
-
-	// Update inbound key immediately.
-	s.SEKInbound = newInboundKey
-	if s.Session != nil && s.Session.Inbound != nil {
-		s.Session.Inbound.UpdateKey(newInboundKey)
-	}
-
-	s.CurrentEpoch = req.Epoch
-	s.LastRekeyAt = time.Now()
-	s.logger.Info("Rekey request processed", "epoch", req.Epoch)
-
-	return resp, nil
-}
-
-// HandleRekeyResponse processes an incoming RekeyResponse from peer.
-// Updates outbound key after peer acknowledged our rekey request.
-func (s *Session) HandleRekeyResponse(resp *bindings.RekeyResponse) error {
-	s.RekeyMu.Lock()
-	defer s.RekeyMu.Unlock()
-
-	if !s.RekeyPending {
-		return fmt.Errorf("unexpected rekey response, no request pending")
-	}
-
-	if s.OwnKeys == nil || s.PeerPubKeys == nil {
-		return fmt.Errorf("session keys not initialized")
-	}
-
-	// Process peer's seeds for our inbound direction.
-	newInboundKey, err := ProcessRekeyResponse(resp, s.OwnKeys, s.PeerPubKeys, s.CipherSuite)
-	if err != nil {
-		return fmt.Errorf("process rekey response: %w", err)
-	}
-
-	// Activate pending outbound key.
-	if s.PendingNewKey != nil {
-		s.SEKOutbound = s.PendingNewKey
-		if s.Session != nil && s.Session.Outbound != nil {
-			s.Session.Outbound.UpdateKey(s.PendingNewKey)
-		}
-		s.PendingNewKey = nil
-	}
-
-	// Update inbound with peer's new key.
-	s.SEKInbound = newInboundKey
-	if s.Session != nil && s.Session.Inbound != nil {
-		s.Session.Inbound.UpdateKey(newInboundKey)
-	}
-
-	s.RekeyPending = false
-	s.CurrentEpoch = resp.Epoch
-	s.LastRekeyAt = time.Now()
-	s.logger.Info("Rekey completed", "epoch", resp.Epoch)
-
-	return nil
-}
+// The in-band rekey handlers (HandleRekeyRequest/HandleRekeyResponse) were removed:
+// swapping a live SecureConn key mid-stream with no on-wire key epoch was unsafe, since
+// a stray, replayed, or forged Rekey RPC from the untrusted relay could brick the
+// connection. Key rotation is performed out of band by an idle re-handshake instead.
 
 // GetRekeyEpoch returns the current key epoch.
 func (s *Session) GetRekeyEpoch() uint64 {

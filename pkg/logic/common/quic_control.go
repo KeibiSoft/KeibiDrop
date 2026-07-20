@@ -34,6 +34,14 @@ import (
 // wrapped in a SecureConn with the matching key and a direction-specific nonce prefix
 // (dialer = outbound, acceptor = inbound), so the two directions never share nonce
 // space even though a QUIC stream is written by both ends.
+//
+// Forward secrecy: when both peers negotiated the in-band key-update capability, the
+// QUIC conns ratchet exactly like the TCP pair (SetKeyUpdate below; same byte/msg/idle
+// cadence, make-before-break on the write path, so a rotation never pauses traffic).
+// The KEM entropy fold is deliberately TCP-pair-only: fold staging and the session
+// rekey driver operate on SessionSockets, and the QUIC channel does not need it —
+// every re-handshake (reconnect or proactive rekey) derives brand-new QUIC keys and
+// rebuilds this channel from epoch 0, which is a strictly stronger reset than a fold.
 
 // DialQUICControl brings up the OUTBOUND QUIC control channel to peerUDPAddr
 // ("host:port"). It opens a QUIC stream on an explicit transport (so the connection
@@ -54,7 +62,13 @@ func DialQUICControl(ctx context.Context, s *session.Session, peerUDPAddr string
 	if err != nil {
 		return nil, nil, fmt.Errorf("quic control dial %s: %w", peerUDPAddr, err)
 	}
-	return session.NewSecureConnRole(mc, key, s.NegotiatedSuite(), true), mc, nil
+	sc := session.NewSecureConn(mc, key, s.NegotiatedSuite(), session.NoncePrefixOutbound)
+	// Same capability the TCP pair negotiated: ApplyKeyUpdateNegotiation flips only the
+	// conns in SessionSockets, so the QUIC conns must opt in here or they would stay at
+	// epoch 0 forever (no forward secrecy on this channel). Must be set before any I/O;
+	// this conn is handed to gRPC only after return.
+	sc.SetKeyUpdate(s.UseKeyUpdate())
+	return sc, mc, nil
 }
 
 // ListenQUICControl starts the INBOUND QUIC control channel listener on udpAddr
@@ -73,15 +87,19 @@ func ListenQUICControl(s *session.Session, udpAddr string) (net.Listener, error)
 	if err != nil {
 		return nil, fmt.Errorf("quic control listen %s: %w", udpAddr, err)
 	}
-	return &quicControlListener{Listener: ln, key: key, suite: s.NegotiatedSuite()}, nil
+	return &quicControlListener{Listener: ln, key: key, suite: s.NegotiatedSuite(), keyUpdate: s.UseKeyUpdate()}, nil
 }
 
 // quicControlListener upgrades every accepted QUIC stream to the inbound control
-// SecureConn, so a plain grpc.Server can Serve it.
+// SecureConn, so a plain grpc.Server can Serve it. keyUpdate is the negotiated in-band
+// ratchet capability, snapshotted at listen time: it is per-session-generation exactly
+// like the key (a reconnect rebuilds the listener), and every accepted conn must get it
+// before gRPC starts I/O on it.
 type quicControlListener struct {
 	net.Listener
-	key   []byte
-	suite kbc.CipherSuite
+	key       []byte
+	suite     kbc.CipherSuite
+	keyUpdate bool
 }
 
 func (l *quicControlListener) Accept() (net.Conn, error) {
@@ -89,7 +107,9 @@ func (l *quicControlListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return session.NewSecureConnRole(c, l.key, l.suite, false), nil
+	sc := session.NewSecureConn(c, l.key, l.suite, session.NoncePrefixInbound)
+	sc.SetKeyUpdate(l.keyUpdate)
+	return sc, nil
 }
 
 // StartQUICControlChannel brings up the QUIC control pair alongside the established TCP

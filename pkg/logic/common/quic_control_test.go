@@ -4,7 +4,9 @@
 package common
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"io"
 	"log/slog"
 	"net"
@@ -53,8 +55,20 @@ func handshakenSessionPair(t *testing.T) (outbound, inbound *session.Session) {
 	_ = oEnd.Close() // the TCP handshake pipe is only needed to derive keys
 	_ = iEnd.Close()
 
+	// Reverse direction, as in the real flow (each peer dials one conn and accepts one).
+	// This is also what completes the key-update negotiation: a node learns
+	// PeerSupportsKeyUpdate only when it ACCEPTS the peer's handshake, so without this
+	// leg the dialer side would never enable the in-band ratchet.
+	oEnd2, iEnd2 := net.Pipe()
+	go func() { errCh <- session.PerformOutboundHandshakeOnConn(inbound, oEnd2) }()
+	require.NoError(t, session.PerformInboundHandshake(outbound, iEnd2))
+	require.NoError(t, <-errCh)
+	_ = oEnd2.Close()
+	_ = iEnd2.Close()
+
 	require.NotEmpty(t, outbound.SEKOutboundQUIC, "outbound QUIC key must be derived")
 	require.Equal(t, outbound.SEKOutboundQUIC, inbound.SEKInboundQUIC, "QUIC keys must match across the pair")
+	require.Equal(t, inbound.SEKOutboundQUIC, outbound.SEKInboundQUIC, "reverse-direction QUIC keys must match too")
 	return outbound, inbound
 }
 
@@ -159,6 +173,149 @@ func TestAnnounceHandler(t *testing.T) {
 	_, err = svc.Announce(context.Background(), &cpb.AnnounceRequest{Ip: "", TcpPort: 0})
 	require.NoError(t, err)
 	require.Equal(t, "fd00::bb", kd.PeerIPv6IP)
+}
+
+// quicEchoPair brings up the real QUIC control channel between two handshaken sessions
+// and starts an echo loop on the accepted (server-side) conn: every message read is
+// written straight back, so BOTH directions carry payload and both writers can ratchet.
+// Returns the dialer-side conn and a channel delivering the accepted server-side conn.
+func quicEchoPair(t *testing.T, alice, bob *session.Session) (net.Conn, <-chan net.Conn) {
+	t.Helper()
+	ln, err := ListenQUICControl(bob, "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, aErr := ln.Accept()
+		if aErr != nil {
+			close(accepted)
+			return
+		}
+		accepted <- c
+		_ = c.SetDeadline(time.Now().Add(60 * time.Second))
+		buf := make([]byte, 64<<10)
+		for {
+			n, rErr := c.Read(buf)
+			if n > 0 {
+				if _, wErr := c.Write(buf[:n]); wErr != nil {
+					return
+				}
+			}
+			if rErr != nil {
+				return
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	conn, mc, err := DialQUICControl(ctx, alice, ln.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close(); _ = mc.Close() })
+	require.NoError(t, conn.SetDeadline(time.Now().Add(60*time.Second)))
+	return conn, accepted
+}
+
+// echoStream ping-pongs total bytes through conn in chunkSize messages, verifying every
+// echoed byte, and returns the worst single-chunk round-trip time.
+func echoStream(t *testing.T, conn net.Conn, total, chunkSize int) time.Duration {
+	t.Helper()
+	payload := make([]byte, chunkSize)
+	echo := make([]byte, chunkSize)
+	var maxRTT time.Duration
+	for sent := 0; sent < total; sent += chunkSize {
+		_, err := rand.Read(payload)
+		require.NoError(t, err)
+		start := time.Now()
+		_, err = conn.Write(payload)
+		require.NoError(t, err)
+		_, err = io.ReadFull(conn, echo)
+		require.NoError(t, err)
+		if d := time.Since(start); d > maxRTT {
+			maxRTT = d
+		}
+		require.True(t, bytes.Equal(payload, echo), "echo mismatch at offset %d", sent)
+	}
+	return maxRTT
+}
+
+// TestQUICControlChannelRatchetsAcrossEpochs is the seamless-rekey proof for the QUIC
+// channel: with the capability negotiated by the REAL handshake pair, stream enough data
+// that the in-band ratchet must fire many times in each direction, and verify (a) every
+// byte round-trips intact, (b) no chunk ever stalls (make-before-break, no pause), and
+// (c) both ends' writer epochs actually advanced — the channel is NOT stuck at epoch 0,
+// which was exactly the bug this guards against (ApplyKeyUpdateNegotiation only covers
+// the TCP pair; the QUIC conns opt in at wrap time).
+func TestQUICControlChannelRatchetsAcrossEpochs(t *testing.T) {
+	alice, bob := handshakenSessionPair(t)
+	require.True(t, alice.UseKeyUpdate(), "full handshake pair must negotiate the in-band ratchet (dialer side)")
+	require.True(t, bob.UseKeyUpdate(), "full handshake pair must negotiate the in-band ratchet (acceptor side)")
+
+	// Drop the byte threshold so a 2 MiB stream crosses ~32 epochs per direction.
+	// Direct assignment bypasses the env floor; restored after this test's conns are
+	// done (no parallel tests in this package touch the ratchet vars).
+	origBytes := session.RekeyBytesThreshold
+	session.RekeyBytesThreshold = 64 << 10
+	t.Cleanup(func() { session.RekeyBytesThreshold = origBytes })
+
+	conn, accepted := quicEchoPair(t, alice, bob)
+	maxRTT := echoStream(t, conn, 2<<20, 16<<10)
+
+	dialSC, ok := conn.(*session.SecureConn)
+	require.True(t, ok, "DialQUICControl must return a *session.SecureConn")
+	require.GreaterOrEqual(t, dialSC.WriterEpoch(), uint16(8),
+		"dialer-side QUIC conn must have ratcheted across many epochs")
+
+	var srvConn net.Conn
+	select {
+	case srvConn = <-accepted:
+		require.NotNil(t, srvConn)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never accepted the QUIC control conn")
+	}
+	srvSC, ok := srvConn.(*session.SecureConn)
+	require.True(t, ok, "accepted conn must be a *session.SecureConn")
+	require.GreaterOrEqual(t, srvSC.WriterEpoch(), uint16(8),
+		"acceptor-side QUIC conn must have ratcheted across many epochs")
+
+	// Seamlessness: an epoch bump rides the next record; it must never pause the
+	// stream. Generous bound so CI noise cannot flake this, while a real stall
+	// (a blocking rekey round-trip) would blow far past it.
+	require.Less(t, maxRTT, 2*time.Second, "a rekey must never stall the stream")
+	t.Logf("QUIC ratchet proof: dialer epoch %d, acceptor epoch %d, worst chunk RTT %v",
+		dialSC.WriterEpoch(), srvSC.WriterEpoch(), maxRTT)
+}
+
+// TestQUICControlChannelStaysEpochZeroWithoutNegotiation is the gate proof: when the
+// capability was NOT negotiated (both ends lack it — the only reachable off state, since
+// keyUpdateBinding fail-closes a one-sided strip at key derivation), the QUIC conns must
+// stay at epoch 0 for old-peer interop while traffic still flows.
+func TestQUICControlChannelStaysEpochZeroWithoutNegotiation(t *testing.T) {
+	alice, bob := handshakenSessionPair(t)
+	alice.PeerSupportsKeyUpdate = false
+	bob.PeerSupportsKeyUpdate = false
+	require.False(t, alice.UseKeyUpdate())
+	require.False(t, bob.UseKeyUpdate())
+
+	// Tiny threshold that WOULD force ratchets if the gate failed open.
+	origBytes := session.RekeyBytesThreshold
+	session.RekeyBytesThreshold = 64 << 10
+	t.Cleanup(func() { session.RekeyBytesThreshold = origBytes })
+
+	conn, accepted := quicEchoPair(t, alice, bob)
+	_ = echoStream(t, conn, 512<<10, 16<<10)
+
+	dialSC := conn.(*session.SecureConn)
+	require.Equal(t, uint16(0), dialSC.WriterEpoch(), "without negotiation the dialer conn must stay at epoch 0")
+	select {
+	case srvConn := <-accepted:
+		require.NotNil(t, srvConn)
+		require.Equal(t, uint16(0), srvConn.(*session.SecureConn).WriterEpoch(),
+			"without negotiation the acceptor conn must stay at epoch 0")
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never accepted the QUIC control conn")
+	}
 }
 
 // TestQUICControlRefusedWithoutKey proves fail-soft: with no negotiated QUIC key (older

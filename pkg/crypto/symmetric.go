@@ -22,12 +22,26 @@ const NonceSize = chacha20poly1305.NonceSize
 const EncOverhead = uint64(chacha20poly1305.NonceSize + chacha20poly1305.Overhead)
 const BlockSize = uint64(2 << 16) // On linux cp works with blocks of 128KiB, we use double.
 
-// NonceGenerator provides deterministic counter-based nonces.
-// Structure: [4-byte prefix][8-byte counter] = 12 bytes total.
-// The prefix distinguishes directions (inbound vs outbound) to prevent reuse.
+// nonceCounterBits is the width of the per-epoch message counter within the nonce.
+// The packed generator state holds the 16-bit epoch in the high bits and the 48-bit
+// counter in the low bits.
+const nonceCounterBits = 48
+
+// nonceCounterMask selects the 48-bit counter out of the packed state.
+const nonceCounterMask = (uint64(1) << nonceCounterBits) - 1
+
+// NonceGenerator provides deterministic per-direction AEAD nonces of the form
+// [4-byte prefix][2-byte big-endian epoch][6-byte big-endian counter] = 12 bytes.
+// The prefix distinguishes directions (inbound vs outbound). The epoch is the key
+// generation, bumped by the rekey ratchet; the 48-bit counter is the per-epoch
+// message index and resets to 0 on each bump. epoch and counter share one atomic
+// word, so every Next reads a consistent pair; SetEpoch must be serialized against
+// Next by the caller (SecureConn holds its writer lock across a ratchet). At epoch 0
+// the layout is byte-identical to the old [4-byte prefix][8-byte counter] format, so
+// a ratchet-unaware peer stays interoperable until the first epoch bump.
 type NonceGenerator struct {
-	prefix  [4]byte       // Direction/session identifier.
-	counter atomic.Uint64 // Monotonic counter.
+	prefix [4]byte       // Direction/session identifier.
+	state  atomic.Uint64 // (epoch << 48) | counter.
 }
 
 // NewNonceGenerator creates a nonce generator with the given prefix.
@@ -38,18 +52,42 @@ func NewNonceGenerator(prefix uint32) *NonceGenerator {
 	return ng
 }
 
-// Next returns the next nonce and increments the counter.
-// Thread-safe via atomic operations.
-func (ng *NonceGenerator) Next() [NonceSize]byte {
+// ErrNonceOverflow is returned by Next when the 48-bit per-epoch counter would wrap into
+// the epoch bytes and reuse a (key, nonce) pair. The caller fails that one connection closed
+// rather than crashing the whole daemon. The ratchet rotates far below 2^48 messages, so
+// reaching this means rotation stalled.
+var ErrNonceOverflow = errors.New("crypto: nonce counter overflow within an epoch (missing rekey)")
+
+// Next returns the next nonce and advances the counter. Thread-safe.
+// It returns ErrNonceOverflow if the 48-bit counter would wrap within an epoch: a wrap
+// carries into the epoch bytes and reuses a (key, nonce) pair, so it must fail closed.
+func (ng *NonceGenerator) Next() ([NonceSize]byte, error) {
+	// state packs epoch|counter, and its big-endian uint64 is exactly
+	// [2B epoch][6B counter], so one PutUint64 emits both halves.
+	s := ng.state.Add(1)
+	if s&nonceCounterMask == 0 {
+		return [NonceSize]byte{}, ErrNonceOverflow
+	}
 	var nonce [NonceSize]byte
 	copy(nonce[:4], ng.prefix[:])
-	binary.BigEndian.PutUint64(nonce[4:], ng.counter.Add(1))
-	return nonce
+	binary.BigEndian.PutUint64(nonce[4:], s)
+	return nonce, nil
 }
 
-// Count returns the current counter value (for monitoring/debugging).
+// SetEpoch installs a new key epoch and resets the counter, so the next Next emits
+// counter 1 under that epoch. The caller must serialize SetEpoch against Next.
+func (ng *NonceGenerator) SetEpoch(epoch uint16) {
+	ng.state.Store(uint64(epoch) << nonceCounterBits)
+}
+
+// Count returns the current per-epoch counter (for monitoring/debugging).
 func (ng *NonceGenerator) Count() uint64 {
-	return ng.counter.Load()
+	return ng.state.Load() & nonceCounterMask
+}
+
+// Epoch returns the current key epoch, the high 16 bits of the state (for monitoring).
+func (ng *NonceGenerator) Epoch() uint16 {
+	return uint16(ng.state.Load() >> nonceCounterBits)
 }
 
 // EncryptWithNonce encrypts using a provided nonce (for counter-based encryption).

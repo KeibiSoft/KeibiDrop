@@ -969,23 +969,16 @@ func (kd *KeibidropServiceImpl) GetChunkHashes(req *bindings.GetChunkHashesReque
 	return nil
 }
 
-// Rekey handles key rotation requests for forward secrecy.
+// Rekey drives the responder side of the entropy fold: a fresh ephemeral hybrid-KEM
+// exchange whose shared secret is mixed into the session ratchet for post-quantum forward
+// secrecy. Unlike the old in-band key swap this fold self-synchronizes on the wire and swaps
+// no key mid-stream, so a stray or forged Rekey cannot brick the connection: the session
+// responder refuses a not-ready or malformed request cleanly.
 func (kd *KeibidropServiceImpl) Rekey(_ context.Context, req *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
-	logger := kd.Logger.With("method", "rekey", "epoch", req.Epoch)
-
 	if kd.Session == nil {
-		logger.Warn("Session not initialized")
-		return nil, status.Error(codes.FailedPrecondition, "session not initialized")
+		return nil, status.Error(codes.FailedPrecondition, "no active session for rekey")
 	}
-
-	resp, err := kd.Session.HandleRekeyRequest(req)
-	if err != nil {
-		logger.Error("Failed to process rekey request", "error", err)
-		return nil, status.Error(codes.Internal, "rekey failed")
-	}
-
-	logger.Info("Rekey request processed successfully")
-	return resp, nil
+	return kd.Session.RespondToFold(req)
 }
 
 // Heartbeat responds to connection health checks.

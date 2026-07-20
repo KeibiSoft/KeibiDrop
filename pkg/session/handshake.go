@@ -29,6 +29,21 @@ type PeerHandshakeMessage struct {
 	OutboundPort     int               `json:"port"`
 	SupportedCiphers []string          `json:"supported_ciphers"` // cipher negotiation
 	Persistent       bool              `json:"persistent,omitempty"`
+	KeyUpdate        bool              `json:"key_update,omitempty"` // in-band ratchet capability
+}
+
+// keyUpdateBinding returns a fixed, domain-separated tag for the sender's advertised in-band
+// key-update capability. It is mixed into the SEK derivation as a channel binding: the
+// key_update handshake field is plaintext and not covered by the fingerprint check, so
+// binding it makes a flipped bit derive a different key on the two ends of a link (a dead
+// conn, fail-closed) instead of a silent ratchet/fold downgrade. Each direction binds the
+// SENDER's advertised value, so the outbound side binds its own and the inbound side binds
+// what it received. Both tags are >=32 bytes, DeriveKey's per-input minimum.
+func keyUpdateBinding(on bool) []byte {
+	if on {
+		return []byte("KeibiDrop-key-update-capability-binding:enabled-")
+	}
+	return []byte("KeibiDrop-key-update-capability-binding:disabled")
 }
 
 // PerformInboundHandshake handles the first plaintext connection from Bob to Alice.
@@ -100,6 +115,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	session.PeerPubKeys = peerKeys
 	session.PeerPort = msg.OutboundPort
 	session.PeerIsPersistent = msg.Persistent
+	session.PeerSupportsKeyUpdate = msg.KeyUpdate
 
 	seed1tr, ok := msg.EncSeeds["x25519"]
 	if !ok {
@@ -153,7 +169,9 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	session.CipherMu.Unlock()
 	logger.Info("Cipher negotiated", "suite", suite, "peer-offered", msg.SupportedCiphers, "hardware-aes", kbc.HasHardwareAES())
 
-	inboundKey, err := kbc.DeriveKey(suite, seed1, seed2)
+	// Bind the peer's advertised key-update capability into the key so a relay that strips
+	// the plaintext handshake bit derives a different key here (fail-closed). See keyUpdateBinding.
+	inboundKey, err := kbc.DeriveKey(suite, seed1, seed2, keyUpdateBinding(msg.KeyUpdate))
 	if err != nil {
 		logger.Error("Failed to derive inbound key", "error", err)
 		return err
@@ -184,7 +202,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 
 	// Upgrade to SecureConn. Acceptor role -> inbound nonce prefix, so this end and the
 	// dialer never share nonce space under the shared key.
-	secure := NewSecureConnRole(conn, session.SEKInbound, suite, false)
+	secure := NewSecureConn(conn, session.SEKInbound, suite, NoncePrefixInbound)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
@@ -298,7 +316,11 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 	}
 	session.CipherMu.Unlock()
 
-	outboundKey, err := kbc.DeriveKey(suite, seed1, seed2)
+	// Bind our own advertised key-update capability into the key; the peer's inbound side
+	// binds what it received, so a tampered bit yields a key mismatch (fail-closed). Snapshot
+	// once so the bound value and the advertised field below cannot diverge under the off-switch.
+	own := ownSupportsKeyUpdate()
+	outboundKey, err := kbc.DeriveKey(suite, seed1, seed2, keyUpdateBinding(own))
 	if err != nil {
 		logger.Error("Failed to derive outbound key", "error", err)
 		return err
@@ -350,6 +372,7 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 		OutboundPort:     session.DefaultInboundPort,
 		SupportedCiphers: supportedStr,
 		Persistent:       session.OwnIsPersistent,
+		KeyUpdate:        own,
 	}
 
 	// Write handshake: 4-byte big-endian length prefix, then JSON payload.
@@ -386,7 +409,7 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 	logger.Info("Peer confirmed handshake upgrading to encrypted connection")
 
 	// Upgrade to SecureConn. Dialer role -> outbound nonce prefix.
-	secure := NewSecureConnRole(conn, session.SEKOutbound, suite, true)
+	secure := NewSecureConn(conn, session.SEKOutbound, suite, NoncePrefixOutbound)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
@@ -477,7 +500,9 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	if suite == "" {
 		suite = kbc.CipherChaCha20
 	}
-	sek, err := kbc.DeriveKey(suite, seed1, sharedKEM)
+	// Bind the peer's advertised key-update capability (learned by the preceding inbound
+	// handshake) into the key; must match the dialer's outbound binding. See keyUpdateBinding.
+	sek, err := kbc.DeriveKey(suite, seed1, sharedKEM, keyUpdateBinding(session.PeerSupportsKeyUpdate))
 	if err != nil {
 		logger.Error("Failed to derive SEK", "error", err)
 		return fmt.Errorf("SEK derivation failed: %w", err)
@@ -493,7 +518,7 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	session.SEKInboundQUIC = quicInboundKey
 
 	// === Step 4: Upgrade connection to SecureConn (acceptor role -> inbound prefix) ===
-	secure := NewSecureConnRole(conn, sek, suite, false)
+	secure := NewSecureConn(conn, sek, suite, NoncePrefixInbound)
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}

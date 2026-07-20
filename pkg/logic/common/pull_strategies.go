@@ -32,6 +32,15 @@ func (kd *KeibiDrop) pullStreamFile(
 	bitmapPath string,
 	logger *slog.Logger,
 ) error {
+	// Snapshot the client under kd.mu; teardown can nil kd.session concurrently.
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.GRPCClient == nil {
+		return ErrInvalidSession
+	}
+	client := s.GRPCClient
+
 	first := bitmap.NextMissing(0)
 	if first < 0 {
 		return nil
@@ -41,7 +50,7 @@ func (kd *KeibiDrop) pullStreamFile(
 		return nil
 	}
 
-	stream, err := kd.session.GRPCClient.StreamFile(ctx, &bindings.StreamFileRequest{
+	stream, err := client.StreamFile(ctx, &bindings.StreamFileRequest{
 		Path:        relPath,
 		StartOffset: startOffset,
 	})
@@ -103,6 +112,16 @@ func (kd *KeibiDrop) pullParallelRead(
 		nWorkers = totalChunks
 	}
 
+	// Snapshot the client under kd.mu before spawning workers; teardown can nil
+	// kd.session mid-transfer and the workers must not re-read it.
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.GRPCClient == nil {
+		return ErrInvalidSession
+	}
+	client := s.GRPCClient
+
 	var wg sync.WaitGroup
 	errCh := make(chan error, nWorkers)
 	var chunksWritten atomic.Int32
@@ -112,7 +131,7 @@ func (kd *KeibiDrop) pullParallelRead(
 		go func(workerID int) {
 			defer wg.Done()
 
-			stream, err := kd.session.GRPCClient.Read(ctx)
+			stream, err := client.Read(ctx)
 			if err != nil {
 				errCh <- fmt.Errorf("worker %d: open stream: %w", workerID, err)
 				cancel()

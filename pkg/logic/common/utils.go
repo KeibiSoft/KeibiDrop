@@ -64,12 +64,18 @@ func (kd *KeibiDrop) relayURL(sub string) (*url.URL, error) {
 
 func (kd *KeibiDrop) registerRoomToRelay() error {
 	logger := kd.logger.With("method", "register-room-to-relay")
-	if kd.relayClient == nil || kd.session == nil || kd.session.OwnKeys == nil {
+	// Snapshot under kd.mu; the keepalive goroutine calls this while teardown may nil
+	// kd.session. Lock only for the read so kd.mu is never held across a relay RPC
+	// (keeps the rk.mu -> kd.mu order intact).
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if kd.relayClient == nil || s == nil || s.OwnKeys == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
 	}
 
-	ownFp := kd.session.OwnFingerprint
+	ownFp := s.OwnFingerprint
 
 	lookupToken, encryptionKey, err := deriveRelayAuth(ownFp)
 	if err != nil {
@@ -77,7 +83,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		return err
 	}
 
-	pkMap, err := kd.session.OwnKeys.ExportPubKeysAsMap()
+	pkMap, err := s.OwnKeys.ExportPubKeysAsMap()
 	if err != nil {
 		logger.Error("Failed to export own keys", "error", err)
 		return err
@@ -154,7 +160,12 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 
 func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	logger := kd.logger.With("method", "get-room-from-relay")
-	if kd.relayClient == nil || kd.session == nil || kd.session.OwnKeys == nil {
+	// Snapshot under kd.mu; reconnect's RelayLookup calls this while teardown may nil
+	// kd.session.
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if kd.relayClient == nil || s == nil || s.OwnKeys == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
 	}
@@ -263,7 +274,7 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		return ErrFingerprintMismatch
 	}
 
-	kd.session.PeerPubKeys = peerKeys
+	s.PeerPubKeys = peerKeys
 
 	// Identity confirmed: emit it. Whatever reacts (the FUSE cache scoper, wired in
 	// setupFilesystem) is none of this verifier's business — it just announces the fact.
@@ -276,7 +287,7 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		peerReg.Listen.Port = config.OutboundPort
 	}
 
-	kd.session.PeerPort = peerReg.Listen.Port
+	s.PeerPort = peerReg.Listen.Port
 	if isValidIPv6(peerReg.Listen.IP) {
 		kd.PeerIPv6IP = peerReg.Listen.IP
 	} else if peerReg.Listen.IP != "" {
@@ -322,6 +333,26 @@ func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) {
 	}
 	req.Attr.Size = info.Size()
 	req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
+}
+
+// isDebouncedNotify reports whether a notify type is per-path debounced (ADD_FILE /
+// EDIT_FILE). Everything else is sent immediately and is NOT replayed by
+// notifyRestoredFiles after a reconnect, so it is what pendingNotifies tracks.
+func isDebouncedNotify(t bindings.NotifyType) bool {
+	return t == bindings.NotifyType_ADD_FILE || t == bindings.NotifyType_EDIT_FILE
+}
+
+// countImmediateNotifies returns how many entries in a flush batch are the
+// immediate REMOVE/RENAME/ADD_DIR kind that pendingNotifies counts. Used to
+// balance the per-event increment once the batch has been handed off.
+func countImmediateNotifies(batch []*bindings.NotifyRequest) int64 {
+	var n int64
+	for _, r := range batch {
+		if !isDebouncedNotify(r.Type) {
+			n++
+		}
+	}
+	return n
 }
 
 func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) error {
@@ -380,10 +411,21 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			if len(batch) == 0 {
 				return
 			}
-			// sendBatchNotify routes over the QUIC metadata channel when up (isolated
-			// from TCP bulk) and falls back to the TCP client; it snapshots kd.session
-			// internally, so a concurrent teardown cannot nil-deref here.
-			if kd.session == nil || kd.session.GRPCClient == nil {
+			// #6: this batch is leaving the worker's hands. Clear its immediate
+			// REMOVE/RENAME events from pendingNotifies on every return path (client
+			// gone, success, or per-item fallback) so the counter cannot leak and
+			// wedge onRekeyNeeded off forever.
+			defer kd.pendingNotifies.Add(-countImmediateNotifies(batch))
+			// Snapshot the session under kd.mu: Run()'s ctx.Done teardown rewrites
+			// kd.session concurrently, and this worker never took kd.mu, so a bare
+			// read establishes no happens-before and races (nil-deref panic in the
+			// worst case). The RPCs below go through sendBatchNotify/sendNotify,
+			// which route over the QUIC metadata channel when up (isolated from TCP
+			// bulk) and fall back to the TCP client.
+			kd.mu.Lock()
+			s := kd.session
+			kd.mu.Unlock()
+			if s == nil || s.GRPCClient == nil {
 				return
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -407,8 +449,14 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			select {
 			case req, ok := <-kd.notifyCh:
 				if !ok {
-					// Channel closed — flush all pending with fresh sizes.
-					remaining := make([]*bindings.NotifyRequest, 0, len(pending))
+					// Channel closed: flush everything still buffered. The immediate
+					// REMOVE/RENAME/ADD_DIR slice goes first (so buffered deletes are not
+					// dropped on shutdown and their pendingNotifies counts are balanced
+					// by flush, #6), then the debounced ADD_FILE map with fresh sizes. A
+					// REMOVE already cleared any pending ADD for its path, so this order
+					// never sends a stale ADD after its REMOVE.
+					remaining := make([]*bindings.NotifyRequest, 0, len(immediate)+len(pending))
+					remaining = append(remaining, immediate...)
 					for _, p := range pending {
 						if kd.FS != nil && kd.FS.Root != nil {
 							refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder)
@@ -423,6 +471,13 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				baseName := filepath.Base(req.Path)
 				if baseName == ".DS_Store" || baseName == ".fseventsd" || strings.HasPrefix(baseName, "._") {
 					continue
+				}
+
+				// #6: count REMOVE/RENAME/ADD_DIR (the immediate, non-replayed kinds)
+				// the instant they are accepted, so a proactive rekey defers until they
+				// are delivered. Balanced by flush's countImmediateNotifies decrement.
+				if !isDebouncedNotify(req.Type) {
+					kd.pendingNotifies.Add(1)
 				}
 
 				switch req.Type {
@@ -483,7 +538,11 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	}()
 
 	fs.OnLocalChange = func(event types.FileEvent) {
-		if kd.session == nil || kd.session.GRPCClient == nil {
+		// Snapshot under kd.mu; teardown rewrites kd.session on another goroutine.
+		kd.mu.Lock()
+		s := kd.session
+		kd.mu.Unlock()
+		if s == nil || s.GRPCClient == nil {
 			return
 		}
 
@@ -569,11 +628,16 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 			return fmt.Errorf("timeout connecting to grpc server")
 		}
 
+		// Snapshot kd.session under kd.mu (teardown nils it concurrently); this runs on
+		// the reconnect goroutine.
+		kd.mu.Lock()
+		s := kd.session
+		kd.mu.Unlock()
 		// only try if the outbound connection is available
-		if kd.session != nil && kd.session.Session != nil && kd.session.Session.Outbound != nil {
+		if s != nil && s.Session != nil && s.Session.Outbound != nil {
 			// Capture the outbound conn so the dialer closure is safe even
 			// if kd.session is nil'd later by the Stop handler.
-			outboundConn := kd.session.Session.Outbound
+			outboundConn := s.Session.Outbound
 
 			dialer := func(ctx context.Context, _ string) (net.Conn, error) {
 				return outboundConn, nil
@@ -589,9 +653,20 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 			if err != nil {
 				logger.Debug("grpc dial attempt failed, retrying", "err", err)
 			} else {
+				newClient := bindings.NewKeibiServiceClient(conn)
+				s.GRPCClient = newClient
+				// Publish the client stack under kd.mu, gated on tearingDown: a reconnect
+				// that finishes after teardown began must not resurrect it. Pairs with
+				// teardown's locked swap of the same fields.
+				kd.mu.Lock()
+				if kd.tearingDown.Load() {
+					kd.mu.Unlock()
+					_ = conn.Close()
+					return fmt.Errorf("connect grpc client: shutting down")
+				}
 				kd.grpcClientConn = conn
-				kd.session.GRPCClient = bindings.NewKeibiServiceClient(conn)
-				kd.KDClient = kd.session.GRPCClient
+				kd.KDClient = newClient
+				kd.mu.Unlock()
 				logger.Info("connected to grpc server")
 				return nil
 			}
@@ -665,27 +740,50 @@ func kdDialOptions() []grpc.DialOption {
 }
 
 func (kd *KeibiDrop) startGRPCServer() error {
-	kd.session.GRPCListener = kd.session.Session.Inbound
+	// Snapshot kd.session under kd.mu: onReconnected spawns this as a goroutine, so
+	// teardown can nil kd.session concurrently. Use the local for every deref below.
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.Session == nil {
+		return ErrInvalidSession
+	}
+	s.GRPCListener = s.Session.Inbound
 
 	grpcServer := grpc.NewServer(kdServerOptions()...)
-	kd.grpcServer = grpcServer
 
-	ln := NewSingleConnListener(kd.session.Session.Inbound)
+	ln := NewSingleConnListener(s.Session.Inbound)
 
 	svc := &service.KeibidropServiceImpl{
-		Session:      kd.session,
-		Logger:       kd.logger.With("component", "keibidrop-server"),
-		SyncTracker:  kd.SyncTracker,
+		Session:     s,
+		Logger:      kd.logger.With("component", "keibidrop-server"),
+		SyncTracker: kd.SyncTracker,
+		// Re-wire the FUSE tree here. On a reconnect (including a proactive rekey
+		// re-handshake) this rebuilds KDSvc, and the post-mount wiring in Run() is not
+		// re-run, so without this a reconnected FUSE peer would take the SyncTracker-only
+		// fallback and never show notify-received files on its mount. kd.FS is nil for a
+		// non-FUSE peer and on the very first connect (mount not up yet), which Run() then
+		// backfills, so this only ever adds the missing reconnect wiring.
+		FS:           kd.FS,
 		OnEvent:      kd.OnEvent,
 		OnDisconnect: kd.handleNotifyDisconnect,
 	}
 
-	// Under mu: serveQUICControl polls KDSvc from its own goroutine to register the
-	// same impl on the QUIC server.
+	bindings.RegisterKeibiServiceServer(grpcServer, svc)
+
+	// Publish the server stack under kd.mu, gated on tearingDown so a reconnect that
+	// finished after teardown began does not resurrect a server on a torn-down session.
+	// Also the publication serveQUICControl polls for: it reads KDSvc from its own
+	// goroutine to register the same impl on the QUIC server.
 	kd.mu.Lock()
+	if kd.tearingDown.Load() {
+		kd.mu.Unlock()
+		grpcServer.Stop()
+		return ErrInvalidSession
+	}
+	kd.grpcServer = grpcServer
 	kd.KDSvc = svc
 	kd.mu.Unlock()
-	bindings.RegisterKeibiServiceServer(grpcServer, svc)
 
 	kd.logger.Info("Starting gRPC server...")
 	if err := grpcServer.Serve(ln); err != nil {

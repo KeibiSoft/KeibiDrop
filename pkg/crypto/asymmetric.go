@@ -136,6 +136,14 @@ func DeriveAES256Key(sharedSecrets ...[]byte) ([]byte, error) {
 	return deriveKeyInternal(sha512.New, "KeibiDrop-AES-256-GCM-SEK", KeySize, sharedSecrets...)
 }
 
+// DeriveFoldSalt derives the 32-byte, session-bound salt for the entropy fold from the
+// given input keying material, via HKDF-SHA512 under a label distinct from every other
+// derivation. Both peers pass the same order-normalized SEK material (see Session.FoldSalt),
+// so they derive an identical salt and therefore agree on the fold secret.
+func DeriveFoldSalt(ikm []byte) ([]byte, error) {
+	return deriveKeyInternal(sha512.New, "KeibiDrop-fold-salt-v1", KeySize, ikm)
+}
+
 func Fingerprint(pub []byte) string {
 	sum := sha512.Sum512(pub)
 	return base64.RawURLEncoding.EncodeToString(sum[:])
