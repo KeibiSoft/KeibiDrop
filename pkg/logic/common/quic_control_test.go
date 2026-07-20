@@ -83,8 +83,9 @@ func TestQUICControlChannelEndToEnd(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	conn, err := DialQUICControl(ctx, alice, ln.Addr().String())
+	conn, mc, err := DialQUICControl(ctx, alice, ln.Addr().String())
 	require.NoError(t, err)
+	defer mc.Close()
 
 	cc, err := grpc.NewClient("passthrough:///quic-control",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -113,8 +114,9 @@ func TestQUICControlWrongKeyFails(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	conn, err := DialQUICControl(ctx, badAlice, ln.Addr().String())
+	conn, mc, err := DialQUICControl(ctx, badAlice, ln.Addr().String())
 	require.NoError(t, err) // QUIC dial + stream open succeed; the mismatch bites at the record layer
+	defer mc.Close()
 	cc, err := grpc.NewClient("passthrough:///quic-control",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return conn, nil }))
@@ -134,7 +136,7 @@ func TestQUICControlRefusedWithoutKey(t *testing.T) {
 	s, err := session.InitSession(logger, 26002, 26001)
 	require.NoError(t, err)
 
-	_, err = DialQUICControl(context.Background(), s, "127.0.0.1:1")
+	_, _, err = DialQUICControl(context.Background(), s, "127.0.0.1:1")
 	require.Error(t, err)
 	_, err = ListenQUICControl(s, "127.0.0.1:0")
 	require.Error(t, err)

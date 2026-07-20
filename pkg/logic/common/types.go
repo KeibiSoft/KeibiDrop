@@ -24,6 +24,7 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
+	"github.com/KeibiSoft/KeibiDrop/pkg/transport"
 	"google.golang.org/grpc"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -69,6 +70,11 @@ type KeibiDrop struct {
 	// docs/transport-architecture.html.
 	quicControlClient *grpc.ClientConn
 	quicControlServer *grpc.Server
+	quicControlLn     net.Listener              // generation marker: serveQUICControl only attaches to the current one
+	quicControlMig    *transport.MigratableConn // migration handle: MigrateQUICControl moves the path, gRPC never notices
+	quicPeerAddr      string                    // peer's UDP control endpoint, kept for the self-heal redial
+	quicRedialing     atomic.Bool               // single-flight guard: at most one background redial
+	quicMetaSent      atomic.Uint64             // metadata RPCs that actually rode the QUIC channel (diagnostics/tests)
 
 	// Non-FUSE fallback.
 	SyncTracker *synctracker.SyncTracker
@@ -490,9 +496,11 @@ func (kd *KeibiDrop) Run() {
 				kd.grpcClientConn.Close()
 				kd.grpcClientConn = nil
 			}
-			kd.stopQUICControlChannel()
+			kd.StopQUICControlChannel()
 			kd.KDClient = nil
-			kd.KDSvc = nil
+			kd.mu.Lock()
+			kd.KDSvc = nil // under mu: serveQUICControl reads it concurrently
+			kd.mu.Unlock()
 			prevPeerFP := ""
 			if kd.session != nil {
 				prevPeerFP = kd.session.ExpectedPeerFingerprint

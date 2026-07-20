@@ -69,7 +69,7 @@ func (kd *KeibiDrop) AddFile(path string) error {
 	defer kd.SyncTracker.LocalFilesMu.Unlock()
 	kd.SyncTracker.LocalFiles[name] = file // upsert: allows retry after failed notification
 
-	_, err = kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+	_, err = kd.sendNotify(context.Background(), &bindings.NotifyRequest{
 		Type: bindings.NotifyType(types.AddFile),
 		Path: file.RelativePath,
 		Attr: &bindings.Attr{
@@ -164,7 +164,7 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 	defer kd.SyncTracker.LocalFilesMu.Unlock()
 	kd.SyncTracker.LocalFiles[remoteName] = file
 
-	_, err = kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+	_, err = kd.sendNotify(context.Background(), &bindings.NotifyRequest{
 		Type: bindings.NotifyType(types.AddFile),
 		Path: remoteName,
 		Attr: &bindings.Attr{
@@ -633,7 +633,7 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 	}
 
 	// Bring up the QUIC control channel alongside TCP (fail-soft, non-blocking).
-	kd.startQUICControlChannel()
+	kd.StartQUICControlChannel()
 
 	// Start health monitoring, reconnection, and relay keepalive.
 	if err := kd.InitConnectionResilience(); err != nil {
@@ -1145,7 +1145,7 @@ func (kd *KeibiDrop) NotifyDisconnect() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err := kd.session.GRPCClient.Notify(ctx, &bindings.NotifyRequest{
+	_, err := kd.sendNotify(ctx, &bindings.NotifyRequest{
 		Type: bindings.NotifyType_DISCONNECT,
 	})
 	if err != nil {

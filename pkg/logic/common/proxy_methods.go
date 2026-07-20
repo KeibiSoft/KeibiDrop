@@ -35,11 +35,20 @@ func mapReadErr(err error) error {
 // Proxy methods to avoid import cycles between the filesystem and the duplex server.
 
 type ImplFileStreamProvider struct {
-	cli bindings.KeibiServiceClient
+	cli  bindings.KeibiServiceClient // bulk channel (TCP): StreamFile prefetch
+	fast bindings.KeibiServiceClient // interactive channel (QUIC): on-demand reads + chunk hashes; nil = use cli
 }
 
 func NewImplStreamProvider(cli bindings.KeibiServiceClient) *ImplFileStreamProvider {
 	return &ImplFileStreamProvider{cli: cli}
+}
+
+// NewImplStreamProviderDual splits traffic across the two channels: bulk StreamFile
+// prefetch stays on the TCP client, while latency-sensitive on-demand reads and chunk
+// hashes go to the QUIC interactive client — so a cache miss is served in about one
+// round trip instead of queuing behind a running prefetch on the same TCP stream.
+func NewImplStreamProviderDual(bulk, fast bindings.KeibiServiceClient) *ImplFileStreamProvider {
+	return &ImplFileStreamProvider{cli: bulk, fast: fast}
 }
 
 type ImplRemoteFileStream struct {
@@ -87,8 +96,23 @@ func (rfs *ImplRemoteFileStream) Close() error {
 	return rfs.stream.CloseSend()
 }
 
+// preferFast is the one provider routing rule: latency-sensitive opens try the QUIC
+// interactive client when present and fall back to the bulk client, so a dead QUIC
+// channel degrades to today's behavior instead of failing the call. Compile-time
+// generic; the concrete open is a parameter.
+func preferFast[T any](sp *ImplFileStreamProvider, open func(bindings.KeibiServiceClient) (T, error)) (T, error) {
+	if sp.fast != nil {
+		if v, err := open(sp.fast); err == nil {
+			return v, nil
+		}
+	}
+	return open(sp.cli)
+}
+
 func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint64, path string) (types.RemoteFileStream, error) {
-	stream, err := sp.cli.Read(ctx)
+	stream, err := preferFast(sp, func(c bindings.KeibiServiceClient) (grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse], error) {
+		return c.Read(ctx)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -127,11 +151,16 @@ func (r *implStreamFileReceiver) Recv() (data []byte, offset uint64, totalSize u
 // Returns codes.Unimplemented if the peer is running older code; the caller
 // is responsible for deciding whether to fall back.
 func (sp *ImplFileStreamProvider) GetChunkHashes(ctx context.Context, path string, chunkSize, fromChunk, count uint64) (types.ChunkHashReceiver, error) {
-	stream, err := sp.cli.GetChunkHashes(ctx, &bindings.GetChunkHashesRequest{
+	req := &bindings.GetChunkHashesRequest{
 		Path:      path,
 		ChunkSize: chunkSize,
 		FromChunk: fromChunk,
 		Count:     count,
+	}
+	// Chunk hashes are small and latency-sensitive (edit reconciliation): same
+	// preferFast routing as on-demand reads.
+	stream, err := preferFast(sp, func(c bindings.KeibiServiceClient) (bindings.KeibiService_GetChunkHashesClient, error) {
+		return c.GetChunkHashes(ctx, req)
 	})
 	if err != nil {
 		return nil, err

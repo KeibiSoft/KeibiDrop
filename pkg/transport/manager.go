@@ -391,23 +391,9 @@ func (m *Manager) Migrate(ctx context.Context) error {
 	}
 	before := m.qconn.LocalAddr()
 
-	newTr, err := newUDPTransport(m.serverAddr)
+	newTr, err := migratePath(ctx, m.qconn, m.serverAddr)
 	if err != nil {
-		return fmt.Errorf("migration socket: %w", err)
-	}
-	path, err := m.qconn.AddPath(newTr)
-	if err != nil {
-		_ = newTr.Close()
-		return fmt.Errorf("AddPath: %w", err)
-	}
-	if err := path.Probe(ctx); err != nil {
-		_ = newTr.Close()
-		return fmt.Errorf("Probe: %w", err)
-	}
-	time.Sleep(30 * time.Millisecond) // let PATH_CHALLENGE/RESPONSE ACKs settle
-	if err := path.Switch(); err != nil {
-		_ = newTr.Close()
-		return fmt.Errorf("Switch: %w", err)
+		return err
 	}
 
 	// The client must send from the new address so the peer migrates its send path too.
@@ -457,11 +443,16 @@ func (m *Manager) Close() error {
 
 // newUDPTransport binds a local UDP socket suitable for reaching serverAddr and wraps
 // it in an explicit quic.Transport (required for migration). Loopback targets bind to
-// loopback; others bind to the unspecified address so the OS picks the right source.
+// the loopback of the SAME family (an IPv4 socket cannot reach ::1); others bind to
+// the unspecified address so the OS picks the right source.
 func newUDPTransport(serverAddr *net.UDPAddr) (*quic.Transport, error) {
 	var bind *net.UDPAddr
 	if serverAddr.IP != nil && serverAddr.IP.IsLoopback() {
-		bind = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}
+		if serverAddr.IP.To4() != nil {
+			bind = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}
+		} else {
+			bind = &net.UDPAddr{IP: net.IPv6loopback}
+		}
 	}
 	udp, err := net.ListenUDP("udp", bind)
 	if err != nil {

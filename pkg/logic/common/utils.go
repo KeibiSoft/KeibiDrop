@@ -380,16 +380,14 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			if len(batch) == 0 {
 				return
 			}
-			// Capture the client under the nil check: Run()'s ctx.Done teardown
-			// nils kd.session concurrently, so re-dereferencing kd.session below
-			// would race into a nil-deref panic. Holding a local reference is the
-			// same pattern connectGRPCClientWithRetry uses for the outbound conn.
+			// sendBatchNotify routes over the QUIC metadata channel when up (isolated
+			// from TCP bulk) and falls back to the TCP client; it snapshots kd.session
+			// internally, so a concurrent teardown cannot nil-deref here.
 			if kd.session == nil || kd.session.GRPCClient == nil {
 				return
 			}
-			client := kd.session.GRPCClient
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			_, err := client.BatchNotify(ctx, &bindings.BatchNotifyRequest{
+			_, err := kd.sendBatchNotify(ctx, &bindings.BatchNotifyRequest{
 				Notifications: batch,
 				Seq:           batchSeq.Add(1),
 				Timestamp:     uint64(time.Now().UnixNano()),
@@ -399,7 +397,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				logger.Error("BatchNotify failed, falling back to individual", "count", len(batch), "error", err)
 				for _, req := range batch {
 					ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-					_, _ = client.Notify(ctx2, req)
+					_, _ = kd.sendNotify(ctx2, req)
 					cancel2()
 				}
 			}
@@ -546,9 +544,16 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 func (kd *KeibiDrop) openStreamProvider() types.FileStreamProvider {
 	kd.mu.Lock()
 	s := kd.session
+	qcc := kd.quicControlClient
 	kd.mu.Unlock()
 	if s == nil || s.GRPCClient == nil {
 		return nil
+	}
+	// With the QUIC control channel up, split: prefetch (StreamFile) on TCP, on-demand
+	// reads + chunk hashes on QUIC. Providers are created per open, so a channel that
+	// connects later is picked up by subsequent opens.
+	if qcc != nil {
+		return NewImplStreamProviderDual(s.GRPCClient, bindings.NewKeibiServiceClient(qcc))
 	}
 	return NewImplStreamProvider(s.GRPCClient)
 }
@@ -576,16 +581,10 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 
 			conn, err := grpc.Dial( //nolint:staticcheck // SA1019: custom dialer over hijacked conn
 				"keibipipe",
-				grpc.WithContextDialer(dialer),
-				grpc.WithTransportCredentials(insecure.NewCredentials()),
-				grpc.WithDefaultCallOptions(
-					grpc.MaxCallRecvMsgSize(config.GRPCMaxMsgSize),
-					grpc.MaxCallSendMsgSize(config.GRPCMaxMsgSize),
-				),
-				grpc.WithInitialWindowSize(config.GRPCWindowSize),
-				grpc.WithInitialConnWindowSize(config.GRPCWindowSize),
-				grpc.WithWriteBufferSize(config.GRPCIOBufferSize),
-				grpc.WithReadBufferSize(config.GRPCIOBufferSize),
+				append([]grpc.DialOption{
+					grpc.WithContextDialer(dialer),
+					grpc.WithTransportCredentials(insecure.NewCredentials()),
+				}, kdDialOptions()...)...,
 			)
 			if err != nil {
 				logger.Debug("grpc dial attempt failed, retrying", "err", err)
@@ -636,17 +635,39 @@ func (kd *KeibiDrop) handleNotifyDisconnect() {
 	kd.cancelContext()
 }
 
-func (kd *KeibiDrop) startGRPCServer() error {
-	kd.session.GRPCListener = kd.session.Session.Inbound
-
-	grpcServer := grpc.NewServer(
+// kdServerOptions is the single source of the tuned gRPC server options (16 MiB
+// frames + windows, 4 MiB I/O buffers). The TCP server and the QUIC control server
+// both use it, so the two transports cannot drift apart.
+func kdServerOptions() []grpc.ServerOption {
+	return []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(config.GRPCMaxMsgSize),
 		grpc.MaxSendMsgSize(config.GRPCMaxMsgSize),
 		grpc.InitialWindowSize(config.GRPCWindowSize),
 		grpc.InitialConnWindowSize(config.GRPCWindowSize),
 		grpc.WriteBufferSize(config.GRPCIOBufferSize),
 		grpc.ReadBufferSize(config.GRPCIOBufferSize),
-	)
+	}
+}
+
+// kdDialOptions is the client-side counterpart of kdServerOptions. Per-channel options
+// (dialer, credentials) are the caller's; everything tuned lives here once.
+func kdDialOptions() []grpc.DialOption {
+	return []grpc.DialOption{
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(config.GRPCMaxMsgSize),
+			grpc.MaxCallSendMsgSize(config.GRPCMaxMsgSize),
+		),
+		grpc.WithInitialWindowSize(config.GRPCWindowSize),
+		grpc.WithInitialConnWindowSize(config.GRPCWindowSize),
+		grpc.WithWriteBufferSize(config.GRPCIOBufferSize),
+		grpc.WithReadBufferSize(config.GRPCIOBufferSize),
+	}
+}
+
+func (kd *KeibiDrop) startGRPCServer() error {
+	kd.session.GRPCListener = kd.session.Session.Inbound
+
+	grpcServer := grpc.NewServer(kdServerOptions()...)
 	kd.grpcServer = grpcServer
 
 	ln := NewSingleConnListener(kd.session.Session.Inbound)
@@ -659,7 +680,11 @@ func (kd *KeibiDrop) startGRPCServer() error {
 		OnDisconnect: kd.handleNotifyDisconnect,
 	}
 
+	// Under mu: serveQUICControl polls KDSvc from its own goroutine to register the
+	// same impl on the QUIC server.
+	kd.mu.Lock()
 	kd.KDSvc = svc
+	kd.mu.Unlock()
 	bindings.RegisterKeibiServiceServer(grpcServer, svc)
 
 	kd.logger.Info("Starting gRPC server...")

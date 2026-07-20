@@ -242,6 +242,10 @@ func (kd *KeibiDrop) onReconnected() {
 		return
 	}
 
+	// The re-handshake derived fresh QUIC keys (SEK*QUIC), so the old QUIC control
+	// pair is cryptographically dead — restart it (idempotent: stops the old one).
+	kd.StartQUICControlChannel()
+
 	// Restart health monitoring with the fresh client.
 	if kd.KDClient != nil && kd.session != nil {
 		kd.HealthMonitor = session.NewHealthMonitor(kd.session, kd.KDClient, kd.logger)
