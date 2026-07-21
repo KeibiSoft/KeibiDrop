@@ -110,6 +110,45 @@ func TestSession_FoldExchangeMatches(t *testing.T) {
 		"the fold is staged on both conns of the peer")
 }
 
+// A fold round must stage its secret on the ExtraFoldConns (the QUIC control lane) too —
+// same secret, same reader-then-writer staging, nil entries skipped. Guards the hook on
+// the responder side, which never goes through the eager-fold driver.
+func TestSession_FoldStagesExtraConns(t *testing.T) {
+	key := randomKey(t)
+	suite := kbc.CipherChaCha20
+	sekX := randomBytes(t, kbc.KeySize)
+	sekY := randomBytes(t, kbc.KeySize)
+
+	extraIn := NewSecureConn(&writeSink{}, key, suite, NoncePrefixInbound)
+	extraOut := NewSecureConn(&writeSink{}, key, suite, NoncePrefixOutbound)
+	responder := &Session{
+		SEKInbound:            sekY,
+		SEKOutbound:           sekX,
+		PeerSupportsKeyUpdate: true,
+		Session: &SessionSockets{
+			Inbound:  NewSecureConn(&writeSink{}, key, suite, NoncePrefixInbound),
+			Outbound: NewSecureConn(&writeSink{}, key, suite, NoncePrefixOutbound),
+		},
+		ExtraFoldConns: func() []*SecureConn { return []*SecureConn{extraIn, extraOut, nil} },
+	}
+
+	initiator, err := kbc.NewFoldInitiator()
+	require.NoError(t, err)
+	resp, err := responder.RespondToFold(&bindings.RekeyRequest{EncSeeds: map[string][]byte{
+		"mlkem":  initiator.MLKEMPublic(),
+		"x25519": initiator.X25519Public(),
+	}})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	tcpSecret := responder.Session.Outbound.stagedWriterFold
+	require.NotEmpty(t, tcpSecret)
+	require.Equal(t, tcpSecret, extraIn.stagedWriterFold,
+		"extra conn (inbound prefix) must be staged with the same fold secret")
+	require.Equal(t, tcpSecret, extraOut.stagedWriterFold,
+		"extra conn (outbound prefix) must be staged with the same fold secret")
+}
+
 // A successful responder fold emits one structured event="fold" Info line, so both peers
 // (not just the initiator) surface the fold. Smoke tests and the kd-bench harness key on
 // this marker to confirm a fold committed.

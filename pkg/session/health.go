@@ -64,6 +64,14 @@ type HealthMonitor struct {
 	// ratchet: the re-handshake is the fallback rotation for peers without key-update.
 	OnRekeyNeeded func() bool
 	RekeyEnabled  bool
+	// ExtraEpoch, when set, reports the highest writer epoch of ratcheting conns OUTSIDE
+	// the captured TCP pair (the QUIC control lane). The near-wrap re-handshake must see
+	// every lane that ratchets: one re-handshake re-derives ALL keys (TCP SEKs and QUIC
+	// SEKs) and resets every epoch to 0, so a single rescue covers all lanes — but only
+	// if the trigger can observe them. Without this, a hot QUIC lane would hold at the
+	// wrap guard (traffic continues, forward secrecy stops advancing) with no rescue.
+	// Called only on the monitor goroutine.
+	ExtraEpoch func() uint16
 
 	// Control
 	ctx    context.Context
@@ -210,7 +218,14 @@ func (m *HealthMonitor) maybeRekey() bool {
 	// Near-wrap uses the captured conns' epoch (MaxWriterEpoch), race-free on the monitor
 	// goroutine: only a key-update conn ratchets past epoch 0, so a high epoch already implies
 	// the ratchet is on. Reading the live m.session here would race a reconnect socket swap.
-	if idle && m.OnRekeyNeeded != nil && (m.shouldRekey() || m.MaxWriterEpoch() >= epochRehandshakeThreshold) {
+	// ExtraEpoch folds in the QUIC lane, which ratchets independently of the captured pair.
+	maxEpoch := m.MaxWriterEpoch()
+	if m.ExtraEpoch != nil {
+		if q := m.ExtraEpoch(); q > maxEpoch {
+			maxEpoch = q
+		}
+	}
+	if idle && m.OnRekeyNeeded != nil && (m.shouldRekey() || maxEpoch >= epochRehandshakeThreshold) {
 		return m.OnRekeyNeeded()
 	}
 	return false

@@ -82,3 +82,33 @@ func TestHealthMonitorNearWrapTriggersRekey(t *testing.T) {
 		"a key-update conn near the wrap guard must fire the re-handshake below the byte threshold")
 	require.Equal(t, 1, fired)
 }
+
+// The QUIC control lane ratchets independently of the captured TCP pair, so the near-wrap
+// rescue must also fire when ONLY the ExtraEpoch source (the QUIC lane) approaches the
+// guard while the TCP pair sits at epoch 0. Without this, a hot QUIC lane would hold at
+// the wrap guard forever: traffic continues but forward secrecy stops advancing, with no
+// re-handshake to reset it.
+func TestHealthMonitorQUICNearWrapTriggersRekey(t *testing.T) {
+	old := RekeyBytesThreshold
+	RekeyBytesThreshold = 1 << 62
+	t.Cleanup(func() { RekeyBytesThreshold = old })
+
+	key := randomKey(t)
+	sc := NewSecureConn(&writeSink{}, key, kbc.CipherChaCha20, NoncePrefixOutbound)
+	require.Equal(t, uint16(0), sc.WriterEpoch(), "TCP pair stays at epoch 0 in this scenario")
+
+	sess := &Session{Session: &SessionSockets{Outbound: sc}}
+	m := &HealthMonitor{session: sess, RekeyEnabled: true, outbound: sc}
+	fired := 0
+	m.OnRekeyNeeded = func() bool { fired++; return true }
+
+	// No extra source yet: nothing fires.
+	require.False(t, m.maybeRekey(), "epoch 0 everywhere must not rekey")
+	require.Equal(t, 0, fired)
+
+	// QUIC lane near the wrap guard: the rescue must fire even though TCP is at epoch 0.
+	m.ExtraEpoch = func() uint16 { return epochRehandshakeThreshold }
+	require.True(t, m.maybeRekey(),
+		"a QUIC-lane epoch at the re-handshake threshold must fire the rescue")
+	require.Equal(t, 1, fired)
+}

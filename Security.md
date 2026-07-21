@@ -122,7 +122,8 @@ The system uses **AEAD encryption (AES-256-GCM or ChaCha20-Poly1305, negotiated 
 
 * File contents are passed over a **secure, AEAD-encrypted duplex stream**.
 * Encryption is **connection-oriented**, rather than chunk-based.
-* Each connection has its own **symmetric session key** (derived from the identity-key handshake, then advanced by the ratchet and mixed with fresh post-quantum entropy once per connection) and independent AEAD state per direction.
+* Each connection has its own **symmetric session key** (derived from the identity-key handshake, then advanced by the ratchet) and independent AEAD state per direction. A fold round stages its fresh post-quantum entropy on **every live lane** — the TCP data pair and the QUIC control conns — so all lanes gain the same forward secrecy (see [Forward Secrecy](#session-key-ratchet-and-forward-secrecy)).
+* A session runs over **two transport lanes**, both wrapped in this same AEAD layer: the **TCP pair** (one conn per direction; bulk file transfer) and the **QUIC control lane over UDP** (control, metadata, and on-demand reads; survives IP changes by connection migration). The QUIC lane's keys are separate per-direction session keys derived in the same handshake (`SEKOutboundQUIC`/`SEKInboundQUIC`). QUIC's own TLS 1.3 sits underneath, but confidentiality rests on this post-quantum layer, not on the transport.
 
 Encryption is handled transparently within the gRPC transport layer using authenticated stream wrappers written in Go. Data is encrypted continuously and decrypted on the fly as it flows across the connection.
 
@@ -151,7 +152,7 @@ This ensures that even bidirectional traffic during a session does **not risk no
 
 ### Nonce safety and re-key thresholds
 
-The nonce space is 2³² (~4.3 billion). We re-key after 1 GB of data transferred or ~1 million encrypted messages, whichever comes first. This gives a ~4000x safety margin before nonce exhaustion. The re-key thresholds are conservative forward secrecy limits that bound the exposure window if a key is ever compromised, not hard cryptographic boundaries.
+The 12-byte AEAD nonce is structured: a 4-byte direction prefix, a 2-byte key epoch, and a 6-byte per-epoch counter (2⁴⁸ ≈ 2.8×10¹⁴ frames per epoch). Each direction rotates its key — bumping the epoch and resetting the counter — after 1 GB, ~1 million messages, or 60 seconds since its last rotation, whichever comes first, so one epoch never sees more than ~10⁶ frames against a 2⁴⁸ counter space (≈10⁸× margin). The epoch space itself is bounded (2¹⁶): a session that somehow burned ~65,500 rotations (≈64 TB per direction at the byte threshold, or ~45 days of rotating at least once a minute) is re-handshaken onto fresh epoch-0 keys by the health monitor before the space runs out — the monitor watches every ratcheting lane, TCP and QUIC. The re-key thresholds are conservative forward-secrecy limits that bound the exposure window if a key is ever compromised, not hard cryptographic boundaries.
 
 ---
 
@@ -193,9 +194,9 @@ The handshake derives the session key from long-term identity keys, so on its ow
 
 ### Symmetric ratchet (always on)
 
-Each direction advances its key with a one-way KDF ratchet: every epoch derives the next chain key from the current one and discards the old one, so a leak of the live key does not expose earlier epochs. The bump rides an on-wire epoch marker in the nonce, with no pause in the data stream. It rotates well before nonce exhaustion, at latest every 1 GB or ~1 million messages per direction, far under the 2^32 nonce space.
+Each direction advances its key with a one-way KDF ratchet: every epoch derives the next chain key from the current one and discards the old one, so a leak of the live key does not expose earlier epochs. The bump rides an on-wire epoch marker in the nonce, with no pause in the data stream. It rotates at latest every 1 GB, ~1 million messages, or 60 seconds of writing per direction — far under the per-epoch 2⁴⁸ counter space. Rotation happens on the write path itself (make-before-break): the frame that crosses a threshold is already sealed under the next key, so there is no round trip and no pause; an idle direction rotates on its first write after the cadence elapses, so no frame is ever sealed under a key older than the thresholds allow. Both the TCP data pair and the QUIC control lane ratchet this way.
 
-Peers that predate the ratchet fall back to a full re-handshake rekey over the `Rekey` gRPC (fresh seeds, new epoch, sockets re-established). This is a compatibility fallback only; two current peers never use it.
+Peers that predate the ratchet negotiate it off — the capability bit is bound into key derivation, so stripping it in transit fails the handshake outright — and rotate via the idle-time re-handshake fallback instead (a full fresh handshake driven by the health monitor). This is a compatibility fallback only; two current peers never use it, and a session running without the ratchet logs a loud warning so a downgrade cannot pass unnoticed.
 
 ### Ephemeral post-quantum fold
 
@@ -210,6 +211,7 @@ Once a direction has folded, its keys depend on ephemeral secrets that were neve
 - **Pre-fold residual.** A direction folds on its next frame after the secret is staged: promptly on the connection-carrying direction, and on the next carrier frame elsewhere, bounded per direction by the ~5 second heartbeat. Frames sent before a direction folds are protected only by the identity-key handshake.
 - **No post-compromise healing.** The fold runs once per connection, not periodically, so a leak of the live ratchet state mid-session is not healed by a later fold. A reconnect does re-fold with fresh entropy.
 - **Additive, never fatal.** A failed or dropped fold leaves the connection on the handshake-derived ratchet with no interruption; the next reconnect re-folds.
+- **QUIC lane fold coverage — join-window residual.** Fold rounds stage their secret on the QUIC conns too (same secret, same per-conn machinery, no wire change), and the initiator re-runs a fold round whenever a QUIC wire comes up (dial success or accept), so the lane normally carries folded keys within one round trip of existing. The residual: a wire that appears between rounds is ratchet-only until the round its own arrival triggers completes (one ~3.2 KB exchange, best-effort); if that round fails, the wire stays on handshake-derived keys until the next reconnect re-folds. Only frames sent on such a wire inside that window have pre-fold exposure.
 
 ---
 

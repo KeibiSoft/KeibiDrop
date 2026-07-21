@@ -11,6 +11,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
@@ -57,10 +58,37 @@ func (kd *KeibiDrop) runEagerFold(sess *session.Session) {
 	ctx, cancel := context.WithTimeout(context.Background(), eagerFoldTimeout)
 	defer cancel()
 
-	if err := sess.InitiateFold(ctx); err != nil {
+	// Lane failover, not duplication: ONE fold round at a time, tried over the QUIC
+	// channel first (isolated from TCP bulk, and it proves the lane end to end), then
+	// the TCP client with the remaining budget. Failover is safe — a half-completed
+	// QUIC round is superseded by the TCP retry's fresh round (staging is supersede-
+	// idempotent). Duplicating one round over both lanes would NOT be safe: KEM
+	// encapsulation is randomized, so duplicate requests derive different secrets.
+	// Fold errors do not demote the QUIC channel: they can be protocol-level
+	// (role/readiness), and the metadata path's own traffic polices channel health.
+	lane := "tcp"
+	err := ErrNoQUICForFold
+	if qc := kd.QUICKeibiClient(); qc != nil {
+		qctx, qcancel := context.WithTimeout(ctx, quicMetaTimeout)
+		err = sess.InitiateFoldVia(qctx, qc)
+		qcancel()
+		lane = "quic"
+	}
+	if err != nil {
+		if lane == "quic" {
+			logger.Debug("Eager fold over QUIC failed; retrying over TCP", "error", err)
+		}
+		lane = "tcp"
+		err = sess.InitiateFold(ctx)
+	}
+	if err != nil {
 		logger.Info("Eager fold did not complete; session stays on the handshake key until reconnect", "error", err)
 		return
 	}
 	logger.Info("Eager fold committed; session is forward-secret against later identity-key theft",
-		"epoch", kd.WriterEpoch(), "dir", "initiate")
+		"epoch", kd.WriterEpoch(), "dir", "initiate", "lane", lane)
 }
+
+// ErrNoQUICForFold is the sentinel that routes the eager fold to TCP when no QUIC
+// channel is up; it never escapes runEagerFold.
+var ErrNoQUICForFold = errors.New("no quic channel for fold")

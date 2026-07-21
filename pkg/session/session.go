@@ -65,6 +65,14 @@ type Session struct {
 
 	GRPCListener net.Listener
 	GRPCClient   bindings.KeibiServiceClient
+	// ExtraFoldConns, when set, returns additional live SecureConns — the QUIC control
+	// lane — to include in a fold round. stageFoldBothConns calls it at staging time on
+	// BOTH roles (initiator and responder), so every lane that exists at that moment gets
+	// the fold's fresh entropy, not just the TCP pair. A QUIC wire that comes up later is
+	// covered by the fold round its own arrival triggers (see the eager-fold driver's
+	// QUIC-conn-up re-fold). Must be safe to call from any goroutine; nil entries are
+	// skipped.
+	ExtraFoldConns func() []*SecureConn
 
 	// Session state and lifecycle
 	State       SessionState
@@ -298,6 +306,13 @@ func (s *Session) ApplyKeyUpdateNegotiation() {
 		return
 	}
 	on := s.UseKeyUpdate()
+	if !on && s.logger != nil {
+		// Post-0.4 every peer supports the in-band ratchet, so a ratchet-less session
+		// means an old peer or a downgrade: keys then rotate only via the re-handshake
+		// fallback. Loud on purpose — a silent epoch-0 session must not pass unnoticed.
+		s.logger.Warn("Session running WITHOUT in-band rekey (peer did not negotiate key-update); forward secrecy limited to re-handshake rotations",
+			"own", ownSupportsKeyUpdate(), "peer", s.PeerSupportsKeyUpdate)
+	}
 	if s.Session.Inbound != nil {
 		s.Session.Inbound.SetKeyUpdate(on)
 	}

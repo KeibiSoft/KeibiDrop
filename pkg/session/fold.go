@@ -89,18 +89,29 @@ func (s *Session) stageFoldBothConns(secret []byte, isInitiator bool) {
 	if s.Session == nil {
 		return
 	}
-	in, out := s.Session.Inbound, s.Session.Outbound
-	if in != nil {
-		in.stageReaderFold(secret)
+	conns := make([]*SecureConn, 0, 4)
+	for _, c := range []*SecureConn{s.Session.Inbound, s.Session.Outbound} {
+		if c != nil {
+			conns = append(conns, c)
+		}
 	}
-	if out != nil {
-		out.stageReaderFold(secret)
+	// The QUIC control lane folds in the same round: same secret, same per-conn staging
+	// machinery, no wire change. ExtraFoldConns snapshots whichever QUIC conns exist right
+	// now; a wire that appears later is covered by the round its arrival triggers.
+	if s.ExtraFoldConns != nil {
+		for _, c := range s.ExtraFoldConns() {
+			if c != nil {
+				conns = append(conns, c)
+			}
+		}
 	}
-	if in != nil {
-		in.armWriterFold(secret, isInitiator)
+	// Every reader staged before any writer is armed — the cross-conn invariant, now
+	// spanning the extra conns too.
+	for _, c := range conns {
+		c.stageReaderFold(secret)
 	}
-	if out != nil {
-		out.armWriterFold(secret, isInitiator)
+	for _, c := range conns {
+		c.armWriterFold(secret, isInitiator)
 	}
 }
 
@@ -157,13 +168,28 @@ func (s *Session) RespondToFold(req *bindings.RekeyRequest) (*bindings.RekeyResp
 	}, nil
 }
 
-// InitiateFold is the initiator side of a fold round (the gRPC client). It derives the
-// session-bound salt, generates a fresh ephemeral keypair, sends its publics over the Rekey
-// RPC, derives the fold secret from the response, and stages it on both conns as the
-// initiator (whose writers fold promptly). The caller treats it as best-effort, so any
-// failure is returned rather than swallowed.
+// InitiateFold is the initiator side of a fold round over the session's own TCP gRPC
+// client. See InitiateFoldVia for the round itself.
 func (s *Session) InitiateFold(ctx context.Context) error {
 	if s.GRPCClient == nil {
+		return ErrFoldNoClient
+	}
+	return s.InitiateFoldVia(ctx, s.GRPCClient)
+}
+
+// InitiateFoldVia runs the initiator side of a fold round over the given KeibiService
+// client — the caller picks the lane (the eager-fold driver tries the QUIC channel first
+// and falls back to TCP); the round is identical either way. It derives the session-bound
+// salt, generates a fresh ephemeral keypair, sends its publics over the Rekey RPC, derives
+// the fold secret from the response, and stages it on both conns as the initiator (whose
+// writers fold promptly). The caller treats it as best-effort, so any failure is returned
+// rather than swallowed. Lane FAILOVER is safe by construction: a failed attempt that
+// still staged the responder is superseded by the retry's fresh round (staging is
+// supersede-idempotent), so both peers converge on the last completed round. Lane
+// DUPLICATION of one round would NOT be safe — KEM encapsulation is randomized, so a
+// duplicate request derives a different secret (see docs/rekey-merge-handoff.md).
+func (s *Session) InitiateFoldVia(ctx context.Context, client bindings.KeibiServiceClient) error {
+	if client == nil {
 		return ErrFoldNoClient
 	}
 	if !s.foldReady() {
@@ -183,7 +209,7 @@ func (s *Session) InitiateFold(ctx context.Context) error {
 		foldKeyX25519: initiator.X25519Public(),
 	}}
 
-	resp, err := s.GRPCClient.Rekey(ctx, req)
+	resp, err := client.Rekey(ctx, req)
 	if err != nil {
 		return fmt.Errorf("fold initiate: rekey rpc: %w", err)
 	}

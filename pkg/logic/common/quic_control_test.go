@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	cpb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control"
@@ -316,6 +317,83 @@ func TestQUICControlChannelStaysEpochZeroWithoutNegotiation(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server never accepted the QUIC control conn")
 	}
+}
+
+// foldRelayClient carries a fold round's Rekey RPC directly to the responder session,
+// standing in for the gRPC channel. Only Rekey is implemented; nothing else is called.
+type foldRelayClient struct {
+	bindings.KeibiServiceClient
+	responder *session.Session
+}
+
+func (c foldRelayClient) Rekey(_ context.Context, req *bindings.RekeyRequest, _ ...grpc.CallOption) (*bindings.RekeyResponse, error) {
+	return c.responder.RespondToFold(req)
+}
+
+// TestQUICControlChannelFoldCoversQUICLane is the record-now-decrypt-later closure proof
+// for the QUIC lane: a real fold round staged via ExtraFoldConns must land on the REAL
+// QUIC control conns of both peers. Discriminator: the byte threshold is out of reach
+// (2^62) and the time cadence (60 s) far exceeds the test, so a plain ratchet bump is
+// impossible — an epoch advance on the QUIC conns proves the FOLD applied. The echo also
+// proves the folded rotation is seamless (byte-perfect across the bump).
+func TestQUICControlChannelFoldCoversQUICLane(t *testing.T) {
+	alice, bob := handshakenSessionPair(t)
+	origBytes := session.RekeyBytesThreshold
+	session.RekeyBytesThreshold = 1 << 62
+	t.Cleanup(func() { session.RekeyBytesThreshold = origBytes })
+
+	conn, accepted := quicEchoPair(t, alice, bob)
+	_ = echoStream(t, conn, 16<<10, 16<<10) // force the accept; epoch-0 baseline
+	var srvConn net.Conn
+	select {
+	case srvConn = <-accepted:
+		require.NotNil(t, srvConn)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never accepted the QUIC control conn")
+	}
+	dialSC := conn.(*session.SecureConn)
+	srvSC := srvConn.(*session.SecureConn)
+	require.Equal(t, uint16(0), dialSC.WriterEpoch(), "baseline: no rotation before the fold")
+	require.Equal(t, uint16(0), srvSC.WriterEpoch(), "baseline: no rotation before the fold")
+
+	// Wire the lane into fold staging exactly as production does (kd.quicFoldConns).
+	alice.ExtraFoldConns = func() []*session.SecureConn { return []*session.SecureConn{dialSC} }
+	bob.ExtraFoldConns = func() []*session.SecureConn { return []*session.SecureConn{srvSC} }
+
+	initiator, responder := alice, bob
+	if !alice.IsFoldInitiator() {
+		initiator, responder = bob, alice
+	}
+	require.NoError(t, initiator.InitiateFoldVia(context.Background(), foldRelayClient{responder: responder}))
+
+	// Two ping-pongs: enough for both writers to fold regardless of which end initiated
+	// (a responder's writer folds only after its own reader followed the initiator's).
+	_ = echoStream(t, conn, 2*(16<<10), 16<<10)
+	require.Equal(t, uint16(1), dialSC.WriterEpoch(),
+		"dial-side QUIC conn must have FOLDED (plain ratchet impossible here)")
+	require.Equal(t, uint16(1), srvSC.WriterEpoch(),
+		"accepted-side QUIC conn must have FOLDED")
+}
+
+// TestQUICListenerAcceptHookFires pins the accept path: wrap in a keyed SecureConn,
+// retain for fold/epoch access, and fire the QUIC-conn-up fold trigger.
+func TestQUICListenerAcceptHookFires(t *testing.T) {
+	c1, c2 := net.Pipe()
+	defer c2.Close()
+	fired := 0
+	l := &quicControlListener{
+		Listener:  NewSingleConnListener(c1),
+		key:       make([]byte, 32),
+		suite:     kbc.CipherChaCha20,
+		keyUpdate: true,
+		onAccept:  func() { fired++ },
+	}
+	got, err := l.Accept()
+	require.NoError(t, err)
+	sc, ok := got.(*session.SecureConn)
+	require.True(t, ok, "accepted conn must be a SecureConn")
+	require.Equal(t, 1, fired, "accept must fire the fold trigger")
+	require.Same(t, sc, l.LastAccepted(), "accepted conn must be retained")
 }
 
 // TestQUICControlRefusedWithoutKey proves fail-soft: with no negotiated QUIC key (older

@@ -101,9 +101,10 @@ type quicControlListener struct {
 	key       []byte
 	suite     kbc.CipherSuite
 	keyUpdate bool
+	onAccept  func() // QUIC-conn-up fold trigger; set before the server goroutine starts
 
 	mu   sync.Mutex
-	last *session.SecureConn // most recently accepted conn, for epoch observability
+	last *session.SecureConn // most recently accepted conn, for epoch observability + fold staging
 }
 
 func (l *quicControlListener) Accept() (net.Conn, error) {
@@ -116,6 +117,13 @@ func (l *quicControlListener) Accept() (net.Conn, error) {
 	l.mu.Lock()
 	l.last = sc
 	l.mu.Unlock()
+	// A new QUIC wire exists: re-run the eager fold so this conn gets the fold's fresh
+	// entropy too (the earlier round may have finished before this wire was up, and the
+	// secret is zeroized after staging — never retained). Single-flight + supersede
+	// staging make repeat rounds safe; the initiator election gates who actually acts.
+	if l.onAccept != nil {
+		l.onAccept()
+	}
 	return sc, nil
 }
 
@@ -158,6 +166,9 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 	if err != nil {
 		logger.Warn("QUIC control listen failed; staying TCP-only", "addr", inAddr, "error", err)
 	} else {
+		if qln, ok := ln.(*quicControlListener); ok {
+			qln.onAccept = kd.maybeStartEagerFold // set before Serve starts accepting
+		}
 		kd.mu.Lock()
 		kd.quicControlLn = ln
 		kd.mu.Unlock()
@@ -266,6 +277,10 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 				_ = oldMig.Close()
 			}
 			logger.Info("QUIC control channel connected", "peer", peerAddr)
+			// New QUIC wire up: re-run the eager fold so the dial-side conn gets the
+			// fold entropy too (the connect-time round may predate this wire). Safe to
+			// repeat: single-flight + supersede-idempotent staging.
+			kd.maybeStartEagerFold()
 			return true
 		}
 		logger.Debug("QUIC control dial attempt failed", "attempt", attempt, "error", err)
@@ -422,6 +437,28 @@ func (kd *KeibiDrop) QUICKeibiClient() bindings.KeibiServiceClient {
 
 // QUICMetadataSent reports how many metadata RPCs actually rode the QUIC channel.
 func (kd *KeibiDrop) QUICMetadataSent() uint64 { return kd.quicMetaSent.Load() }
+
+// quicFoldConns returns the live QUIC control SecureConns (dial-side + last accepted) so
+// a fold round can stage its secret on them too — the same handles QUICWriterEpoch reads.
+// Wired as session.ExtraFoldConns wherever kd.session is published. Safe from any
+// goroutine; returns only what exists right now (empty when the channel is down, in which
+// case the fold covers the TCP pair alone, exactly as before).
+func (kd *KeibiDrop) quicFoldConns() []*session.SecureConn {
+	kd.mu.Lock()
+	sc := kd.quicControlSC
+	ln, _ := kd.quicControlLn.(*quicControlListener)
+	kd.mu.Unlock()
+	conns := make([]*session.SecureConn, 0, 2)
+	if sc != nil {
+		conns = append(conns, sc)
+	}
+	if ln != nil {
+		if a := ln.LastAccepted(); a != nil {
+			conns = append(conns, a)
+		}
+	}
+	return conns
+}
 
 // QUICWriterEpoch returns the highest writer key-epoch across the live QUIC control
 // conns (dial-side and the last accepted server-side), or 0 when the channel is down.

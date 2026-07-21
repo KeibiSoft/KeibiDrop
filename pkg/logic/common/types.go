@@ -299,6 +299,7 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 
 	kd.Identity = id
 	kd.AddressBook = ab
+	sess.ExtraFoldConns = kd.quicFoldConns // fold rounds cover the QUIC lane too
 	kd.mu.Lock()
 	kd.session = sess
 	kd.mu.Unlock()
@@ -318,6 +319,7 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 			logger.Error("Failed to refresh persistent session", "error", err)
 			return nil
 		}
+		s.ExtraFoldConns = kd.quicFoldConns // fold rounds cover the QUIC lane too
 		return s
 	}
 
@@ -344,6 +346,7 @@ func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, 
 		if err != nil {
 			return "", fmt.Errorf("init ephemeral session: %w", err)
 		}
+		sess.ExtraFoldConns = kd.quicFoldConns // fold rounds cover the QUIC lane too
 		kd.mu.Lock()
 		kd.session = sess
 		kd.mu.Unlock()
@@ -353,6 +356,7 @@ func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, 
 				kd.logger.Error("Failed to refresh ephemeral session", "error", err)
 				return nil
 			}
+			s.ExtraFoldConns = kd.quicFoldConns // fold rounds cover the QUIC lane too
 			return s
 		}
 		return sess.OwnFingerprint, nil

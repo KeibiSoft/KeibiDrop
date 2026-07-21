@@ -33,6 +33,9 @@ func (kd *KeibiDrop) newConfiguredHealthMonitor(sess *session.Session, client bi
 	hm := session.NewHealthMonitor(sess, client, kd.logger)
 	hm.OnDisconnect = kd.onDisconnect
 	hm.OnRekeyNeeded = kd.onRekeyNeeded
+	// Near-wrap rescue must watch the QUIC lane too: it ratchets independently of the
+	// captured TCP pair, and the rescue re-handshake re-derives the QUIC keys as well.
+	hm.ExtraEpoch = kd.QUICWriterEpoch
 	hm.OnHealthChange = func(old, cur session.ConnectionHealth) {
 		logger.Info("Connection health changed", "from", old, "to", cur)
 	}
