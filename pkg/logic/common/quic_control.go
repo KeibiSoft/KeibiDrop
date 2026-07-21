@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -100,6 +101,9 @@ type quicControlListener struct {
 	key       []byte
 	suite     kbc.CipherSuite
 	keyUpdate bool
+
+	mu   sync.Mutex
+	last *session.SecureConn // most recently accepted conn, for epoch observability
 }
 
 func (l *quicControlListener) Accept() (net.Conn, error) {
@@ -109,7 +113,17 @@ func (l *quicControlListener) Accept() (net.Conn, error) {
 	}
 	sc := session.NewSecureConn(c, l.key, l.suite, session.NoncePrefixInbound)
 	sc.SetKeyUpdate(l.keyUpdate)
+	l.mu.Lock()
+	l.last = sc
+	l.mu.Unlock()
 	return sc, nil
+}
+
+// LastAccepted returns the most recently accepted server-side SecureConn, or nil.
+func (l *quicControlListener) LastAccepted() *session.SecureConn {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.last
 }
 
 // StartQUICControlChannel brings up the QUIC control pair alongside the established TCP
@@ -124,12 +138,16 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 	kd.StopQUICControlChannel()
 
 	logger := kd.logger.With("component", "quic-control")
+	// Snapshot session + ctx under kd.mu: teardown nils kd.session under the lock, and
+	// a bare read here has no happens-before (his teardown-race probes catch exactly this).
+	kd.mu.Lock()
 	s := kd.session
+	ctx := kd.ctx // this generation's context; a reconnect swaps kd.ctx for a fresh one
+	kd.mu.Unlock()
 	if s == nil || len(s.SEKInboundQUIC) == 0 {
 		logger.Info("peer did not negotiate a QUIC channel; staying TCP-only")
 		return
 	}
-	ctx := kd.ctx // this generation's context; a reconnect swaps kd.ctx for a fresh one
 
 	// Inbound listener on our UDP port (same number as the TCP inbound port). The gRPC
 	// server is attached in a background goroutine: it must register the KeibiService
@@ -204,7 +222,11 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 		if ctx.Err() != nil {
 			return false
 		}
+		// Under kd.mu: this loop runs in a background goroutine, so a teardown can nil
+		// kd.session concurrently.
+		kd.mu.Lock()
 		s := kd.session
+		kd.mu.Unlock()
 		if s == nil {
 			return false
 		}
@@ -235,6 +257,7 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 			oldMig := kd.quicControlMig
 			kd.quicControlClient = cc
 			kd.quicControlMig = mc
+			kd.quicControlSC, _ = conn.(*session.SecureConn) // epoch observability handle
 			kd.mu.Unlock()
 			if old != nil {
 				_ = old.Close() // exactly one live client; a racing redial loses cleanly
@@ -317,6 +340,7 @@ func (kd *KeibiDrop) StopQUICControlChannel() {
 	kd.quicControlServer = nil
 	kd.quicControlLn = nil
 	kd.quicControlMig = nil
+	kd.quicControlSC = nil
 	kd.quicPeerAddr = "" // a demote redial after this point has nowhere to dial (stale peer)
 	kd.mu.Unlock()
 	if cc != nil {
@@ -399,6 +423,28 @@ func (kd *KeibiDrop) QUICKeibiClient() bindings.KeibiServiceClient {
 // QUICMetadataSent reports how many metadata RPCs actually rode the QUIC channel.
 func (kd *KeibiDrop) QUICMetadataSent() uint64 { return kd.quicMetaSent.Load() }
 
+// QUICWriterEpoch returns the highest writer key-epoch across the live QUIC control
+// conns (dial-side and the last accepted server-side), or 0 when the channel is down.
+// The QUIC lane ratchets independently of the TCP pair — on-demand reads ride it when
+// it is up — so transport-wide rekey observability (tests, diagnostics) must read both
+// lanes, not just the TCP SessionSockets the HealthMonitor captures.
+func (kd *KeibiDrop) QUICWriterEpoch() uint16 {
+	kd.mu.Lock()
+	sc := kd.quicControlSC
+	ln, _ := kd.quicControlLn.(*quicControlListener)
+	kd.mu.Unlock()
+	var e uint16
+	if sc != nil {
+		e = sc.WriterEpoch()
+	}
+	if ln != nil {
+		if a := ln.LastAccepted(); a != nil && a.WriterEpoch() > e {
+			e = a.WriterEpoch()
+		}
+	}
+	return e
+}
+
 // quicMetaTimeout bounds the QUIC-first attempt of a metadata RPC. A half-dead QUIC
 // channel (e.g. UDP blackholed mid-session) otherwise stalls the RPC until the QUIC
 // idle timeout (~20s, measured); with this bound the worst case is one short stall,
@@ -417,6 +463,7 @@ func (kd *KeibiDrop) demoteQUICControl(err error) {
 	mc := kd.quicControlMig
 	kd.quicControlClient = nil
 	kd.quicControlMig = nil
+	kd.quicControlSC = nil
 	peerAddr := kd.quicPeerAddr
 	ctx := kd.ctx
 	kd.mu.Unlock()
@@ -455,7 +502,11 @@ func quicFirst[Req, Resp any](kd *KeibiDrop, ctx context.Context, req Req,
 		}
 		kd.demoteQUICControl(err)
 	}
+	// Snapshot under kd.mu: the notify worker calls this from its own goroutine while
+	// Run's teardown rewrites kd.session under the lock (bare read = data race).
+	kd.mu.Lock()
 	s := kd.session
+	kd.mu.Unlock()
 	if s == nil || s.GRPCClient == nil {
 		var zero Resp
 		return zero, ErrInvalidSession
@@ -520,7 +571,11 @@ func (s quicControlService) Announce(_ context.Context, req *cpb.AnnounceRequest
 		return &cpb.AnnounceReply{}, nil
 	}
 	port := int(req.TcpPort)
+	// Under kd.mu: Announce arrives on a gRPC server goroutine; teardown nils kd.session
+	// under the lock.
+	kd.mu.Lock()
 	sess := kd.session
+	kd.mu.Unlock()
 	changed := kd.PeerIPv6IP != req.Ip || (sess != nil && sess.PeerPort != port)
 	if !changed {
 		return &cpb.AnnounceReply{}, nil

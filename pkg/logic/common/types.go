@@ -72,6 +72,7 @@ type KeibiDrop struct {
 	quicControlServer *grpc.Server
 	quicControlLn     net.Listener              // generation marker: serveQUICControl only attaches to the current one
 	quicControlMig    *transport.MigratableConn // migration handle: MigrateQUICControl moves the path, gRPC never notices
+	quicControlSC     *session.SecureConn       // dial-side conn: epoch observability across the transport manager (QUICWriterEpoch)
 	quicPeerAddr      string                    // peer's UDP control endpoint, kept for the self-heal redial
 	quicRedialing     atomic.Bool               // single-flight guard: at most one background redial
 	quicMetaSent      atomic.Uint64             // metadata RPCs that actually rode the QUIC channel (diagnostics/tests)

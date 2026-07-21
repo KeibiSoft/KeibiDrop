@@ -51,16 +51,24 @@ func forceFrequentRatchet(t *testing.T, bytesPerBump uint64) {
 	})
 }
 
-// maxWriterEpoch reads the higher of the two peers' live writer epochs. The peer
-// serving file data ratchets its writer, but taking the max catches a bump either way.
+// maxWriterEpoch reads the highest live writer epoch across the WHOLE transport
+// manager of both peers: the TCP SessionSockets pair (via the HealthMonitor) AND the
+// QUIC control conns. On-demand reads ride the QUIC lane when it is up (the dual
+// stream provider routes them there), and that lane ratchets independently — watching
+// only the TCP pair makes a QUIC-served stream look like "no rekeys happened".
 func maxWriterEpoch(tp *TestPair) func() uint16 {
 	return func() uint16 {
-		a := tp.Alice.HealthMonitor.MaxWriterEpoch()
-		b := tp.Bob.HealthMonitor.MaxWriterEpoch()
-		if a > b {
-			return a
+		e := tp.Alice.HealthMonitor.MaxWriterEpoch()
+		for _, cand := range []uint16{
+			tp.Bob.HealthMonitor.MaxWriterEpoch(),
+			tp.Alice.QUICWriterEpoch(),
+			tp.Bob.QUICWriterEpoch(),
+		} {
+			if cand > e {
+				e = cand
+			}
 		}
-		return b
+		return e
 	}
 }
 
