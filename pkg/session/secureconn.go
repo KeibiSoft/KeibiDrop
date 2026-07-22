@@ -9,6 +9,7 @@
 package session
 
 import (
+	"bytes"
 	"crypto/cipher"
 	"encoding/binary"
 	"fmt"
@@ -205,34 +206,59 @@ type SecureReader struct {
 	// release a responder's writers.
 	foldMu        sync.Mutex
 	stagedFold    []byte
+	priorFold     []byte // the superseded round's secret, kept one deep (see stageFold)
 	foldCommitted atomic.Bool
 }
 
 // stageFold stages the 32-byte KEM secret this receive direction should fold when it next
-// follows an epoch bump. Copies, so the caller keeps ownership; a re-stage supersedes a
-// not-yet-applied secret.
+// follows an epoch bump. Copies, so the caller keeps ownership. A re-stage supersedes a
+// not-yet-applied secret BUT keeps it one deep in priorFold: between the peer staging a
+// new round and the initiator's writers re-arming, a writer armed with the superseded
+// round can still legitimately fold it into a bump already in flight, and dropping that
+// secret outright made such frames undecryptable ("decryption failed at epoch N" under
+// back-to-back fold rounds, CI 2026-07-22). Fold labels are domain-separated per secret,
+// so at most one candidate authenticates; keeping the prior is a correctness window, not
+// a weakening.
 func (s *SecureReader) stageFold(secret []byte) {
 	s.foldMu.Lock()
-	zeroize(s.stagedFold)
+	if s.stagedFold != nil {
+		zeroize(s.priorFold)
+		s.priorFold = s.stagedFold
+	}
 	s.stagedFold = append([]byte(nil), secret...)
 	s.foldMu.Unlock()
 }
 
-// loadFold returns a copy of the staged fold secret, or nil if none is staged.
-func (s *SecureReader) loadFold() []byte {
+// loadFoldCandidates returns copies of the staged fold secrets to try for a one-epoch
+// advance, newest first: the current round, then the superseded prior (if any).
+func (s *SecureReader) loadFoldCandidates() [][]byte {
 	s.foldMu.Lock()
 	defer s.foldMu.Unlock()
-	if s.stagedFold == nil {
-		return nil
+	var out [][]byte
+	if s.stagedFold != nil {
+		out = append(out, append([]byte(nil), s.stagedFold...))
 	}
-	return append([]byte(nil), s.stagedFold...)
+	if s.priorFold != nil {
+		out = append(out, append([]byte(nil), s.priorFold...))
+	}
+	return out
 }
 
-// clearFold drops the staged fold secret after it has healed this direction (single-use).
-func (s *SecureReader) clearFold() {
+// clearFoldAfterCommit drops fold state after a folded epoch was accepted (single-use).
+// If the CURRENT round healed the chain, everything clears. If the PRIOR (superseded)
+// round healed it, the current round stays staged: the peer's writers re-arm with it and
+// its fold arrives on a later bump.
+func (s *SecureReader) clearFoldAfterCommit(committed []byte) {
 	s.foldMu.Lock()
-	zeroize(s.stagedFold)
-	s.stagedFold = nil
+	if s.priorFold != nil && bytes.Equal(committed, s.priorFold) {
+		zeroize(s.priorFold)
+		s.priorFold = nil
+	} else {
+		zeroize(s.stagedFold)
+		s.stagedFold = nil
+		zeroize(s.priorFold)
+		s.priorFold = nil
+	}
 	s.foldMu.Unlock()
 }
 
@@ -311,13 +337,13 @@ func (s *SecureReader) openRatcheted(nonce, ciphertext []byte) ([]byte, error) {
 	}
 
 	// wireEpoch == s.epoch+1: the sender advanced one epoch. It may be a plain ratchet or a
-	// folded one (it mixed the staged KEM secret); the wire carries no signal of which (by
-	// design, no proto change), so derive both candidates and commit whichever authenticates.
-	// The staged fold is tried first; a plain frame then falls through. Each candidate opens
-	// into a FRESH buffer, never ciphertext[:0]: AEAD Open zeroes its destination on failure,
-	// which would corrupt the shared ciphertext for the next candidate.
-	staged := s.loadFold()
-	for _, fold := range foldCandidates(staged) {
+	// folded one (it mixed a staged KEM secret); the wire carries no signal of which (by
+	// design, no proto change), so derive the candidates and commit whichever authenticates.
+	// Candidates: the current staged round, then a superseded prior round (a writer armed
+	// with it may fold it before re-arming), then plain. Each candidate opens into a FRESH
+	// buffer, never ciphertext[:0]: AEAD Open zeroes its destination on failure, which
+	// would corrupt the shared ciphertext for the next candidate.
+	for _, fold := range foldCandidates(s.loadFoldCandidates()) {
 		ck, mk, err := kbc.RatchetKeys(s.ck, s.prefix, wireEpoch, fold)
 		if err != nil {
 			continue
@@ -338,22 +364,18 @@ func (s *SecureReader) openRatcheted(nonce, ciphertext []byte) ([]byte, error) {
 		s.epoch = wireEpoch
 		s.lastNonce = wireNonce
 		if fold != nil {
-			s.clearFold()               // single-use: this fold healed the chain
-			s.foldCommitted.Store(true) // release the responder's gated writers
+			s.clearFoldAfterCommit(fold) // single-use per round; keeps a newer staged round
+			s.foldCommitted.Store(true)  // release the responder's gated writers
 		}
 		return plaintext, nil
 	}
 	return nil, fmt.Errorf("decryption failed at epoch %d", wireEpoch)
 }
 
-// foldCandidates lists the fold secrets to try for a one-epoch advance, in priority order:
-// the staged secret first (if any), then plain (nil). Distinct fold labels mean at most one
-// authenticates, so the order only decides which is attempted first.
-func foldCandidates(staged []byte) [][]byte {
-	if staged != nil {
-		return [][]byte{staged, nil}
-	}
-	return [][]byte{nil}
+// foldCandidates appends the plain (nil) candidate after the staged rounds. Distinct fold
+// labels mean at most one authenticates, so the order only decides which is attempted first.
+func foldCandidates(staged [][]byte) [][]byte {
+	return append(staged, nil)
 }
 
 // SecureConn wraps a net.Conn with separate inbound/outbound encryption.

@@ -256,3 +256,50 @@ func TestSecureConn_ConcurrentStageFoldNoRace(t *testing.T) {
 	require.False(t, reader.r.foldCommitted.Load(),
 		"a gated responder never folds, so no folded epoch is ever committed")
 }
+
+// The back-to-back-rounds supersede race from CI (2026-07-22, "decryption failed at
+// epoch 2"): the responder's reader is re-staged with round B while the initiator's
+// writer, not yet re-armed, still folds round A into a bump already due. The reader
+// must keep the superseded round one deep and authenticate the A-folded epoch, then
+// follow a later B-folded epoch from the re-armed writer. Without priorFold this
+// test's first read fails exactly like CI.
+func TestSecureConn_SupersededRoundStillDecryptsThenNewRoundFolds(t *testing.T) {
+	key := randomKey(t)
+	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
+	writer.SetKeyUpdate(true)
+	reader.SetKeyUpdate(true)
+
+	secretA := randomBytes(t, kbc.KeySize)
+	secretB := randomBytes(t, kbc.KeySize)
+
+	// Round A staged on both ends (writer = initiator, folds promptly on next write).
+	writer.StageEntropyFold(secretA, true)
+	reader.StageEntropyFold(secretA, false)
+	// Round B reaches the reader's side before the writer re-arms (the race window).
+	reader.StageEntropyFold(secretB, false)
+
+	msg1 := randomBytes(t, 256)
+	errCh := make(chan error, 1)
+	go func() { _, e := writer.Write(msg1); errCh <- e }()
+	got := make([]byte, len(msg1))
+	_, err := io.ReadFull(reader, got)
+	require.NoError(t, err, "A-folded epoch must decrypt via the superseded (prior) round")
+	require.NoError(t, <-errCh)
+	require.Equal(t, msg1, got)
+	require.Equal(t, uint16(1), reader.r.epoch, "reader followed the A-folded bump")
+	require.True(t, reader.r.foldCommitted.Load())
+	require.NotNil(t, reader.r.stagedFold, "round B must stay staged after the prior committed")
+
+	// The writer re-arms with round B and folds it on the next write.
+	writer.StageEntropyFold(secretB, true)
+	msg2 := randomBytes(t, 256)
+	go func() { _, e := writer.Write(msg2); errCh <- e }()
+	got2 := make([]byte, len(msg2))
+	_, err = io.ReadFull(reader, got2)
+	require.NoError(t, err, "B-folded epoch must decrypt via the current staged round")
+	require.NoError(t, <-errCh)
+	require.Equal(t, msg2, got2)
+	require.Equal(t, uint16(2), reader.r.epoch)
+	require.Nil(t, reader.r.stagedFold, "current round consumed")
+	require.Nil(t, reader.r.priorFold, "no stale rounds retained")
+}

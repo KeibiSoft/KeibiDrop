@@ -264,12 +264,18 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 				_ = mc.Close()
 				return false
 			}
+			hbCtx, hbCancel := context.WithCancel(ctx)
 			old := kd.quicControlClient
 			oldMig := kd.quicControlMig
+			oldHB := kd.quicHBCancel
 			kd.quicControlClient = cc
 			kd.quicControlMig = mc
+			kd.quicHBCancel = hbCancel
 			kd.quicControlSC, _ = conn.(*session.SecureConn) // epoch observability handle
 			kd.mu.Unlock()
+			if oldHB != nil {
+				oldHB() // the superseded generation's heartbeat exits NOW, not at its next tick
+			}
 			if old != nil {
 				_ = old.Close() // exactly one live client; a racing redial loses cleanly
 			}
@@ -279,7 +285,7 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 			logger.Info("QUIC control channel connected", "peer", peerAddr)
 			// The control-Ping heartbeat now owns QUIC-lane liveness: metadata rides TCP
 			// first, so it can no longer be the canary that trips demote+self-heal.
-			go kd.quicControlHeartbeat(ctx, cc)
+			go kd.quicControlHeartbeat(hbCtx, cc)
 			// New QUIC wire up: re-run the eager fold so the dial-side conn gets the
 			// fold entropy too (the connect-time round may predate this wire). Safe to
 			// repeat: single-flight + supersede-idempotent staging.
@@ -354,6 +360,8 @@ func (kd *KeibiDrop) StopQUICControlChannel() {
 	srv := kd.quicControlServer
 	ln := kd.quicControlLn
 	mc := kd.quicControlMig
+	hb := kd.quicHBCancel
+	kd.quicHBCancel = nil
 	kd.quicControlClient = nil
 	kd.quicControlServer = nil
 	kd.quicControlLn = nil
@@ -361,6 +369,9 @@ func (kd *KeibiDrop) StopQUICControlChannel() {
 	kd.quicControlSC = nil
 	kd.quicPeerAddr = "" // a demote redial after this point has nowhere to dial (stale peer)
 	kd.mu.Unlock()
+	if hb != nil {
+		hb()
+	}
 	if cc != nil {
 		_ = cc.Close()
 	}
@@ -501,12 +512,17 @@ func (kd *KeibiDrop) demoteQUICControl(err error) {
 	kd.mu.Lock()
 	cc := kd.quicControlClient
 	mc := kd.quicControlMig
+	hb := kd.quicHBCancel
+	kd.quicHBCancel = nil
 	kd.quicControlClient = nil
 	kd.quicControlMig = nil
 	kd.quicControlSC = nil
 	peerAddr := kd.quicPeerAddr
 	ctx := kd.ctx
 	kd.mu.Unlock()
+	if hb != nil {
+		hb()
+	}
 	if cc == nil {
 		return // already demoted by a concurrent failure
 	}

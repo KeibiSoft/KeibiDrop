@@ -334,10 +334,35 @@ func TestUXLatency_ManySmallFiles(t *testing.T) {
 	}
 
 	run := func(t *testing.T, fuse bool, nFiles int) {
+		// Two runs per phase, compared on the MIN: the metric is one wall-clock total
+		// over hundreds of sequential loopback pulls, and a single scheduler/GC stall
+		// on a shared box swings it by ~2x (observed baseline spread 652-971 ms across
+		// back-to-back runs, with forced/base ratios from 0.95 to 1.94 and an identical
+		// ratchet count every time). A REAL per-rotation cost inflates every run and
+		// survives the min; one-off noise does not.
 		var baseTotal, forcedTotal time.Duration
 		var forcedBumps int
-		okBase := t.Run("baseline", func(t *testing.T) { _, baseTotal, _ = uxlatSyncSmallFiles(t, fuse, nFiles, false) })
-		okForced := t.Run("forced", func(t *testing.T) { _, forcedTotal, forcedBumps = uxlatSyncSmallFiles(t, fuse, nFiles, true) })
+		minPhase := func(name string, forced bool) (time.Duration, int, bool) {
+			best := time.Duration(0)
+			bumps := 0
+			for i := 1; i <= 2; i++ {
+				var total time.Duration
+				var b int
+				ok := t.Run(fmt.Sprintf("%s-%d", name, i), func(t *testing.T) {
+					_, total, b = uxlatSyncSmallFiles(t, fuse, nFiles, forced)
+				})
+				if !ok {
+					return 0, 0, false
+				}
+				if best == 0 || total < best {
+					best, bumps = total, b
+				}
+			}
+			return best, bumps, true
+		}
+		var okBase, okForced bool
+		baseTotal, _, okBase = minPhase("baseline", false)
+		forcedTotal, forcedBumps, okForced = minPhase("forced", true)
 		if !okBase || !okForced {
 			t.Fatal("a phase subtest failed; skipping the cross-phase comparison (its inputs are zero values)")
 		}

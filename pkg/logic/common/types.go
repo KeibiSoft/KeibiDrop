@@ -75,6 +75,7 @@ type KeibiDrop struct {
 	quicControlSC     *session.SecureConn       // dial-side conn: epoch observability across the transport manager (QUICWriterEpoch)
 	quicPeerAddr      string                    // peer's UDP control endpoint, kept for the self-heal redial
 	quicRedialing     atomic.Bool               // single-flight guard: at most one background redial
+	quicHBCancel      context.CancelFunc        // cancels the CURRENT generation's control heartbeat (kd.mu); deterministic exit so soak counts stay flat
 	disconnectDeferrals atomic.Int32            // consecutive health-failure disconnects deferred for active transfers (bounded; see onDisconnect)
 	quicMetaSent      atomic.Uint64             // metadata RPCs that actually rode the QUIC channel (diagnostics/tests)
 
