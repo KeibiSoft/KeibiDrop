@@ -225,7 +225,17 @@ func (m *HealthMonitor) maybeRekey() bool {
 			maxEpoch = q
 		}
 	}
-	if idle && m.OnRekeyNeeded != nil && (m.shouldRekey() || maxEpoch >= epochRehandshakeThreshold) {
+	// The volume trigger belongs to the legacy (no-ratchet) path only. On a key-update
+	// session the byte counters are cumulative, so ShouldRekey latches true after one
+	// threshold; rotation is already handled in band by the ratchet, and firing
+	// OnRekeyNeeded here would drop the sockets of a healthy session (surfaced as
+	// closed-conn failures and zero observed epoch bumps in the UX-latency suite).
+	// The near-wrap disjunct stays unconditional: it is the deliberate ratchet-era
+	// rescue that resets the epoch space via an idle re-handshake.
+	ratchetOn := (m.inbound != nil && m.inbound.UsesKeyUpdate()) ||
+		(m.outbound != nil && m.outbound.UsesKeyUpdate())
+	volumeDue := m.shouldRekey() && !ratchetOn
+	if idle && m.OnRekeyNeeded != nil && (volumeDue || maxEpoch >= epochRehandshakeThreshold) {
 		return m.OnRekeyNeeded()
 	}
 	return false

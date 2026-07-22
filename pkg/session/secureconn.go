@@ -633,6 +633,15 @@ func (s *SecureConn) SetKeyUpdate(on bool) {
 	s.r.keyUpdate.Store(on)
 }
 
+// UsesKeyUpdate reports whether the in-band ratchet is active on this conn. The health
+// monitor reads it to keep the legacy volume-based re-handshake trigger off ratcheting
+// sessions: their byte counters are cumulative (never reset by a ratchet), so past one
+// threshold ShouldRekey stays true forever, and a volume-driven re-handshake would tear
+// down a healthy session that is already rotating in band.
+func (s *SecureConn) UsesKeyUpdate() bool {
+	return s.useKeyUpdate.Load()
+}
+
 func (s *SecureConn) SetDeadline(t time.Time) error {
 	return s.conn.SetDeadline(t)
 }

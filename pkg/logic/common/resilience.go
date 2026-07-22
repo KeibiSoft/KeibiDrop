@@ -193,6 +193,13 @@ func (kd *KeibiDrop) hasActiveTransfers() bool {
 // cannot thrash the connection.
 const rekeyCooldown = 60 * time.Second
 
+// maxDisconnectDeferrals caps how many consecutive health-failure disconnects the
+// active-transfer guard may defer. A transfer blocked on a dead connection never
+// finishes on its own, so an unbounded deferral deadlocks recovery; at the cap the
+// reconnect proceeds, the dead conn's blocked streams error out, and resumption
+// picks the transfer back up.
+const maxDisconnectDeferrals = 3
+
 // envRekeyUint reads an unsigned-integer env var for the debug rekey threshold override
 // (KD_REKEY_BYTES / KD_REKEY_MSGS). It returns 0 when unset, empty, or unparseable, which
 // leaves the corresponding threshold at its production default.
@@ -290,10 +297,23 @@ func (kd *KeibiDrop) onDisconnect() {
 	// Don't tear down the connection while transfers are active.
 	// Heartbeat failures during large transfers are expected (the gRPC
 	// connection is saturated with file data, starving heartbeat RPCs).
+	// BOUNDED (maxDisconnectDeferrals): a transfer stuck on a dead connection holds the active count
+	// forever, and an unbounded deferral then starves reconnection while the
+	// stuck transfer waits for exactly the reconnect being deferred (observed
+	// as a test-suite hang in TestUXLatency_LiveEditPropagation). After the
+	// cap we reconnect anyway; tearing the dead conn errors the blocked
+	// streams out and resumption recovers the transfer.
 	if kd.hasActiveTransfers() {
-		logger.Warn("Heartbeat failed but active transfers in progress, deferring disconnect")
-		return
+		n := kd.disconnectDeferrals.Add(1)
+		if n < maxDisconnectDeferrals {
+			logger.Warn("Heartbeat failed but active transfers in progress, deferring disconnect",
+				"deferrals", n, "max", maxDisconnectDeferrals)
+			return
+		}
+		logger.Warn("Active transfers still blocked after repeated failed heartbeats; reconnecting anyway",
+			"deferrals", n)
 	}
+	kd.disconnectDeferrals.Store(0)
 
 	logger.Warn("Connection lost, initiating reconnection")
 

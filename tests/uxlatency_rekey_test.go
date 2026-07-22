@@ -299,8 +299,11 @@ func TestUXLatency_InteractiveFirstByte(t *testing.T) {
 	run := func(t *testing.T, fuse bool) {
 		var baseLat, forcedLat []time.Duration
 		var forcedBumps int
-		t.Run("baseline", func(t *testing.T) { baseLat, _, _ = uxlatSyncSmallFiles(t, fuse, nFiles, false) })
-		t.Run("forced", func(t *testing.T) { forcedLat, _, forcedBumps = uxlatSyncSmallFiles(t, fuse, nFiles, true) })
+		okBase := t.Run("baseline", func(t *testing.T) { baseLat, _, _ = uxlatSyncSmallFiles(t, fuse, nFiles, false) })
+		okForced := t.Run("forced", func(t *testing.T) { forcedLat, _, forcedBumps = uxlatSyncSmallFiles(t, fuse, nFiles, true) })
+		if !okBase || !okForced {
+			t.Fatal("a phase subtest failed; skipping the cross-phase comparison (its inputs are zero values)")
+		}
 
 		medBase := durPercentile(baseLat, 0.50)
 		medForced := durPercentile(forcedLat, 0.50)
@@ -333,8 +336,11 @@ func TestUXLatency_ManySmallFiles(t *testing.T) {
 	run := func(t *testing.T, fuse bool, nFiles int) {
 		var baseTotal, forcedTotal time.Duration
 		var forcedBumps int
-		t.Run("baseline", func(t *testing.T) { _, baseTotal, _ = uxlatSyncSmallFiles(t, fuse, nFiles, false) })
-		t.Run("forced", func(t *testing.T) { _, forcedTotal, forcedBumps = uxlatSyncSmallFiles(t, fuse, nFiles, true) })
+		okBase := t.Run("baseline", func(t *testing.T) { _, baseTotal, _ = uxlatSyncSmallFiles(t, fuse, nFiles, false) })
+		okForced := t.Run("forced", func(t *testing.T) { _, forcedTotal, forcedBumps = uxlatSyncSmallFiles(t, fuse, nFiles, true) })
+		if !okBase || !okForced {
+			t.Fatal("a phase subtest failed; skipping the cross-phase comparison (its inputs are zero values)")
+		}
 
 		t.Logf("burst of %d files: baseline total=%s, forced total=%s (%d ratchets), ratio forced/base=%.2f",
 			nFiles, baseTotal, forcedTotal, forcedBumps, float64(forcedTotal)/float64(baseTotal))
@@ -366,8 +372,11 @@ func TestUXLatency_LiveEditPropagation(t *testing.T) {
 
 	var baseLat, forcedLat []time.Duration
 	var forcedBumps int
-	t.Run("baseline", func(t *testing.T) { baseLat, _ = uxlatEditPropagation(t, nEdits, false) })
-	t.Run("forced", func(t *testing.T) { forcedLat, forcedBumps = uxlatEditPropagation(t, nEdits, true) })
+	okBase := t.Run("baseline", func(t *testing.T) { baseLat, _ = uxlatEditPropagation(t, nEdits, false) })
+	okForced := t.Run("forced", func(t *testing.T) { forcedLat, forcedBumps = uxlatEditPropagation(t, nEdits, true) })
+	if !okBase || !okForced {
+		t.Fatal("a phase subtest failed; skipping the cross-phase comparison (its inputs are zero values)")
+	}
 
 	medBase := durPercentile(baseLat, 0.50)
 	medForced := durPercentile(forcedLat, 0.50)

@@ -277,6 +277,9 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 				_ = oldMig.Close()
 			}
 			logger.Info("QUIC control channel connected", "peer", peerAddr)
+			// The control-Ping heartbeat now owns QUIC-lane liveness: metadata rides TCP
+			// first, so it can no longer be the canary that trips demote+self-heal.
+			go kd.quicControlHeartbeat(ctx, cc)
 			// New QUIC wire up: re-run the eager fold so the dial-side conn gets the
 			// fold entropy too (the connect-time round may predate this wire). Safe to
 			// repeat: single-flight + supersede-idempotent staging.
@@ -507,7 +510,7 @@ func (kd *KeibiDrop) demoteQUICControl(err error) {
 	if cc == nil {
 		return // already demoted by a concurrent failure
 	}
-	kd.logger.Warn("QUIC metadata attempt failed; demoting to TCP, redialing in background", "error", err)
+	kd.logger.Warn("QUIC control lane failed; demoting, redialing in background", "error", err)
 	_ = cc.Close()
 	if mc != nil {
 		_ = mc.Close()
@@ -521,14 +524,32 @@ func (kd *KeibiDrop) demoteQUICControl(err error) {
 	}
 }
 
-// quicFirst is the ONE metadata routing policy, written once: try the QUIC channel
-// bounded by quicMetaTimeout (counting successes), demote the channel on failure, fall
-// back to the TCP client. The concrete RPC is a parameter, so per-RPC wrappers are
-// one-liners; generics are monomorphized at compile time (no reflection, no interface
-// boxing on the hot path).
-func quicFirst[Req, Resp any](kd *KeibiDrop, ctx context.Context, req Req,
+// metadataSend is the ONE metadata routing policy, written once: TCP-first, with the QUIC
+// channel as a bounded fallback. Bulk metadata bursts (a git-clone-scale flood of notifies)
+// must ride TCP so they never congest the scarce QUIC lane the cache-miss seeks and control
+// depend on — that congestion would itself be a new freeze. QUIC is used only when TCP is
+// unavailable/failing, so a notify still gets through during a TCP outage that QUIC survives
+// (an IP change). The concrete RPC is a parameter; generics are monomorphized at compile
+// time (no reflection on the hot path). See plan-0.4.0/05-transport-routing-and-cache-miss.md.
+func metadataSend[Req, Resp any](kd *KeibiDrop, ctx context.Context, req Req,
 	call func(bindings.KeibiServiceClient, context.Context, Req) (Resp, error),
 ) (Resp, error) {
+	// Snapshot under kd.mu: the notify worker calls this from its own goroutine while
+	// Run's teardown rewrites kd.session under the lock (bare read = data race).
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+
+	tcpErr := error(ErrInvalidSession)
+	if s != nil && s.GRPCClient != nil {
+		resp, err := call(s.GRPCClient, ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		tcpErr = err
+	}
+	// TCP unavailable/failed: fall back to the QUIC lane (bounded, so a dead lane can't
+	// hang the notify). QUIC-lane health is owned by the control heartbeat, not this path.
 	if qc := kd.QUICKeibiClient(); qc != nil {
 		qctx, cancel := context.WithTimeout(ctx, quicMetaTimeout)
 		resp, err := call(qc, qctx, req)
@@ -537,29 +558,20 @@ func quicFirst[Req, Resp any](kd *KeibiDrop, ctx context.Context, req Req,
 			kd.quicMetaSent.Add(1)
 			return resp, nil
 		}
-		kd.demoteQUICControl(err)
 	}
-	// Snapshot under kd.mu: the notify worker calls this from its own goroutine while
-	// Run's teardown rewrites kd.session under the lock (bare read = data race).
-	kd.mu.Lock()
-	s := kd.session
-	kd.mu.Unlock()
-	if s == nil || s.GRPCClient == nil {
-		var zero Resp
-		return zero, ErrInvalidSession
-	}
-	return call(s.GRPCClient, ctx, req)
+	var zero Resp
+	return zero, tcpErr
 }
 
 // sendNotify / sendBatchNotify: the metadata RPCs, each just naming its call.
 func (kd *KeibiDrop) sendNotify(ctx context.Context, req *bindings.NotifyRequest) (*bindings.NotifyResponse, error) {
-	return quicFirst(kd, ctx, req, func(c bindings.KeibiServiceClient, ctx context.Context, r *bindings.NotifyRequest) (*bindings.NotifyResponse, error) {
+	return metadataSend(kd, ctx, req, func(c bindings.KeibiServiceClient, ctx context.Context, r *bindings.NotifyRequest) (*bindings.NotifyResponse, error) {
 		return c.Notify(ctx, r)
 	})
 }
 
 func (kd *KeibiDrop) sendBatchNotify(ctx context.Context, req *bindings.BatchNotifyRequest) (*bindings.BatchNotifyResponse, error) {
-	return quicFirst(kd, ctx, req, func(c bindings.KeibiServiceClient, ctx context.Context, r *bindings.BatchNotifyRequest) (*bindings.BatchNotifyResponse, error) {
+	return metadataSend(kd, ctx, req, func(c bindings.KeibiServiceClient, ctx context.Context, r *bindings.BatchNotifyRequest) (*bindings.BatchNotifyResponse, error) {
 		return c.BatchNotify(ctx, r)
 	})
 }
@@ -570,6 +582,41 @@ func (kd *KeibiDrop) QUICControlConnected() bool {
 	kd.mu.Lock()
 	defer kd.mu.Unlock()
 	return kd.quicControlClient != nil
+}
+
+// quicHeartbeatInterval is how often the QUIC control lane is pinged to detect a dead
+// channel. Metadata is TCP-first now, so it can no longer be the liveness canary; this
+// heartbeat is the control lane doing its own natural job. Cheap (a few packets).
+const quicHeartbeatInterval = 5 * time.Second
+
+// quicControlHeartbeat pings the QUIC control lane on an interval and, on failure, demotes
+// it (which kicks the self-heal maintainer to re-probe UDP and switch back when it works).
+// One per channel generation: it exits when its client cc is superseded, closed, or the
+// context ends, so after a reconnect only the fresh generation's heartbeat is live.
+func (kd *KeibiDrop) quicControlHeartbeat(ctx context.Context, cc *grpc.ClientConn) {
+	t := time.NewTicker(quicHeartbeatInterval)
+	defer t.Stop()
+	client := cpb.NewControlClient(cc)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			kd.mu.Lock()
+			current := kd.quicControlClient == cc
+			kd.mu.Unlock()
+			if !current {
+				return // superseded by a newer generation; that one has its own heartbeat
+			}
+			pctx, cancel := context.WithTimeout(ctx, quicMetaTimeout)
+			_, err := client.Ping(pctx, &cpb.PingRequest{})
+			cancel()
+			if err != nil {
+				kd.demoteQUICControl(err) // closes cc + kicks the self-heal maintainer
+				return
+			}
+		}
+	}
 }
 
 // PingQUICControl sends one control-plane Ping over the QUIC channel, or errors if the

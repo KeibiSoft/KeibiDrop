@@ -112,3 +112,36 @@ func TestHealthMonitorQUICNearWrapTriggersRekey(t *testing.T) {
 		"a QUIC-lane epoch at the re-handshake threshold must fire the rescue")
 	require.Equal(t, 1, fired)
 }
+
+// A ratcheting (key-update) session must NOT fire the volume-based re-handshake. Its
+// byte counters are cumulative and never reset by a ratchet, so past one threshold
+// ShouldRekey latches true; rotation is already handled in band, and a volume-driven
+// OnRekeyNeeded would drop the sockets of a healthy session (surfaced in CI as
+// closed-conn fetch failures and zero observed epoch bumps in the UX-latency suite).
+// Only the near-wrap disjunct may re-handshake a ratcheting session.
+func TestHealthMonitorVolumeTriggerGatedOffWhenRatcheting(t *testing.T) {
+	old := RekeyBytesThreshold
+	RekeyBytesThreshold = 1
+	t.Cleanup(func() { RekeyBytesThreshold = old })
+
+	key := randomKey(t)
+	sc := NewSecureConn(&writeSink{}, key, kbc.CipherChaCha20, NoncePrefixOutbound)
+	sc.SetKeyUpdate(true)
+	// Two writes: make-before-break checks thresholds BEFORE sealing, so the first
+	// (large) frame seals at epoch 0 and the second frame carries the rotation.
+	_, err := sc.Write(randomBytes(t, rekeyIdleByteDelta+4096))
+	require.NoError(t, err)
+	_, err = sc.Write(randomBytes(t, 64))
+	require.NoError(t, err)
+	require.True(t, sc.ShouldRekey(), "cumulative counters must be past the threshold")
+	require.GreaterOrEqual(t, sc.WriterEpoch(), uint16(1), "the second write must have carried a rotation")
+
+	sess := &Session{Session: &SessionSockets{Outbound: sc}}
+	m := &HealthMonitor{session: sess, RekeyEnabled: true, outbound: sc}
+	fired := 0
+	m.OnRekeyNeeded = func() bool { fired++; return true }
+
+	require.False(t, m.maybeRekey(), "first check only sets the idle mark")
+	require.False(t, m.maybeRekey(), "idle and over threshold, but ratcheting: no re-handshake")
+	require.Equal(t, 0, fired)
+}

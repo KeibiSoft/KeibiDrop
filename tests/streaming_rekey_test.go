@@ -164,6 +164,17 @@ func TestStream_RekeyDuringPlaybackAddsNoStall(t *testing.T) {
 	var bumpDur, cleanDur []time.Duration
 	var maxAll time.Duration
 	epochStart := getEpoch()
+
+	// Optional per-sample record for offline analysis (latency ECDFs in the paper's
+	// data pipeline): KD_REKEY_SAMPLES_OUT=/path.jsonl appends one row per read.
+	// No behavior change when unset.
+	var samplesOut *os.File
+	if p := os.Getenv("KD_REKEY_SAMPLES_OUT"); p != "" {
+		samplesOut, err = os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		require.NoError(err)
+		defer samplesOut.Close() //nolint:errcheck // best-effort diagnostics sink
+	}
+
 	for off := int64(0); off < movieSize; off += chunk {
 		want := int64(chunk)
 		if off+want > movieSize {
@@ -178,10 +189,16 @@ func TestStream_RekeyDuringPlaybackAddsNoStall(t *testing.T) {
 		if dur > maxAll {
 			maxAll = dur
 		}
-		if getEpoch() != before {
+		after := getEpoch()
+		if after != before {
 			bumpDur = append(bumpDur, dur)
 		} else {
 			cleanDur = append(cleanDur, dur)
+		}
+		if samplesOut != nil {
+			fmt.Fprintf(samplesOut,
+				"{\"off\":%d,\"len\":%d,\"dur_us\":%d,\"coincident\":%t,\"epoch_before\":%d,\"epoch_after\":%d}\n",
+				off, len(data), dur.Microseconds(), after != before, before, after)
 		}
 	}
 	bumps := int(getEpoch()) - int(epochStart)

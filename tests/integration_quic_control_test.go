@@ -31,20 +31,23 @@ func TestQUICControlChannel_ConnectsInFlow(t *testing.T) {
 	require.NoError(t, tp.Alice.PingQUICControl(ctx), "alice ping over QUIC control channel")
 	require.NoError(t, tp.Bob.PingQUICControl(ctx), "bob ping over QUIC control channel")
 
-	// Metadata routing: an AddFile notify must ride the QUIC channel (counted), and
-	// the peer must receive it — i.e. the QUIC server serves the real KeibiService.
-	content := []byte("metadata over quic")
-	filePath := filepath.Join(tp.AliceSaveDir, "meta-quic.txt")
+	// Metadata sync works alongside the QUIC control channel. Metadata is TCP-first
+	// (bulk bursts must not congest the QUIC seek/control lane); that it does NOT depend
+	// on QUIC is proven by TestQUICControlChannel_FallbackToTCP (sync continues, QUIC
+	// counter 0, with the QUIC lane dead). Here we just prove end-to-end delivery; the
+	// counter is not asserted because a startup TCP transient can legitimately fall the
+	// first notify back to QUIC (the resilience working), which would flake it.
+	content := []byte("metadata sync")
+	filePath := filepath.Join(tp.AliceSaveDir, "meta.txt")
 	require.NoError(t, os.WriteFile(filePath, content, 0644))
 	require.NoError(t, tp.Alice.AddFile(filePath))
-	WaitForRemoteFile(t, tp.Bob.SyncTracker, "meta-quic.txt", 5*time.Second)
-	require.GreaterOrEqual(t, tp.Alice.QUICMetadataSent(), uint64(1),
-		"the AddFile notify should have ridden the QUIC metadata channel")
+	WaitForRemoteFile(t, tp.Bob.SyncTracker, "meta.txt", 5*time.Second)
 }
 
-// TestQUICControlChannel_FallbackToTCP is the sad path: with the QUIC channel torn down
-// mid-session (UDP blocked / channel died), metadata falls back to the TCP channel and
-// sync keeps working — the QUIC channel can never lose metadata or break the session.
+// TestQUICControlChannel_FallbackToTCP is the sad path: with the QUIC lane torn down
+// mid-session (UDP blocked / channel died), metadata + sync keep working over TCP with
+// NO stall (metadata is TCP-first, independent of QUIC), the control-Ping heartbeat
+// detects the dead lane and demotes it, and the lane self-heals when the peer returns.
 func TestQUICControlChannel_FallbackToTCP(t *testing.T) {
 	tp := SetupPeerPair(t, false)
 
@@ -52,68 +55,46 @@ func TestQUICControlChannel_FallbackToTCP(t *testing.T) {
 		return tp.Alice.QUICControlConnected() && tp.Bob.QUICControlConnected()
 	}, "QUIC control channel to connect on both peers")
 
-	// Kill Alice's QUIC pair: her client is gone AND her server side dies, so Bob's
-	// outbound QUIC client breaks too — both directions must degrade to TCP.
-	t0 := time.Now()
+	// Kill Alice's QUIC pair: her client and server die, so Bob's outbound QUIC client
+	// now points at a dead server.
 	tp.Alice.StopQUICControlChannel()
-	t.Logf("stop QUIC channel: %v", time.Since(t0))
 
-	content := []byte("metadata over tcp fallback")
-	filePath := filepath.Join(tp.AliceSaveDir, "meta-tcp.txt")
-	require.NoError(t, os.WriteFile(filePath, content, 0644))
+	// Metadata keeps flowing over TCP with no dependency on QUIC and no stall (it is
+	// always TCP-first) — both directions, including Bob->Alice whose QUIC server is dead.
+	aPath := filepath.Join(tp.AliceSaveDir, "meta-a.txt")
+	require.NoError(t, os.WriteFile(aPath, []byte("a"), 0644))
+	t0 := time.Now()
+	require.NoError(t, tp.Alice.AddFile(aPath))
+	require.Less(t, time.Since(t0), 3*time.Second, "metadata must not stall on a dead QUIC lane")
+	WaitForRemoteFile(t, tp.Bob.SyncTracker, "meta-a.txt", 5*time.Second)
+
+	bPath := filepath.Join(tp.BobSaveDir, "meta-b.txt")
+	require.NoError(t, os.WriteFile(bPath, []byte("b"), 0644))
 	t0 = time.Now()
-	require.NoError(t, tp.Alice.AddFile(filePath))
-	t.Logf("alice AddFile (no QUIC client, straight TCP): %v", time.Since(t0))
-	WaitForRemoteFile(t, tp.Bob.SyncTracker, "meta-tcp.txt", 5*time.Second)
+	require.NoError(t, tp.Bob.AddFile(bPath))
+	require.Less(t, time.Since(t0), 3*time.Second, "reverse metadata must not stall on a dead QUIC lane")
+	WaitForRemoteFile(t, tp.Alice.SyncTracker, "meta-b.txt", 5*time.Second)
+	require.Equal(t, uint64(0), tp.Bob.QUICMetadataSent(), "metadata rode TCP, never the dead QUIC lane")
 
-	// And the reverse direction: Bob's QUIC client now points at a dead server. The
-	// QUIC-first attempt is bounded by quicMetaTimeout (2s), then falls back to TCP
-	// and demotes the channel — without the bound this stalled ~20s (the QUIC idle
-	// timeout), measured before the fix.
-	bobFile := filepath.Join(tp.BobSaveDir, "meta-tcp-bob.txt")
-	require.NoError(t, os.WriteFile(bobFile, content, 0644))
-	t0 = time.Now()
-	require.NoError(t, tp.Bob.AddFile(bobFile))
-	firstSend := time.Since(t0)
-	t.Logf("bob AddFile (dead QUIC conn, bounded fallback to TCP): %v", firstSend)
-	require.Less(t, firstSend, 4*time.Second, "fallback must be bounded by quicMetaTimeout, not the QUIC idle timeout")
-	WaitForRemoteFile(t, tp.Alice.SyncTracker, "meta-tcp-bob.txt", 10*time.Second)
+	// Bob's control-Ping heartbeat detects the dead lane and demotes it (which kicks the
+	// self-heal maintainer). Bounded by the heartbeat interval, generous timeout.
+	WaitForCondition(t, 20*time.Second, 200*time.Millisecond, func() bool {
+		return !tp.Bob.QUICControlConnected()
+	}, "Bob's control heartbeat should demote the dead QUIC lane")
 
-	// After the failed attempt Bob demoted his QUIC client, so the next send skips
-	// the dead channel entirely and goes straight to TCP.
-	require.False(t, tp.Bob.QUICControlConnected(), "failed QUIC attempt should demote the channel")
-	bobFile2 := filepath.Join(tp.BobSaveDir, "meta-tcp-bob2.txt")
-	require.NoError(t, os.WriteFile(bobFile2, content, 0644))
-	t0 = time.Now()
-	require.NoError(t, tp.Bob.AddFile(bobFile2))
-	secondSend := time.Since(t0)
-	t.Logf("bob AddFile (demoted, straight TCP): %v", secondSend)
-	require.Less(t, secondSend, 1*time.Second, "post-demotion sends must go straight to TCP")
-	WaitForRemoteFile(t, tp.Alice.SyncTracker, "meta-tcp-bob2.txt", 10*time.Second)
-
-	// SELF-HEAL: the demote was a transient (Alice comes back). Bob's background
-	// redial must restore the fast lane without any reconnect — the channel demotes
-	// on failure but is not one-strike-dead.
+	// SELF-HEAL: Alice returns; Bob's maintainer re-dials and restores the lane without
+	// any reconnect — demote is not one-strike-dead.
 	tp.Alice.StartQUICControlChannel()
 	WaitForCondition(t, 30*time.Second, 200*time.Millisecond, func() bool {
 		return tp.Bob.QUICControlConnected() && tp.Alice.QUICControlConnected()
 	}, "QUIC channel to self-heal on both peers after Alice returns")
-
-	// And metadata rides QUIC again.
-	before := tp.Bob.QUICMetadataSent()
-	bobFile3 := filepath.Join(tp.BobSaveDir, "meta-quic-again.txt")
-	require.NoError(t, os.WriteFile(bobFile3, content, 0644))
-	require.NoError(t, tp.Bob.AddFile(bobFile3))
-	WaitForRemoteFile(t, tp.Alice.SyncTracker, "meta-quic-again.txt", 10*time.Second)
-	require.Greater(t, tp.Bob.QUICMetadataSent(), before, "post-heal metadata should ride QUIC again")
 }
 
 // TestQUICControlChannel_Migration is the IP-change proof at the app level: a live,
 // session-keyed QUIC control channel migrates to a fresh local UDP socket mid-session
-// (the Wi-Fi -> LTE case) and SURVIVES — no reconnect, no re-handshake, the gRPC
-// channel and the SecureConn on it never notice — and metadata keeps riding it.
-// A TCP channel dies at this exact moment; that difference is the reason QUIC carries
-// control.
+// (the Wi-Fi -> LTE case) and SURVIVES — no reconnect, no re-handshake, the gRPC channel
+// and the SecureConn on it never notice — and the control plane keeps riding it. A TCP
+// channel dies at this exact moment; that difference is the reason QUIC carries control.
 func TestQUICControlChannel_Migration(t *testing.T) {
 	tp := SetupPeerPair(t, false)
 
@@ -130,14 +111,15 @@ func TestQUICControlChannel_Migration(t *testing.T) {
 	require.NoError(t, tp.Alice.MigrateQUICControl(ctx), "second migration")
 	require.True(t, tp.Alice.QUICControlConnected(), "channel must survive migration (no demote)")
 
-	// Metadata still rides the migrated channel.
-	before := tp.Alice.QUICMetadataSent()
-	content := []byte("metadata over the migrated path")
+	// The control plane rides the migrated channel: a Ping still round-trips over it.
+	require.NoError(t, tp.Alice.PingQUICControl(ctx), "control Ping over the migrated QUIC channel")
+
+	// And data still flows after the migration: metadata (TCP) reaches the peer.
+	content := []byte("after migration")
 	filePath := filepath.Join(tp.AliceSaveDir, "meta-migrated.txt")
 	require.NoError(t, os.WriteFile(filePath, content, 0644))
 	require.NoError(t, tp.Alice.AddFile(filePath))
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, "meta-migrated.txt", 5*time.Second)
-	require.Greater(t, tp.Alice.QUICMetadataSent(), before, "metadata should ride the migrated QUIC channel")
 }
 
 // TestQUICControlChannel_LiveFUSE is the direct proof for the painful path: a LIVE
@@ -167,7 +149,6 @@ func TestQUICControlChannel_LiveFUSE(t *testing.T) {
 	data, err := os.ReadFile(alicePath)
 	require.NoError(t, err)
 	require.Equal(t, content, data, "on-demand read through the live mount must be byte-correct over QUIC")
-
-	// Bob's share notify rode the QUIC metadata path.
-	require.GreaterOrEqual(t, tp.Bob.QUICMetadataSent(), uint64(1), "the share notify should have ridden QUIC")
+	// (The on-demand read rode the QUIC interactive lane — preferFast; the share notify
+	// itself rode TCP, which is the metadata routing proven in the non-FUSE tests.)
 }
