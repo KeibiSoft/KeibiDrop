@@ -88,13 +88,11 @@ func TestEphemeralFold_MalformedPublicsRejected(t *testing.T) {
 	_, x25519Pub, err := GenerateX25519Keypair()
 	require.NoError(t, err)
 
-	// Responder rejects malformed initiator publics.
 	_, _, _, err = EphemeralFoldRespond([]byte("too-short"), x25519Pub.Bytes(), salt)
 	require.Error(t, err)
 	_, _, _, err = EphemeralFoldRespond(mlkemPub.Bytes(), []byte("too-short"), salt)
 	require.Error(t, err)
 
-	// Initiator rejects a malformed responder X25519 public.
 	init, err := NewFoldInitiator()
 	require.NoError(t, err)
 	_, ct, _, err := EphemeralFoldRespond(init.MLKEMPublic(), init.X25519Public(), salt)
@@ -109,7 +107,6 @@ func TestEphemeralFold_RejectsShortSalt(t *testing.T) {
 	_, _, _, err = EphemeralFoldRespond(init.MLKEMPublic(), init.X25519Public(), randomBytes(t, minFoldSaltSize-1))
 	require.Error(t, err, "responder rejects a short salt")
 
-	// The initiator's Derive rejects a short salt too.
 	init2, err := NewFoldInitiator()
 	require.NoError(t, err)
 	_, ct, respPub, err := EphemeralFoldRespond(init2.MLKEMPublic(), init2.X25519Public(), randomBytes(t, minFoldSaltSize))
@@ -128,8 +125,7 @@ func TestEphemeralFold_DeriveConsumesInitiator(t *testing.T) {
 	_, err = init.Derive(ct, respPub, salt)
 	require.NoError(t, err)
 
-	// The ephemeral privates are dropped after the first Derive; a second call must fail
-	// rather than silently reuse a half-cleared state.
+	// Ephemeral privates are dropped after the first Derive; a second Derive must fail.
 	_, err = init.Derive(ct, respPub, salt)
 	require.Error(t, err)
 }

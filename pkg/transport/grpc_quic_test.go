@@ -9,9 +9,8 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// TestGRPCUnaryOverQUIC is the core proof of the whole track: a real gRPC unary
-// RPC completing over a QUIC stream, through the quicConn adapter, the
-// quicListener, and grpc.NewClient with the passthrough dialer.
+// TestGRPCUnaryOverQUIC runs a real gRPC unary RPC over a QUIC stream, through the
+// quicConn adapter, the quicListener, and grpc.NewClient with the passthrough dialer.
 func TestGRPCUnaryOverQUIC(t *testing.T) {
 	srv, addr, err := startQUICServer("127.0.0.1:0", benchService{})
 	if err != nil {

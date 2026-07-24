@@ -17,12 +17,9 @@ import (
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
-// TestSecureConnConcurrentClose reproduces F1: SecureConn.Close is a check-then-act
-// on a non-atomic `done` bool plus close(s.closed). When the proactive rekey drops the
-// sockets (resilience.onRekeyNeeded) while gRPC's transport still owns the same
-// *SecureConn, both close it: two closers pass the `if s.done` check, both write `done`
-// (a data race) and both run close(s.closed) (panic: close of closed channel).
-// Start-barrier + high iteration make the tiny window deterministic under -race.
+// Two owners (the proactive-rekey socket drop and gRPC's transport) close the same *SecureConn
+// concurrently. Both pass the check-then-act on the non-atomic `done` (data race) and both run
+// close(s.closed) (panic). Start-barrier + high iteration make the window deterministic under -race.
 func TestSecureConnConcurrentClose(t *testing.T) {
 	key := randomKey(t)
 	const iters = 300

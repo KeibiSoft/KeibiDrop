@@ -38,10 +38,9 @@ func durPercentile(ds []time.Duration, p float64) time.Duration {
 	return s[idx]
 }
 
-// forceFrequentRatchet drops the in-band ratchet byte threshold so a long transfer
-// crosses many key-epochs. Assigning the var directly bypasses the env-override floor
-// (minRekeyBytes); restored on cleanup after the pair is torn down (registered before
-// SetupFUSEPeerPair, so its cleanup runs last), so no writer reads it concurrently.
+// forceFrequentRatchet drops the ratchet byte threshold so a long transfer crosses many
+// key-epochs. Assigning the var directly bypasses the env-override floor. Register it before
+// SetupFUSEPeerPair so its cleanup runs last (after teardown), where no writer reads it.
 func forceFrequentRatchet(t *testing.T, bytesPerBump uint64) {
 	t.Helper()
 	origBytes, origMsgs := session.RekeyBytesThreshold, session.RekeyMsgsThreshold
@@ -51,11 +50,9 @@ func forceFrequentRatchet(t *testing.T, bytesPerBump uint64) {
 	})
 }
 
-// maxWriterEpoch reads the highest live writer epoch across the WHOLE transport
-// manager of both peers: the TCP SessionSockets pair (via the HealthMonitor) AND the
-// QUIC control conns. On-demand reads ride the QUIC lane when it is up (the dual
-// stream provider routes them there), and that lane ratchets independently — watching
-// only the TCP pair makes a QUIC-served stream look like "no rekeys happened".
+// maxWriterEpoch reads the highest live writer epoch across both peers' whole transport: the
+// TCP pair (via HealthMonitor) and the QUIC control conns. On-demand reads ride the QUIC lane
+// when it is up and it ratchets independently, so watching only TCP would miss those rekeys.
 func maxWriterEpoch(tp *TestPair) func() uint16 {
 	return func() uint16 {
 		e := tp.Alice.HealthMonitor.MaxWriterEpoch()
@@ -88,22 +85,18 @@ func (p *capturingProvider) StreamFile(ctx context.Context, path string, startOf
 	return p.inner.StreamFile(ctx, path, startOffset)
 }
 
-// TestStream_RekeyDuringPlaybackAddsNoStall streams a 64 MiB "movie" from the serving
-// peer in 256 KiB reads (one gRPC round trip each, the granularity a player consumes)
-// while the always-on symmetric ratchet is forced to bump its key-epoch every ~1 MiB. It
-// isolates the rekey's cost: reads that coincide with an epoch bump are compared head to
-// head with reads that don't. The in-band ratchet is a local ~microsecond HKDF folded
-// into the next record (make-before-break, no round trip), so the two buckets must match
-// and no read may stall long enough to starve a player's jitter buffer.
+// TestStream_RekeyDuringPlaybackAddsNoStall streams a 64 MiB "movie" in 256 KiB reads while
+// the ratchet is forced to bump its key-epoch every ~1 MiB. It compares reads that coincide
+// with an epoch bump against those that don't: the ratchet is a local microsecond HKDF folded
+// into the next record, so the two buckets must match and no read may stall the jitter buffer.
 func TestStream_RekeyDuringPlaybackAddsNoStall(t *testing.T) {
 	skipIfNoFUSE(t)
 	if testing.Short() {
 		t.Skip("skipping streaming-under-rekey in short mode")
 	}
 
-	// Pure on-demand (no eager prefetch on open) and one epoch bump per ~1 MiB served.
-	// With 256 KiB wire reads the serving writer flushes 256 KiB per response, so it
-	// ratchets once every ~4 reads: a natural mix of bumped and clean reads.
+	// Pure on-demand (no prefetch on open), one epoch bump per ~1 MiB served: with 256 KiB reads
+	// the writer ratchets once every ~4 reads, a natural mix of bumped and clean reads.
 	t.Setenv("KEIBIDROP_PREFETCH_ON_OPEN", "0")
 	forceFrequentRatchet(t, 1<<20)
 
@@ -151,9 +144,9 @@ func TestStream_RekeyDuringPlaybackAddsNoStall(t *testing.T) {
 	capMu.Unlock()
 	require.Truef(ok, "did not capture remote (inode, path)")
 
-	// Stream the movie ourselves: 256 KiB reads, one round trip each, straight to the
-	// serving peer (fresh stream bypasses Alice's cache, so every read makes Bob serve
-	// and ratchet). Record each read's latency and whether the epoch advanced during it.
+	// Stream the movie ourselves in 256 KiB reads straight to the serving peer: a fresh stream
+	// bypasses Alice's cache, so every read makes Bob serve and ratchet. Record each read's
+	// latency and whether the epoch advanced during it.
 	ctx := context.Background()
 	prov := origFactory()
 	rs, err := prov.OpenRemoteFile(ctx, inode, path)
@@ -165,9 +158,8 @@ func TestStream_RekeyDuringPlaybackAddsNoStall(t *testing.T) {
 	var maxAll time.Duration
 	epochStart := getEpoch()
 
-	// Optional per-sample record for offline analysis (latency ECDFs in the paper's
-	// data pipeline): KD_REKEY_SAMPLES_OUT=/path.jsonl appends one row per read.
-	// No behavior change when unset.
+	// Optional per-sample record for offline analysis: KD_REKEY_SAMPLES_OUT=/path.jsonl appends
+	// one row per read. No behavior change when unset.
 	var samplesOut *os.File
 	if p := os.Getenv("KD_REKEY_SAMPLES_OUT"); p != "" {
 		samplesOut, err = os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -218,19 +210,16 @@ func TestStream_RekeyDuringPlaybackAddsNoStall(t *testing.T) {
 	// No read may stall long enough to starve a player's jitter buffer.
 	require.Lessf(maxAll, 2*time.Second, "a read stalled %s (buffer-starving)", maxAll)
 
-	// The heart of it: the median rekey-coincident read must not be materially slower
-	// than the median clean read. The ratchet is a local microsecond KDF, so the medians
-	// match; a blocking rekey (a round trip or a lock wait) would shift the bumped median.
+	// The median rekey-coincident read must not be materially slower than the median clean read:
+	// the ratchet is a local microsecond KDF, so a blocking rekey would shift the bumped median.
 	require.Lessf(bumpP50, cleanP50+5*time.Millisecond,
 		"rekey-coincident reads are slower: bumpP50=%s vs cleanP50=%s", bumpP50, cleanP50)
 }
 
-// TestStream_PacedBluRayPlaybackNoRekeyUnderrun is the literal Blu-ray simulation: a
-// 32 MiB clip consumed at a sustained 40 Mbps in 256 KiB blocks (a player draining its
-// jitter buffer at playback rate) while the ratchet rekeys throughout. It asserts no single
-// block read outlasts a 2 s jitter buffer, i.e. playback never stutters because of a rekey.
-// Reads are paced to playback speed so a rekey-induced stall would eat the buffer rather than
-// be masked by reading far ahead.
+// TestStream_PacedBluRayPlaybackNoRekeyUnderrun consumes a 32 MiB clip at a sustained 40 Mbps
+// in 256 KiB blocks (a player draining its jitter buffer at playback rate) while the ratchet
+// rekeys throughout, and asserts no block read outlasts the 2 s jitter buffer. Reads are paced
+// to playback speed so a rekey stall would eat the buffer rather than be masked by reading ahead.
 func TestStream_PacedBluRayPlaybackNoRekeyUnderrun(t *testing.T) {
 	skipIfNoFUSE(t)
 	if testing.Short() {
@@ -290,8 +279,8 @@ func TestStream_PacedBluRayPlaybackNoRekeyUnderrun(t *testing.T) {
 			break
 		}
 		require.NoError(rerr)
-		// Pace to playback rate: if the fetch beat the block's playback time, wait out
-		// the difference (buffer full). A stalled fetch skips the sleep and drains buffer.
+		// Pace to playback rate: if the fetch beat the block's playback time, wait out the
+		// difference. A stalled fetch skips the sleep and drains the buffer.
 		if fetch < blockInterval {
 			time.Sleep(blockInterval - fetch)
 		}
@@ -304,9 +293,9 @@ func TestStream_PacedBluRayPlaybackNoRekeyUnderrun(t *testing.T) {
 		clipSize>>20, bumps, maxFetch.Round(time.Millisecond), slowestOffset, jitterBuffer)
 }
 
-// measureBulkThroughput pulls a `size`-byte file Bob->Alice over loopback `iters` times and
-// returns the MEDIAN MB/s (robust to a single slow pull) and the total writer epoch bumps. A
-// fresh pair is used so the caller can set the ratchet threshold before it connects (race-free).
+// measureBulkThroughput pulls a size-byte file Bob->Alice over loopback iters times and returns
+// the median MB/s and total writer epoch bumps. A fresh pair lets the caller set the ratchet
+// threshold before connect (race-free).
 func measureBulkThroughput(t *testing.T, size, iters int, forceRekey bool) (float64, int) {
 	t.Helper()
 	if forceRekey {
@@ -342,13 +331,10 @@ func measureBulkThroughput(t *testing.T, size, iters int, forceRekey bool) (floa
 	return rates[len(rates)/2], bumps // median
 }
 
-// TestStream_BulkThroughputUnaffectedByRekey answers, deterministically and without network
-// noise, whether forcing the ratchet to rotate every ~1 MiB dents sustained transfer throughput.
-// It pulls 128 MiB over loopback with the ratchet at its production threshold (zero rotations at
-// this size) versus forced to rotate ~32 times, on separate pairs so the threshold is set before
-// connect. The ratchet is a local microsecond KDF folded into the writer (no round trip, no flush
-// forced), so the forced-rekey throughput must stay within noise of the baseline. This is the
-// deterministic counterpart to the noisy single-trial WAN off-vs-on comparison.
+// TestStream_BulkThroughputUnaffectedByRekey checks deterministically whether forcing the
+// ratchet to rotate every ~1 MiB dents sustained throughput. It pulls 128 MiB over loopback at
+// the production threshold (zero rotations) versus forced to rotate ~32 times, on separate pairs
+// so the threshold is set before connect; the local-KDF ratchet must stay within noise.
 func TestStream_BulkThroughputUnaffectedByRekey(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping bulk-throughput-under-rekey in short mode")
@@ -364,8 +350,8 @@ func TestStream_BulkThroughputUnaffectedByRekey(t *testing.T) {
 	t.Logf("local bulk %d MiB (median of %d): rekey-off %.0f MB/s, rekey-on %.0f MB/s (%d ratchets), ratio on/off=%.2f",
 		size>>20, iters, offMBps, onMBps, onBumps, onMBps/offMBps)
 	require.GreaterOrEqualf(t, onBumps, 10, "rekey-on must actually rotate, got %d", onBumps)
-	// The ratchet KDF is negligible; on loopback the forced-rekey median must stay within 20% of
-	// baseline. A real per-rotation stall or flush cost would blow past this.
+	// On loopback the forced-rekey median must stay within 20% of baseline; a real per-rotation
+	// stall or flush cost would blow past this.
 	require.Greaterf(t, onMBps, offMBps*0.8,
 		"forced rekey cut bulk throughput: off=%.0f on=%.0f MB/s", offMBps, onMBps)
 }

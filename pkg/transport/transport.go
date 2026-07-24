@@ -12,11 +12,9 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// Transport establishes gRPC-ready net.Conns over a wire protocol. Two
-// implementations: TCP (the fast bulk data plane) and QUIC (migration-capable —
-// the always-on control channel and the degraded-link fallback). One interface so
-// gRPC, the benchmarks, and eventually KeibiDrop treat both uniformly, and the
-// choice of transport is a single value rather than a forked code path.
+// Transport establishes gRPC-ready net.Conns over a wire protocol. Two implementations:
+// TCP (the fast bulk data plane) and QUIC (migration-capable: the always-on control
+// channel and the degraded-link fallback). One interface so both are treated uniformly.
 type Transport interface {
 	// Dial connects to addr and returns a net.Conn ready to carry gRPC.
 	Dial(ctx context.Context, addr string) (net.Conn, error)
@@ -58,9 +56,9 @@ func (quicTransport) Dial(ctx context.Context, addr string) (net.Conn, error) {
 }
 
 func (quicTransport) Listen(addr string) (net.Listener, error) {
-	// Own the UDP socket + Transport explicitly (rather than quic.ListenAddr, whose
-	// listener Close does NOT release the internally-created socket), so closing the
-	// listener frees the port immediately — required for reconnect on the same port.
+	// Own the UDP socket and Transport explicitly (quic.ListenAddr's listener Close does
+	// NOT release the internally-created socket), so closing the listener frees the port
+	// immediately, required for reconnect on the same port.
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err
@@ -79,10 +77,9 @@ func (quicTransport) Listen(addr string) (net.Listener, error) {
 	return newQUICListener(ln, tr, udp), nil
 }
 
-// quicConfig is applied to both ends so throughput isn't window-limited and the
-// comparison against TCP is fair. Matched on both sides. MaxIdleTimeout is a
-// sensible dead-peer-detection value for a P2P app; KeepAlivePeriod keeps healthy
-// connections alive well within it.
+// quicConfig is applied to both ends so throughput isn't window-limited. MaxIdleTimeout
+// is the dead-peer-detection window; KeepAlivePeriod keeps healthy connections alive
+// well within it.
 func quicConfig() *quic.Config {
 	return &quic.Config{
 		MaxIdleTimeout:                 20 * time.Second,
@@ -113,7 +110,7 @@ func ServeGRPC(tr Transport, addr string, svc pb.BenchServiceServer, secure bool
 
 // DialGRPC dials svc over the transport at addr. If secure, the PQC handshake runs
 // (client role) before gRPC sees the conn. The passthrough:/// target keeps
-// grpc.NewClient off the dns resolver (it defaults to dns, unlike the old Dial).
+// grpc.NewClient off the dns resolver.
 func DialGRPC(tr Transport, addr string, secure bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	dialer := func(ctx context.Context, _ string) (net.Conn, error) {
 		c, err := tr.Dial(ctx, addr)

@@ -15,10 +15,9 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// countingPacketConn wraps a net.PacketConn and counts datagrams in each
-// direction, so a test can prove which network path QUIC is actually using.
-// (Wrapping also opts out of quic-go's *net.UDPConn fast paths — fine for a
-// correctness test.)
+// countingPacketConn wraps a net.PacketConn and counts datagrams each direction, so a
+// test can prove which path QUIC uses. Wrapping also opts out of quic-go's *net.UDPConn
+// fast paths, fine for a correctness test.
 type countingPacketConn struct {
 	net.PacketConn
 	reads  atomic.Int64
@@ -41,22 +40,14 @@ func (c *countingPacketConn) WriteTo(p []byte, a net.Addr) (int, error) {
 	return n, err
 }
 
-// TestConnectionMigration is the marquee proof, modelled on the hybrid design: the
-// QUIC channel is a bidirectional control channel (heartbeats/metadata), so the
-// client actively sends — which is also what drives QUIC migration. We run gRPC
-// unary "pings" over QUIC, move the client to a brand-new UDP socket mid-flight
-// (AddPath -> Probe -> Switch), keep pinging, and prove — via per-socket packet
-// counters — that traffic moves to the new path in BOTH directions (client sends
-// AND server responses), i.e. the server migrated its send path too. The gRPC
-// channel keeps working throughout an address change that would have killed a TCP
-// connection outright.
+// TestConnectionMigration runs gRPC unary pings over QUIC, moves the client to a new
+// UDP socket mid-flight (AddPath -> Probe -> Switch), and proves via per-socket packet
+// counters that traffic moves to the new path in both directions (client sends and
+// server responses), i.e. the server migrated its send path too.
 //
-// Usage learned from quic-go's own integrationtests/self/connection_migration_test.go:
-// Switch-before-Probe fails; wait for ACKs before Switch; the client must send after
-// Switch to migrate the peer; LocalAddr updates only after that activity. Note: we do
-// NOT close the original Transport — quic-go ties the connection's lifetime to it, so
-// that is a separate concern (the "old interface physically disappears" case) tracked
-// in FINDINGS, not something migration alone is meant to survive.
+// Ordering constraints: Switch before Probe fails; wait for ACKs before Switch; the
+// client must send after Switch to migrate the peer; LocalAddr updates only after that.
+// The original Transport is left open, since quic-go ties the connection's lifetime to it.
 func TestConnectionMigration(t *testing.T) {
 	srv, addr, err := startQUICServer("127.0.0.1:0", benchService{})
 	if err != nil {
@@ -160,8 +151,8 @@ func TestConnectionMigration(t *testing.T) {
 	w1 := cudp1.writes.Load()
 	r2, w2 := cudp2.reads.Load(), cudp2.writes.Load()
 
-	// Keep pinging so the client sends from the new address; the server sees it,
-	// validates, and migrates its own send path to match.
+	// Keep pinging so the client sends from the new address; the server validates it and
+	// migrates its own send path to match.
 	for i := 0; i < 25; i++ {
 		ping("path2")
 	}
@@ -185,8 +176,8 @@ func TestConnectionMigration(t *testing.T) {
 	if grew := cudp1.writes.Load() - w1; grew > 5 {
 		t.Fatalf("path 1 still sending after switch (+%d); did not migrate", grew)
 	}
-	// 3) The server RESPONDS on path 2 (client receives there) — proves the peer
-	//    migrated its send path too, not just the client.
+	// 3) The server RESPONDS on path 2 (client receives there), proving the peer
+	//    migrated its send path too.
 	if grew := cudp2.reads.Load() - r2; grew < 20 {
 		t.Fatalf("path 2 received no server responses (+%d); server did not migrate", grew)
 	}

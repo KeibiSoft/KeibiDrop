@@ -124,8 +124,8 @@ func TestSecureConn_RatchetRoundTripAcrossEpochs(t *testing.T) {
 	}
 }
 
-// A far-future epoch (a gap) must be rejected before the reader derives any key, so a
-// forged frame cannot force an unbounded run of HKDF steps (review F5).
+// A far-future epoch (a gap) must be rejected before the reader derives any key, so a forged frame
+// cannot force an unbounded run of HKDF steps.
 func TestSecureConn_ReaderRejectsEpochGap(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherChaCha20
@@ -174,9 +174,8 @@ func TestSecureConn_ReaderRejectsReplay(t *testing.T) {
 	require.Error(t, err, "a replayed (non-increasing) nonce must be rejected")
 }
 
-// The writer must stop ratcheting before the uint16 epoch wraps, so a long-lived
-// connection never resets the counter under an already-passed epoch (which would brick
-// the reader's monotonic gate). Review MED-1.
+// The writer must stop ratcheting before the uint16 epoch wraps, so a long-lived conn never resets
+// the counter under an already-passed epoch (which would brick the reader's monotonic gate).
 func TestSecureConn_WriterStopsRatchetingAtEpochGuard(t *testing.T) {
 	shrinkRekeyThresholds(t, 1, 1<<20) // ratchet on essentially every write
 
@@ -200,9 +199,8 @@ func TestSecureConn_WriterStopsRatchetingAtEpochGuard(t *testing.T) {
 	}
 }
 
-// Concurrent writers must never reuse or reorder a nonce: wMu serializes the seal and
-// the inline ratchet so the epoch bump is single-flight (review F3). gRPC uses a single
-// writer in practice, so this guards the defence-in-depth, not a live code path.
+// Concurrent writers must never reuse or reorder a nonce: wMu serializes the seal and the inline
+// ratchet so the epoch bump is single-flight. Defence-in-depth (gRPC uses a single writer).
 func TestSecureConn_ConcurrentWritersNoNonceReuse(t *testing.T) {
 	shrinkRekeyThresholds(t, 4096, 256) // ratchet often, on both bytes and message count
 

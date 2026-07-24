@@ -31,7 +31,6 @@ func TestRatchetKeys_DeterministicAndDistinct(t *testing.T) {
 
 	// CK and MK are independent: leaking the AEAD key must not reveal the chain.
 	require.NotEqual(t, ck1, mk1)
-	// The next chain key differs from the previous one.
 	require.NotEqual(t, ck0, ck1)
 }
 
@@ -41,12 +40,10 @@ func TestRatchetKeys_DomainSeparation(t *testing.T) {
 	ck1, _, err := RatchetKeys(ck0, 0x01, 1, nil)
 	require.NoError(t, err)
 
-	// A different epoch derives different keys.
 	ck2, _, err := RatchetKeys(ck0, 0x01, 2, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, ck1, ck2)
 
-	// A different direction prefix derives different keys.
 	ckOtherDir, _, err := RatchetKeys(ck0, 0x02, 1, nil)
 	require.NoError(t, err)
 	require.NotEqual(t, ck1, ckOtherDir)
@@ -63,8 +60,7 @@ func TestRatchetKeys_FoldMixesEntropy(t *testing.T) {
 	foldCK, foldMK, err := RatchetKeys(ck0, 0x01, 1, s1)
 	require.NoError(t, err)
 
-	// A fold at the same epoch yields different keys than the plain ratchet (distinct
-	// label + extra IKM), so the reader's plain vs folded candidates never collide.
+	// A fold at the same epoch yields keys distinct from the plain ratchet, so plain vs folded candidates never collide.
 	require.NotEqual(t, plainCK, foldCK)
 	require.NotEqual(t, plainMK, foldMK)
 

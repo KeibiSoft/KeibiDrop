@@ -17,8 +17,8 @@ import (
 	cpb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control"
 )
 
-// maxFrame is the gRPC message-size cap on both channels, matching KeibiDrop's tuned
-// 16 MiB frame (its StreamFile chunk). The default is 4 MiB.
+// maxFrame is the gRPC message-size cap on both channels, matching KeibiDrop's 16 MiB
+// frame. The default is 4 MiB.
 const maxFrame = 16 << 20
 
 // controlService is the transport's own heartbeat responder, registered on every
@@ -31,34 +31,26 @@ func (controlService) Ping(_ context.Context, _ *cpb.PingRequest) (*cpb.PingRepl
 	return &cpb.PingReply{}, nil
 }
 
-// This is the real thing: KeibiDrop's own post-quantum handshake, run over a QUIC
-// stream, providing the security INSTEAD of relying on QUIC's TLS. secure.go is a
-// simplified ephemeral copy; this imports KeibiDrop's pkg/crypto unchanged, so the
-// seed-wrap, the ML-KEM-1024 encapsulation, the HKDF-SHA512 key derivation, the
-// cipher negotiation, and the fingerprint are byte-identical to the product. That
-// is what makes it a drop-in for Phase 3 and interoperable with a real KeibiDrop
-// peer.
+// This is KeibiDrop's own post-quantum handshake, run over a QUIC stream, providing
+// security instead of relying on QUIC's TLS. It imports pkg/crypto unchanged, so the
+// seed-wrap, ML-KEM-1024 encapsulation, HKDF-SHA512 derivation, cipher negotiation, and
+// fingerprint are byte-identical to the product.
 //
-// Why a second layer at all, when Go 1.24+ already negotiates X25519MLKEM768 inside
-// QUIC's TLS? Because TLS's post-quantum key exchange gives PQ *confidentiality* but
-// authenticates with a signature certificate, and KeibiDrop's identity keys are KEM
-// keys (X25519 + ML-KEM), not signature keys. The product authenticates a peer by
-// KEM possession bound to a fingerprint, not by a cert. This handshake carries that
-// exact model. The single-layer alternative (fold identity into the TLS cert) is
-// analysed in docs/FINDINGS.md; it changes the identity model, so it is not a
-// drop-in.
+// Why a second layer, when Go negotiates X25519MLKEM768 inside QUIC's TLS? TLS gives PQ
+// confidentiality but authenticates with a signature certificate; KeibiDrop's identity
+// keys are KEM keys (X25519 + ML-KEM), and it authenticates a peer by KEM possession
+// bound to a fingerprint, not by a cert. This handshake carries that model.
 
 // Identity is a device's persistent post-quantum identity: an X25519 key and an
-// ML-KEM-1024 key, the exact key material KeibiDrop stores in its encrypted identity
-// file. The fingerprint is a hash over the two public keys and is the token peers
-// verify out of band (over Signal, a QR code, in person).
+// ML-KEM-1024 key. The fingerprint is a hash over the two public keys, the token peers
+// verify out of band.
 type Identity struct {
 	keys *kbc.OwnKeys
 	fp   string
 }
 
-// NewIdentity generates a fresh identity (X25519 + ML-KEM-1024), like KeibiDrop's
-// identity.create(). In the product this is loaded from disk instead of generated.
+// NewIdentity generates a fresh identity (X25519 + ML-KEM-1024). In the product this is
+// loaded from disk instead.
 func NewIdentity() (*Identity, error) {
 	kemPriv, kemPub, err := kbc.GenerateMLKEMKeypair()
 	if err != nil {
@@ -79,10 +71,9 @@ func NewIdentity() (*Identity, error) {
 // Fingerprint returns the out-of-band verification token.
 func (id *Identity) Fingerprint() string { return id.fp }
 
-// kdHello is one handshake frame, sent length-prefixed (writeFrame/readFrame from
-// secure.go) as JSON. It mirrors the fields KeibiDrop exchanges: public keys, the
-// sender's cipher list, the server's chosen suite, and a seed encapsulated to the
-// peer for one direction's key.
+// kdHello is one handshake frame, sent length-prefixed as JSON. It mirrors the fields
+// KeibiDrop exchanges: public keys, the sender's cipher list, the server's chosen suite,
+// and a seed encapsulated to the peer for one direction's key.
 type kdHello struct {
 	Pub     map[string]string `json:"pub,omitempty"`     // base64 x25519 + mlkem public keys
 	Ciphers []string          `json:"ciphers,omitempty"` // client's supported suites (frame 1)
@@ -92,14 +83,13 @@ type kdHello struct {
 }
 
 // SecureKD runs KeibiDrop's post-quantum handshake over conn and returns an
-// AEAD-encrypted net.Conn. Mutual fingerprint verification; seeds encapsulated to
-// the peer's identity keys; a per-direction SEK from HKDF-SHA512.
+// AEAD-encrypted net.Conn: mutual fingerprint verification, seeds encapsulated to the
+// peer's identity keys, a per-direction SEK from HKDF-SHA512.
 //
-// One bidirectional QUIC stream carries both directions, so unlike KeibiDrop's two
-// one-way TCP sockets we derive two keys: Kc2s (client sends) and Ks2c (server
-// sends). Each side encapsulates the seed for its OWN send direction, exactly like a
-// KeibiDrop outbound handshake, so both KEM operations reuse pkg/crypto unchanged.
-// Three frames, no deadlock on a single stream: client writes, reads, writes.
+// One bidirectional QUIC stream carries both directions, so we derive two keys: Kc2s
+// (client sends) and Ks2c (server sends). Each side encapsulates the seed for its own
+// send direction, reusing pkg/crypto unchanged. Three frames, no deadlock on a single
+// stream: client writes, reads, writes.
 func SecureKD(conn net.Conn, id *Identity, expectedPeerFP string, role Role) (net.Conn, error) {
 	switch role {
 	case RoleClient:
@@ -180,7 +170,7 @@ func secureKDServer(conn net.Conn, id *Identity, expectedClientFP string) (net.C
 
 // encapSeed picks a random 32-byte seed, wraps it to the peer's X25519 key and
 // ML-KEM-encapsulates a second secret to the peer's ML-KEM key, then derives the
-// directional SEK exactly like KeibiDrop's outbound handshake.
+// directional SEK.
 func encapSeed(own *kbc.OwnKeys, peer *kbc.PeerKeys, suite kbc.CipherSuite) (key []byte, encXB64, encKB64 string, err error) {
 	seed1 := kbc.GenerateSeed()
 	encX, err := kbc.X25519Encapsulate(seed1, own.X25519Private, peer.X25519Public)
@@ -216,9 +206,8 @@ func decapSeed(own *kbc.OwnKeys, peer *kbc.PeerKeys, suite kbc.CipherSuite, encX
 	return kbc.DeriveKey(suite, seed1, seed2)
 }
 
-// newSecureConnSuite builds the record layer (secureConn from secure.go) with AEADs
-// for the negotiated suite, so this path honours KeibiDrop's cipher negotiation
-// (AES-256-GCM on hardware-AES machines, ChaCha20-Poly1305 otherwise).
+// newSecureConnSuite builds the record layer (secureConn) with AEADs for the negotiated
+// suite (AES-256-GCM on hardware-AES machines, ChaCha20-Poly1305 otherwise).
 func newSecureConnSuite(inner net.Conn, suite kbc.CipherSuite, wkey, rkey []byte) (net.Conn, error) {
 	waead, err := kbc.NewAEAD(suite, wkey)
 	if err != nil {
@@ -283,7 +272,7 @@ func parseSuites(s []string) []kbc.CipherSuite {
 	return out
 }
 
-func b64(b []byte) string        { return base64.StdEncoding.EncodeToString(b) }
+func b64(b []byte) string            { return base64.StdEncoding.EncodeToString(b) }
 func unb64(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
 
 func writeHello(conn net.Conn, h kdHello) error {
@@ -335,9 +324,8 @@ func ServeGRPCKD(addr string, svc pb.BenchServiceServer, id *Identity, expectedC
 	return ServeGRPCKDOver(QUIC(), addr, svc, id, expectedClientFP, opts...)
 }
 
-// ServeGRPCKDOver is ServeGRPCKD over an explicit transport. The PQC handshake is
-// transport-agnostic (SecureKD wraps any net.Conn), so the same authenticated,
-// post-quantum-secured gRPC runs over TCP (the bulk channel) or QUIC (interactive).
+// ServeGRPCKDOver is ServeGRPCKD over an explicit transport. The PQC handshake wraps any
+// net.Conn, so the same secured gRPC runs over TCP (bulk) or QUIC (interactive).
 func ServeGRPCKDOver(tr Transport, addr string, svc pb.BenchServiceServer, id *Identity, expectedClientFP string, opts ...grpc.ServerOption) (*grpc.Server, net.Addr, error) {
 	ln, err := tr.Listen(addr)
 	if err != nil {
@@ -360,9 +348,8 @@ func DialGRPCKD(addr string, id *Identity, expectedServerFP string, opts ...grpc
 	return DialGRPCKDOver(QUIC(), addr, id, expectedServerFP, opts...)
 }
 
-// DialGRPCKDOver is DialGRPCKD over an explicit transport (QUIC for interactive, TCP
-// for bulk). Same PQC handshake either way, so both channels are equally secured with
-// one identity + fingerprint.
+// DialGRPCKDOver is DialGRPCKD over an explicit transport (QUIC for interactive, TCP for
+// bulk). Same PQC handshake either way.
 func DialGRPCKDOver(tr Transport, addr string, id *Identity, expectedServerFP string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	dialer := func(ctx context.Context, _ string) (net.Conn, error) {
 		c, err := tr.Dial(ctx, addr)

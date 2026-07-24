@@ -64,9 +64,8 @@ func (kd *KeibiDrop) relayURL(sub string) (*url.URL, error) {
 
 func (kd *KeibiDrop) registerRoomToRelay() error {
 	logger := kd.logger.With("method", "register-room-to-relay")
-	// Snapshot under kd.mu; the keepalive goroutine calls this while teardown may nil
-	// kd.session. Lock only for the read so kd.mu is never held across a relay RPC
-	// (keeps the rk.mu -> kd.mu order intact).
+	// Snapshot under kd.mu: the keepalive goroutine calls this while teardown may nil
+	// kd.session. Lock only for the read to keep the rk.mu -> kd.mu order intact.
 	kd.mu.Lock()
 	s := kd.session
 	kd.mu.Unlock()
@@ -276,8 +275,8 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 
 	s.PeerPubKeys = peerKeys
 
-	// Identity confirmed: emit it. Whatever reacts (the FUSE cache scoper, wired in
-	// setupFilesystem) is none of this verifier's business — it just announces the fact.
+	// Identity confirmed: emit it. The reactor (the FUSE cache scoper, wired in
+	// setupFilesystem) is decoupled from this verifier.
 	if kd.OnPeerVerified != nil {
 		kd.OnPeerVerified(computedFp)
 	}
@@ -314,37 +313,32 @@ func isValidIPv6(ipStr string) bool {
 
 //
 
-// refreshAttrFromDisk refreshes req.Attr's Size/ModTime from disk before a
-// debounced notify is sent (the queued size may be stale). A file gone at
-// flush time is kept, not dropped (see Option A below).
+// refreshAttrFromDisk refreshes req.Attr's Size/ModTime from disk before a debounced notify is
+// sent (the queued size may be stale). A file gone at flush time is kept, not dropped.
 func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) {
 	if req.Attr == nil {
 		return
 	}
 	info, err := os.Lstat(filepath.Join(downloadFolder, req.Path))
 	if err != nil {
-		// Option A: file is gone at flush — it either flickered (rename/replace)
-		// during the 200ms debounce, or is a true transient (.keep/.lock). Do NOT
-		// signal a drop: keep the ADD with the attr captured at enqueue. Silently
-		// dropping here loses REAL files that merely flickered (e.g. files generated
-		// then atomically replaced); a true phantom is harmless because the peer's
-		// on-demand Read returns EOF for a gone remote file (see fuse Read handler).
+		// File gone at flush: it either flickered (rename/replace) during the debounce or is a
+		// true transient. Keep the ADD with the attr captured at enqueue rather than drop, which
+		// would lose real files that merely flickered; a true phantom is harmless (the peer's
+		// on-demand Read returns EOF for a gone remote file).
 		return
 	}
 	req.Attr.Size = info.Size()
 	req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
 }
 
-// isDebouncedNotify reports whether a notify type is per-path debounced (ADD_FILE /
-// EDIT_FILE). Everything else is sent immediately and is NOT replayed by
-// notifyRestoredFiles after a reconnect, so it is what pendingNotifies tracks.
+// isDebouncedNotify reports whether a notify type is per-path debounced (ADD_FILE/EDIT_FILE).
+// Everything else is sent immediately and is what pendingNotifies tracks.
 func isDebouncedNotify(t bindings.NotifyType) bool {
 	return t == bindings.NotifyType_ADD_FILE || t == bindings.NotifyType_EDIT_FILE
 }
 
-// countImmediateNotifies returns how many entries in a flush batch are the
-// immediate REMOVE/RENAME/ADD_DIR kind that pendingNotifies counts. Used to
-// balance the per-event increment once the batch has been handed off.
+// countImmediateNotifies returns how many entries in a flush batch are the immediate
+// REMOVE/RENAME/ADD_DIR kind that pendingNotifies counts, to balance the per-event increment.
 func countImmediateNotifies(batch []*bindings.NotifyRequest) int64 {
 	var n int64
 	for _, r := range batch {
@@ -374,26 +368,19 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs.PrefetchAutoMB = kd.PrefetchAutoMB
 	fs.ReadAheadWindowMB = kd.ReadAheadWindowMB
 
-	// Composition point: the handshake EMITS OnPeerVerified; the FUSE cache REACTS by
-	// scoping itself to that peer. A different peer drops the prior cache (no cross-peer
-	// leak); the same peer reconnecting or resuming keeps it (files still there, no
-	// re-fetch). Neither side knows the other — they meet only on this line.
+	// The handshake emits OnPeerVerified; the FUSE cache reacts by scoping to that peer. A
+	// different peer drops the prior cache (no cross-peer leak); the same peer reconnecting or
+	// resuming keeps it (no re-fetch).
 	kd.OnPeerVerified = func(fp string) {
 		if kd.FS != nil {
 			kd.FS.EnsurePeerScope(fp)
 		}
 	}
 
-	// Notification worker with per-path debounce and batching.
-	//
-	// Problem: LFS downloads a 420MB file over several seconds. Each intermediate
-	// write triggers ADD_FILE. Without debounce, the peer restarts prefetch 10+
-	// times and never gets the correct content.
-	//
-	// Solution: Per-path debounce. For ADD_FILE/EDIT_FILE, we track the last
-	// notification per path. Each update resets a 200ms timer for that path.
-	// Only when the path is stable for 200ms do we include it in the batch.
-	// RENAME/REMOVE/ADD_DIR are sent immediately (no debounce).
+	// Notification worker with per-path debounce and batching. Without debounce, a multi-write
+	// download (e.g. LFS writing a 420MB file) triggers ADD_FILE repeatedly and the peer
+	// restarts prefetch each time. ADD_FILE/EDIT_FILE are debounced per path on a 200ms timer;
+	// RENAME/REMOVE/ADD_DIR are sent immediately.
 	kd.notifyCh = make(chan *bindings.NotifyRequest, 16384) // 8x headroom for git-clone bursts (~1-1.5 events/file)
 	var batchSeq atomic.Uint64
 	go func() {
@@ -411,17 +398,12 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			if len(batch) == 0 {
 				return
 			}
-			// #6: this batch is leaving the worker's hands. Clear its immediate
-			// REMOVE/RENAME events from pendingNotifies on every return path (client
-			// gone, success, or per-item fallback) so the counter cannot leak and
-			// wedge onRekeyNeeded off forever.
+			// This batch is leaving the worker's hands: clear its immediate REMOVE/RENAME
+			// events from pendingNotifies on every return path so the counter can't leak.
 			defer kd.pendingNotifies.Add(-countImmediateNotifies(batch))
-			// Snapshot the session under kd.mu: Run()'s ctx.Done teardown rewrites
-			// kd.session concurrently, and this worker never took kd.mu, so a bare
-			// read establishes no happens-before and races (nil-deref panic in the
-			// worst case). The RPCs below go through sendBatchNotify/sendNotify,
-			// which route over the QUIC metadata channel when up (isolated from TCP
-			// bulk) and fall back to the TCP client.
+			// Snapshot the session under kd.mu: teardown rewrites kd.session concurrently and
+			// this worker never took kd.mu, so a bare read would race. The RPCs below route
+			// over the QUIC metadata channel when up and fall back to TCP.
 			kd.mu.Lock()
 			s := kd.session
 			kd.mu.Unlock()
@@ -449,12 +431,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			select {
 			case req, ok := <-kd.notifyCh:
 				if !ok {
-					// Channel closed: flush everything still buffered. The immediate
-					// REMOVE/RENAME/ADD_DIR slice goes first (so buffered deletes are not
-					// dropped on shutdown and their pendingNotifies counts are balanced
-					// by flush, #6), then the debounced ADD_FILE map with fresh sizes. A
-					// REMOVE already cleared any pending ADD for its path, so this order
-					// never sends a stale ADD after its REMOVE.
+					// Channel closed: flush everything buffered. Immediate REMOVE/RENAME/ADD_DIR
+					// first (so buffered deletes aren't dropped and their counts are balanced),
+					// then the debounced ADD_FILE map. A REMOVE already cleared any pending ADD.
 					remaining := make([]*bindings.NotifyRequest, 0, len(immediate)+len(pending))
 					remaining = append(remaining, immediate...)
 					for _, p := range pending {
@@ -473,9 +452,8 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					continue
 				}
 
-				// #6: count REMOVE/RENAME/ADD_DIR (the immediate, non-replayed kinds)
-				// the instant they are accepted, so a proactive rekey defers until they
-				// are delivered. Balanced by flush's countImmediateNotifies decrement.
+				// Count REMOVE/RENAME/ADD_DIR (immediate, non-replayed kinds) on accept so a
+				// proactive rekey defers until they're delivered. Balanced by flush.
 				if !isDebouncedNotify(req.Type) {
 					kd.pendingNotifies.Add(1)
 				}
@@ -489,9 +467,8 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 						deadline: time.Now().Add(200 * time.Millisecond),
 					}
 				case bindings.NotifyType_RENAME_FILE, bindings.NotifyType_RENAME_DIR:
-					// RENAME: send immediately. If there's a pending ADD_FILE for
-					// the old path, re-target it to the new path so the peer still
-					// downloads the content (at the correct path after rename).
+					// RENAME: send immediately. Re-target any pending ADD_FILE for the old path
+					// to the new path so the peer still downloads the content.
 					if old, exists := pending[req.OldPath]; exists {
 						delete(pending, req.OldPath)
 						old.req.Path = req.Path // retarget to new path
@@ -499,9 +476,8 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					}
 					immediate = append(immediate, req)
 				default:
-					// REMOVE, ADD_DIR, REMOVE_DIR, DISCONNECT — send immediately.
-					// create-then-delete in the debounce window: drop the pending
-					// ADD and send the REMOVE so the peer doesn't keep a dead file.
+					// REMOVE, ADD_DIR, REMOVE_DIR, DISCONNECT: send immediately. On
+					// create-then-delete in the debounce window, drop the pending ADD.
 					if req.Type == bindings.NotifyType_REMOVE_FILE || req.Type == bindings.NotifyType_REMOVE_DIR {
 						delete(pending, req.Path)
 					}
@@ -594,12 +570,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	return nil
 }
 
-// openStreamProvider is the FUSE OpenStreamProvider callback. It snapshots the
-// session under kd.mu and returns nil if the session (or its gRPC client) is
-// gone. During Shutdown, Run() nils kd.session before FsCtx is cancelled, so a
-// goroutine waking from PrefetchSem in that window must not deref a nil session.
-// Callers handle a nil return: reconcileEditAsync's ChunkHasher assertion fails
-// (ok == false) and prefetchFile's "if fsp == nil" guard fires.
+// openStreamProvider is the FUSE OpenStreamProvider callback. It snapshots the session under
+// kd.mu and returns nil if the session (or its gRPC client) is gone, so a goroutine waking from
+// PrefetchSem during teardown can't deref a nil session. Callers handle the nil return.
 func (kd *KeibiDrop) openStreamProvider() types.FileStreamProvider {
 	kd.mu.Lock()
 	s := kd.session
@@ -608,9 +581,8 @@ func (kd *KeibiDrop) openStreamProvider() types.FileStreamProvider {
 	if s == nil || s.GRPCClient == nil {
 		return nil
 	}
-	// With the QUIC control channel up, split: prefetch (StreamFile) on TCP, on-demand
-	// reads + chunk hashes on QUIC. Providers are created per open, so a channel that
-	// connects later is picked up by subsequent opens.
+	// With the QUIC control channel up, split prefetch (StreamFile) on TCP from on-demand reads
+	// and chunk hashes on QUIC. Providers are per open, so a later channel is picked up.
 	if qcc != nil {
 		return NewImplStreamProviderDual(s.GRPCClient, bindings.NewKeibiServiceClient(qcc))
 	}
@@ -656,8 +628,7 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 				newClient := bindings.NewKeibiServiceClient(conn)
 				s.GRPCClient = newClient
 				// Publish the client stack under kd.mu, gated on tearingDown: a reconnect
-				// that finishes after teardown began must not resurrect it. Pairs with
-				// teardown's locked swap of the same fields.
+				// finishing after teardown must not resurrect it.
 				kd.mu.Lock()
 				if kd.tearingDown.Load() {
 					kd.mu.Unlock()
@@ -676,43 +647,30 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 	}
 }
 
-// grpcDisconnectGraceDelay is the wait between a peer's Notify(DISCONNECT)
-// arriving and our own context cancellation. The DISCONNECT handler returns
-// a response on the same gRPC server we then tear down; without this wait
-// the teardown races the response write and either crashes the server (the
-// original bug) or, post-#121, leaks the Serve() and ClientConn maintenance
-// goroutines once Stop()/Close() are restored on the cleanup path. See #122.
-//
-// Declared as var (not const) so tests can shrink it.
+// grpcDisconnectGraceDelay is the wait between a peer's Notify(DISCONNECT) arriving and our own
+// context cancellation. The DISCONNECT handler returns a response on the same gRPC server we
+// then tear down; without this wait the teardown races the response write and crashes the
+// server or leaks the Serve()/ClientConn goroutines. Declared as var so tests can shrink it.
 var grpcDisconnectGraceDelay = 250 * time.Millisecond
 
-// handleNotifyDisconnect runs the post-DISCONNECT teardown: clear the FUSE
-// view (keeping the mount alive for reuse on reconnect), then sleep the grace
-// window to let the in-flight DISCONNECT RPC response flush before we cancel
-// the context (which the Run() ctx.Done branch uses to call grpcServer.Stop()
-// and grpcClientConn.Close()).
-//
-// MUST be invoked in a goroutine separate from the gRPC handler — the
-// handler is still writing the response when this runs.
+// handleNotifyDisconnect runs the post-DISCONNECT teardown: clear the FUSE view (keeping the
+// mount alive for reconnect), then sleep the grace window so the in-flight DISCONNECT response
+// flushes before we cancel the context. Must run in a goroutine separate from the gRPC handler,
+// which is still writing the response when this runs.
 func (kd *KeibiDrop) handleNotifyDisconnect() {
 	if kd.FS != nil {
-		// Keep the FUSE mount alive across the disconnect — cgofuse allows only
-		// one mount per process, so a fresh remount on reconnect is fragile and
-		// can fail (leaving the mount point dead). CancelInFlight cancels in-flight
-		// reads but PRESERVES the peer's file view, so a same-peer reconnect or a
-		// resumed session finds its files still there with NO re-fetch; a DIFFERENT
-		// peer drops them at its next handshake (EnsurePeerScope). Run()'s Start
-		// handler reuses the mount on reconnect (it returns via the ctx.Done select,
-		// not by Mount() unblocking). Full Unmount stays on app exit.
+		// Keep the FUSE mount alive across the disconnect: cgofuse allows only one mount per
+		// process, so a remount on reconnect is fragile. CancelInFlight cancels in-flight reads
+		// but preserves the peer's file view, so a same-peer reconnect finds its files with no
+		// re-fetch; a different peer drops them at its next handshake. Full Unmount is on app exit.
 		kd.FS.CancelInFlight()
 	}
 	time.Sleep(grpcDisconnectGraceDelay)
 	kd.cancelContext()
 }
 
-// kdServerOptions is the single source of the tuned gRPC server options (16 MiB
-// frames + windows, 4 MiB I/O buffers). The TCP server and the QUIC control server
-// both use it, so the two transports cannot drift apart.
+// kdServerOptions is the single source of the tuned gRPC server options. The TCP server and
+// the QUIC control server both use it, so the two transports can't drift apart.
 func kdServerOptions() []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(config.GRPCMaxMsgSize),
@@ -758,12 +716,9 @@ func (kd *KeibiDrop) startGRPCServer() error {
 		Session:     s,
 		Logger:      kd.logger.With("component", "keibidrop-server"),
 		SyncTracker: kd.SyncTracker,
-		// Re-wire the FUSE tree here. On a reconnect (including a proactive rekey
-		// re-handshake) this rebuilds KDSvc, and the post-mount wiring in Run() is not
-		// re-run, so without this a reconnected FUSE peer would take the SyncTracker-only
-		// fallback and never show notify-received files on its mount. kd.FS is nil for a
-		// non-FUSE peer and on the very first connect (mount not up yet), which Run() then
-		// backfills, so this only ever adds the missing reconnect wiring.
+		// Re-wire the FUSE tree here: a reconnect rebuilds KDSvc but the post-mount wiring in
+		// Run() is not re-run, so without this a reconnected FUSE peer would never show
+		// notify-received files. kd.FS is nil for non-FUSE and the first connect (Run backfills).
 		FS:           kd.FS,
 		OnEvent:      kd.OnEvent,
 		OnDisconnect: kd.handleNotifyDisconnect,
@@ -771,10 +726,9 @@ func (kd *KeibiDrop) startGRPCServer() error {
 
 	bindings.RegisterKeibiServiceServer(grpcServer, svc)
 
-	// Publish the server stack under kd.mu, gated on tearingDown so a reconnect that
-	// finished after teardown began does not resurrect a server on a torn-down session.
-	// Also the publication serveQUICControl polls for: it reads KDSvc from its own
-	// goroutine to register the same impl on the QUIC server.
+	// Publish the server stack under kd.mu, gated on tearingDown so a reconnect finishing after
+	// teardown doesn't resurrect a server on a torn-down session. serveQUICControl polls for
+	// this publication to register the same impl on the QUIC server.
 	kd.mu.Lock()
 	if kd.tearingDown.Load() {
 		kd.mu.Unlock()

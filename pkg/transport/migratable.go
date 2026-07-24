@@ -10,11 +10,10 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// MigratableConn is a QUIC-backed net.Conn dialed on an explicit quic.Transport, so
-// the underlying connection can MIGRATE to a fresh local UDP socket (the Wi-Fi -> LTE
-// case) while the stream — and everything layered on it (SecureConn, gRPC) — survives
-// untouched. The plain Transport.Dial uses quic.DialAddr, whose connection cannot
-// AddPath; the app-level control channel dials through this instead.
+// MigratableConn is a QUIC-backed net.Conn dialed on an explicit quic.Transport, so the
+// connection can migrate to a fresh local UDP socket (Wi-Fi -> LTE) while the stream and
+// everything layered on it (SecureConn, gRPC) survive untouched. The plain
+// Transport.Dial uses quic.DialAddr, whose connection cannot AddPath.
 type MigratableConn struct {
 	net.Conn // the one-stream adapter (quicConn)
 
@@ -55,9 +54,9 @@ func DialQUICMigratable(ctx context.Context, addr string) (*MigratableConn, erro
 	}, nil
 }
 
-// Migrate moves the connection to a fresh local UDP socket and returns the old and
-// new local addresses. The stream keeps working across the switch. The caller must
-// send traffic right after (e.g. a ping) so the peer migrates its send path too.
+// Migrate moves the connection to a fresh local UDP socket and returns the old and new
+// local addresses. The caller must send traffic right after (e.g. a ping) so the peer
+// migrates its send path too.
 func (m *MigratableConn) Migrate(ctx context.Context) (oldAddr, newAddr net.Addr, err error) {
 	oldAddr = m.qconn.LocalAddr()
 	tr, err := migratePath(ctx, m.qconn, m.serverAddr)
@@ -101,12 +100,12 @@ func migratePath(ctx context.Context, qconn *quic.Conn, serverAddr *net.UDPAddr)
 	}
 	if err := path.Probe(ctx); err != nil {
 		_ = newTr.Close()
-		return nil, fmt.Errorf("Probe: %w", err)
+		return nil, fmt.Errorf("probe: %w", err)
 	}
 	time.Sleep(30 * time.Millisecond) // let PATH_CHALLENGE/RESPONSE ACKs settle
 	if err := path.Switch(); err != nil {
 		_ = newTr.Close()
-		return nil, fmt.Errorf("Switch: %w", err)
+		return nil, fmt.Errorf("switch: %w", err)
 	}
 	return newTr, nil
 }

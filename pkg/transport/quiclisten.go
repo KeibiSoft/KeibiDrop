@@ -7,14 +7,11 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// quicListener adapts a *quic.Listener to net.Listener so grpc.Server.Serve can
-// consume it. Each accepted QUIC connection contributes its first stream as one
-// net.Conn (one stream = one conn, mirroring KeibiDrop's per-direction socket).
+// quicListener adapts a *quic.Listener to net.Listener so grpc.Server.Serve can consume
+// it. Each accepted QUIC connection contributes its first stream as one net.Conn.
 //
-// Streams are accepted in a per-connection goroutine so that a client which
-// connects but stalls before opening its stream cannot block Accept for other
-// clients — the one place the naive "Accept then AcceptStream inline" version
-// would head-of-line block.
+// Streams are accepted in a per-connection goroutine so a client that connects but
+// stalls before opening its stream cannot head-of-line block Accept for other clients.
 type quicListener struct {
 	ln     *quic.Listener
 	tr     *quic.Transport // owned; Close stops the transport

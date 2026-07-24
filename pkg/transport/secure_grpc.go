@@ -10,9 +10,8 @@ import (
 )
 
 // secureListener runs the PQC handshake (server role) on each accepted conn before
-// handing it up, so gRPC runs over a post-quantum-secured net.Conn. A failed
-// handshake drops that conn and keeps serving. (For the PoC the handshake runs on
-// the Accept path; production would move it into the per-conn goroutine.)
+// handing it up, so gRPC runs over a post-quantum-secured net.Conn. A failed handshake
+// drops that conn and keeps serving.
 type secureListener struct {
 	net.Listener
 }

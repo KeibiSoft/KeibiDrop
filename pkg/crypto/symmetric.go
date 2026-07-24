@@ -20,25 +20,22 @@ import (
 const KeySize = chacha20poly1305.KeySize
 const NonceSize = chacha20poly1305.NonceSize
 const EncOverhead = uint64(chacha20poly1305.NonceSize + chacha20poly1305.Overhead)
-const BlockSize = uint64(2 << 16) // On linux cp works with blocks of 128KiB, we use double.
+const BlockSize = uint64(2 << 16) // linux cp uses 128KiB blocks; we use double.
 
-// nonceCounterBits is the width of the per-epoch message counter within the nonce.
-// The packed generator state holds the 16-bit epoch in the high bits and the 48-bit
-// counter in the low bits.
+// nonceCounterBits is the width of the per-epoch message counter within the nonce. The
+// packed state holds the 16-bit epoch in the high bits, the 48-bit counter in the low bits.
 const nonceCounterBits = 48
 
 // nonceCounterMask selects the 48-bit counter out of the packed state.
 const nonceCounterMask = (uint64(1) << nonceCounterBits) - 1
 
 // NonceGenerator provides deterministic per-direction AEAD nonces of the form
-// [4-byte prefix][2-byte big-endian epoch][6-byte big-endian counter] = 12 bytes.
-// The prefix distinguishes directions (inbound vs outbound). The epoch is the key
-// generation, bumped by the rekey ratchet; the 48-bit counter is the per-epoch
-// message index and resets to 0 on each bump. epoch and counter share one atomic
-// word, so every Next reads a consistent pair; SetEpoch must be serialized against
-// Next by the caller (SecureConn holds its writer lock across a ratchet). At epoch 0
-// the layout is byte-identical to the old [4-byte prefix][8-byte counter] format, so
-// a ratchet-unaware peer stays interoperable until the first epoch bump.
+// [4-byte prefix][2-byte big-endian epoch][6-byte big-endian counter] = 12 bytes. The prefix
+// distinguishes directions. The epoch (key generation) is bumped by the ratchet; the 48-bit
+// counter resets to 0 on each bump. Epoch and counter share one atomic word so every Next
+// reads a consistent pair; the caller serializes SetEpoch against Next. At epoch 0 the layout
+// is byte-identical to the old [4-byte prefix][8-byte counter] format, so a ratchet-unaware
+// peer stays interoperable until the first bump.
 type NonceGenerator struct {
 	prefix [4]byte       // Direction/session identifier.
 	state  atomic.Uint64 // (epoch << 48) | counter.
@@ -52,18 +49,17 @@ func NewNonceGenerator(prefix uint32) *NonceGenerator {
 	return ng
 }
 
-// ErrNonceOverflow is returned by Next when the 48-bit per-epoch counter would wrap into
-// the epoch bytes and reuse a (key, nonce) pair. The caller fails that one connection closed
-// rather than crashing the whole daemon. The ratchet rotates far below 2^48 messages, so
-// reaching this means rotation stalled.
+// ErrNonceOverflow is returned by Next when the 48-bit per-epoch counter would wrap into the
+// epoch bytes and reuse a (key, nonce) pair. The ratchet rotates far below 2^48 messages, so
+// reaching this means rotation stalled; the caller closes that one connection.
 var ErrNonceOverflow = errors.New("crypto: nonce counter overflow within an epoch (missing rekey)")
 
-// Next returns the next nonce and advances the counter. Thread-safe.
-// It returns ErrNonceOverflow if the 48-bit counter would wrap within an epoch: a wrap
-// carries into the epoch bytes and reuses a (key, nonce) pair, so it must fail closed.
+// Next returns the next nonce and advances the counter. Thread-safe. Returns ErrNonceOverflow
+// if the 48-bit counter would wrap within an epoch, since a wrap carries into the epoch bytes
+// and reuses a (key, nonce) pair.
 func (ng *NonceGenerator) Next() ([NonceSize]byte, error) {
-	// state packs epoch|counter, and its big-endian uint64 is exactly
-	// [2B epoch][6B counter], so one PutUint64 emits both halves.
+	// state packs epoch|counter; its big-endian uint64 is exactly [2B epoch][6B counter],
+	// so one PutUint64 emits both halves.
 	s := ng.state.Add(1)
 	if s&nonceCounterMask == 0 {
 		return [NonceSize]byte{}, ErrNonceOverflow
@@ -111,9 +107,8 @@ func EncryptWithNonce(kek, plainText []byte, nonce [NonceSize]byte) ([]byte, err
 	return result, nil
 }
 
-// EncryptWithAAD encrypts plainText using KEK with ChaCha20-Poly1305 and
-// authenticated associated data (aad). The aad is authenticated but not
-// included in the ciphertext. Pass nil or empty slice for no AAD.
+// EncryptWithAAD encrypts plainText using KEK with ChaCha20-Poly1305 and authenticated
+// associated data (aad is authenticated but not included in the ciphertext; nil for none).
 // Returns [nonce | ciphertext+MAC], or error.
 func EncryptWithAAD(kek, plainText, aad []byte) ([]byte, error) {
 	if len(kek) != KeySize {
@@ -130,7 +125,7 @@ func EncryptWithAAD(kek, plainText, aad []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// The nonce is not hardcoded, I just generated it in the previous line.
+	// Nonce is freshly generated above, not hardcoded.
 	cipherText := aead.Seal(nil, nonce, plainText, aad) // #nosec G407
 
 	result := make([]byte, len(nonce)+len(cipherText))
@@ -140,11 +135,9 @@ func EncryptWithAAD(kek, plainText, aad []byte) ([]byte, error) {
 	return result, nil
 }
 
-// DecryptWithAAD decrypts [nonce | ciphertext+MAC] using KEK, verifying the
-// authenticated associated data (aad). The aad must match what was passed to
-// EncryptWithAAD; any mismatch causes authentication failure. Pass nil or
-// empty slice when no AAD was used during encryption.
-// Returns plainText or error if authentication fails.
+// DecryptWithAAD decrypts [nonce | ciphertext+MAC] using KEK, verifying the associated
+// data (aad). The aad must match what EncryptWithAAD used, or authentication fails; nil
+// when no AAD was used. Returns plainText or error if authentication fails.
 func DecryptWithAAD(kek, input, aad []byte) ([]byte, error) {
 	if len(kek) != KeySize {
 		return nil, errors.New("invalid key size")

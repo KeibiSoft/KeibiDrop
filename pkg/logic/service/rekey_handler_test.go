@@ -42,9 +42,8 @@ func discardService(sess *session.Session) *KeibidropServiceImpl {
 	}
 }
 
-// A not-ready session (a half-built or forged target) must refuse the fold cleanly: the RPC
-// is no longer Unimplemented, it returns a typed not-ready error, and it never rotates or
-// bricks the live conn. This is the reversed contract of the old neutered handler.
+// A not-ready session must refuse the fold cleanly: not Unimplemented, a typed not-ready
+// error, and no rotation or bricking of the live conn.
 func TestRekeyRPCRefusesWhenNotReady(t *testing.T) {
 	key := randKey(t)
 	c1, c2 := net.Pipe()
@@ -64,8 +63,7 @@ func TestRekeyRPCRefusesWhenNotReady(t *testing.T) {
 	require.Equal(t, epochBefore, inbound.GetEpoch(), "a refused fold must not rotate or brick the live conn")
 }
 
-// A ready session answers a well-formed fold request: the handler wires straight to the
-// session responder and returns the ML-KEM ciphertext plus the responder's ephemeral public.
+// A ready session answers a well-formed fold request: it returns the ML-KEM ciphertext plus the responder's ephemeral public.
 func TestRekeyRPCRespondsToFold(t *testing.T) {
 	key := randKey(t)
 	suite := kbc.CipherAES256

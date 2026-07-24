@@ -632,19 +632,16 @@ func (kd *KeibiDrop) waitForPeerFingerprint() error {
 // CreateRoom: start the gRPC server, dial the client with retry, init
 // connection resilience, then either signal ready (no-FUSE) or mount FUSE.
 func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
-	// Clear the teardown latch: a prior Stop() set tearingDown to make an in-flight
-	// reconnect bail, but this is a fresh CreateRoom/JoinRoom (the previous teardown has
-	// already completed, since Stop() blocks on it), so the gRPC-stack publishes below
-	// must not be gated off. The auto-reconnect path (onReconnected) does not run through
-	// finishConnect, so it stays gated during a live teardown.
+	// Clear the teardown latch: a prior Stop() set tearingDown to make an in-flight reconnect
+	// bail, but this is a fresh CreateRoom/JoinRoom (the previous teardown already completed),
+	// so the gRPC-stack publishes below must not be gated off.
 	kd.tearingDown.Store(false)
 
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
 
-	// Arm the in-band ratchet on both fresh conns before the gRPC readers start: kd.Start
-	// spawns the server on Inbound and connectGRPCClientWithRetry dials the client on
-	// Outbound. Both handshakes are done, so the negotiated capability is known.
+	// Arm the in-band ratchet on both fresh conns before the gRPC readers start. Both
+	// handshakes are done, so the negotiated capability is known.
 	kd.session.ApplyKeyUpdateNegotiation()
 
 	kd.Start()
@@ -663,9 +660,8 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 		logger.Warn("Failed to init connection resilience", "error", err)
 	}
 
-	// Eager fold: make the session forward-secret against later identity-key theft in about
-	// one round trip. Best-effort and initiator-only; a no-op on the responder and when the
-	// in-band ratchet is off.
+	// Eager fold: make the session forward-secret against later identity-key theft in about one
+	// round trip. Best-effort and initiator-only; a no-op on the responder or with the ratchet off.
 	kd.maybeStartEagerFold()
 
 	if !kd.IsFUSE {
@@ -750,7 +746,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 	// Connection priority: LAN (2s per addr) → direct IPv6 (15s) → bridge relay.
 	{
-		// 1. Try LAN addresses first (only in local mode — internet mode skips this).
+		// 1. Try LAN addresses first (only in local mode; internet mode skips this).
 		lanConnected := false
 		if kd.IsLocalMode && len(kd.PeerLocalAddrs) > 0 {
 			logger.Info("Trying LAN addresses first", "addrs", kd.PeerLocalAddrs)
@@ -762,7 +758,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 					logger.Info("LAN address failed", "addr", addr, "error", err)
 					continue
 				}
-				// LAN connection succeeded — do handshake on this connection.
+				// LAN connection succeeded, do handshake on this connection.
 				if err := session.PerformOutboundHandshakeOnConn(kd.session, conn); err != nil {
 					conn.Close()
 					logger.Warn("LAN handshake failed", "addr", addr, "error", err)
@@ -772,7 +768,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 				kd.PeerIPv6IP = localAddr
 				lanConnected = true
 
-				// Accept inbound from peer (LAN, should be fast — 5s timeout).
+				// Accept inbound from peer (LAN, should be fast, 5s timeout).
 				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
 				inConn, err := kd.listener.Accept()
 				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
@@ -845,7 +841,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 			if needBridge {
 				logger.Info("Falling back to bridge for both directions")
-				// Close the direct outbound — we'll redo both via bridge.
+				// Close the direct outbound; we'll redo both via bridge.
 				if kd.session.Session != nil && kd.session.Session.Outbound != nil {
 					kd.session.Session.Outbound.Close()
 					kd.session.Session.Outbound = nil
@@ -927,12 +923,9 @@ func LocalConnectRole(myName, peerName, myAddr, peerAddr string) (create bool) {
 	return myAddr < peerAddr
 }
 
-// DecideLocalRole reports whether this peer should create (listen) rather than
-// join (dial) for a local-mode connection to peerName at peerAddr. It feeds
-// LocalConnectRole this peer's own LAN IPv4 and the peer's bare IP (port and
-// zone stripped), so colliding names compare like-for-like and the two sides
-// never both pick join. Callers on every frontend (CLI, desktop UI, mobile)
-// route through this one decider.
+// DecideLocalRole reports whether this peer should create (listen) rather than join (dial) for
+// a local-mode connection to peerName at peerAddr. It feeds LocalConnectRole this peer's LAN
+// IPv4 and the peer's bare IP (port/zone stripped), so colliding names compare like-for-like.
 func DecideLocalRole(myName, peerName, peerAddr string) bool {
 	logger := slog.Default().With("fn", "DecideLocalRole")
 	peerIP := peerAddr
@@ -1055,7 +1048,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 					logger.Warn("Direct outbound to peer failed, falling back to bridge for outbound", "error", err)
 					// Reset outbound crypto state for bridge handshake.
 					kd.session.ResetOutboundCrypto()
-					// Close direct inbound too — we need both via bridge.
+					// Close direct inbound too; we need both via bridge.
 					if kd.session.Session != nil && kd.session.Session.Inbound != nil {
 						kd.session.Session.Inbound.Close()
 						kd.session.Session.Inbound = nil

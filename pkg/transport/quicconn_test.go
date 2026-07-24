@@ -14,10 +14,9 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// connPair is a live QUIC connection wrapped as net.Conn on both ends. The server
-// side arrives only after the client first writes, because QUIC opens streams
-// lazily (the peer's AcceptStream returns on the first STREAM frame) — which is
-// exactly how gRPC behaves, since its client writes the HTTP/2 preface first.
+// connPair is a live QUIC connection wrapped as net.Conn on both ends. The server side
+// arrives only after the client first writes, because QUIC opens streams lazily
+// (AcceptStream returns on the first STREAM frame), as gRPC does with its HTTP/2 preface.
 type connPair struct {
 	client   net.Conn
 	ln       *quic.Listener
@@ -78,9 +77,8 @@ func (p *connPair) close() {
 	_ = p.ln.Close()
 }
 
-// TestQUICConnRoundTrip proves the adapter carries bytes correctly in both
-// directions, with a payload larger than a single read buffer (so partial reads
-// are exercised — the thing SecureConn needs framing for and we get free).
+// TestQUICConnRoundTrip checks the adapter carries bytes both directions with a payload
+// larger than one read buffer, exercising partial reads.
 func TestQUICConnRoundTrip(t *testing.T) {
 	p := newConnPair(t)
 	defer p.close()
@@ -141,12 +139,10 @@ func TestQUICConnReadDeadline(t *testing.T) {
 	}
 }
 
-// TestQUICConnCloseNoLeak runs many connect/write/close cycles and asserts the
-// goroutine count settles back near baseline — i.e. the Close() fix actually
-// tears the connection down and does not leak a reader goroutine per conn.
+// TestQUICConnCloseNoLeak runs many connect/write/close cycles and asserts the goroutine
+// count settles near baseline, i.e. Close does not leak a reader goroutine per conn.
 func TestQUICConnCloseNoLeak(t *testing.T) {
-	// Warm up once so quic-go's one-time/global goroutines are already running,
-	// then take the baseline.
+	// Warm up so quic-go's global goroutines are running before taking the baseline.
 	warm := newConnPair(t)
 	go func() { _, _ = warm.client.Write([]byte("x")) }()
 	_, _ = io.ReadFull(warm.awaitServer(t), make([]byte, 1))

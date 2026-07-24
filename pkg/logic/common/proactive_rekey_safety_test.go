@@ -24,8 +24,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-// closeRecorder wraps a net.Conn and records whether Close was called, so a test
-// can assert a rekey did (or did not) drop the underlying sockets.
+// closeRecorder records whether Close was called, so a test can assert a rekey did or did not drop the sockets.
 type closeRecorder struct {
 	net.Conn
 	closed atomic.Bool
@@ -36,9 +35,8 @@ func (c *closeRecorder) Close() error {
 	return c.Conn.Close()
 }
 
-// newRecordedSecureConn returns a real *session.SecureConn whose underlying conn
-// records Close calls. The zero key is fine: these conns are only ever closed,
-// never read from or written to.
+// newRecordedSecureConn returns a *session.SecureConn whose conn records Close calls.
+// Zero key is fine: these conns are only closed, never read or written.
 func newRecordedSecureConn(t *testing.T, prefix uint32) (*session.SecureConn, *closeRecorder) {
 	t.Helper()
 	c1, c2 := net.Pipe()
@@ -48,10 +46,8 @@ func newRecordedSecureConn(t *testing.T, prefix uint32) (*session.SecureConn, *c
 	return session.NewSecureConn(rec, key, kbc.CipherChaCha20, prefix), rec
 }
 
-// newInitiatorRekeyKD builds a KeibiDrop for which every onRekeyNeeded guard
-// passes: the ratchet is off so the re-handshake fallback is active, this peer is the
-// deterministic initiator (lower fingerprint), reconnect state Connected, and no cooldown
-// (LastRekeyAt zero). A test then adds exactly one blocker and asserts the rekey defers.
+// newInitiatorRekeyKD builds a KeibiDrop where every onRekeyNeeded guard passes (ratchet
+// off, this peer the initiator, Connected, no cooldown); a test adds one blocker and asserts the rekey defers.
 func newInitiatorRekeyKD(t *testing.T) (kd *KeibiDrop, inRec, outRec *closeRecorder) {
 	t.Helper()
 	kd = newTestKD(t)
@@ -65,25 +61,19 @@ func newInitiatorRekeyKD(t *testing.T) (kd *KeibiDrop, inRec, outRec *closeRecor
 	return kd, inRec, outRec
 }
 
-// TestOnRekeyNeeded_SessionNilRace_NoPanic reproduces F2: Run's ctx.Done teardown
-// nils kd.session concurrently with the health monitor calling onRekeyNeeded. The
-// pre-fix code re-read kd.session after its nil-check and dereferenced it (RekeyMu,
-// Session), panicking when the pointer flipped to nil mid-call. The fix snapshots
-// kd.session once under kd.mu. Both sides go through kd.mu so the pointer access is
-// race-clean (same discipline as reconnect_race_test.go); reverting the snapshot
-// brings back both the DATA RACE and the nil-deref panic.
+// TestOnRekeyNeeded_SessionNilRace_NoPanic reproduces F2: teardown nils kd.session while
+// the health monitor calls onRekeyNeeded; the fix snapshots kd.session once under kd.mu.
 func TestOnRekeyNeeded_SessionNilRace_NoPanic(t *testing.T) {
 	kd := newTestKD(t)
-	// Keep this session an initiator and hold it past the rekey cooldown so a call
-	// that survives the nil race still returns before any OnDisconnect side effects.
+	// Initiator held past the rekey cooldown, so a call surviving the nil race returns
+	// before any OnDisconnect side effects.
 	kd.session.OwnFingerprint = "aaa"
 	kd.session.ExpectedPeerFingerprint = "zzz"
 	kd.session.LastRekeyAt = time.Now()
 	kd.ReconnectManager = session.NewReconnectManager(kd.session, kd.logger)
 	t.Cleanup(func() { kd.ReconnectManager.Stop() })
 
-	// The teardown writer swaps kd.session between nil and a ready-made replacement
-	// (no per-iteration keygen). The replacement is also an initiator past cooldown.
+	// The writer swaps kd.session between nil and a ready replacement (also an initiator past cooldown).
 	replacement := &session.Session{
 		OwnFingerprint:          "aaa",
 		ExpectedPeerFingerprint: "zzz",
@@ -122,14 +112,11 @@ func TestOnRekeyNeeded_SessionNilRace_NoPanic(t *testing.T) {
 
 	start.Done()
 	done.Wait()
-	// Reaching here without a panic (and, under -race, without a DATA RACE) is the pass.
+	// Reaching here without a panic (and no -race DATA RACE) is the pass.
 }
 
-// TestOnRekeyNeeded_ActiveTransfer_DefersRekey reproduces F3: a serving/on-demand
-// transfer trickling under the health monitor's idle gate must not have its sockets
-// dropped by a proactive rekey. onRekeyNeeded now carries onDisconnect's
-// hasActiveTransfers guard. Removing that guard makes this test fail (epoch bumped,
-// sockets closed).
+// TestOnRekeyNeeded_ActiveTransfer_DefersRekey (F3): an active transfer must not have its
+// sockets dropped by a proactive rekey; onRekeyNeeded carries the hasActiveTransfers guard.
 func TestOnRekeyNeeded_ActiveTransfer_DefersRekey(t *testing.T) {
 	kd, inRec, outRec := newInitiatorRekeyKD(t)
 
@@ -151,10 +138,8 @@ func TestOnRekeyNeeded_ActiveTransfer_DefersRekey(t *testing.T) {
 	}
 }
 
-// TestOnRekeyNeeded_RatchetOn_DefersRekey covers the T5 demotion: when the in-band ratchet
-// is negotiated, the re-handshake rekey must not fire. The ratchet rotates the keys
-// zero-pause, so dropping the sockets here would be a pointless stall. Removing the
-// UseKeyUpdate guard in onRekeyNeeded makes this fire (epoch bumped, sockets closed).
+// TestOnRekeyNeeded_RatchetOn_DefersRekey (T5): with the in-band ratchet negotiated, the
+// re-handshake rekey must not fire; the UseKeyUpdate guard defers it.
 func TestOnRekeyNeeded_RatchetOn_DefersRekey(t *testing.T) {
 	kd, inRec, outRec := newInitiatorRekeyKD(t)
 	kd.session.PeerSupportsKeyUpdate = true // both peers advertised: ratchet on
@@ -172,13 +157,9 @@ func TestOnRekeyNeeded_RatchetOn_DefersRekey(t *testing.T) {
 	}
 }
 
-// TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey reproduces #6: a REMOVE notify
-// is in flight over the outbound gRPC client when a proactive rekey wants to drop
-// that socket. The notify worker has no retry queue and notifyRestoredFiles replays
-// only ADD_FILE, so dropping here loses the delete and diverges the peers. The fix
-// gates onRekeyNeeded on pendingNotifies. This test drives the REAL notify worker
-// with a client that blocks inside BatchNotify, so the REMOVE is genuinely mid-flight
-// when onRekeyNeeded is called. Removing the gate makes it fire (epoch bumped).
+// TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey (#6): a REMOVE notify in flight must
+// defer the rekey, else the drop loses the delete; the pendingNotifies gate blocks it. The
+// test drives the real notify worker with a client that blocks inside BatchNotify.
 func TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey(t *testing.T) {
 	kd := newTestKD(t)
 	kd.session.OwnFingerprint = "aaa"
@@ -194,8 +175,7 @@ func TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey(t *testing.T) {
 	kd.ReconnectManager = session.NewReconnectManager(kd.session, kd.logger)
 	t.Cleanup(func() { kd.ReconnectManager.Stop() })
 
-	// Start the real notify worker (wires fs.OnLocalChange). setupFilesystem does not
-	// mount; it only creates the FS struct and the worker goroutine.
+	// Start the real notify worker; setupFilesystem creates the FS struct and worker goroutine without mounting.
 	if err := kd.setupFilesystem(kd.logger, nil); err != nil {
 		t.Fatalf("setupFilesystem: %v", err)
 	}
@@ -230,17 +210,12 @@ func TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey(t *testing.T) {
 	closeChan()
 }
 
-// TestOnRekeyNeeded_QueuedRemoveNotify_DefersRekey covers the buffered-but-undrained
-// window of #6: a REMOVE is enqueued on notifyCh but the worker has not dequeued it
-// yet, so pendingNotifies is still 0. A rotation here would drop the socket and, if the
-// worker then flushes during the reconnect gap, lose the delete. onRekeyNeeded also
-// checks the channel depth; dropping that check makes this fire (epoch bumped) despite
-// the queued REMOVE.
+// TestOnRekeyNeeded_QueuedRemoveNotify_DefersRekey (#6): a REMOVE queued but not yet
+// dequeued (pendingNotifies still 0) must defer the rekey; onRekeyNeeded checks channel depth too.
 func TestOnRekeyNeeded_QueuedRemoveNotify_DefersRekey(t *testing.T) {
 	kd, inRec, outRec := newInitiatorRekeyKD(t)
 
-	// A REMOVE sits in the buffered channel, not yet dequeued: pendingNotifies stays 0,
-	// mirroring the enqueue-to-dequeue window in the real notify worker.
+	// A REMOVE sits buffered but not yet dequeued, so pendingNotifies stays 0.
 	kd.notifyCh = make(chan *bindings.NotifyRequest, 16)
 	kd.notifyCh <- &bindings.NotifyRequest{}
 
@@ -260,17 +235,14 @@ func TestOnRekeyNeeded_QueuedRemoveNotify_DefersRekey(t *testing.T) {
 	}
 }
 
-// TestOnRekeyNeeded_KeyUpdateNearEpochWrap_Rekeys is the MED-2 escape: a key-update pair
-// normally defers rekey to the ratchet (see TestOnRekeyNeeded_RatchetOn_DefersRekey), but
-// once the writer epoch nears the wrap guard the ratchet stops advancing, so onRekeyNeeded
-// MUST re-handshake for a fresh epoch-0 key. Dropping the near-wrap escape makes this return
-// false and the epoch pins forever (silent loss of forward-secrecy advance).
+// TestOnRekeyNeeded_KeyUpdateNearEpochWrap_Rekeys (MED-2): near the epoch-wrap guard the
+// ratchet stops advancing, so onRekeyNeeded must re-handshake for a fresh epoch-0 key.
 func TestOnRekeyNeeded_KeyUpdateNearEpochWrap_Rekeys(t *testing.T) {
 	kd, inRec, outRec := newInitiatorRekeyKD(t)
-	kd.session.PeerSupportsKeyUpdate = true // ratchet on: would normally defer...
+	kd.session.PeerSupportsKeyUpdate = true // ratchet on: would normally defer
 
-	// ...but the writer epoch has reached the guard, where the ratchet stops. 0xFFFF is well
-	// above epochRehandshakeThreshold, so NearEpochWrap() is true.
+	// Writer epoch at the guard where the ratchet stops: 0xFFFF is above
+	// epochRehandshakeThreshold, so NearEpochWrap() is true.
 	kd.session.Session.Outbound.SetWriterEpochForTest(0xFFFF)
 
 	epochBefore := kd.session.CurrentEpoch
@@ -298,9 +270,8 @@ func waitForNotifiesDrained(t *testing.T, kd *KeibiDrop, timeout time.Duration) 
 	t.Fatalf("pendingNotifies did not drain to 0 within %s (got %d)", timeout, kd.pendingNotifies.Load())
 }
 
-// blockingNotifyClient is a bindings.KeibiServiceClient whose BatchNotify signals
-// once it has been entered and then blocks until release is closed, holding a notify
-// "in flight" for as long as the test needs. All other RPCs are unused no-ops.
+// blockingNotifyClient's BatchNotify signals once entered then blocks until release is
+// closed, holding a notify in flight; other RPCs are no-ops.
 type blockingNotifyClient struct {
 	entered chan struct{}
 	release chan struct{}

@@ -24,33 +24,21 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// The QUIC control channel mirrors the TCP pair on UDP: an outbound conn (we dial the
-// peer's UDP control endpoint) and an inbound conn (the peer dials ours), reusing the
-// TCP port numbers on UDP. It carries control + metadata + the network-change signal,
-// while bulk file transfer stays on TCP.
+// The QUIC control channel mirrors the TCP pair on UDP: an outbound conn we dial and an
+// inbound conn the peer dials, reusing the TCP port numbers. It carries control,
+// metadata, and the network-change signal; bulk transfer stays on TCP.
 //
-// The channel does NO per-connection handshake. Its keys were already derived in the
-// TCP handshake payload (SEKOutboundQUIC / SEKInboundQUIC, one per direction), from the
-// peer keys that were already exchanged and validated. Each QUIC stream is simply
-// wrapped in a SecureConn with the matching key and a direction-specific nonce prefix
-// (dialer = outbound, acceptor = inbound), so the two directions never share nonce
-// space even though a QUIC stream is written by both ends.
-//
-// Forward secrecy: when both peers negotiated the in-band key-update capability, the
-// QUIC conns ratchet exactly like the TCP pair (SetKeyUpdate below; same byte/msg/idle
-// cadence, make-before-break on the write path, so a rotation never pauses traffic).
-// The KEM entropy fold is deliberately TCP-pair-only: fold staging and the session
-// rekey driver operate on SessionSockets, and the QUIC channel does not need it —
-// every re-handshake (reconnect or proactive rekey) derives brand-new QUIC keys and
-// rebuilds this channel from epoch 0, which is a strictly stronger reset than a fold.
+// No per-connection handshake: keys come from the TCP handshake payload
+// (SEKOutboundQUIC/SEKInboundQUIC, one per direction). Each stream is wrapped in a
+// SecureConn with a direction-specific nonce prefix, so the two directions never share
+// nonce space. When both peers negotiated in-band key-update, the QUIC conns ratchet
+// like the TCP pair (SetKeyUpdate below). The KEM fold stages on these QUIC conns too
+// (quicFoldConns/ExtraFoldConns); a re-handshake also re-derives fresh QUIC keys.
 
-// DialQUICControl brings up the OUTBOUND QUIC control channel to peerUDPAddr
-// ("host:port"). It opens a QUIC stream on an explicit transport (so the connection
-// can MIGRATE across an IP change) and wraps it in the session's outbound SecureConn
-// (SEKOutboundQUIC, dialer role). The returned net.Conn is ready to carry gRPC; the
-// returned MigratableConn is the migration handle (Migrate moves the underlying path,
-// the SecureConn and gRPC above never notice). It errors if the peer negotiated no
-// QUIC key (older build), so the caller can fall back to TCP-only.
+// DialQUICControl brings up the outbound QUIC control channel to peerUDPAddr. It wraps a
+// migratable QUIC stream in the session's outbound SecureConn (SEKOutboundQUIC); the
+// returned MigratableConn is the migration handle. Errors if the peer negotiated no QUIC
+// key, so the caller can fall back to TCP-only.
 func DialQUICControl(ctx context.Context, s *session.Session, peerUDPAddr string) (net.Conn, *transport.MigratableConn, error) {
 	if s == nil {
 		return nil, nil, fmt.Errorf("quic control: nil session")
@@ -64,18 +52,15 @@ func DialQUICControl(ctx context.Context, s *session.Session, peerUDPAddr string
 		return nil, nil, fmt.Errorf("quic control dial %s: %w", peerUDPAddr, err)
 	}
 	sc := session.NewSecureConn(mc, key, s.NegotiatedSuite(), session.NoncePrefixOutbound)
-	// Same capability the TCP pair negotiated: ApplyKeyUpdateNegotiation flips only the
-	// conns in SessionSockets, so the QUIC conns must opt in here or they would stay at
-	// epoch 0 forever (no forward secrecy on this channel). Must be set before any I/O;
-	// this conn is handed to gRPC only after return.
+	// Opt into the negotiated ratchet before any I/O; the SessionSockets opt-in doesn't
+	// reach these conns.
 	sc.SetKeyUpdate(s.UseKeyUpdate())
 	return sc, mc, nil
 }
 
-// ListenQUICControl starts the INBOUND QUIC control channel listener on udpAddr
-// ("host:port", "host:0" for an ephemeral port). Each accepted stream is wrapped in the
-// session's inbound SecureConn (SEKInboundQUIC, acceptor role), ready for a gRPC server
-// over a singleConnListener. It errors if the peer negotiated no QUIC key.
+// ListenQUICControl starts the inbound QUIC control listener on udpAddr. Each accepted
+// stream is wrapped in the session's inbound SecureConn (SEKInboundQUIC). Errors if the
+// peer negotiated no QUIC key.
 func ListenQUICControl(s *session.Session, udpAddr string) (net.Listener, error) {
 	if s == nil {
 		return nil, fmt.Errorf("quic control: nil session")
@@ -92,19 +77,16 @@ func ListenQUICControl(s *session.Session, udpAddr string) (net.Listener, error)
 }
 
 // quicControlListener upgrades every accepted QUIC stream to the inbound control
-// SecureConn, so a plain grpc.Server can Serve it. keyUpdate is the negotiated in-band
-// ratchet capability, snapshotted at listen time: it is per-session-generation exactly
-// like the key (a reconnect rebuilds the listener), and every accepted conn must get it
-// before gRPC starts I/O on it.
+// SecureConn. keyUpdate is the negotiated ratchet capability, snapshotted at listen time.
 type quicControlListener struct {
 	net.Listener
 	key       []byte
 	suite     kbc.CipherSuite
 	keyUpdate bool
-	onAccept  func() // QUIC-conn-up fold trigger; set before the server goroutine starts
+	onAccept  func() // fold trigger on conn-up; set before Serve
 
 	mu   sync.Mutex
-	last *session.SecureConn // most recently accepted conn, for epoch observability + fold staging
+	last *session.SecureConn // most recent accepted conn (epoch observability + fold staging)
 }
 
 func (l *quicControlListener) Accept() (net.Conn, error) {
@@ -117,10 +99,8 @@ func (l *quicControlListener) Accept() (net.Conn, error) {
 	l.mu.Lock()
 	l.last = sc
 	l.mu.Unlock()
-	// A new QUIC wire exists: re-run the eager fold so this conn gets the fold's fresh
-	// entropy too (the earlier round may have finished before this wire was up, and the
-	// secret is zeroized after staging — never retained). Single-flight + supersede
-	// staging make repeat rounds safe; the initiator election gates who actually acts.
+	// New wire: re-run the eager fold so this conn gets fresh entropy too. Single-flight
+	// and supersede-idempotent staging make repeats safe.
 	if l.onAccept != nil {
 		l.onAccept()
 	}
@@ -134,20 +114,16 @@ func (l *quicControlListener) LastAccepted() *session.SecureConn {
 	return l.last
 }
 
-// StartQUICControlChannel brings up the QUIC control pair alongside the established TCP
-// session: an inbound listener on our UDP port (the same number as the TCP inbound
-// port) serving the control service, and a background outbound dial to the peer's UDP
-// control endpoint. It is FAIL-SOFT: any failure (UDP blocked, a peer without QUIC
-// keys, a timing race) logs and leaves the session TCP-only, so it can never break
-// connectivity, and the outbound dial runs in the background so it never delays connect.
+// StartQUICControlChannel brings up the QUIC control pair alongside the TCP session: an
+// inbound listener on our UDP port and a background outbound dial to the peer. Fail-soft:
+// any failure logs and leaves the session TCP-only. The outbound dial is backgrounded so
+// it never delays connect.
 func (kd *KeibiDrop) StartQUICControlChannel() {
-	// Idempotent: a reconnect re-runs finishConnect, so release any prior instance's
-	// UDP socket + client before rebinding (otherwise the listener hits address-in-use).
+	// Idempotent: release any prior instance before rebinding (reconnect re-runs this).
 	kd.StopQUICControlChannel()
 
 	logger := kd.logger.With("component", "quic-control")
-	// Snapshot session + ctx under kd.mu: teardown nils kd.session under the lock, and
-	// a bare read here has no happens-before (his teardown-race probes catch exactly this).
+	// Snapshot session + ctx under kd.mu: teardown nils kd.session under the lock.
 	kd.mu.Lock()
 	s := kd.session
 	ctx := kd.ctx // this generation's context; a reconnect swaps kd.ctx for a fresh one
@@ -157,10 +133,8 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 		return
 	}
 
-	// Inbound listener on our UDP port (same number as the TCP inbound port). The gRPC
-	// server is attached in a background goroutine: it must register the KeibiService
-	// impl (kd.KDSvc), which startGRPCServer creates concurrently, and gRPC forbids
-	// registering a service after Serve — so the goroutine waits (bounded) for the svc.
+	// Inbound listener on our UDP port. The gRPC server attaches in a goroutine that waits
+	// (bounded) for kd.KDSvc, since gRPC forbids registering a service after Serve.
 	inAddr := net.JoinHostPort("::", strconv.Itoa(kd.inboundPort))
 	ln, err := ListenQUICControl(s, inAddr)
 	if err != nil {
@@ -175,8 +149,7 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 		go kd.serveQUICControl(ln, inAddr)
 	}
 
-	// Outbound dial to the peer's UDP control endpoint (same number as the TCP peer
-	// port), in the background so it never delays connect.
+	// Outbound dial to the peer's UDP control endpoint, backgrounded so it never delays connect.
 	if kd.PeerIPv6IP == "" || len(s.SEKOutboundQUIC) == 0 {
 		return
 	}
@@ -189,15 +162,13 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 	}
 }
 
-// quicReprobeInterval is how often a session with QUIC down re-probes UDP. A probe is
-// a few packets, so this is cheap — and it means the fast lane comes back by itself
-// when the network allows it again: TCP-only is a fallback state, never a verdict.
+// quicReprobeInterval is how often a session with QUIC down re-probes UDP. Cheap, so the
+// fast lane returns by itself once the network allows: TCP-only is a fallback, not a verdict.
 const quicReprobeInterval = 30 * time.Second
 
-// maintainQUICControl keeps (re)establishing the outbound QUIC channel: a burst of
-// dial attempts, then a periodic re-probe while it stays down. Exits when the channel
-// is up, the session generation changes (peer addr cleared/replaced), or ctx ends.
-// Single-flight: spawn only after winning kd.quicRedialing.
+// maintainQUICControl keeps (re)establishing the outbound channel: a dial burst, then a
+// periodic re-probe while down. Exits when up, the session generation changes, or ctx ends.
+// Single-flight via kd.quicRedialing.
 func (kd *KeibiDrop) maintainQUICControl(ctx context.Context, peerAddr string) {
 	defer kd.quicRedialing.Store(false)
 	logger := kd.logger.With("component", "quic-control")
@@ -225,16 +196,14 @@ func (kd *KeibiDrop) maintainQUICControl(ctx context.Context, peerAddr string) {
 }
 
 // dialQUICControlWithRetry dials the peer's QUIC control endpoint, retrying a few times
-// because the peer's listener may not be up the instant we are (both peers reach this
-// just after the TCP handshake). Reports whether the channel came up.
+// because the peer's listener may not be up yet. Reports whether the channel came up.
 func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr string) bool {
 	logger := kd.logger.With("component", "quic-control")
 	for attempt := 0; attempt < 5; attempt++ {
 		if ctx.Err() != nil {
 			return false
 		}
-		// Under kd.mu: this loop runs in a background goroutine, so a teardown can nil
-		// kd.session concurrently.
+		// Under kd.mu: teardown can nil kd.session concurrently.
 		kd.mu.Lock()
 		s := kd.session
 		kd.mu.Unlock()
@@ -274,21 +243,18 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 			kd.quicControlSC, _ = conn.(*session.SecureConn) // epoch observability handle
 			kd.mu.Unlock()
 			if oldHB != nil {
-				oldHB() // the superseded generation's heartbeat exits NOW, not at its next tick
+				oldHB() // superseded heartbeat exits now
 			}
 			if old != nil {
-				_ = old.Close() // exactly one live client; a racing redial loses cleanly
+				_ = old.Close() // exactly one live client
 			}
 			if oldMig != nil {
 				_ = oldMig.Close()
 			}
 			logger.Info("QUIC control channel connected", "peer", peerAddr)
-			// The control-Ping heartbeat now owns QUIC-lane liveness: metadata rides TCP
-			// first, so it can no longer be the canary that trips demote+self-heal.
+			// The control-Ping heartbeat owns QUIC-lane liveness now (metadata rides TCP first).
 			go kd.quicControlHeartbeat(hbCtx, cc)
-			// New QUIC wire up: re-run the eager fold so the dial-side conn gets the
-			// fold entropy too (the connect-time round may predate this wire). Safe to
-			// repeat: single-flight + supersede-idempotent staging.
+			// New wire: re-run the eager fold for the dial-side conn (safe to repeat).
 			kd.maybeStartEagerFold()
 			return true
 		}
@@ -304,11 +270,9 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 	return false
 }
 
-// serveQUICControl attaches the QUIC control gRPC server to ln. It serves the control
-// Ping plus the full KeibiService — the SAME impl instance the TCP server uses, so
-// metadata and cache-miss reads landing over QUIC act on shared state. kd.KDSvc is
-// created concurrently by startGRPCServer, so wait for it (bounded); on timeout serve
-// Control-only — the peer's client falls back to TCP on Unimplemented (fail-soft).
+// serveQUICControl attaches the QUIC control gRPC server to ln: the control Ping plus the
+// full KeibiService (the same impl the TCP server uses). kd.KDSvc is created concurrently,
+// so wait for it (bounded); on timeout serve Control-only and let the peer fall back to TCP.
 func (kd *KeibiDrop) serveQUICControl(ln net.Listener, inAddr string) {
 	logger := kd.logger.With("component", "quic-control")
 
@@ -351,9 +315,8 @@ func (kd *KeibiDrop) serveQUICControl(ln net.Listener, inAddr string) {
 	}
 }
 
-// StopQUICControlChannel tears down the QUIC control pair. Safe to call when it was
-// never brought up (fields nil). Closing the listener also retires a serveQUICControl
-// goroutine still waiting for the service impl (generation check).
+// StopQUICControlChannel tears down the QUIC control pair. Safe when it was never brought
+// up (fields nil). Closing the listener also retires a waiting serveQUICControl goroutine.
 func (kd *KeibiDrop) StopQUICControlChannel() {
 	kd.mu.Lock()
 	cc := kd.quicControlClient
@@ -367,7 +330,7 @@ func (kd *KeibiDrop) StopQUICControlChannel() {
 	kd.quicControlLn = nil
 	kd.quicControlMig = nil
 	kd.quicControlSC = nil
-	kd.quicPeerAddr = "" // a demote redial after this point has nowhere to dial (stale peer)
+	kd.quicPeerAddr = "" // a later demote redial has nowhere to dial
 	kd.mu.Unlock()
 	if hb != nil {
 		hb()
@@ -379,20 +342,18 @@ func (kd *KeibiDrop) StopQUICControlChannel() {
 		srv.Stop()
 	}
 	if ln != nil {
-		_ = ln.Close() // releases the UDP port even if no server ever attached
+		_ = ln.Close() // releases the UDP port
 	}
 	if mc != nil {
-		_ = mc.Close() // releases the outbound conn's transports/sockets
+		_ = mc.Close() // releases the outbound sockets
 	}
 }
 
-// MigrateQUICControl moves the live QUIC control connection to a fresh local UDP
-// socket — the Wi-Fi -> LTE case — WITHOUT dropping the channel: the stream, the
-// SecureConn on it, and the gRPC channel all survive the switch (QUIC identifies the
-// connection by connection ID, not the 5-tuple). It pings right after so the peer
-// migrates its send path too. This is the network-change entry point (OS signal,
-// reconnect logic, or manual). Fail-soft: on error the channel demotes and the
-// background maintainer re-establishes from scratch.
+// MigrateQUICControl moves the live QUIC control connection to a fresh local UDP socket
+// (the Wi-Fi to LTE case) without dropping the channel: QUIC identifies the connection by
+// connection ID, not the 5-tuple, so the stream, SecureConn, and gRPC channel all survive.
+// It pings right after so the peer migrates its send path too. Fail-soft: on error the
+// channel demotes and the maintainer re-establishes.
 func (kd *KeibiDrop) MigrateQUICControl(ctx context.Context) error {
 	kd.mu.Lock()
 	mc := kd.quicControlMig
@@ -411,12 +372,9 @@ func (kd *KeibiDrop) MigrateQUICControl(ctx context.Context) error {
 		return fmt.Errorf("quic control post-migration ping: %w", err)
 	}
 
-	// Announce our coordinates over the surviving channel, so on a real IP change the
-	// peer re-dials TCP/UDP at the fresh address immediately — no heartbeat timeout,
-	// no relay lookup. Same-address announces are a no-op on the receiver. Best-effort:
-	// on failure the peer still recovers via the heartbeat path. (On a real change the
-	// caller — the OS network-change signal — updates kd.LocalIPv6IP first and kicks
-	// its own reconnect after; see docs/transport-architecture.html.)
+	// Announce our coordinates over the surviving channel so the peer re-dials the fresh
+	// address immediately, skipping the heartbeat timeout and relay lookup. Same-address
+	// announces are a no-op; best-effort, since the peer still recovers via the heartbeat.
 	kd.mu.Lock()
 	cc := kd.quicControlClient
 	kd.mu.Unlock()
@@ -436,9 +394,8 @@ func (kd *KeibiDrop) MigrateQUICControl(ctx context.Context) error {
 	return nil
 }
 
-// QUICKeibiClient returns a KeibiService client over the QUIC control channel, or nil
-// when the channel is not connected. Metadata RPCs prefer this channel: it is isolated
-// by transport from TCP bulk, so they never queue behind a prefetch.
+// QUICKeibiClient returns a KeibiService client over the QUIC control channel, or nil when
+// it is down. Metadata prefers it: transport-isolated from TCP bulk, so it never queues behind a prefetch.
 func (kd *KeibiDrop) QUICKeibiClient() bindings.KeibiServiceClient {
 	kd.mu.Lock()
 	cc := kd.quicControlClient
@@ -452,11 +409,9 @@ func (kd *KeibiDrop) QUICKeibiClient() bindings.KeibiServiceClient {
 // QUICMetadataSent reports how many metadata RPCs actually rode the QUIC channel.
 func (kd *KeibiDrop) QUICMetadataSent() uint64 { return kd.quicMetaSent.Load() }
 
-// quicFoldConns returns the live QUIC control SecureConns (dial-side + last accepted) so
-// a fold round can stage its secret on them too — the same handles QUICWriterEpoch reads.
-// Wired as session.ExtraFoldConns wherever kd.session is published. Safe from any
-// goroutine; returns only what exists right now (empty when the channel is down, in which
-// case the fold covers the TCP pair alone, exactly as before).
+// quicFoldConns returns the live QUIC control SecureConns (dial-side + last accepted) so a
+// fold round can stage its secret on them too. Wired as session.ExtraFoldConns; returns
+// only what exists now (empty when the channel is down, so the fold covers TCP alone).
 func (kd *KeibiDrop) quicFoldConns() []*session.SecureConn {
 	kd.mu.Lock()
 	sc := kd.quicControlSC
@@ -474,11 +429,9 @@ func (kd *KeibiDrop) quicFoldConns() []*session.SecureConn {
 	return conns
 }
 
-// QUICWriterEpoch returns the highest writer key-epoch across the live QUIC control
-// conns (dial-side and the last accepted server-side), or 0 when the channel is down.
-// The QUIC lane ratchets independently of the TCP pair — on-demand reads ride it when
-// it is up — so transport-wide rekey observability (tests, diagnostics) must read both
-// lanes, not just the TCP SessionSockets the HealthMonitor captures.
+// QUICWriterEpoch returns the highest writer key-epoch across the live QUIC control conns,
+// or 0 when the channel is down. The QUIC lane ratchets independently of the TCP pair, so
+// transport-wide rekey observability must read both lanes, not just the TCP SessionSockets.
 func (kd *KeibiDrop) QUICWriterEpoch() uint16 {
 	kd.mu.Lock()
 	sc := kd.quicControlSC
@@ -496,18 +449,15 @@ func (kd *KeibiDrop) QUICWriterEpoch() uint16 {
 	return e
 }
 
-// quicMetaTimeout bounds the QUIC-first attempt of a metadata RPC. A half-dead QUIC
-// channel (e.g. UDP blackholed mid-session) otherwise stalls the RPC until the QUIC
-// idle timeout (~20s, measured); with this bound the worst case is one short stall,
-// after which demoteQUICControl sends everything straight to TCP.
+// quicMetaTimeout bounds a metadata RPC's QUIC attempt. A half-dead channel (UDP
+// blackholed) would otherwise stall until the QUIC idle timeout (~20s); with this bound
+// the worst case is one short stall, after which demoteQUICControl routes everything to TCP.
 const quicMetaTimeout = 2 * time.Second
 
-// demoteQUICControl drops the outbound QUIC client after a failed metadata attempt, so
-// subsequent RPCs go straight to TCP instead of paying quicMetaTimeout each time — and
-// immediately starts a single-flight background redial, so a transient failure heals
-// itself in seconds and the fast lane comes back. Only a genuinely dead channel (UDP
-// blocked, peer gone) stays demoted: there the redial fails and TCP-only is correct.
-// The inbound server stays up throughout.
+// demoteQUICControl drops the outbound QUIC client after a failure, so subsequent RPCs go
+// straight to TCP instead of paying quicMetaTimeout each time, and starts a single-flight
+// background redial so a transient failure heals itself. A genuinely dead channel stays
+// demoted (the redial fails). The inbound server stays up throughout.
 func (kd *KeibiDrop) demoteQUICControl(err error) {
 	kd.mu.Lock()
 	cc := kd.quicControlClient
@@ -540,18 +490,14 @@ func (kd *KeibiDrop) demoteQUICControl(err error) {
 	}
 }
 
-// metadataSend is the ONE metadata routing policy, written once: TCP-first, with the QUIC
-// channel as a bounded fallback. Bulk metadata bursts (a git-clone-scale flood of notifies)
-// must ride TCP so they never congest the scarce QUIC lane the cache-miss seeks and control
-// depend on — that congestion would itself be a new freeze. QUIC is used only when TCP is
-// unavailable/failing, so a notify still gets through during a TCP outage that QUIC survives
-// (an IP change). The concrete RPC is a parameter; generics are monomorphized at compile
-// time (no reflection on the hot path). See plan-0.4.0/05-transport-routing-and-cache-miss.md.
+// metadataSend is the metadata routing policy: TCP-first, with the QUIC channel as a
+// bounded fallback. Bulk notify bursts must ride TCP so they never congest the scarce QUIC
+// lane that cache-miss seeks and control depend on. QUIC is used only when TCP is
+// unavailable, so a notify still gets through a TCP outage that QUIC survives (an IP change).
 func metadataSend[Req, Resp any](kd *KeibiDrop, ctx context.Context, req Req,
 	call func(bindings.KeibiServiceClient, context.Context, Req) (Resp, error),
 ) (Resp, error) {
-	// Snapshot under kd.mu: the notify worker calls this from its own goroutine while
-	// Run's teardown rewrites kd.session under the lock (bare read = data race).
+	// Snapshot under kd.mu: teardown rewrites kd.session under the lock.
 	kd.mu.Lock()
 	s := kd.session
 	kd.mu.Unlock()
@@ -564,8 +510,7 @@ func metadataSend[Req, Resp any](kd *KeibiDrop, ctx context.Context, req Req,
 		}
 		tcpErr = err
 	}
-	// TCP unavailable/failed: fall back to the QUIC lane (bounded, so a dead lane can't
-	// hang the notify). QUIC-lane health is owned by the control heartbeat, not this path.
+	// TCP unavailable: fall back to the bounded QUIC lane, so a dead lane can't hang the notify.
 	if qc := kd.QUICKeibiClient(); qc != nil {
 		qctx, cancel := context.WithTimeout(ctx, quicMetaTimeout)
 		resp, err := call(qc, qctx, req)
@@ -592,8 +537,7 @@ func (kd *KeibiDrop) sendBatchNotify(ctx context.Context, req *bindings.BatchNot
 	})
 }
 
-// QUICControlConnected reports whether the outbound QUIC control channel is up (the
-// client dialed the peer successfully). For tests and diagnostics.
+// QUICControlConnected reports whether the outbound QUIC control channel is up. For tests.
 func (kd *KeibiDrop) QUICControlConnected() bool {
 	kd.mu.Lock()
 	defer kd.mu.Unlock()
@@ -601,14 +545,11 @@ func (kd *KeibiDrop) QUICControlConnected() bool {
 }
 
 // quicHeartbeatInterval is how often the QUIC control lane is pinged to detect a dead
-// channel. Metadata is TCP-first now, so it can no longer be the liveness canary; this
-// heartbeat is the control lane doing its own natural job. Cheap (a few packets).
+// channel. Metadata is TCP-first, so this heartbeat is the lane's own liveness check.
 const quicHeartbeatInterval = 5 * time.Second
 
-// quicControlHeartbeat pings the QUIC control lane on an interval and, on failure, demotes
-// it (which kicks the self-heal maintainer to re-probe UDP and switch back when it works).
-// One per channel generation: it exits when its client cc is superseded, closed, or the
-// context ends, so after a reconnect only the fresh generation's heartbeat is live.
+// quicControlHeartbeat pings the QUIC control lane and, on failure, demotes it (kicking the
+// self-heal maintainer). One per channel generation: exits when cc is superseded or ctx ends.
 func (kd *KeibiDrop) quicControlHeartbeat(ctx context.Context, cc *grpc.ClientConn) {
 	t := time.NewTicker(quicHeartbeatInterval)
 	defer t.Stop()
@@ -635,8 +576,7 @@ func (kd *KeibiDrop) quicControlHeartbeat(ctx context.Context, cc *grpc.ClientCo
 	}
 }
 
-// PingQUICControl sends one control-plane Ping over the QUIC channel, or errors if the
-// channel is not up. For tests and as the seed of the heartbeat/RTT loop.
+// PingQUICControl sends one control Ping over the QUIC channel, or errors if it is down.
 func (kd *KeibiDrop) PingQUICControl(ctx context.Context) error {
 	kd.mu.Lock()
 	cc := kd.quicControlClient
@@ -648,8 +588,7 @@ func (kd *KeibiDrop) PingQUICControl(ctx context.Context) error {
 	return err
 }
 
-// quicControlService answers the QUIC control channel's own RPCs: the heartbeat Ping
-// and the network-change Announce.
+// quicControlService answers the control channel's own RPCs: Ping and Announce.
 type quicControlService struct {
 	cpb.UnimplementedControlServer
 	kd *KeibiDrop
@@ -659,20 +598,16 @@ func (quicControlService) Ping(context.Context, *cpb.PingRequest) (*cpb.PingRepl
 	return &cpb.PingReply{}, nil
 }
 
-// Announce is the receiver side of the network-change signal: the peer moved (its QUIC
-// channel survived by migration and carried this message), so refresh every cached
-// coordinate — TCP reconnect target, UDP control target — and, if the address actually
-// changed, kick reconnection NOW instead of waiting ~25s of heartbeat failures plus a
-// relay lookup that may still hold the stale address. Same-address announces (e.g. a
-// migration between sockets on one host) are a no-op.
+// Announce is the receiver side of the network-change signal: the peer moved, so refresh
+// the cached coordinates and, if the address changed, kick reconnection now instead of
+// waiting out ~25s of heartbeat failures plus a relay lookup. Same-address is a no-op.
 func (s quicControlService) Announce(_ context.Context, req *cpb.AnnounceRequest) (*cpb.AnnounceReply, error) {
 	kd := s.kd
 	if kd == nil || req.Ip == "" || req.TcpPort == 0 {
 		return &cpb.AnnounceReply{}, nil
 	}
 	port := int(req.TcpPort)
-	// Under kd.mu: Announce arrives on a gRPC server goroutine; teardown nils kd.session
-	// under the lock.
+	// Under kd.mu: teardown nils kd.session under the lock.
 	kd.mu.Lock()
 	sess := kd.session
 	kd.mu.Unlock()
@@ -691,8 +626,8 @@ func (s quicControlService) Announce(_ context.Context, req *cpb.AnnounceRequest
 	kd.quicPeerAddr = net.JoinHostPort(req.Ip, strconv.Itoa(port)) // maintainer redials the NEW addr
 	kd.mu.Unlock()
 
-	// The TCP pair to the old address is dead; reconnect immediately with the fresh
-	// coordinates (onDisconnect guards re-entrancy and active transfers itself).
+	// The old TCP pair is dead; reconnect with the fresh coordinates (onDisconnect guards
+	// re-entrancy).
 	if kd.ReconnectManager != nil {
 		go kd.onDisconnect()
 	}

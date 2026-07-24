@@ -969,11 +969,9 @@ func (kd *KeibidropServiceImpl) GetChunkHashes(req *bindings.GetChunkHashesReque
 	return nil
 }
 
-// Rekey drives the responder side of the entropy fold: a fresh ephemeral hybrid-KEM
-// exchange whose shared secret is mixed into the session ratchet for post-quantum forward
-// secrecy. Unlike the old in-band key swap this fold self-synchronizes on the wire and swaps
-// no key mid-stream, so a stray or forged Rekey cannot brick the connection: the session
-// responder refuses a not-ready or malformed request cleanly.
+// Rekey drives the responder side of the entropy fold: an ephemeral hybrid-KEM whose shared
+// secret mixes into the session ratchet for post-quantum forward secrecy. Self-synchronizing
+// on the wire (no mid-stream key swap), so a stray or forged Rekey can't brick the connection.
 func (kd *KeibidropServiceImpl) Rekey(_ context.Context, req *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
 	if kd.Session == nil {
 		return nil, status.Error(codes.FailedPrecondition, "no active session for rekey")

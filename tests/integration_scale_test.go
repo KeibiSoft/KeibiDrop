@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 KeibiSoft S.R.L.
-// Characterizes EAGER metadata at scale. oak.space reached ~100k files using LAZY
-// metadata; KeibiDrop announces every file up front (ADD_FILE per file), so this test
-// measures the cost of that — propagation time + receiver heap — and REPORTS it. Opt-in
+// Characterizes EAGER metadata at scale: KeibiDrop announces every file up front (ADD_FILE
+// per file), so this test measures propagation time + receiver heap and reports it. Opt-in
 // via KD_SCALE_N (e.g. 100000) so it never slows the normal suite.
 
 package tests
@@ -18,17 +17,16 @@ import (
 	"time"
 )
 
-// bobRemoteCount returns how many files the receiver currently tracks (the eager metadata
-// set), read under the same lock the harness uses.
+// bobRemoteCount returns how many files the receiver currently tracks, read under lock.
 func bobRemoteCount(tp *TestPair) int {
 	tp.Bob.SyncTracker.RemoteFilesMu.RLock()
 	defer tp.Bob.SyncTracker.RemoteFilesMu.RUnlock()
 	return len(tp.Bob.SyncTracker.RemoteFiles)
 }
 
-// TestScale_ManyFiles: Alice announces N tiny files (every one a separate ADD_FILE the
-// peer must track); we measure how fast the peer receives the full set and its heap, then
-// byte-verify a spread-out sample. Run: KD_SCALE_N=100000 go test -run TestScale_ManyFiles -v
+// TestScale_ManyFiles: Alice announces N tiny files (each a separate ADD_FILE the peer must
+// track); measures how fast the peer receives the full set and its heap, then byte-verifies a
+// sample. Run: KD_SCALE_N=100000 go test -run TestScale_ManyFiles -v
 func TestScale_ManyFiles(t *testing.T) {
 	v := os.Getenv("KD_SCALE_N")
 	if v == "" {
@@ -43,8 +41,8 @@ func TestScale_ManyFiles(t *testing.T) {
 
 	content := []byte("x") // tiny: we measure metadata scale, not transfer throughput
 
-	// Create the files first. This is a TEST artifact (a real share's files already exist
-	// on disk), timed separately so it doesn't pollute the eager-metadata cost.
+	// Create the files first (a test artifact: a real share's files already exist), timed
+	// separately so it doesn't pollute the eager-metadata cost.
 	createStart := time.Now()
 	paths := make([]string, N)
 	for i := 0; i < N; i++ {
@@ -55,8 +53,7 @@ func TestScale_ManyFiles(t *testing.T) {
 	}
 	createElapsed := time.Since(createStart)
 
-	// THIS is the eager-metadata cost: AddFile indexes each file and queues an ADD_FILE
-	// the peer must receive. (Templating would shrink the bytes of that ADD_FILE, not this.)
+	// The eager-metadata cost: AddFile indexes each file and queues an ADD_FILE the peer must receive.
 	addStart := time.Now()
 	for i := 0; i < N; i++ {
 		if aerr := tp.Alice.AddFile(paths[i]); aerr != nil {
@@ -65,7 +62,6 @@ func TestScale_ManyFiles(t *testing.T) {
 	}
 	addElapsed := time.Since(addStart)
 
-	// Wait for the eager metadata to fully land on the peer.
 	syncStart := time.Now()
 	deadline := time.Now().Add(540 * time.Second)
 	var got int

@@ -21,7 +21,6 @@ func TestCipherNegotiation(t *testing.T) {
 	t.Run("HasHardwareAES", func(t *testing.T) {
 		has := crypto.HasHardwareAES()
 		t.Logf("Hardware AES: %v", has)
-		// On this machine (Intel i7 with AES-NI), should be true
 		supported := crypto.SupportedCiphers()
 		t.Logf("Supported ciphers: %v", supported)
 		if has {
@@ -60,12 +59,10 @@ func TestSecureConnBothCiphers(t *testing.T) {
 		t.Run(string(suite), func(t *testing.T) {
 			require := require.New(t)
 
-			// Generate a random 32-byte key.
 			key := make([]byte, 32)
 			_, err := rand.Read(key)
 			require.NoError(err)
 
-			// Create a pipe to simulate a network connection.
 			serverConn, clientConn := net.Pipe()
 			defer serverConn.Close()
 			defer clientConn.Close()
@@ -73,7 +70,6 @@ func TestSecureConnBothCiphers(t *testing.T) {
 			server := session.NewSecureConn(serverConn, key, suite, session.NoncePrefixInbound)
 			client := session.NewSecureConn(clientConn, key, suite, session.NoncePrefixOutbound)
 
-			// Test: client writes, server reads.
 			testData := []byte("Hello from encrypted connection using " + string(suite))
 
 			go func() {
@@ -88,7 +84,6 @@ func TestSecureConnBothCiphers(t *testing.T) {
 			require.NoError(err)
 			require.Equal(testData, buf[:n])
 
-			// Test: large message (1MB).
 			bigData := make([]byte, 1024*1024)
 			_, err = rand.Read(bigData)
 			require.NoError(err)
@@ -114,7 +109,7 @@ func TestSecureConnBothCiphers(t *testing.T) {
 func TestKeyDerivationDomainSeparation(t *testing.T) {
 	require := require.New(t)
 
-	// Same input secrets, different cipher suites → different keys.
+	// Same input secret, different cipher suites must yield different keys.
 	secret := make([]byte, 32)
 	_, err := rand.Read(secret)
 	require.NoError(err)

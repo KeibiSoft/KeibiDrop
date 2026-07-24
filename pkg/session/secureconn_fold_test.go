@@ -19,8 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// keyUpdateReader builds a receive-ratchet reader over raw bytes, optionally with a
-// staged fold secret, mirroring how the receive side is configured on a live conn.
+// keyUpdateReader builds a receive-ratchet reader over raw bytes, optionally with a staged fold secret.
 func keyUpdateReader(raw, key []byte, suite kbc.CipherSuite, staged []byte) *SecureReader {
 	r := NewSecureReader(bytes.NewReader(raw), key, suite, NoncePrefixOutbound)
 	r.keyUpdate.Store(true)
@@ -30,9 +29,8 @@ func keyUpdateReader(raw, key []byte, suite kbc.CipherSuite, staged []byte) *Sec
 	return r
 }
 
-// An initiator writer folds the staged KEM secret on its next write (prompt, no threshold
-// wait); a reader holding the same secret follows and commits the folded epoch, while a
-// reader without it cannot open the frame, proving the epoch was genuinely folded.
+// An initiator writer folds the staged KEM secret on its next write; a reader holding the same
+// secret follows, while a reader without it cannot open the frame (proving a genuine fold).
 func TestSecureConn_InitiatorWriterFoldsAndReaderFollows(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherChaCha20
@@ -61,10 +59,9 @@ func TestSecureConn_InitiatorWriterFoldsAndReaderFollows(t *testing.T) {
 	require.Error(t, err, "a folded frame must not open under the plain ratchet")
 }
 
-// A plain ratchet must still open while a fold is staged: the reader tries the folded
-// candidate first, and when it fails must fall through to plain with the ciphertext buffer
-// intact. This is the regression guard for opening each candidate into a fresh buffer
-// rather than ciphertext[:0], which AEAD Open zeroes on failure.
+// A plain ratchet must still open while a fold is staged: the reader tries the folded candidate
+// first, then falls through to plain with the ciphertext intact. Regression guard for opening each
+// candidate into a fresh buffer, not ciphertext[:0] which AEAD Open zeroes on failure.
 func TestSecureConn_ReaderPlainFallthroughWhileFoldStaged(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherChaCha20
@@ -83,9 +80,8 @@ func TestSecureConn_ReaderPlainFallthroughWhileFoldStaged(t *testing.T) {
 	require.NotNil(t, r.stagedFold, "the fold stays staged until an actual folded frame arrives")
 }
 
-// A responder writer must not fold until its own reader has committed a folded frame from
-// the initiator. With the gate closed and no threshold pressure, a staged responder does
-// not ratchet at all; once the gate opens it folds on the next write.
+// A responder writer must not fold until its own reader commits a folded frame from the initiator:
+// gated and with no threshold pressure it does not ratchet; once ungated it folds on the next write.
 func TestSecureConn_ResponderWriterGatedUntilPeerFolds(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherChaCha20
@@ -152,12 +148,9 @@ func TestSecureConn_FoldRoundTripAcrossPair(t *testing.T) {
 	}
 }
 
-// The adversarial ordering case the security review called out: under active load the
-// responder crosses its ratchet threshold BEFORE the initiator has S. A gated responder must
-// then plain-ratchet across several epochs (never folding, never tearing down) with its reader
-// following every plain bump; once its reader commits the initiator's fold the gate opens and
-// the next write folds, and the reader follows across the folded epoch. Data is intact through
-// both phases.
+// Adversarial ordering from the security review: under load the responder crosses its ratchet
+// threshold before the initiator has S. A gated responder must plain-ratchet across several epochs
+// (never folding or tearing down), then fold once its reader commits the initiator's fold.
 func TestSecureConn_GatedResponderPlainRatchetsUnderLoadThenFolds(t *testing.T) {
 	shrinkRekeyThresholds(t, 4096, 5) // a burst forces repeated plain ratchets while gated
 	key := randomKey(t)
@@ -210,12 +203,9 @@ func TestSecureConn_GatedResponderPlainRatchetsUnderLoadThenFolds(t *testing.T) 
 	require.True(t, reader.r.foldCommitted.Load(), "the reader committed the folded epoch")
 }
 
-// Staging must be race-free against concurrent writes and reads: a duplicate Rekey delivery
-// re-staging the same secret cannot tear the writer/reader fold state. Staged as a gated
-// responder so the writer only plain-ratchets (never folds into the data path), which keeps
-// every frame decryptable while still exercising, under -race, the writer fold fields (wMu),
-// the reader staged fold (foldMu, via the plain fallthrough at each epoch bump), and the
-// foldCommitted flag.
+// Staging must be race-free against concurrent writes and reads: a duplicate Rekey re-staging the
+// same secret cannot tear the fold state. Gated responder so the writer only plain-ratchets (every
+// frame decryptable) while exercising the writer/reader fold fields and foldCommitted under -race.
 func TestSecureConn_ConcurrentStageFoldNoRace(t *testing.T) {
 	shrinkRekeyThresholds(t, 4096, 256) // force periodic plain ratchets so the reader hits epoch bumps
 	key := randomKey(t)
@@ -257,12 +247,9 @@ func TestSecureConn_ConcurrentStageFoldNoRace(t *testing.T) {
 		"a gated responder never folds, so no folded epoch is ever committed")
 }
 
-// The back-to-back-rounds supersede race from CI (2026-07-22, "decryption failed at
-// epoch 2"): the responder's reader is re-staged with round B while the initiator's
-// writer, not yet re-armed, still folds round A into a bump already due. The reader
-// must keep the superseded round one deep and authenticate the A-folded epoch, then
-// follow a later B-folded epoch from the re-armed writer. Without priorFold this
-// test's first read fails exactly like CI.
+// Back-to-back-rounds supersede race: the reader is re-staged with round B while the writer, not yet
+// re-armed, still folds round A into a due bump. The reader must keep the superseded round one deep
+// (priorFold), authenticate the A-folded epoch, then follow a later B-folded epoch.
 func TestSecureConn_SupersededRoundStillDecryptsThenNewRoundFolds(t *testing.T) {
 	key := randomKey(t)
 	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)

@@ -24,9 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// disableKeyUpdate turns the in-band ratchet off for a test, so a same-build pair negotiates
-// key-update off and exercises the re-handshake fallback (the path the rotation and
-// regression tests assert). Restored on cleanup.
+// disableKeyUpdate turns the in-band ratchet off so the pair exercises the re-handshake
+// fallback (the path the rotation and regression tests assert). Restored on cleanup.
 func disableKeyUpdate(t *testing.T) {
 	t.Helper()
 	session.SetKeyUpdateEnabled(false)
@@ -67,21 +66,18 @@ func requireResilienceReady(t *testing.T, tp *TestPair) {
 
 // reconnectWatcher captures each peer's "reconnected:" event.
 //
-// The automatic reconnect loop stores the "connected" reconnect state BEFORE
-// onReconnected rebuilds the gRPC client (reconnect.go sets the state, then calls
-// OnReconnected). So polling ReconnectionState()=="connected" observes the link
-// before the fresh client exists and races the rebuild (a real DATA RACE on
-// session.GRPCClient). The "reconnected:" event is emitted AFTER the rebuild, and
-// delivering it over a channel gives the test a clean happens-before to the live
-// session. Both peers rebuild independently, so both events must be awaited.
+// Polling ReconnectionState()=="connected" races the gRPC client rebuild (a real data race
+// on session.GRPCClient): the state is set before OnReconnected rebuilds the client. The
+// "reconnected:" event fires after the rebuild, giving a clean happens-before. Both peers
+// rebuild independently, so both events must be awaited.
 type reconnectWatcher struct {
 	alice chan struct{}
 	bob   chan struct{}
 }
 
-// watchReconnect wires the per-peer OnEvent callbacks. Call it before triggering a
-// rotation (and before the baseline round trip, so the OnEvent field write is
-// ordered ahead of the monitor goroutines that later read it).
+// watchReconnect wires the per-peer OnEvent callbacks. Call it before triggering a rotation
+// (and before the baseline round trip) so the OnEvent write is ordered ahead of the monitor
+// goroutines that read it.
 func watchReconnect(tp *TestPair) *reconnectWatcher {
 	w := &reconnectWatcher{
 		alice: make(chan struct{}, 8),
@@ -125,18 +121,16 @@ func waitEvent(t *testing.T, ch <-chan struct{}, timeout time.Duration, what str
 	}
 }
 
-// rekeyRoundTrip shares content from "from" and pulls it on "to", asserting the
-// bytes survived the trip. It exercises one nonce direction on whatever session
-// keys are currently live, so calling it before and after a rotation proves the
-// re-handshaked session actually carries data. The share step is retried because
-// right after a reconnect the peer's gRPC server is (re)starting asynchronously.
+// rekeyRoundTrip shares content from "from" and pulls it on "to", asserting the bytes
+// survived. Calling it before and after a rotation proves the re-handshaked session carries
+// data. The share is retried because the peer's gRPC server restarts asynchronously after a
+// reconnect.
 func rekeyRoundTrip(t *testing.T, from *common.KeibiDrop, fromSave string, to *common.KeibiDrop, toSave, name string, content []byte) {
 	t.Helper()
 	require := require.New(t)
 	src := filepath.Join(fromSave, name)
 	require.NoError(os.WriteFile(src, content, 0644))
-	// AddFile is an upsert, so retrying until the peer's server is serving again
-	// is safe and needs no sleep.
+	// AddFile is an upsert, so retrying until the server is serving again is safe.
 	WaitForCondition(t, 20*time.Second, 200*time.Millisecond, func() bool {
 		return from.AddFile(src) == nil
 	}, "share "+name+" with peer")
@@ -150,10 +144,9 @@ func rekeyRoundTrip(t *testing.T, from *common.KeibiDrop, fromSave string, to *c
 	require.Equal(content, got)
 }
 
-// rekeyRoundTripToMount shares content from the no-FUSE peer and verifies it
-// materializes byte-identical on the FUSE peer's mount. The share is retried
-// (post-reconnect server restart) and the mount read is polled (on-demand
-// streaming may need a beat to serve the full file) rather than slept.
+// rekeyRoundTripToMount shares from the no-FUSE peer and verifies it materializes
+// byte-identical on the FUSE peer's mount. The share is retried (post-reconnect restart) and
+// the mount read is polled rather than slept.
 func rekeyRoundTripToMount(t *testing.T, from *common.KeibiDrop, fromSave, mountDir, name string, content []byte) {
 	t.Helper()
 	require := require.New(t)
@@ -176,22 +169,18 @@ func rekeyRoundTripToMount(t *testing.T, from *common.KeibiDrop, fromSave, mount
 	require.Equal(content, got)
 }
 
-// TestRekeyRotation_NoFUSE_RotatesAndDataFlows forces exactly one proactive
-// forward-secrecy rotation on the initiator and proves the re-handshaked session
-// still carries data in both directions. The guard (only the initiator rotates)
-// and the load-bearing post-rotation round trips are both asserted.
+// TestRekeyRotation_NoFUSE_RotatesAndDataFlows forces one proactive rotation on the initiator
+// and proves the re-handshaked session still carries data both directions.
 func TestRekeyRotation_NoFUSE_RotatesAndDataFlows(t *testing.T) {
-	// Exercise the re-handshake fallback: disable the ratchet so the pair rotates via a
-	// re-handshake (read at setup time, before the pair connects).
+	// Disable the ratchet so the pair rotates via a re-handshake (read before the pair connects).
 	disableKeyUpdate(t)
 
 	tp := SetupPeerPair(t, false)
 	require := require.New(t)
 	requireResilienceReady(t, tp)
 
-	// One failed heartbeat (~1 Interval) is enough for the responder to notice the
-	// initiator dropped the sockets, so the automatic reconnect starts promptly
-	// instead of after the default five failures.
+	// One failed heartbeat is enough for the responder to notice the dropped sockets, so
+	// reconnect starts promptly instead of after the default five failures.
 	tp.Alice.HealthMonitor.MaxFailures = 1
 	tp.Bob.HealthMonitor.MaxFailures = 1
 
@@ -206,7 +195,6 @@ func TestRekeyRotation_NoFUSE_RotatesAndDataFlows(t *testing.T) {
 	require.False(responder.HealthMonitor.OnRekeyNeeded(), "responder (non-initiator) must not rotate")
 	require.True(initiator.HealthMonitor.OnRekeyNeeded(), "initiator must initiate the rotation")
 
-	// The forced re-handshake must bring both peers back with a fresh session.
 	watcher.awaitBoth(t, tp, 30*time.Second)
 
 	// Load-bearing: the rotated (re-handshaked) session carries data both ways.
@@ -214,14 +202,12 @@ func TestRekeyRotation_NoFUSE_RotatesAndDataFlows(t *testing.T) {
 	rekeyRoundTrip(t, tp.Bob, tp.BobSaveDir, tp.Alice, tp.AliceSaveDir, "post-b2a.txt", []byte("bob to alice AFTER rekey"))
 }
 
-// TestRekeyRotation_NoFUSE_RatchetRotatesInBand proves the new-new path: with the in-band
-// ratchet negotiated (the default), the session rotates its keys mid-connection without
-// dropping the sockets. It lowers the ratchet threshold, moves several MiB across it in both
-// directions, and asserts the key epoch advanced with zero reconnect events, so the rotation
-// was in-band, not a re-handshake.
+// TestRekeyRotation_NoFUSE_RatchetRotatesInBand proves that with the in-band ratchet (the
+// default), the session rotates keys mid-connection without dropping the sockets: it moves
+// several MiB across a lowered threshold and asserts the epoch advanced with zero reconnects.
 func TestRekeyRotation_NoFUSE_RatchetRotatesInBand(t *testing.T) {
-	// Ratchet ON (the default: do NOT disableKeyUpdate). Force ratchets on small transfers by
-	// dropping the byte threshold to 1 MiB; restore it so no later test inherits it.
+	// Ratchet ON (default). Drop the byte threshold to 1 MiB to force ratchets on small
+	// transfers; restore it so no later test inherits it.
 	origBytes, origMsgs := session.RekeyBytesThreshold, session.RekeyMsgsThreshold
 	session.RekeyBytesThreshold = 1 << 20
 	t.Cleanup(func() { session.RekeyBytesThreshold, session.RekeyMsgsThreshold = origBytes, origMsgs })
@@ -232,16 +218,16 @@ func TestRekeyRotation_NoFUSE_RatchetRotatesInBand(t *testing.T) {
 
 	initiator, responder := rekeyRoles(t, tp)
 
-	// The pair negotiated the ratchet, so the re-handshake fallback is demoted: OnRekeyNeeded
-	// must be a no-op on BOTH peers (it would needlessly drop the sockets).
+	// With the ratchet negotiated, the re-handshake fallback is demoted: OnRekeyNeeded must be
+	// a no-op on both peers.
 	require.False(initiator.HealthMonitor.OnRekeyNeeded(), "ratchet on: initiator must not re-handshake")
 	require.False(responder.HealthMonitor.OnRekeyNeeded(), "ratchet on: responder must not re-handshake")
 
 	watcher := watchReconnect(tp)
 	epochBefore := initiator.HealthMonitor.MaxWriterEpoch()
 
-	// Move several MiB both ways across the 1 MiB threshold. Each transfer survives only if the
-	// writer's mid-stream epoch bump and the reader's follow both work with no socket drop.
+	// Move several MiB both ways across the threshold; each transfer survives only if the
+	// writer's epoch bump and the reader's follow both work with no socket drop.
 	payload := bytes.Repeat([]byte("ratchet-payload!"), 96*1024) // ~1.5 MiB
 	for i := 0; i < 4; i++ {
 		rekeyRoundTrip(t, tp.Alice, tp.AliceSaveDir, tp.Bob, tp.BobSaveDir,
@@ -250,7 +236,6 @@ func TestRekeyRotation_NoFUSE_RatchetRotatesInBand(t *testing.T) {
 			fmt.Sprintf("ratchet-b2a-%d.bin", i), payload)
 	}
 
-	// The key epoch advanced mid-connection: the in-band ratchet rotated the keys.
 	require.Greater(initiator.HealthMonitor.MaxWriterEpoch(), epochBefore, "ratchet must advance the epoch")
 
 	// And with no socket drop: neither peer reconnected.
@@ -295,28 +280,23 @@ func TestRekeyRotation_FUSE_RotatesAndDataFlows(t *testing.T) {
 
 	watcher.awaitBoth(t, tp, 40*time.Second)
 
-	// Load-bearing: a file shared AFTER the rotation must materialize on the FUSE
-	// peer's mount, not just in SyncTracker. This is the regression guard for the
-	// reconnect-rebuild dropping the service's FUSE wiring.
+	// A file shared after the rotation must materialize on the mount, not just in SyncTracker:
+	// the regression guard for the reconnect-rebuild dropping the service's FUSE wiring.
 	rekeyRoundTripToMount(t, tp.Bob, tp.BobSaveDir, tp.AliceMountDir, "fuse-post.txt", []byte("bob to alice fuse AFTER rekey"))
 }
 
-// rekeyBigFileSize is large enough that the pull is still streaming when we probe
-// the rekey guard, yet well under the 1GB rekey byte threshold so the background
-// health tick never auto-rotates and races the test.
+// rekeyBigFileSize is large enough that the pull is still streaming when we probe the rekey
+// guard, yet under the 1GB threshold so the background health tick never auto-rotates.
 const rekeyBigFileSize = 128 * 1024 * 1024
 
-// TestRekeyRotation_NoFUSE_DefersDuringActiveTransfer is the end-to-end F3 guard:
-// a proactive rekey must never drop the sockets while a transfer is in flight. We
-// drive a real large pull on the initiator, and while it streams every rekey probe
-// must defer; the transfer must complete intact; and only once idle may a rotation
-// succeed and data flow again.
+// TestRekeyRotation_NoFUSE_DefersDuringActiveTransfer is the F3 guard: a proactive rekey must
+// never drop the sockets mid-transfer. While a large pull streams, every rekey probe must
+// defer and the transfer must complete intact; only once idle may a rotation succeed.
 func TestRekeyRotation_NoFUSE_DefersDuringActiveTransfer(t *testing.T) {
 	disableKeyUpdate(t)
 
-	// A large transfer plus a reconnect needs more wall-clock than the 30s default
-	// peer context; give it headroom so the context never tears the peers down
-	// mid-test. This only widens the time budget, not any assertion.
+	// A large transfer plus a reconnect needs more than the 30s default peer context; give it
+	// headroom so the context never tears the peers down mid-test.
 	tp := SetupPeerPairWithTimeout(t, false, 90*time.Second)
 	require := require.New(t)
 	requireResilienceReady(t, tp)
@@ -329,9 +309,8 @@ func TestRekeyRotation_NoFUSE_DefersDuringActiveTransfer(t *testing.T) {
 	initSave := saveDirFor(tp, initiator)
 	respSave := saveDirFor(tp, responder)
 
-	// A rotation is driven by the initiator's own hasActiveTransfers() gate, which
-	// tracks downloads (pulls). So the initiator must be the puller: the responder
-	// serves a large file and the initiator pulls it.
+	// The rotation is gated by the initiator's own hasActiveTransfers(), which tracks pulls, so
+	// the initiator must be the puller: the responder serves and the initiator pulls.
 	big := make([]byte, rekeyBigFileSize)
 	for i := range big {
 		big[i] = byte(i%251 + 1) // never zero, so a truncated (zero) file never matches
@@ -345,17 +324,15 @@ func TestRekeyRotation_NoFUSE_DefersDuringActiveTransfer(t *testing.T) {
 	pullDone := make(chan error, 1)
 	go func() { pullDone <- initiator.PullFile(bigName, bigDest) }()
 
-	// Wait until the pull has genuinely started streaming before probing the guard.
-	// PullFile registers the download before streaming, and pullStreamFile writes
-	// chunks sequentially from offset 0, so a matching head means the download is
-	// registered (active) and probing exercises the F3 gate rather than firing
-	// before the transfer exists.
+	// Wait until the pull is genuinely streaming before probing. PullFile registers the download
+	// before streaming and writes chunks sequentially from offset 0, so a matching head means the
+	// download is active and the probe exercises the F3 gate rather than firing before it exists.
 	head := big[:1024]
 	WaitForCondition(t, 20*time.Second, 20*time.Millisecond, func() bool {
 		select {
 		case err := <-pullDone:
-			// Finished before we could observe it streaming (file too small). Push
-			// it back so the loop below reports it and the size assertion fails loudly.
+			// Finished before we observed streaming (file too small). Push it back so the loop
+			// below reports it and the size assertion fails loudly.
 			pullDone <- err
 			return true
 		default:
@@ -372,10 +349,9 @@ func TestRekeyRotation_NoFUSE_DefersDuringActiveTransfer(t *testing.T) {
 		return bytes.Equal(buf, head)
 	}, "large download to start streaming")
 
-	// While the transfer is in flight, every rekey probe must defer (F3). A probe
-	// may only succeed once the transfer has finished, so a true result is accepted
-	// solely if the pull is draining right now; otherwise the guard let a rotation
-	// cut a live transfer, which is the exact regression this test guards.
+	// While the transfer is in flight, every rekey probe must defer (F3). A true result is
+	// accepted only if the pull is draining now; otherwise the guard let a rotation cut a live
+	// transfer, the exact regression this test guards.
 	deferrals := 0
 	rotatedAtTail := false
 	var transferErr error
@@ -404,15 +380,14 @@ poll:
 	require.NoError(err)
 	require.True(bytes.Equal(big, got), "pulled bytes must be identical to the source")
 
-	// The link is idle now, so a rotation must succeed. If it already fired at the
-	// tail of the transfer, the 60s cooldown blocks a second one, so skip it.
+	// The link is idle now, so a rotation must succeed. If it already fired at the tail, the 60s
+	// cooldown blocks a second one, so skip it.
 	if !rotatedAtTail {
 		require.True(initiator.HealthMonitor.OnRekeyNeeded(), "rekey must rotate once the transfer is done")
 	}
 
 	watcher.awaitBoth(t, tp, 45*time.Second)
 
-	// Data must flow again on the rotated session, both directions.
 	rekeyRoundTrip(t, tp.Alice, tp.AliceSaveDir, tp.Bob, tp.BobSaveDir, "post-defer-a2b.txt", []byte("alice to bob after deferred rekey"))
 	rekeyRoundTrip(t, tp.Bob, tp.BobSaveDir, tp.Alice, tp.AliceSaveDir, "post-defer-b2a.txt", []byte("bob to alice after deferred rekey"))
 }

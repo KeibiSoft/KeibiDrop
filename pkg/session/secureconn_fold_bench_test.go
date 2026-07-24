@@ -25,9 +25,8 @@ func benchFoldKey(b *testing.B) []byte {
 	return k
 }
 
-// BenchmarkSecureConn_StageEntropyFold measures staging a fold secret on both directions of a
-// conn. Staged as a gated responder so it re-stages each iteration without consuming the
-// secret or bumping the epoch, isolating the pure staging cost the driver pays per round.
+// Measures staging a fold secret. Staged as a gated responder so it re-stages each iteration
+// without consuming the secret or bumping the epoch, isolating the pure staging cost.
 func BenchmarkSecureConn_StageEntropyFold(b *testing.B) {
 	sc := NewSecureConn(&writeSink{}, benchFoldKey(b), kbc.CipherChaCha20, NoncePrefixOutbound)
 	sc.SetKeyUpdate(true)

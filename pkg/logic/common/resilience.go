@@ -22,19 +22,15 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 )
 
-// InitConnectionResilience sets up health monitoring, reconnection, and relay keepalive.
-// Call this after the session is connected and gRPC client is ready.
-// newConfiguredHealthMonitor builds a fully-wired health monitor. BOTH the initial setup and the
-// post-reconnect rebuild go through here so their configuration can never drift: a divergence
-// between the two (an explicit RekeyEnabled override on the rebuild) silently dropped the near-wrap
-// re-handshake once already. RekeyEnabled is the constructor default; onRekeyNeeded owns the
-// actual rotation decision.
+// newConfiguredHealthMonitor builds a fully-wired health monitor. Both initial setup and the
+// post-reconnect rebuild go through here so their config can't drift. RekeyEnabled is the
+// constructor default; onRekeyNeeded owns the rotation decision.
 func (kd *KeibiDrop) newConfiguredHealthMonitor(sess *session.Session, client bindings.KeibiServiceClient, logger *slog.Logger) *session.HealthMonitor {
 	hm := session.NewHealthMonitor(sess, client, kd.logger)
 	hm.OnDisconnect = kd.onDisconnect
 	hm.OnRekeyNeeded = kd.onRekeyNeeded
-	// Near-wrap rescue must watch the QUIC lane too: it ratchets independently of the
-	// captured TCP pair, and the rescue re-handshake re-derives the QUIC keys as well.
+	// Near-wrap rescue watches the QUIC lane too: it ratchets independently of the TCP pair,
+	// and the rescue re-handshake re-derives the QUIC keys.
 	hm.ExtraEpoch = kd.QUICWriterEpoch
 	hm.OnHealthChange = func(old, cur session.ConnectionHealth) {
 		logger.Info("Connection health changed", "from", old, "to", cur)
@@ -49,17 +45,15 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 
 	logger := kd.logger.With("method", "init-connection-resilience")
 
-	// Debug-only: KD_REKEY_BYTES/KD_REKEY_MSGS lower the rotation thresholds so tests and
-	// benchmarks can force a rekey without moving a gigabyte. Clamped to a floor (can only
-	// fire sooner, never disable), logged once. Env-only, never persisted.
+	// Debug-only: KD_REKEY_BYTES/KD_REKEY_MSGS lower the rotation thresholds so tests can force
+	// a rekey without moving a gigabyte. Clamped to fire sooner only, never disable.
 	if b, m := envRekeyUint("KD_REKEY_BYTES"), envRekeyUint("KD_REKEY_MSGS"); b != 0 || m != 0 {
 		ab, am := session.ApplyRekeyThresholdOverride(b, m)
 		logger.Warn("DEBUG rekey threshold override active (testing only)", "bytes", ab, "msgs", am)
 	}
 
-	// Initialize health monitor. RekeyEnabled defaults on in NewHealthMonitor (so the monitor
-	// onReconnected rebuilds can't silently drop it); onRekeyNeeded decides whether a proposed
-	// rotation actually fires, deferring to the ratchet except near the epoch-wrap guard.
+	// RekeyEnabled defaults on in NewHealthMonitor so reconnect rebuilds can't drop it;
+	// onRekeyNeeded decides whether a proposed rotation actually fires.
 	kd.HealthMonitor = kd.newConfiguredHealthMonitor(kd.session, kd.KDClient, logger)
 
 	// Initialize reconnection manager
@@ -88,8 +82,8 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		}
 	}
 	kd.ReconnectManager.AcceptConn = func(timeout time.Duration) (net.Conn, error) {
-		// Latent nil-deref (Andrei flagged it): if a prior bridge fallback closed+nil'd the
-		// listener and we returned before reopening, Accept() on a nil interface panics.
+		// If a prior bridge fallback closed and nil'd the listener before reopening, Accept()
+		// on a nil interface panics.
 		if kd.listener == nil {
 			return nil, fmt.Errorf("accept-conn: inbound listener not open")
 		}
@@ -112,7 +106,7 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	// Start all components
 	kd.HealthMonitor.Start()
 
-	// Skip relay keepalive in local mode — no relay to keep alive.
+	// Skip relay keepalive in local mode (no relay to keep alive).
 	if !kd.IsLocalMode {
 		kd.RelayKeepalive = NewRelayKeepalive(kd, kd.logger)
 		kd.RelayKeepalive.Start()
@@ -193,16 +187,13 @@ func (kd *KeibiDrop) hasActiveTransfers() bool {
 // cannot thrash the connection.
 const rekeyCooldown = 60 * time.Second
 
-// maxDisconnectDeferrals caps how many consecutive health-failure disconnects the
-// active-transfer guard may defer. A transfer blocked on a dead connection never
-// finishes on its own, so an unbounded deferral deadlocks recovery; at the cap the
-// reconnect proceeds, the dead conn's blocked streams error out, and resumption
-// picks the transfer back up.
+// maxDisconnectDeferrals caps consecutive health-failure disconnects the active-transfer guard
+// may defer. A transfer blocked on a dead conn never finishes, so an unbounded deferral
+// deadlocks recovery; at the cap the reconnect proceeds and resumption recovers the transfer.
 const maxDisconnectDeferrals = 3
 
-// envRekeyUint reads an unsigned-integer env var for the debug rekey threshold override
-// (KD_REKEY_BYTES / KD_REKEY_MSGS). It returns 0 when unset, empty, or unparseable, which
-// leaves the corresponding threshold at its production default.
+// envRekeyUint reads an unsigned-integer env var for the debug rekey threshold override.
+// Returns 0 when unset, empty, or unparseable, leaving the threshold at its default.
 func envRekeyUint(name string) uint64 {
 	v := os.Getenv(name)
 	if v == "" {
@@ -215,19 +206,12 @@ func envRekeyUint(name string) uint64 {
 	return n
 }
 
-// onRekeyNeeded rotates the session keys for forward secrecy when the connection is idle
-// and has passed the data/message threshold. It performs a full re-handshake by dropping
-// the current sockets and letting the proven reconnect path re-establish them with fresh
-// per-direction keys. Only the deterministic reconnect-initiator drives it; the peer
-// follows via its normal disconnect recovery. Gated on idle, so no transfer is cut.
-// onRekeyNeeded returns true only when it actually initiates a rotation, so the health
-// monitor knows whether it still owes a heartbeat this tick.
+// onRekeyNeeded rotates the session keys for forward secrecy when idle and past the
+// data/message threshold, via a full re-handshake (drop the sockets, let the reconnect path
+// re-establish with fresh keys). Only the reconnect-initiator drives it; the peer follows via
+// disconnect recovery. Returns true only when it actually initiates a rotation.
 func (kd *KeibiDrop) onRekeyNeeded() bool {
-	// F2: snapshot the session and reconnect-manager pointers once (under kd.mu) so a
-	// concurrent teardown (Run's ctx.Done path nils kd.session / kd.ReconnectManager)
-	// cannot flip either to nil between the nil-check and a later deref and panic us.
-	// Every deref below uses the locals. Mirrors openStreamProvider, which snapshots
-	// kd.session for the very same shutdown race.
+	// Snapshot session + reconnect-manager under kd.mu: teardown nils them concurrently.
 	kd.mu.Lock()
 	sess := kd.session
 	rm := kd.ReconnectManager
@@ -238,28 +222,22 @@ func (kd *KeibiDrop) onRekeyNeeded() bool {
 	if rm.State() == session.ReconnectStateReconnecting {
 		return false // a reconnect is already in flight; do not re-enter it
 	}
-	// The in-band ratchet rotates a new-new pair zero-pause, so the re-handshake rekey is the
-	// fallback for old peers only. Dropping the sockets while the ratchet is on would be a
-	// pointless stall, so defer to it, EXCEPT near the epoch-wrap guard: there the ratchet
-	// stops advancing, so even a key-update pair must re-handshake for a fresh epoch-0 key.
-	// Read after the reconnect-state guard: PeerSupportsKeyUpdate is rewritten by a reconnect
-	// handshake, which only runs while state is Reconnecting, so this read lands in the same
-	// reconnect-excluded zone as onRekeyNeeded's other session reads.
+	// The in-band ratchet rotates zero-pause, so re-handshake rekey is the fallback for old
+	// peers only; defer to it, except near the epoch-wrap guard where the ratchet stops
+	// advancing and even a key-update pair must re-handshake for a fresh epoch-0 key.
 	if sess.UseKeyUpdate() && !sess.NearEpochWrap() {
 		return false
 	}
 
-	// F3: never rekey while a transfer is in flight. A serving/on-demand transfer can
-	// trickle under the health monitor's idle gate; dropping the sockets here would cut
-	// it mid-stream. Mirrors onDisconnect's guard.
+	// Never rekey while a transfer is in flight: a trickle under the idle gate would be cut
+	// mid-stream if we dropped the sockets.
 	if kd.hasActiveTransfers() {
 		return false
 	}
 
-	// #6: never rekey while a REMOVE/RENAME notify is queued or in flight. The notify
-	// worker has no retry queue and notifyRestoredFiles replays only ADD_FILE, so a drop
-	// here would silently lose the delete/rename and diverge the peers. pendingNotifies
-	// counts only from dequeue, so also check the channel for a just-enqueued one.
+	// Never rekey while a REMOVE/RENAME notify is queued or in flight: the worker has no retry
+	// queue and only ADD_FILE is replayed, so a drop would lose the delete/rename.
+	// pendingNotifies counts from dequeue, so also check the channel for a just-enqueued one.
 	if len(kd.notifyCh) > 0 || kd.pendingNotifies.Load() > 0 {
 		return false
 	}
@@ -294,15 +272,10 @@ func (kd *KeibiDrop) onRekeyNeeded() bool {
 func (kd *KeibiDrop) onDisconnect() {
 	logger := kd.logger.With("event", "disconnect")
 
-	// Don't tear down the connection while transfers are active.
-	// Heartbeat failures during large transfers are expected (the gRPC
-	// connection is saturated with file data, starving heartbeat RPCs).
-	// BOUNDED (maxDisconnectDeferrals): a transfer stuck on a dead connection holds the active count
-	// forever, and an unbounded deferral then starves reconnection while the
-	// stuck transfer waits for exactly the reconnect being deferred (observed
-	// as a test-suite hang in TestUXLatency_LiveEditPropagation). After the
-	// cap we reconnect anyway; tearing the dead conn errors the blocked
-	// streams out and resumption recovers the transfer.
+	// Don't tear down while transfers are active: heartbeat failures during large transfers
+	// are expected (file data starves heartbeat RPCs). Bounded by maxDisconnectDeferrals: a
+	// transfer stuck on a dead conn holds the active count forever, so an unbounded deferral
+	// starves the very reconnect it waits on. After the cap we reconnect anyway.
 	if kd.hasActiveTransfers() {
 		n := kd.disconnectDeferrals.Add(1)
 		if n < maxDisconnectDeferrals {
@@ -322,9 +295,8 @@ func (kd *KeibiDrop) onDisconnect() {
 		kd.OnEvent("peer_disconnected:health_timeout")
 	}
 
-	// Snapshot the resilience handles under kd.mu; teardown nils them concurrently.
-	// Call their methods outside the lock so kd.mu is never held across a
-	// RelayKeepalive/ReconnectManager call (keeps the rk.mu -> kd.mu order intact).
+	// Snapshot the resilience handles under kd.mu (teardown nils them); call their methods
+	// outside the lock to keep the rk.mu -> kd.mu order intact.
 	kd.mu.Lock()
 	rk := kd.RelayKeepalive
 	rm := kd.ReconnectManager
@@ -341,9 +313,8 @@ func (kd *KeibiDrop) onDisconnect() {
 	}
 }
 
-// onReconnected is called when reconnection succeeds.
-// It rebuilds the gRPC client and server on the fresh P2P sockets so that
-// all subsequent RPCs (file ops, health checks) use the new connection.
+// onReconnected rebuilds the gRPC client and server on the fresh P2P sockets so subsequent
+// RPCs use the new connection.
 func (kd *KeibiDrop) onReconnected() {
 	logger := kd.logger.With("event", "reconnected")
 	// Bail if Run's teardown has begun: don't rebuild a stack it is concurrently
@@ -374,9 +345,8 @@ func (kd *KeibiDrop) onReconnected() {
 		_ = rk.ForceRefresh()
 	}
 
-	// Stop old health monitor BEFORE tearing down gRPC so it doesn't
-	// fire heartbeats against the dead client and trigger a spurious
-	// second reconnection.
+	// Stop the old health monitor before tearing down gRPC so it doesn't heartbeat the dead
+	// client and trigger a spurious second reconnection.
 	if hm != nil {
 		hm.Stop()
 	}
@@ -410,21 +380,19 @@ func (kd *KeibiDrop) onReconnected() {
 		return
 	}
 
-	// Teardown may have begun during the 15s connect above; don't resurrect a health
-	// monitor on a session Run is tearing down (that leaks a goroutine on a dead
-	// session). The guard bounds the window; teardown set tearingDown before niling.
+	// Teardown may have begun during the 15s connect: don't resurrect a health monitor on a
+	// session Run is tearing down (leaks a goroutine on a dead session).
 	if kd.tearingDown.Load() {
 		logger.Info("Reconnect finished during shutdown; skipping monitor restart")
 		return
 	}
 
-	// The re-handshake derived fresh QUIC keys (SEK*QUIC), so the old QUIC control
-	// pair is cryptographically dead — restart it (idempotent: stops the old one).
+	// The re-handshake derived fresh QUIC keys, so the old QUIC control pair is
+	// cryptographically dead. Restart it (idempotent: stops the old one).
 	kd.StartQUICControlChannel()
 
-	// Restart health monitoring with the fresh client. kd.KDClient was just set by the
-	// connect above on this goroutine; snapshot kd.session (teardown writes it under
-	// kd.mu) and publish the new monitor under the lock.
+	// Restart health monitoring with the fresh client. Snapshot kd.session under kd.mu
+	// (teardown writes it) and publish the new monitor under the lock.
 	kd.mu.Lock()
 	sess2 := kd.session
 	client := kd.KDClient
@@ -487,9 +455,8 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 // resumePartialDownloads checks the registry for bitmaps belonging to the
 // current peer and auto-resumes them. Called after successful reconnection.
 func (kd *KeibiDrop) resumePartialDownloads(logger *slog.Logger) {
-	// Snapshot kd.session under kd.mu: this runs as a detached goroutine spawned by
-	// onReconnected, so Run's ctx.Done teardown can nil kd.session concurrently. The
-	// lock pairs with the teardown's locked write for a clean happens-before.
+	// Snapshot kd.session under kd.mu: this detached goroutine runs while teardown can nil
+	// kd.session concurrently.
 	kd.mu.Lock()
 	sess := kd.session
 	kd.mu.Unlock()
@@ -540,7 +507,7 @@ func (kd *KeibiDrop) resumePartialDownloads(logger *slog.Logger) {
 		err := kd.PullFile(remoteName, localPath)
 		if err != nil {
 			logger.Warn("Resume failed, peer may have deleted file", "remoteName", remoteName, "err", err)
-			// Peer doesn't have it anymore — clean up.
+			// Peer doesn't have it anymore, clean up.
 			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
 				kd.dlRegistry.Unregister(bitmapPath)
 				os.Remove(bitmapPath)
@@ -580,10 +547,9 @@ func (kd *KeibiDrop) ConnectionStatus() string {
 	return kd.HealthMonitor.Health().String()
 }
 
-// WriterEpoch reports the current in-band ratchet generation (the max writer epoch across both
-// live directions), or 0 before a monitor/connection exists. Pull-based and race-free (it reads
-// the monitor's captured conns), so `kd status` can surface it for smoke tests and kd-bench to
-// watch the ratchet advance without any log spam.
+// WriterEpoch reports the current in-band ratchet generation (max writer epoch across both live
+// directions), or 0 before a monitor exists. Pull-based and race-free (reads the monitor's
+// captured conns).
 func (kd *KeibiDrop) WriterEpoch() uint16 {
 	hm := kd.HealthMonitor
 	if hm == nil {

@@ -18,23 +18,18 @@ import (
 )
 
 // eagerFoldTimeout bounds the fold RPC so a stuck round never leaks a goroutine or pins the
-// single-flight guard. The fold is best-effort, so a timeout just leaves the session on the
-// handshake key until the next reconnect re-folds.
+// single-flight guard. Best-effort: a timeout leaves the session on the handshake key.
 const eagerFoldTimeout = 15 * time.Second
 
-// eagerFoldEligible reports whether this peer should drive an eager fold: it is the
-// deterministic fold initiator and the in-band ratchet is active (a fold applies only through
-// the ratchet, so on a non-ratchet session staging would be a silent no-op). Pure over the
-// snapshot, so the gating is easy to test without a live connection.
+// eagerFoldEligible reports whether this peer should drive an eager fold: it is the fold
+// initiator and the in-band ratchet is active (a fold applies only through the ratchet).
 func eagerFoldEligible(sess *session.Session) bool {
 	return sess != nil && sess.IsFoldInitiator() && sess.UseKeyUpdate()
 }
 
 // maybeStartEagerFold runs one best-effort ephemeral-KEM fold when this peer is the initiator
-// and the ratchet is on. It snapshots kd.session under kd.mu (mirroring onRekeyNeeded, so a
-// concurrent teardown niling kd.session cannot panic us), enforces single-flight, and folds
-// in a goroutine so the caller (finishConnect / onReconnected) is never blocked on the round
-// trip. The responder answers through the Rekey handler; no driver action is needed there.
+// and the ratchet is on. Snapshots kd.session under kd.mu (teardown nils it concurrently),
+// enforces single-flight, and folds in a goroutine so the caller is never blocked.
 func (kd *KeibiDrop) maybeStartEagerFold() {
 	kd.mu.Lock()
 	sess := kd.session
@@ -49,8 +44,7 @@ func (kd *KeibiDrop) maybeStartEagerFold() {
 }
 
 // runEagerFold performs the initiator's fold round and always clears the single-flight guard.
-// Best-effort: any failure (RPC error, not-ready session) leaves the session on the handshake
-// key until a reconnect re-folds, so it is logged, not fatal.
+// Best-effort: any failure leaves the session on the handshake key until a reconnect re-folds.
 func (kd *KeibiDrop) runEagerFold(sess *session.Session) {
 	defer kd.eagerFoldInFlight.Store(false)
 	logger := kd.logger.With("event", "fold")
@@ -58,14 +52,10 @@ func (kd *KeibiDrop) runEagerFold(sess *session.Session) {
 	ctx, cancel := context.WithTimeout(context.Background(), eagerFoldTimeout)
 	defer cancel()
 
-	// Lane failover, not duplication: ONE fold round at a time, tried over the QUIC
-	// channel first (isolated from TCP bulk, and it proves the lane end to end), then
-	// the TCP client with the remaining budget. Failover is safe — a half-completed
-	// QUIC round is superseded by the TCP retry's fresh round (staging is supersede-
-	// idempotent). Duplicating one round over both lanes would NOT be safe: KEM
-	// encapsulation is randomized, so duplicate requests derive different secrets.
-	// Fold errors do not demote the QUIC channel: they can be protocol-level
-	// (role/readiness), and the metadata path's own traffic polices channel health.
+	// Lane failover, not duplication: one fold round, tried over QUIC first (isolated from TCP
+	// bulk), then TCP with the remaining budget. A half-completed QUIC round is superseded by
+	// the TCP retry (staging is supersede-idempotent); duplicating over both lanes would derive
+	// different secrets (KEM encapsulation is randomized). Fold errors do not demote QUIC.
 	lane := "tcp"
 	err := ErrNoQUICForFold
 	if qc := kd.QUICKeibiClient(); qc != nil {

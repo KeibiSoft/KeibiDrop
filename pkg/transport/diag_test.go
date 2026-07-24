@@ -9,11 +9,10 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// TestDiagCancelWedge is a DIAGNOSTIC (not a correctness assertion): it reproduces
-// the server-stream cancel wedge over QUIC and reports exactly how many bytes the
-// server sends before it blocks, so we can see the real flow-control ceiling
-// instead of guessing. It deliberately never calls srv.Stop (that would hang on the
-// wedged handler); the binary exiting reaps the leaked goroutine.
+// TestDiagCancelWedge is a diagnostic, not a correctness assertion: it reproduces the
+// server-stream cancel wedge over QUIC and reports how many bytes the server sends
+// before it blocks. It deliberately never calls srv.Stop (that would hang on the
+// wedged handler); process exit reaps the leaked goroutine.
 func TestDiagCancelWedge(t *testing.T) {
 	var sent atomic.Uint64
 	var done atomic.Bool
@@ -48,7 +47,6 @@ func TestDiagCancelWedge(t *testing.T) {
 	t.Logf("at cancel: client read=%d, server sent=%d, total=%d", read, sent.Load(), total)
 	cancel()
 
-	// Does the client Recv return promptly after cancel?
 	recvDone := make(chan error, 1)
 	go func() { _, e := stream.Recv(); recvDone <- e }()
 	select {
@@ -77,8 +75,7 @@ func TestDiagCancelWedge(t *testing.T) {
 		return
 	}
 
-	// Handler is genuinely wedged in Send. KEY EXPERIMENT: does closing the client
-	// connection unblock it, and how fast?
+	// Handler is wedged in Send: does closing the client connection unblock it, how fast?
 	t.Logf("RESULT=WEDGED at sent=%d; closing client connection", sent.Load())
 	tClose := time.Now()
 	_ = cc.Close()

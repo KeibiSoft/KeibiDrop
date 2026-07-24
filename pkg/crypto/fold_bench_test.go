@@ -23,8 +23,7 @@ func benchFoldSalt(b *testing.B) []byte {
 	return salt
 }
 
-// BenchmarkFold_InitiatorKeygen isolates the initiator's ephemeral ML-KEM-1024 + X25519
-// keygen, the dominant per-fold cost.
+// BenchmarkFold_InitiatorKeygen isolates the initiator's ephemeral ML-KEM-1024 + X25519 keygen, the dominant per-fold cost.
 func BenchmarkFold_InitiatorKeygen(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -36,8 +35,7 @@ func BenchmarkFold_InitiatorKeygen(b *testing.B) {
 	}
 }
 
-// BenchmarkFold_Respond measures the responder's work: validate the initiator's publics,
-// generate an ephemeral X25519, encapsulate to the ML-KEM public, and combine.
+// BenchmarkFold_Respond measures the responder's work: validate publics, encapsulate, combine.
 func BenchmarkFold_Respond(b *testing.B) {
 	salt := benchFoldSalt(b)
 	fi, err := NewFoldInitiator()
@@ -54,9 +52,7 @@ func BenchmarkFold_Respond(b *testing.B) {
 	}
 }
 
-// BenchmarkFold_FullRound measures the entire per-fold crypto cost end to end: initiator
-// keygen, responder encapsulate, initiator decapsulate and combine. The RTT must dwarf this
-// for the "adds about one round trip, negligible CPU" claim to hold.
+// BenchmarkFold_FullRound measures the entire per-fold crypto cost end to end.
 func BenchmarkFold_FullRound(b *testing.B) {
 	salt := benchFoldSalt(b)
 	b.ReportAllocs()
@@ -79,9 +75,7 @@ func BenchmarkFold_FullRound(b *testing.B) {
 	}
 }
 
-// BenchmarkRatchetKeys_Plain and BenchmarkRatchetKeys_Folded bracket the folded ratchet's
-// marginal cost: a folded epoch bump only appends the 32-byte secret under two extra HKDF
-// labels, so the two should differ by a hair, confirming the fold adds no data-path stall.
+// BenchmarkRatchetKeys_Plain and _Folded bracket the folded ratchet's marginal cost (two extra HKDF labels over a 32-byte secret).
 func BenchmarkRatchetKeys_Plain(b *testing.B) {
 	ck := benchFoldSalt(b) // any 32-byte chain key
 	b.ReportAllocs()

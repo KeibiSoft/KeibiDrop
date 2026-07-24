@@ -57,11 +57,8 @@ func TestHealthMonitorProactiveRekeyTrigger(t *testing.T) {
 	require.Equal(t, 1, fired)
 }
 
-// The near-wrap disjunct of maybeRekey must fire the re-handshake even when the byte threshold is
-// nowhere near: a key-update conn that ratcheted up to the wrap guard has to rotate on a fresh
-// epoch-0 key. This is the monitor-goroutine trigger that consults the captured-conn epoch. Without
-// it the trigger wiring could be deleted and every decision-level test (NearEpochWrap etc.) stays
-// green.
+// The near-wrap disjunct of maybeRekey must fire the re-handshake below the byte threshold: a
+// key-update conn ratcheted to the wrap guard has to rotate on a fresh epoch-0 key.
 func TestHealthMonitorNearWrapTriggersRekey(t *testing.T) {
 	// Byte threshold out of reach so shouldRekey() is false; only near-wrap can fire.
 	old := RekeyBytesThreshold
@@ -83,11 +80,8 @@ func TestHealthMonitorNearWrapTriggersRekey(t *testing.T) {
 	require.Equal(t, 1, fired)
 }
 
-// The QUIC control lane ratchets independently of the captured TCP pair, so the near-wrap
-// rescue must also fire when ONLY the ExtraEpoch source (the QUIC lane) approaches the
-// guard while the TCP pair sits at epoch 0. Without this, a hot QUIC lane would hold at
-// the wrap guard forever: traffic continues but forward secrecy stops advancing, with no
-// re-handshake to reset it.
+// The QUIC lane ratchets independently of the TCP pair, so the near-wrap rescue must also fire when
+// only the ExtraEpoch (QUIC) source nears the guard while the TCP pair sits at epoch 0.
 func TestHealthMonitorQUICNearWrapTriggersRekey(t *testing.T) {
 	old := RekeyBytesThreshold
 	RekeyBytesThreshold = 1 << 62
@@ -113,12 +107,9 @@ func TestHealthMonitorQUICNearWrapTriggersRekey(t *testing.T) {
 	require.Equal(t, 1, fired)
 }
 
-// A ratcheting (key-update) session must NOT fire the volume-based re-handshake. Its
-// byte counters are cumulative and never reset by a ratchet, so past one threshold
-// ShouldRekey latches true; rotation is already handled in band, and a volume-driven
-// OnRekeyNeeded would drop the sockets of a healthy session (surfaced in CI as
-// closed-conn fetch failures and zero observed epoch bumps in the UX-latency suite).
-// Only the near-wrap disjunct may re-handshake a ratcheting session.
+// A ratcheting (key-update) session must NOT fire the volume-based re-handshake: its byte counters
+// are cumulative and never reset by a ratchet, so ShouldRekey latches true while rotation is already
+// handled in band. Only the near-wrap disjunct may re-handshake it.
 func TestHealthMonitorVolumeTriggerGatedOffWhenRatcheting(t *testing.T) {
 	old := RekeyBytesThreshold
 	RekeyBytesThreshold = 1
@@ -127,8 +118,8 @@ func TestHealthMonitorVolumeTriggerGatedOffWhenRatcheting(t *testing.T) {
 	key := randomKey(t)
 	sc := NewSecureConn(&writeSink{}, key, kbc.CipherChaCha20, NoncePrefixOutbound)
 	sc.SetKeyUpdate(true)
-	// Two writes: make-before-break checks thresholds BEFORE sealing, so the first
-	// (large) frame seals at epoch 0 and the second frame carries the rotation.
+	// make-before-break checks thresholds BEFORE sealing: the first (large) frame seals at epoch 0,
+	// the second carries the rotation.
 	_, err := sc.Write(randomBytes(t, rekeyIdleByteDelta+4096))
 	require.NoError(t, err)
 	_, err = sc.Write(randomBytes(t, 64))

@@ -48,11 +48,8 @@ func newConnPair(t *testing.T, key []byte, suite kbc.CipherSuite) (writer, reade
 	return NewSecureConn(c1, key, suite, NoncePrefixOutbound), NewSecureConn(c2, key, suite, NoncePrefixInbound)
 }
 
-// A divergent session key must fail the AEAD open (fail closed), not silently decrypt. This anchors
-// the security claim behind the capability-binding tests (TestKeyUpdateCapabilityBoundIntoSEK,
-// TestKeyUpdateBindingBreaksOldPeerInterop): those prove a tampered relay or an old peer derives a
-// DIFFERENT key; this proves a different key actually kills the connection rather than leaking
-// plaintext, which is what "fail closed" means.
+// A divergent session key must fail the AEAD open (fail closed), not silently decrypt: this proves
+// a different key kills the connection rather than leaking plaintext.
 func TestSecureConn_MismatchedKeyFailsClosed(t *testing.T) {
 	c1, c2 := net.Pipe()
 	t.Cleanup(func() { c1.Close(); c2.Close() })
@@ -68,7 +65,6 @@ func TestSecureConn_MismatchedKeyFailsClosed(t *testing.T) {
 
 var cipherSuites = []kbc.CipherSuite{kbc.CipherChaCha20, kbc.CipherAES256}
 
-// TestSecureConn_RoundTrip verifies small and large (4 MiB) write/read round-trips.
 func TestSecureConn_RoundTrip(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
@@ -113,8 +109,7 @@ func TestSecureConn_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestSecureConn_PartialReads writes 1 MiB and reads it back in 4096-byte chunks,
-// exercising the leftover/readBuf path.
+// Reads 1 MiB back in 4096-byte chunks, exercising the leftover/readBuf path.
 func TestSecureConn_PartialReads(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
@@ -151,8 +146,7 @@ func TestSecureConn_PartialReads(t *testing.T) {
 	}
 }
 
-// TestSecureConn_MultiMessage writes 3 separate messages and reads them back
-// with exact-size reads. SecureConn is a byte stream — messages are not framed.
+// SecureConn is a byte stream: messages are not framed, so 3 messages are read back with exact-size reads.
 func TestSecureConn_MultiMessage(t *testing.T) {
 	key := randomKey(t)
 	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
@@ -191,7 +185,6 @@ func TestSecureConn_MultiMessage(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
-// TestSecureConn_LargeMessage writes exactly 4 MiB and reads it back in one ReadFull.
 func TestSecureConn_LargeMessage(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
@@ -217,8 +210,6 @@ func TestSecureConn_LargeMessage(t *testing.T) {
 	}
 }
 
-// TestSecureConn_ConcurrentReadWrite writes 100 messages of 1024 bytes concurrently
-// and verifies no data loss by checksumming the full byte stream.
 func TestSecureConn_ConcurrentReadWrite(t *testing.T) {
 	key := randomKey(t)
 	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
@@ -249,9 +240,7 @@ func TestSecureConn_ConcurrentReadWrite(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
-// TestSecureReader_RejectsOversizedLength sends a length header exceeding
-// MaxSecureMessageSize and verifies the reader returns an error instead of
-// allocating an unbounded buffer.
+// A length header over MaxSecureMessageSize must error, not allocate an unbounded buffer.
 func TestSecureReader_RejectsOversizedLength(t *testing.T) {
 	key := randomKey(t)
 	c1, c2 := net.Pipe()
@@ -278,8 +267,7 @@ func TestSecureReader_RejectsOversizedLength(t *testing.T) {
 	require.Contains(t, err.Error(), "exceeds maximum")
 }
 
-// TestSecureReader_AcceptsMaxSizeLength verifies that a message exactly at
-// MaxSecureMessageSize is accepted (not rejected by the bounds check).
+// A message exactly at MaxSecureMessageSize is accepted (boundary of the bounds check).
 func TestSecureReader_AcceptsMaxSizeLength(t *testing.T) {
 	key := randomKey(t)
 	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
@@ -298,8 +286,7 @@ func TestSecureReader_AcceptsMaxSizeLength(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
-// TestSecureConn_LeftoverAcrossMessages writes two messages and reads them
-// in 5000-byte chunks, crossing message boundaries to exercise leftover logic.
+// Reads two messages in 5000-byte chunks, crossing message boundaries to exercise leftover logic.
 func TestSecureConn_LeftoverAcrossMessages(t *testing.T) {
 	key := randomKey(t)
 	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
@@ -340,10 +327,8 @@ func TestSecureConn_LeftoverAcrossMessages(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
-// TestSecureConnRoleNoncePrefixSeparation proves the QUIC control-channel keying is
-// safe: the two ends of one connection sharing the SAME key never collide on
-// key+nonce, because the dialer writes with the outbound prefix and the acceptor with
-// the inbound prefix. It also proves bytes still round-trip both ways.
+// QUIC control-channel keying is safe: the two ends of one conn sharing the SAME key never collide
+// on key+nonce, because the dialer writes the outbound prefix and the acceptor the inbound.
 func TestSecureConnRoleNoncePrefixSeparation(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherChaCha20

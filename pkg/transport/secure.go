@@ -30,12 +30,10 @@ const maxSecureFrame = 20 << 20 // 20 MiB, matches KeibiDrop's cap
 // Secure runs a hybrid post-quantum handshake (ML-KEM-1024 + X25519) over conn and
 // returns an encrypted net.Conn (ChaCha20-Poly1305, length-prefixed AEAD frames).
 //
-// This is the post-quantum guarantee the QUIC channel needs on top of it: QUIC
-// mandates TLS 1.3, which is *classical* — a harvest-now-decrypt-later adversary
-// breaks it once a quantum computer exists. This handshake is PQ-hybrid, so the
-// bytes stay confidential. It uses the same primitives as KeibiDrop's session layer
-// (crypto/mlkem + crypto/ecdh + HKDF + ChaCha20-Poly1305), so the real handshake
-// drops into this seam in Phase 3.
+// QUIC mandates TLS 1.3, which is classical: a harvest-now-decrypt-later adversary
+// breaks it once a quantum computer exists. This handshake is PQ-hybrid, so the bytes
+// stay confidential. Same primitives as KeibiDrop's session layer (crypto/mlkem +
+// crypto/ecdh + HKDF + ChaCha20-Poly1305).
 func Secure(_ context.Context, conn net.Conn, role Role) (net.Conn, error) {
 	secret, err := pqHandshake(conn, role)
 	if err != nil {
@@ -151,15 +149,14 @@ func readFrame(r io.Reader) ([]byte, error) {
 }
 
 // secureConn is an AEAD-framed net.Conn: [4B len][12B nonce][ciphertext+tag] per
-// message, ChaCha20-Poly1305, one key + counter-nonce per direction. Same wire
-// shape as KeibiDrop's SecureConn, including the leftover buffering that lets it
-// serve gRPC's arbitrary Read sizes from message-framed ciphertext.
+// message, ChaCha20-Poly1305, one key + counter-nonce per direction. The leftover
+// buffering lets it serve gRPC's arbitrary Read sizes from message-framed ciphertext.
 type secureConn struct {
 	net.Conn
 	waead, raead cipher.AEAD
 	wmu          sync.Mutex
 	rmu          sync.Mutex
-	wctr, rctr   uint64
+	wctr         uint64
 	leftover     []byte
 }
 

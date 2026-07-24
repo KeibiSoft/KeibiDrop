@@ -17,8 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// At epoch 0 the nonce must stay byte-identical to the pre-epoch
-// [4B prefix][8B BE counter] layout, so a ratchet-unaware peer interoperates.
+// At epoch 0 the nonce stays byte-identical to the pre-epoch [4B prefix][8B BE counter] layout, so a ratchet-unaware peer interoperates.
 func TestNonceGenerator_Epoch0WireCompat(t *testing.T) {
 	ng := NewNonceGenerator(0x01020304)
 	for want := uint64(1); want <= 4; want++ {
@@ -32,9 +31,9 @@ func TestNonceGenerator_Epoch0WireCompat(t *testing.T) {
 
 func TestNonceGenerator_EpochBytesAndReset(t *testing.T) {
 	ng := NewNonceGenerator(0)
-	_, err := ng.Next() // counter 1
+	_, err := ng.Next()
 	require.NoError(t, err)
-	_, err = ng.Next() // counter 2
+	_, err = ng.Next()
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), ng.Count())
 
@@ -54,9 +53,7 @@ func TestNonceGenerator_EpochBytesAndReset(t *testing.T) {
 	require.Equal(t, []byte{0xAB, 0xCD}, n[4:6], "an arbitrary epoch lands in bytes 4:6")
 }
 
-// The 48-bit counter must never wrap within an epoch: a wrap would carry into the
-// epoch bytes and reuse a (key, nonce) pair, so Next must fail closed with an error
-// (which the writer turns into a dropped connection) rather than crash the daemon.
+// The 48-bit counter must never wrap within an epoch: a wrap would carry into the epoch bytes and reuse a (key, nonce) pair, so Next must fail closed.
 func TestNonceGenerator_CounterOverflowFailsClosed(t *testing.T) {
 	ng := NewNonceGenerator(0)
 	ng.state.Store((uint64(7) << nonceCounterBits) | (nonceCounterMask - 1))

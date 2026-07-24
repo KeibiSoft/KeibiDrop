@@ -26,13 +26,9 @@ func probeGate(t *testing.T) {
 	}
 }
 
-// TestProbe_FlushTeardownNilDerefCrash is ONE crash trial. It runs the real notify worker
-// (its flush reads kd.session lock-free) against a writer that nils kd.session and restores
-// it, exactly as Run's teardown nils the session. Without -race, if flush reads kd.session
-// non-nil at its guard then the write nils it before the kd.session.GRPCClient deref, the
-// worker goroutine nil-derefs and the PROCESS CRASHES. A driver runs this binary many times
-// and counts non-zero exits to get the real-world crash probability. Iteration count comes
-// from KD_RACEPROBE_ITERS (default 200000).
+// TestProbe_FlushTeardownNilDerefCrash is ONE crash trial: the notify worker's lock-free flush
+// read of kd.session races a writer nil-ing and restoring it (as teardown does), so a mistimed
+// read nil-derefs and crashes the process. A driver runs it many times; iters from KD_RACEPROBE_ITERS (default 200000).
 func TestProbe_FlushTeardownNilDerefCrash(t *testing.T) {
 	probeGate(t)
 	iters := envIntDefault("KD_RACEPROBE_ITERS", 200000)
@@ -60,9 +56,8 @@ func TestProbe_FlushTeardownNilDerefCrash(t *testing.T) {
 		}
 	}()
 
-	// Writer nils kd.session and restores it, mirroring Run's teardown write. No lock: even
-	// the real teardown's kd.mu does not synchronize the lock-free flush reader, so nil-ing
-	// is the faithful worst case and lets the reader's nil-deref actually panic.
+	// Writer nils kd.session and restores it (as teardown does), unlocked: teardown's kd.mu
+	// does not synchronize the lock-free flush reader, so this is the faithful worst case.
 	done.Add(1)
 	go func() {
 		defer done.Done()
@@ -77,13 +72,8 @@ func TestProbe_FlushTeardownNilDerefCrash(t *testing.T) {
 	done.Wait()
 }
 
-// TestProbe_OnReconnectedTeardownStackRace is the Part B guard. Before the fix, onReconnected
-// read+wrote kd.grpcServer with no lock while Run's teardown rewrote it, and running the real
-// onReconnected against a stack writer fired a DATA RACE 8/8 under -race. The fix has teardown
-// set tearingDown before it touches the stack, and onReconnected bails at that flag. This test
-// models teardown having begun (tearingDown set), then runs the real onReconnected against a
-// concurrent kd.grpcServer writer: onReconnected must return at the guard WITHOUT touching the
-// stack, so -race stays clean. Delete the guard and this goes red again.
+// TestProbe_OnReconnectedTeardownStackRace: with tearingDown set (teardown begun), the real
+// onReconnected must bail at the guard without touching kd.grpcServer, so -race stays clean.
 func TestProbe_OnReconnectedTeardownStackRace(t *testing.T) {
 	probeGate(t)
 	kd := newTestKD(t)
@@ -104,8 +94,7 @@ func TestProbe_OnReconnectedTeardownStackRace(t *testing.T) {
 		close(done)
 	}()
 
-	// Writer: rewrite kd.grpcServer, mirroring Run's teardown. If onReconnected honors the
-	// guard it never reads this field, so -race sees no collision.
+	// Writer rewrites kd.grpcServer; if onReconnected honors the guard it never reads this field.
 	go func() {
 		start.Wait()
 		defer func() { _ = recover() }()
@@ -123,12 +112,8 @@ func TestProbe_OnReconnectedTeardownStackRace(t *testing.T) {
 	}
 }
 
-// TestProbe_OnReconnectedStackSwapRace exercises the Finding-2 in-flight window the entry-guard
-// probe cannot reach: onReconnected running its gRPC-stack swap (NOT tearing down) concurrent
-// with Run's teardown swapping the same fields. Both now perform the swap under kd.mu, so -race
-// stays clean. Revert either side's kd.mu and it fires (unlocked reader vs locked writer is still
-// a race). onReconnected is detached (it blocks in connectGRPCClientWithRetry); the swap collides
-// in the first ms, which the short sleep captures.
+// TestProbe_OnReconnectedStackSwapRace: onReconnected's gRPC-stack swap (not tearing down) runs
+// concurrent with teardown swapping the same fields; both swap under kd.mu, so -race stays clean.
 func TestProbe_OnReconnectedStackSwapRace(t *testing.T) {
 	probeGate(t)
 	kd := newTestKD(t)

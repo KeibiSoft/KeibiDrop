@@ -69,11 +69,8 @@ func TestResumePartialDownloads_NilRegistry_NoPanic(t *testing.T) {
 	kd.resumePartialDownloads(kd.logger)
 }
 
-// TestOpenStreamProvider_NilSession_NoPanic verifies the FUSE OpenStreamProvider
-// callback is nil-safe during a Shutdown race. Run() nils kd.session before FsCtx
-// is cancelled; a goroutine waking from PrefetchSem (reconcileEditAsync /
-// prefetchFile) then calls this. It must return a nil provider, not deref a nil
-// session and crash the process.
+// TestOpenStreamProvider_NilSession_NoPanic: the FUSE OpenStreamProvider callback must be
+// nil-safe when a shutdown race nils kd.session, returning a nil provider instead of crashing.
 func TestOpenStreamProvider_NilSession_NoPanic(t *testing.T) {
 	kd := newNilGuardTestKD()
 	defer kd.Cancel()
@@ -85,8 +82,8 @@ func TestOpenStreamProvider_NilSession_NoPanic(t *testing.T) {
 	}
 }
 
-// TestOpenStreamProvider_NilGRPCClient_NoPanic verifies a session present but with
-// no gRPC client (a window during connect/teardown) also yields a nil provider.
+// TestOpenStreamProvider_NilGRPCClient_NoPanic: a session present but with no gRPC client
+// (a connect/teardown window) also yields a nil provider.
 func TestOpenStreamProvider_NilGRPCClient_NoPanic(t *testing.T) {
 	kd := newNilGuardTestKD()
 	defer kd.Cancel()
@@ -98,10 +95,8 @@ func TestOpenStreamProvider_NilGRPCClient_NoPanic(t *testing.T) {
 	}
 }
 
-// TestNilSessionGuard_SkipsCachedPeerUpdate verifies the guard pattern used in
-// onReconnected (resilience.go:198). Calling onReconnected directly requires full
-// gRPC infrastructure, so this tests the guard inline. If the guard is removed
-// from production code, grep for "kd.session != nil" in onReconnected to verify.
+// TestNilSessionGuard_SkipsCachedPeerUpdate verifies onReconnected's nil-session guard
+// pattern inline, since calling onReconnected directly needs full gRPC infrastructure.
 func TestNilSessionGuard_SkipsCachedPeerUpdate(t *testing.T) {
 	kd := newNilGuardTestKD()
 	defer kd.Cancel()
@@ -118,10 +113,8 @@ func TestNilSessionGuard_SkipsCachedPeerUpdate(t *testing.T) {
 	}
 }
 
-// TestNilSessionGuard_RelayLookupReturnsError verifies the guard pattern used in
-// the RelayLookup closure (resilience.go:56-59). The closure is defined inline in
-// InitConnectionResilience which requires a live session, so this tests the
-// pattern directly.
+// TestNilSessionGuard_RelayLookupReturnsError verifies the RelayLookup closure's nil-session
+// guard directly, since the closure lives inside InitConnectionResilience which needs a live session.
 func TestNilSessionGuard_RelayLookupReturnsError(t *testing.T) {
 	kd := newNilGuardTestKD()
 	defer kd.Cancel()
@@ -143,9 +136,8 @@ func TestNilSessionGuard_RelayLookupReturnsError(t *testing.T) {
 	}
 }
 
-// TestWriterEpoch_NilMonitor_ReturnsZero verifies the kd status writer-epoch accessor is
-// nil-safe: before InitConnectionResilience builds the health monitor (no connection yet), it
-// must surface epoch 0 rather than deref a nil monitor and crash the status command.
+// TestWriterEpoch_NilMonitor_ReturnsZero: before the health monitor exists, the writer-epoch
+// accessor must return 0 rather than deref a nil monitor and crash the status command.
 func TestWriterEpoch_NilMonitor_ReturnsZero(t *testing.T) {
 	kd := newNilGuardTestKD()
 	defer kd.Cancel()
@@ -155,9 +147,8 @@ func TestWriterEpoch_NilMonitor_ReturnsZero(t *testing.T) {
 	}
 }
 
-// newConfiguredHealthMonitor is the single wiring path for BOTH the initial monitor and the
-// post-reconnect rebuild. This locks the property whose divergence reintroduced the MED-2 bug:
-// the monitor must always ship rekey-enabled with its callbacks wired, from either site.
+// TestNewConfiguredHealthMonitor_RekeyEnabledAndWired locks the property whose divergence caused
+// MED-2: the single wiring path must always ship the monitor rekey-enabled with callbacks wired.
 func TestNewConfiguredHealthMonitor_RekeyEnabledAndWired(t *testing.T) {
 	kd := newNilGuardTestKD()
 	defer kd.Cancel()

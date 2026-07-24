@@ -16,18 +16,13 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// motelWAN emulates the link measured on 2026-07-19 from the motel to the
-// KeibiDrop server at 185.104.181.40: ping RTT ~62-133 ms (avg ~79 ms) over a
-// ~60 Mbps download bottleneck. Latency is one-way, so ~40 ms models the ~80 ms
-// round trip. This is the wire KeibiDrop's on-demand reads actually cross, so the
-// freeze number below is calibrated to it rather than to a toy profile. The real
-// WAN counterpart (72 ms Barcelona link) is the blog's 3066 ms vs 109 ms.
+// motelWAN emulates a measured real link: ~60 Mbps bottleneck, ~80 ms RTT. Latency is
+// one-way in this shaper, so 40 ms models the 80 ms round trip.
 var motelWAN = latency.Network{Kbps: 60 * 1024, Latency: 40 * time.Millisecond, MTU: 1500}
 
-// shapedTCP dials/listens plain TCP and wraps each conn in a latency.Network, so
-// the PQC handshake, gRPC, and the record layer all run across the emulated WAN.
-// Both ends must be wrapped (the latency package syncs a baseline across the
-// pair), which dialing and listening through the same Network guarantees.
+// shapedTCP wraps each plain-TCP conn in a latency.Network so the handshake, gRPC, and
+// record layer all run across the emulated WAN. Both ends must be wrapped, which dialing
+// and listening through the same Network guarantees.
 type shapedTCP struct{ net latency.Network }
 
 func (s shapedTCP) Dial(ctx context.Context, addr string) (net.Conn, error) {
@@ -52,25 +47,11 @@ func (s shapedTCP) Listen(addr string) (net.Listener, error) {
 	return s.net.Listener(ln), nil
 }
 
-// TestWANFreezeUnderPrefetch is the calibrated, repo-resident repro of the problem
-// this transport exists to kill: a random-jump cache-miss read while a prefetch
-// saturates the WAN link. It runs over an emulated motel link (60 Mbps, ~80 ms RTT)
-// and contrasts the two designs:
-//   - muxed:     the read shares one gRPC channel with the bulk prefetch (what
-//                KeibiDrop does today: one connection per direction), so it competes
-//                with the prefetch for that channel.
-//   - fast lane: the read runs on a SEPARATE channel, so it stays near the idle
-//                floor (about one round trip plus the transfer).
-//
-// Honest scope: the shaper models latency + bandwidth but NOT packet loss, and the
-// seconds-long freeze on real Wi-Fi is dominated by loss-driven TCP head-of-line
-// blocking (a dropped bulk segment stalls the seek's already-sent segments until
-// retransmit) that QUIC avoids per-stream. So this emulation shows only the
-// bandwidth-contention share; the full magnitude is the blog's real-WAN result
-// (seek under prefetch: TCP 3066 ms vs QUIC 109 ms on a 72 ms lossy link), which is
-// reproducible on the lossy fleet (Timisoara/Singapore), not on a loss-free shaper.
-// Both channels are shaped TCP here so the isolated variable is channel separation;
-// KeibiDrop's real fast lane is QUIC, which also brings migration and metadata.
+// TestWANFreezeUnderPrefetch reproduces a random-jump cache-miss read while a prefetch
+// saturates the WAN link, contrasting two designs: muxed (read shares one gRPC channel
+// with the bulk prefetch) vs fast lane (read on a separate channel). The shaper models
+// latency and bandwidth but NOT loss, so it shows only the bandwidth-contention share;
+// both channels are shaped TCP here, so the isolated variable is channel separation.
 func TestWANFreezeUnderPrefetch(t *testing.T) {
 	if testing.Short() {
 		t.Skip("WAN freeze benchmark is slow by design (seconds-long muxed reads); run without -short")
@@ -80,10 +61,8 @@ func TestWANFreezeUnderPrefetch(t *testing.T) {
 	clientID, _ := NewIdentity()
 	tr := shapedTCP{net: motelWAN}
 
-	// KeibiDrop's real gRPC tuning: a large FIXED 16 MiB window (autotuning off) so
-	// the prefetch keeps ~16 MiB in flight. On a 60 Mbps link that is ~2 s of buffered
-	// bulk a muxed read must wait behind. Using the app's actual config is what makes
-	// this a faithful repro rather than a toy with gRPC's small autotuned window.
+	// KeibiDrop's real gRPC tuning: a fixed 16 MiB window (autotuning off), so the
+	// prefetch keeps ~16 MiB in flight (~2 s of buffered bulk a muxed read waits behind).
 	srvOpts := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(config.GRPCMaxMsgSize),
 		grpc.MaxSendMsgSize(config.GRPCMaxMsgSize),
@@ -122,7 +101,7 @@ func TestWANFreezeUnderPrefetch(t *testing.T) {
 	}
 	defer fastCh.Close()
 
-	const readLen = 512 << 10 // KeibiDrop's block: the first chunk fetched on a miss
+	const readLen = 512 << 10  // KeibiDrop's block: the first chunk fetched on a miss
 	const fileBlocks = 1 << 14 // 8 GiB of virtual file to jump around in
 	rng := rand.New(rand.NewSource(42))
 
@@ -143,8 +122,7 @@ func TestWANFreezeUnderPrefetch(t *testing.T) {
 	bulk := pb.NewBenchServiceClient(bulkCh)
 	fast := pb.NewBenchServiceClient(fastCh)
 
-	// Reference: a cache-miss read on an idle link, no prefetch competing. This is
-	// the floor (about one round trip plus the 512 KiB transfer).
+	// Reference: a cache-miss read on an idle link, the floor (one round trip plus the transfer).
 	idle := measureReads(t, 5, func(i int) (time.Duration, error) {
 		return read(bulk, uint64(rng.Intn(fileBlocks))*readLen)
 	})
@@ -191,9 +169,8 @@ func TestWANFreezeUnderPrefetch(t *testing.T) {
 	t.Logf("  freeze is loss-driven TCP head-of-line blocking; real-WAN magnitude is 3066")
 	t.Logf("  ms vs 109 ms (blog, 72 ms lossy link). Reproduce that on the lossy fleet.")
 
-	// What THIS loss-free emulation can assert truthfully: the separate lane is
-	// isolated from the prefetch (stays near the idle floor), and muxing onto the
-	// busy channel is measurably worse. The full freeze magnitude needs loss (NOTE).
+	// What this loss-free emulation can assert: the separate lane stays near the idle
+	// floor (isolated from the prefetch), and muxing onto the busy channel is worse.
 	if pctile(lane, .5) > 2*pctile(idle, .5) {
 		t.Errorf("fast lane should stay near the idle floor (isolated from bulk); lane p50=%v idle p50=%v", pctile(lane, .5), pctile(idle, .5))
 	}

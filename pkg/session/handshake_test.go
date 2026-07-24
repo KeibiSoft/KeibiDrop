@@ -19,18 +19,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// buildHandshakeFixture creates two sessions (alice = inbound, bob = outbound)
-// and returns bob's handshake message ready to be sent over a pipe.
+// buildHandshakeFixture returns alice (inbound) and bob's handshake message, ready to send over a pipe.
 func buildHandshakeFixture(t *testing.T) (*Session, PeerHandshakeMessage) {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	// Alice (inbound side)
 	alice, err := InitSession(logger, 26002, 26001)
 	require.NoError(t, err, "InitSession for alice")
 
-	// Bob (outbound side) — we only need his keys to build the message
 	bob, err := InitSession(logger, 26004, 26003)
 	require.NoError(t, err, "InitSession for bob")
 
@@ -58,9 +55,8 @@ func buildHandshakeFixture(t *testing.T) (*Session, PeerHandshakeMessage) {
 	return alice, msg
 }
 
-// pipeWithMessage creates a net.Pipe, writes the length-prefixed JSON message
-// to one end, and returns the other end for the handshake to read from.
-// Format matches PerformInboundHandshake: 4-byte big-endian length + JSON body.
+// pipeWithMessage writes the length-prefixed JSON message to one pipe end and returns the other.
+// Wire format: 4-byte big-endian length + JSON body.
 func pipeWithMessage(t *testing.T, msg PeerHandshakeMessage) net.Conn {
 	t.Helper()
 	server, client := net.Pipe()
@@ -143,10 +139,8 @@ func TestPerformInboundHandshake_ExactMatch_Succeeds(t *testing.T) {
 	require.NoError(t, err, "Handshake must succeed when fingerprint matches exactly")
 }
 
-// TestHandshakeDerivesQUICChannelKeys runs a real outbound->inbound handshake over a
-// pipe and proves the extra QUIC seeds in the same payload yield a matching, INDEPENDENT
-// key on each side: the QUIC control channel is keyed from the one handshake, with its
-// own key so it never shares key+nonce space with the TCP channel.
+// A real handshake proves the extra QUIC seeds yield a matching, INDEPENDENT key on each side: the
+// QUIC control channel never shares key+nonce space with the TCP channel.
 func TestHandshakeDerivesQUICChannelKeys(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -155,8 +149,7 @@ func TestHandshakeDerivesQUICChannelKeys(t *testing.T) {
 	bob, err := InitSession(logger, 26004, 26003)
 	require.NoError(t, err)
 
-	// Peers already know and validated each other's public keys before this point;
-	// bob (outbound) encapsulates to alice's keys, alice expects bob's fingerprint.
+	// bob (outbound) encapsulates to alice's keys; alice expects bob's fingerprint.
 	alicePeer, err := kbc.ParsePeerKeys(map[string][]byte{
 		"x25519": alice.OwnKeys.X25519Public.Bytes(),
 		"mlkem":  alice.OwnKeys.MlKemPublic.Bytes(),
@@ -186,8 +179,7 @@ func TestHandshakeDerivesQUICChannelKeys(t *testing.T) {
 	require.NotEqual(t, bob.SEKOutbound, bob.SEKOutboundQUIC, "QUIC key must differ from the TCP key")
 }
 
-// TestHandshakeQUICSeedsOptional proves backward compatibility: a peer that sends no
-// "*_quic" seeds (older build) still completes the handshake, just with no QUIC key.
+// Backward compat: a peer that sends no "*_quic" seeds still completes the handshake, with no QUIC key.
 func TestHandshakeQUICSeedsOptional(t *testing.T) {
 	alice, msg := buildHandshakeFixture(t) // fixture builds a payload WITHOUT quic seeds
 	alice.ExpectedPeerFingerprint = "TOFU"

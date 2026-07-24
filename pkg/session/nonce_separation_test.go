@@ -23,8 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// writeSink is a net.Conn whose writes accumulate in a buffer, so a test can inspect
-// the exact frames a SecureConn emits.
+// writeSink is a net.Conn whose writes accumulate in a buffer so a test can inspect the frames.
 type writeSink struct{ buf bytes.Buffer }
 
 func (s *writeSink) Write(p []byte) (int, error)     { return s.buf.Write(p) }
@@ -73,9 +72,8 @@ func firstNonce(t *testing.T, key []byte, suite kbc.CipherSuite, prefix uint32) 
 	return got[0]
 }
 
-// TestNonceDirectionSeparation is the core guard: on a shared key, the outbound and
-// inbound endpoints seal their first message under different nonces (OUTB|1 vs INBD|1),
-// so the two-time pad that the reuse enabled no longer exists.
+// Core guard: on a shared key, the outbound and inbound endpoints seal their first message under
+// different nonces (OUTB|1 vs INBD|1), so no two-time pad exists.
 func TestNonceDirectionSeparation(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
@@ -92,10 +90,8 @@ func TestNonceDirectionSeparation(t *testing.T) {
 	}
 }
 
-// TestHandshakeAssignsOppositeNoncePrefixes guards the actual wiring in handshake.go:
-// after a real handshake, the dialing side's Outbound writer uses OUTB and the
-// accepting side's Inbound writer uses INBD, even though the socket's two ends share
-// one key (the reuse precondition).
+// Guards the handshake wiring: after a real handshake the dialing side's Outbound writer uses OUTB
+// and the accepting side's Inbound writer uses INBD, though both ends share one key.
 func TestHandshakeAssignsOppositeNoncePrefixes(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	alice, err := InitSession(log, config.OutboundPort, config.InboundPort)
@@ -119,8 +115,7 @@ func TestHandshakeAssignsOppositeNoncePrefixes(t *testing.T) {
 	require.Equal(t, alice.SEKOutbound, bob.SEKInbound, "sanity: the socket's two ends share one key")
 }
 
-// TestRoundTripBothDirections confirms the direction-separated conns still interoperate:
-// each side decrypts the other's frames.
+// The direction-separated conns still interoperate: each side decrypts the other's frames.
 func TestRoundTripBothDirections(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
@@ -153,9 +148,8 @@ func TestRoundTripBothDirections(t *testing.T) {
 	}
 }
 
-// TestReaderDecryptsInboundPrefixFrame is the 0.3.x wire-compat guard: a prefix-agnostic
-// reader (which keys only on the SEK and takes the nonce from the frame) decrypts an
-// INBD-sealed frame. The fix does not change the wire format.
+// 0.3.x wire-compat guard: a prefix-agnostic reader (nonce taken from the frame) decrypts an
+// INBD-sealed frame; the fix does not change the wire format.
 func TestReaderDecryptsInboundPrefixFrame(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherAES256
@@ -170,8 +164,7 @@ func TestReaderDecryptsInboundPrefixFrame(t *testing.T) {
 	require.Equal(t, payload, got)
 }
 
-// TestUpdateKeyPersistsWriterPrefix guards that a rekey keeps the direction prefix:
-// UpdateKey must not silently revert an inbound writer to the outbound prefix.
+// A rekey must keep the direction prefix: UpdateKey must not revert an inbound writer to outbound.
 func TestUpdateKeyPersistsWriterPrefix(t *testing.T) {
 	key := randomKey(t)
 	newKey := randomKey(t)

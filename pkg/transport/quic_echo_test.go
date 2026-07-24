@@ -9,10 +9,9 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// TestQUICEcho is the smallest possible proof that quic-go v0.60 compiles and
-// runs on this machine, using the v0.60 concrete-struct API (*quic.Listener,
-// *quic.Conn, *quic.Stream). Server echoes bytes on the first stream the client
-// opens; client round-trips a message. No gRPC, no adapter — just the library.
+// TestQUICEcho is a smoke test for quic-go's concrete-struct API (*quic.Listener,
+// *quic.Conn, *quic.Stream): server echoes bytes on the first stream the client opens,
+// client round-trips a message. No gRPC.
 func TestQUICEcho(t *testing.T) {
 	ln, err := quic.ListenAddr("127.0.0.1:0", serverTLSConfig(), nil)
 	if err != nil {

@@ -17,28 +17,21 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 )
 
-// TestSessionTeardownRacesNotifyFlush proves the F2 hardening is incomplete on the
-// reader side. It drives the REAL notify worker, whose flush closure reads kd.session
-// lock-free (the "kd.session == nil" nil-check and the "client := kd.session.GRPCClient"
-// deref), against a writer that rewrites kd.session UNDER kd.mu, exactly as Run's
-// teardown does when it nils the session. Because flush never takes kd.mu, the mutex on
-// the writer establishes no happens-before with the read, so the two collide with no
-// synchronization: a data race the -race detector fires on. Locking only the writer (and
-// onRekeyNeeded) therefore does not make the notify path race-clean.
-//
-// Run: go test -race -run TestSessionTeardownRacesNotifyFlush -count=5 ./pkg/logic/common/
+// TestSessionTeardownRacesNotifyFlush proves the F2 hardening is incomplete on the reader
+// side: the real notify worker's flush reads kd.session lock-free while a writer rewrites it
+// under kd.mu (as Run's teardown does), so the two race with no happens-before. -race fires.
 func TestSessionTeardownRacesNotifyFlush(t *testing.T) {
 	kd := newTestKD(t)
 
-	// A non-blocking no-op gRPC client so flush passes its nil-check and reaches the
-	// second lock-free read (kd.session.GRPCClient) without doing real network I/O.
+	// A non-blocking no-op client so flush passes its nil-check and reaches the second
+	// lock-free read (kd.session.GRPCClient) without real network I/O.
 	rel := make(chan struct{})
 	close(rel)
 	fake := &blockingNotifyClient{entered: make(chan struct{}, 1), release: rel}
 	kd.session.GRPCClient = fake
 
-	// Two valid sessions to swap between, so the writer models the teardown's kd.session
-	// pointer write without ever nil-ing it: a clean data-race signal, no nil-deref noise.
+	// Two valid sessions to swap between, so the writer models teardown's pointer write
+	// without nil-ing it: a clean data-race signal, no nil-deref noise.
 	sessA := kd.session
 	sessB := &session.Session{GRPCClient: fake}
 

@@ -10,13 +10,9 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// BenchmarkEcho measures unary round-trip latency over each transport, reporting
-// the mean (ns/op) plus p50/p90/p99 as custom metrics.
-//
-// IMPORTANT: on loopback with zero loss this is the *overhead tax* of userspace
-// QUIC + HTTP/2-over-a-QUIC-stream versus kernel TCP. QUIC is expected to be
-// slower here. Its advantage appears under real latency/loss and on an address
-// change — measured on the WAN (step 8), not on this benchmark.
+// BenchmarkEcho measures unary round-trip latency over each transport, reporting mean
+// (ns/op) plus p50/p90/p99. On loopback this is the overhead tax of userspace QUIC vs
+// kernel TCP, so QUIC is expected slower here; its advantage needs real latency/loss.
 func BenchmarkEcho(b *testing.B) {
 	for _, tr := range transports {
 		b.Run(tr.name, func(b *testing.B) {

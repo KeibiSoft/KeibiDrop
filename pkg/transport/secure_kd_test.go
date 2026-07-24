@@ -11,10 +11,9 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// TestKDHandshakeOverQUIC runs KeibiDrop's real post-quantum handshake (persistent
-// X25519 + ML-KEM-1024 identities, mutual fingerprint verification, pkg/crypto
-// unchanged) over a QUIC stream, then sends AEAD data both ways. Proves the
-// product's actual security layer composes with QUIC.
+// TestKDHandshakeOverQUIC runs KeibiDrop's post-quantum handshake (persistent X25519 +
+// ML-KEM-1024 identities, mutual fingerprint verification) over a QUIC stream, then
+// sends AEAD data both ways.
 func TestKDHandshakeOverQUIC(t *testing.T) {
 	serverID, err := NewIdentity()
 	if err != nil {
@@ -78,9 +77,8 @@ func TestKDHandshakeOverQUIC(t *testing.T) {
 	}
 }
 
-// TestKDFingerprintMismatch proves the authentication actually gates the connection:
-// a server expecting a different client fingerprint rejects the handshake. This is
-// the security property, not just "it runs".
+// TestKDFingerprintMismatch checks authentication gates the connection: a server
+// expecting a different client fingerprint rejects the handshake.
 func TestKDFingerprintMismatch(t *testing.T) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()

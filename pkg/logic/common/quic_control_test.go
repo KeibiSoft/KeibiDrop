@@ -22,9 +22,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// handshakenSessionPair returns two sessions that have completed the TCP handshake, so
-// they hold matching, independent QUIC keys: the outbound session's SEKOutboundQUIC ==
-// the inbound session's SEKInboundQUIC.
+// handshakenSessionPair returns two sessions that completed the TCP handshake, so they hold
+// matching independent QUIC keys (outbound.SEKOutboundQUIC == inbound.SEKInboundQUIC).
 func handshakenSessionPair(t *testing.T) (outbound, inbound *session.Session) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -43,8 +42,7 @@ func handshakenSessionPair(t *testing.T) (outbound, inbound *session.Session) {
 	outbound.PeerPubKeys = inboundPeer
 	outbound.ExpectedPeerFingerprint, err = inbound.OwnKeys.Fingerprint()
 	require.NoError(t, err)
-	// The acceptor (inbound) verifies the dialer's keys against the fingerprint it
-	// already holds out of band.
+	// The acceptor (inbound) verifies the dialer's keys against the fingerprint it holds out of band.
 	inbound.ExpectedPeerFingerprint, err = outbound.OwnKeys.Fingerprint()
 	require.NoError(t, err)
 
@@ -56,10 +54,8 @@ func handshakenSessionPair(t *testing.T) (outbound, inbound *session.Session) {
 	_ = oEnd.Close() // the TCP handshake pipe is only needed to derive keys
 	_ = iEnd.Close()
 
-	// Reverse direction, as in the real flow (each peer dials one conn and accepts one).
-	// This is also what completes the key-update negotiation: a node learns
-	// PeerSupportsKeyUpdate only when it ACCEPTS the peer's handshake, so without this
-	// leg the dialer side would never enable the in-band ratchet.
+	// Reverse direction, as in the real flow (each peer dials one and accepts one). This also
+	// completes key-update negotiation: a node learns PeerSupportsKeyUpdate only when it accepts.
 	oEnd2, iEnd2 := net.Pipe()
 	go func() { errCh <- session.PerformOutboundHandshakeOnConn(inbound, oEnd2) }()
 	require.NoError(t, session.PerformInboundHandshake(outbound, iEnd2))
@@ -79,11 +75,8 @@ func (pingServer) Ping(context.Context, *cpb.PingRequest) (*cpb.PingReply, error
 	return &cpb.PingReply{}, nil
 }
 
-// TestQUICControlChannelEndToEnd brings up the real QUIC control channel between two
-// sessions using ONLY the keys derived in the TCP handshake (no per-conn handshake),
-// and runs a gRPC RPC over it. This proves the whole mechanism end to end: extra seeds
-// in the handshake payload -> independent QUIC keys -> role-keyed SecureConn over a real
-// QUIC stream -> working gRPC. Control + metadata ride this; file transfer stays on TCP.
+// TestQUICControlChannelEndToEnd brings up the real QUIC control channel from only the
+// TCP-handshake-derived keys (no per-conn handshake) and runs a gRPC RPC over it, end to end.
 func TestQUICControlChannelEndToEnd(t *testing.T) {
 	alice, bob := handshakenSessionPair(t) // alice = outbound (dials), bob = inbound (listens)
 
@@ -112,12 +105,11 @@ func TestQUICControlChannelEndToEnd(t *testing.T) {
 	require.NoError(t, err, "Ping over the session-keyed QUIC control channel must succeed")
 }
 
-// TestQUICControlWrongKeyFails is the sad path: if the two ends are keyed differently
-// (a wrong or rotated key), the SecureConn cannot decrypt, so the RPC fails rather than
-// silently succeeding. The QUIC/TLS layer connects, but our post-quantum layer rejects.
+// TestQUICControlWrongKeyFails is the sad path: mismatched keys mean the SecureConn cannot
+// decrypt, so the RPC fails rather than silently succeeding (QUIC/TLS connects; our layer rejects).
 func TestQUICControlWrongKeyFails(t *testing.T) {
-	_, bob := handshakenSessionPair(t)          // bob holds a valid inbound QUIC key
-	badAlice, _ := handshakenSessionPair(t)      // a different pair: badAlice's outbound key != bob's inbound key
+	_, bob := handshakenSessionPair(t)      // bob holds a valid inbound QUIC key
+	badAlice, _ := handshakenSessionPair(t) // a different pair: badAlice's outbound key != bob's inbound key
 
 	ln, err := ListenQUICControl(bob, "127.0.0.1:0")
 	require.NoError(t, err)
@@ -144,10 +136,8 @@ func TestQUICControlWrongKeyFails(t *testing.T) {
 	require.Error(t, err, "Ping with mismatched QUIC keys must fail, not silently succeed")
 }
 
-// TestAnnounceHandler pins the network-change receiver: a peer's Announce with a NEW
-// address refreshes every cached coordinate (TCP reconnect target, UDP control target);
-// a same-address announce is a strict no-op. Reconnect kicking is nil-guarded here
-// (ReconnectManager unset), exercised by the live-flow tests.
+// TestAnnounceHandler pins the network-change receiver: a NEW-address Announce refreshes every
+// cached coordinate (TCP + UDP targets); a same-address announce is a strict no-op.
 func TestAnnounceHandler(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s, err := session.InitSession(logger, 26002, 26001)
@@ -176,10 +166,8 @@ func TestAnnounceHandler(t *testing.T) {
 	require.Equal(t, "fd00::bb", kd.PeerIPv6IP)
 }
 
-// quicEchoPair brings up the real QUIC control channel between two handshaken sessions
-// and starts an echo loop on the accepted (server-side) conn: every message read is
-// written straight back, so BOTH directions carry payload and both writers can ratchet.
-// Returns the dialer-side conn and a channel delivering the accepted server-side conn.
+// quicEchoPair brings up the real QUIC control channel and echoes on the accepted conn, so
+// both directions carry payload and both writers ratchet. Returns the dialer conn and accepted-conn channel.
 func quicEchoPair(t *testing.T, alice, bob *session.Session) (net.Conn, <-chan net.Conn) {
 	t.Helper()
 	ln, err := ListenQUICControl(bob, "127.0.0.1:0")
@@ -241,21 +229,16 @@ func echoStream(t *testing.T, conn net.Conn, total, chunkSize int) time.Duration
 	return maxRTT
 }
 
-// TestQUICControlChannelRatchetsAcrossEpochs is the seamless-rekey proof for the QUIC
-// channel: with the capability negotiated by the REAL handshake pair, stream enough data
-// that the in-band ratchet must fire many times in each direction, and verify (a) every
-// byte round-trips intact, (b) no chunk ever stalls (make-before-break, no pause), and
-// (c) both ends' writer epochs actually advanced — the channel is NOT stuck at epoch 0,
-// which was exactly the bug this guards against (ApplyKeyUpdateNegotiation only covers
-// the TCP pair; the QUIC conns opt in at wrap time).
+// TestQUICControlChannelRatchetsAcrossEpochs is the seamless-rekey proof: streaming enough data
+// fires the in-band ratchet many times per direction, verifying every byte round-trips, no chunk
+// stalls, and both writer epochs advanced (not stuck at epoch 0, the bug this guards against).
 func TestQUICControlChannelRatchetsAcrossEpochs(t *testing.T) {
 	alice, bob := handshakenSessionPair(t)
 	require.True(t, alice.UseKeyUpdate(), "full handshake pair must negotiate the in-band ratchet (dialer side)")
 	require.True(t, bob.UseKeyUpdate(), "full handshake pair must negotiate the in-band ratchet (acceptor side)")
 
-	// Drop the byte threshold so a 2 MiB stream crosses ~32 epochs per direction.
-	// Direct assignment bypasses the env floor; restored after this test's conns are
-	// done (no parallel tests in this package touch the ratchet vars).
+	// Drop the byte threshold so a 2 MiB stream crosses ~32 epochs per direction. Direct
+	// assignment bypasses the env floor; restored after the test (no parallel tests touch these vars).
 	origBytes := session.RekeyBytesThreshold
 	session.RekeyBytesThreshold = 64 << 10
 	t.Cleanup(func() { session.RekeyBytesThreshold = origBytes })
@@ -280,18 +263,15 @@ func TestQUICControlChannelRatchetsAcrossEpochs(t *testing.T) {
 	require.GreaterOrEqual(t, srvSC.WriterEpoch(), uint16(8),
 		"acceptor-side QUIC conn must have ratcheted across many epochs")
 
-	// Seamlessness: an epoch bump rides the next record; it must never pause the
-	// stream. Generous bound so CI noise cannot flake this, while a real stall
-	// (a blocking rekey round-trip) would blow far past it.
+	// Seamlessness: an epoch bump rides the next record and must never pause the stream.
+	// Generous bound so CI noise cannot flake it, while a real stall would blow far past.
 	require.Less(t, maxRTT, 2*time.Second, "a rekey must never stall the stream")
 	t.Logf("QUIC ratchet proof: dialer epoch %d, acceptor epoch %d, worst chunk RTT %v",
 		dialSC.WriterEpoch(), srvSC.WriterEpoch(), maxRTT)
 }
 
-// TestQUICControlChannelStaysEpochZeroWithoutNegotiation is the gate proof: when the
-// capability was NOT negotiated (both ends lack it — the only reachable off state, since
-// keyUpdateBinding fail-closes a one-sided strip at key derivation), the QUIC conns must
-// stay at epoch 0 for old-peer interop while traffic still flows.
+// TestQUICControlChannelStaysEpochZeroWithoutNegotiation is the gate proof: without the
+// negotiated capability the QUIC conns must stay at epoch 0 for old-peer interop while traffic flows.
 func TestQUICControlChannelStaysEpochZeroWithoutNegotiation(t *testing.T) {
 	alice, bob := handshakenSessionPair(t)
 	alice.PeerSupportsKeyUpdate = false
@@ -319,8 +299,7 @@ func TestQUICControlChannelStaysEpochZeroWithoutNegotiation(t *testing.T) {
 	}
 }
 
-// foldRelayClient carries a fold round's Rekey RPC directly to the responder session,
-// standing in for the gRPC channel. Only Rekey is implemented; nothing else is called.
+// foldRelayClient carries a fold round's Rekey RPC straight to the responder session; only Rekey is implemented.
 type foldRelayClient struct {
 	bindings.KeibiServiceClient
 	responder *session.Session
@@ -330,12 +309,9 @@ func (c foldRelayClient) Rekey(_ context.Context, req *bindings.RekeyRequest, _ 
 	return c.responder.RespondToFold(req)
 }
 
-// TestQUICControlChannelFoldCoversQUICLane is the record-now-decrypt-later closure proof
-// for the QUIC lane: a real fold round staged via ExtraFoldConns must land on the REAL
-// QUIC control conns of both peers. Discriminator: the byte threshold is out of reach
-// (2^62) and the time cadence (60 s) far exceeds the test, so a plain ratchet bump is
-// impossible — an epoch advance on the QUIC conns proves the FOLD applied. The echo also
-// proves the folded rotation is seamless (byte-perfect across the bump).
+// TestQUICControlChannelFoldCoversQUICLane proves a fold round staged via ExtraFoldConns lands
+// on both peers' real QUIC control conns. With the byte threshold (2^62) and time cadence (60s)
+// out of reach, a plain ratchet is impossible, so an epoch advance proves the fold applied.
 func TestQUICControlChannelFoldCoversQUICLane(t *testing.T) {
 	alice, bob := handshakenSessionPair(t)
 	origBytes := session.RekeyBytesThreshold

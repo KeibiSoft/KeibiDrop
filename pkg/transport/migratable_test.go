@@ -7,10 +7,8 @@ import (
 	"time"
 )
 
-// TestDialQUICMigratable proves the migratable dial: a byte round trip works, the
-// connection migrates to a fresh local socket (local address changes), and the SAME
-// stream keeps carrying bytes after the switch — no re-dial, nothing above the conn
-// notices. This is the app-level control channel's IP-change mechanism.
+// TestDialQUICMigratable checks that after Migrate the local address changes and the
+// same stream keeps carrying bytes, with no re-dial.
 func TestDialQUICMigratable(t *testing.T) {
 	ln, err := QUIC().Listen("127.0.0.1:0")
 	if err != nil {
@@ -18,7 +16,6 @@ func TestDialQUICMigratable(t *testing.T) {
 	}
 	defer ln.Close()
 
-	// Echo server: one accepted conn, echo everything.
 	go func() {
 		c, err := ln.Accept()
 		if err != nil {

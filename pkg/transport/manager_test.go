@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-// TestManagerControlPlane brings up the QUIC control plane to a peer, and checks the
-// heartbeat measured an RTT, the loopback link reads as clean, and a clean link
-// routes bulk to QUIC.
+// TestManagerControlPlane brings up the QUIC control plane and checks the heartbeat
+// measured an RTT, the loopback link reads clean, and bulk routes to TCP while QUIC
+// bulk is not viable.
 func TestManagerControlPlane(t *testing.T) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()
@@ -37,10 +37,9 @@ func TestManagerControlPlane(t *testing.T) {
 	}
 }
 
-// TestManagerMigration is the network-change proof at the library level: migrate the
-// control plane to a fresh local socket, assert the network-change event fires with a
-// changed address, and assert the control plane still answers afterward, which a TCP
-// control channel could not do across an address change.
+// TestManagerMigration migrates the control plane to a fresh local socket, asserts the
+// network-change event fires with a changed address, and asserts the control plane still
+// answers afterward (which a TCP control channel could not do across an address change).
 func TestManagerMigration(t *testing.T) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()
@@ -84,9 +83,8 @@ func TestManagerMigration(t *testing.T) {
 	}
 }
 
-// TestBulkRouting pins the routing rule in both capability states. Today QUIC bulk is
-// not viable, so every link routes bulk to TCP (the measured bulk winner). Once
-// sendmsg_x makes QUIC bulk viable, only a clean link flips to QUIC.
+// TestBulkRouting pins the routing rule in both capability states: while QUIC bulk is
+// not viable every link routes bulk to TCP; once viable, only a clean link flips to QUIC.
 func TestBulkRouting(t *testing.T) {
 	// Current reality: QUIC bulk not viable -> TCP everywhere.
 	for _, q := range []Quality{QualityClean, QualityDegraded, QualityUnknown, QualityDead} {

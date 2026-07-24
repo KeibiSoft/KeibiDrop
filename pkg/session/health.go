@@ -30,9 +30,9 @@ const (
 type HealthMonitor struct {
 	session    *Session
 	grpcClient bindings.KeibiServiceClient
-	// inbound/outbound are captured at creation and immutable for this monitor's
-	// lifetime (a fresh monitor is built after a reconnect swaps the sockets), so reading
-	// their byte stats needs no lock even while a reconnect rewrites session.Session.
+	// inbound/outbound are captured at creation and immutable for this monitor's lifetime (a
+	// fresh monitor is built after a reconnect swaps the sockets), so reading their byte stats
+	// needs no lock even while a reconnect rewrites session.Session.
 	inbound  *SecureConn
 	outbound *SecureConn
 	logger   *slog.Logger
@@ -55,22 +55,18 @@ type HealthMonitor struct {
 	// Callbacks
 	OnHealthChange func(old, new ConnectionHealth)
 	OnDisconnect   func()
-	// OnRekeyNeeded fires on an idle heartbeat tick when the session has passed its
-	// rekey threshold, so the resilience layer can rotate keys via a re-handshake. It
-	// returns true only when it actually initiated a rotation; when it returns false
-	// (not the initiator, on cooldown, already reconnecting) the tick falls through to a
-	// normal heartbeat, so liveness detection is never starved. Fires only when
-	// RekeyEnabled is set, which the resilience layer ties to the absence of the in-band
-	// ratchet: the re-handshake is the fallback rotation for peers without key-update.
+	// OnRekeyNeeded fires on an idle heartbeat tick when the session has passed its rekey
+	// threshold, so the resilience layer can rotate keys via a re-handshake. Returns true only
+	// when it actually initiated a rotation; on false the tick falls through to a normal
+	// heartbeat, so liveness detection is never starved. Fires only when RekeyEnabled is set,
+	// which the resilience layer ties to the absence of the in-band ratchet.
 	OnRekeyNeeded func() bool
 	RekeyEnabled  bool
-	// ExtraEpoch, when set, reports the highest writer epoch of ratcheting conns OUTSIDE
-	// the captured TCP pair (the QUIC control lane). The near-wrap re-handshake must see
-	// every lane that ratchets: one re-handshake re-derives ALL keys (TCP SEKs and QUIC
-	// SEKs) and resets every epoch to 0, so a single rescue covers all lanes — but only
-	// if the trigger can observe them. Without this, a hot QUIC lane would hold at the
-	// wrap guard (traffic continues, forward secrecy stops advancing) with no rescue.
-	// Called only on the monitor goroutine.
+	// ExtraEpoch, when set, reports the highest writer epoch of ratcheting conns OUTSIDE the
+	// captured TCP pair (the QUIC control lane). One re-handshake re-derives ALL keys (TCP and
+	// QUIC SEKs) and resets every epoch to 0, so a single rescue covers all lanes, but only if
+	// the trigger observes them. Without this a hot QUIC lane would hold at the wrap guard with
+	// no rescue. Called only on the monitor goroutine.
 	ExtraEpoch func() uint16
 
 	// Control
@@ -149,8 +145,7 @@ func (m *HealthMonitor) AvgRTT() time.Duration {
 
 // MaxWriterEpoch returns the higher key epoch across both captured conns, or 0 if none. It
 // advances when the in-band ratchet rotates either send direction, so a caller can confirm a
-// rotation happened without a reconnect and without knowing which direction carried the
-// bulk. The captured conns are immutable for this monitor's lifetime.
+// rotation without a reconnect. The captured conns are immutable for this monitor's lifetime.
 func (m *HealthMonitor) MaxWriterEpoch() uint16 {
 	var e uint16
 	if m.inbound != nil {
@@ -179,10 +174,10 @@ func (m *HealthMonitor) runLoop() {
 	}
 }
 
-// rekeyIdleByteDelta is the most a truly-idle session's byte counters may grow between
-// two ticks (heartbeat and keepalive scale). More than this means a transfer is in
-// flight in EITHER direction (including the serving side, which activeTransfers does not
-// track), so a rekey must not drop the connection.
+// rekeyIdleByteDelta is the most a truly-idle session's byte counters may grow between two
+// ticks (heartbeat and keepalive scale). More than this means a transfer is in flight in EITHER
+// direction (including the serving side, which activeTransfers does not track), so a rekey must
+// not drop the connection.
 const rekeyIdleByteDelta = 32 * 1024
 
 // sessionBytes sums the bytes moved across both of the session's sockets. It is the idle
@@ -225,13 +220,11 @@ func (m *HealthMonitor) maybeRekey() bool {
 			maxEpoch = q
 		}
 	}
-	// The volume trigger belongs to the legacy (no-ratchet) path only. On a key-update
-	// session the byte counters are cumulative, so ShouldRekey latches true after one
-	// threshold; rotation is already handled in band by the ratchet, and firing
-	// OnRekeyNeeded here would drop the sockets of a healthy session (surfaced as
-	// closed-conn failures and zero observed epoch bumps in the UX-latency suite).
-	// The near-wrap disjunct stays unconditional: it is the deliberate ratchet-era
-	// rescue that resets the epoch space via an idle re-handshake.
+	// The volume trigger belongs to the legacy (no-ratchet) path only. On a key-update session
+	// the byte counters are cumulative, so ShouldRekey latches true after one threshold;
+	// rotation is already handled in band by the ratchet, and firing OnRekeyNeeded here would
+	// drop the sockets of a healthy session. The near-wrap disjunct stays unconditional: the
+	// deliberate ratchet-era rescue that resets the epoch space via an idle re-handshake.
 	ratchetOn := (m.inbound != nil && m.inbound.UsesKeyUpdate()) ||
 		(m.outbound != nil && m.outbound.UsesKeyUpdate())
 	volumeDue := m.shouldRekey() && !ratchetOn
@@ -252,10 +245,10 @@ func (m *HealthMonitor) tick() {
 		}
 		return
 	}
-	// A rotation skips the heartbeat this tick; anything else (disabled, not the initiator,
-	// on cooldown, already reconnecting, or not yet idle) falls through so liveness
-	// detection is never starved. Byte-work runs only when the feature is enabled, so a
-	// default (disabled) peer never touches session.Session on the tick path.
+	// A rotation skips the heartbeat this tick; anything else (disabled, not the initiator, on
+	// cooldown, already reconnecting, or not yet idle) falls through so liveness detection is
+	// never starved. Byte-work runs only when enabled, so a default peer never touches
+	// session.Session on the tick path.
 	if m.RekeyEnabled && m.maybeRekey() {
 		return
 	}
@@ -308,7 +301,7 @@ func (m *HealthMonitor) sendHeartbeat() error {
 		m.logger.Debug("Health changed", "from", oldHealth, "to", newHealth, "rtt", rtt)
 	}
 
-	// Log clock skew if significant (>5 seconds — mobile clocks drift more)
+	// Log clock skew if significant (>5 seconds; mobile clocks drift more)
 	if resp.Timestamp > 0 {
 		peerTime := time.Unix(0, int64(resp.Timestamp)) //nolint:gosec // G115: timestamp fits int64 until year 2262
 		skew := time.Since(peerTime) - rtt/2

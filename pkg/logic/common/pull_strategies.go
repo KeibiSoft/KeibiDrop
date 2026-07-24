@@ -18,10 +18,9 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 )
 
-// pullStreamFile downloads using the server-streaming StreamFile RPC.
-// One request, server pushes all chunks — zero per-chunk round-trip overhead.
-// On resume, starts from the first incomplete chunk — no-FUSE downloads
-// are always contiguous so everything after the pause point is missing.
+// pullStreamFile downloads using the server-streaming StreamFile RPC: one request, server
+// pushes all chunks (zero per-chunk round-trip overhead). On resume, starts from the first
+// incomplete chunk (no-FUSE downloads are contiguous, so everything after the pause is missing).
 func (kd *KeibiDrop) pullStreamFile(
 	ctx context.Context,
 	bitmap *filesystem.ChunkBitmap,
@@ -89,10 +88,9 @@ func (kd *KeibiDrop) pullStreamFile(
 	return nil
 }
 
-// pullParallelRead downloads using N parallel bidirectional Read streams.
-// Each worker owns a shard of chunk indices and processes them sequentially.
-// 4 workers with interleaved shards saturate the link while keeping per-chunk
-// ordering within each stream (required by gRPC).
+// pullParallelRead downloads using N parallel bidirectional Read streams. Each worker owns a
+// shard of chunk indices; interleaved shards saturate the link while keeping per-chunk ordering
+// within each stream (required by gRPC).
 //
 //nolint:unused // kept as alternative strategy for high-latency links
 func (kd *KeibiDrop) pullParallelRead(

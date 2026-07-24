@@ -22,33 +22,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These tests prove the zero-downtime rekey (the in-band symmetric ratchet and, on
-// reconnect, the eager ML-KEM fold) adds no user-perceptible lag. Each measures a
-// user-visible latency with the ratchet FORCED to rotate constantly versus an unforced
-// BASELINE, confirms the ratchet actually rotated (an epoch delta, else the test is
-// vacuous), and uses generous margins so loopback timing jitter never flakes.
-//
-// The rekey lives at the SecureConn/session layer, below both FUSE and non-FUSE, so both
-// modes ratchet identically; scenarios that change the read path cover both. The ratchet is
-// a local make-before-break HKDF (~microseconds, no round trip, nothing blocks on the peer),
-// so on loopback the forced and baseline numbers must match within noise.
+// These tests prove the zero-downtime rekey adds no user-perceptible lag. Each measures a
+// user-visible latency with the ratchet forced to rotate constantly versus an unforced
+// baseline, confirms the ratchet actually rotated (an epoch delta, else the test is vacuous),
+// and uses generous margins so loopback jitter never flakes. The rekey lives at the session
+// layer below both FUSE and non-FUSE, so both modes ratchet identically.
 const (
-	// uxlatSmallFileSize is a small file whose "first block" is the whole file: the
-	// realistic small-share case, and the FUSE on-demand fetch pulls it in one shot.
+	// uxlatSmallFileSize: a small file whose "first block" is the whole file (FUSE fetches it
+	// in one shot).
 	uxlatSmallFileSize = 64 << 10
 
 	// uxlatForcedRekeyBytes forces the writer to ratchet about every half small-file, so a
-	// handful of transfers crosses many key-epochs. forceFrequentRatchet assigns the var
-	// directly, bypassing the 1 MiB production floor.
+	// handful of transfers crosses many key-epochs (bypassing the 1 MiB production floor).
 	uxlatForcedRekeyBytes = 32 << 10
 
-	// uxlatMinBumps is the floor of forced writer-epoch advances a test must observe to
-	// prove the ratchet actually rotated. The real counts are in the tens to hundreds.
+	// uxlatMinBumps is the floor of forced epoch advances a test must observe to prove the
+	// ratchet actually rotated.
 	uxlatMinBumps = 10
 )
 
-// uxlatPattern builds size bytes of deterministic, seed-dependent content (never zero, so a
-// sparse-hole read is distinguishable). Cheaper and more reproducible than random fill.
+// uxlatPattern builds size bytes of deterministic seed-dependent content (never zero, so a
+// sparse-hole read is distinguishable).
 func uxlatPattern(seed, size int) []byte {
 	b := make([]byte, size)
 	for j := range b {
@@ -58,8 +52,7 @@ func uxlatPattern(seed, size int) []byte {
 }
 
 // uxlatRevision builds a same-size file body whose first 8 bytes encode rev, so a peer can
-// tell which in-place revision it fetched. Every revision is byte-length identical (the
-// hard same-size in-place-edit case) yet content-distinct.
+// tell which in-place revision it fetched (the hard same-size in-place-edit case).
 func uxlatRevision(rev, size int) []byte {
 	b := make([]byte, size)
 	binary.BigEndian.PutUint64(b, uint64(rev)) //nolint:gosec // G115: rev is a small non-negative counter
@@ -69,8 +62,8 @@ func uxlatRevision(rev, size int) []byte {
 	return b
 }
 
-// uxlatReadWhole opens path and reads exactly size bytes (the file's first and only block on
-// the FUSE mount). A short read surfaces as an error, catching a truncated on-demand fetch.
+// uxlatReadWhole opens path and reads exactly size bytes; a short read surfaces as an error,
+// catching a truncated on-demand fetch.
 func uxlatReadWhole(path string, size int) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -85,12 +78,10 @@ func uxlatReadWhole(path string, size int) ([]byte, error) {
 	return buf[:n], nil
 }
 
-// uxlatSyncSmallFiles shares nFiles distinct small files Bob->Alice on a fresh pair, then on
-// Alice fetches each and verifies its bytes: FUSE reads the whole file off the mount (pure
-// on-demand, so the read itself streams and ratchets); non-FUSE PullFiles it. It returns the
-// per-file fetch latency, the total data-transfer wall time, and the writer-epoch bumps over
-// that phase. A fresh pair lets the caller force the ratchet threshold before connect, which
-// forceFrequentRatchet requires to stay race-free.
+// uxlatSyncSmallFiles shares nFiles small files Bob->Alice, then on Alice fetches and verifies
+// each (FUSE reads off the mount, non-FUSE PullFiles it). Returns per-file fetch latency, total
+// transfer time, and the writer-epoch bumps. A fresh pair lets the caller force the ratchet
+// threshold before connect (race-free).
 func uxlatSyncSmallFiles(t *testing.T, fuse bool, nFiles int, forceRekey bool) (lat []time.Duration, total time.Duration, bumps int) {
 	t.Helper()
 	if forceRekey {
@@ -119,8 +110,7 @@ func uxlatSyncSmallFiles(t *testing.T, fuse bool, nFiles int, forceRekey bool) (
 		require.NoError(os.WriteFile(filepath.Join(tp.BobSaveDir, names[i]), contents[i], 0644))
 		require.NoError(tp.Bob.AddFile(filepath.Join(tp.BobSaveDir, names[i])))
 	}
-	// Wait for all files to be visible (metadata via notify) before timing, so the timed
-	// phase is data transfer only, the sole place a per-rotation cost could hide.
+	// Wait for all files to be visible before timing, so the timed phase is data transfer only.
 	for i := 0; i < nFiles; i++ {
 		if fuse {
 			WaitForFileOnMount(t, filepath.Join(tp.AliceMountDir, names[i]), 30*time.Second)
@@ -155,15 +145,10 @@ func uxlatSyncSmallFiles(t *testing.T, fuse bool, nFiles int, forceRekey bool) (
 
 // uxlatEditPropagation repeatedly rewrites ONE file in place on the sharer (each revision the
 // same byte length, the hard same-size case) and measures how long the peer takes to see the
-// new content. It returns the per-edit visible latency and the writer-epoch bumps.
-//
-// This is the documented simpler variant of the live-collab scenario. True same-size in-place
-// edit-visibility over a FUSE mount depends on macFUSE auto_cache page-cache behavior, which
-// is flaky on loopback (see TestFUSEtoFUSE_LiveCollab, skipped on CI for exactly this). So we
-// measure propagation over the non-FUSE re-share path instead, which exercises the identical
-// session-layer ratchet below FUSE and is deterministic: the peer re-pulls and detects the new
-// revision marker. A fresh dst per pull attempt is mandatory because PullFile resume-skips a
-// same-size file already on disk, which would otherwise serve the stale revision forever.
+// new content. It uses the non-FUSE re-share path (macFUSE same-size page-cache visibility is
+// flaky on loopback), which exercises the identical session-layer ratchet and is deterministic.
+// A fresh dst per pull attempt is mandatory: PullFile resume-skips a same-size file already on
+// disk, which would otherwise serve the stale revision forever.
 func uxlatEditPropagation(t *testing.T, nEdits int, forceRekey bool) (lat []time.Duration, bumps int) {
 	t.Helper()
 	if forceRekey {
@@ -208,11 +193,10 @@ func uxlatEditPropagation(t *testing.T, nEdits int, forceRekey bool) (lat []time
 	return lat, bumps
 }
 
-// uxlatForcedReconnect forces one re-handshake reconnect on tp and blocks until both peers
-// have rebuilt. It mirrors the rotation harness: only the deterministic initiator drives it,
-// the responder's probe is a guarded no-op, and both "reconnected:" events must fire. Callers
-// must disableKeyUpdate before setup (the re-handshake path) and wire watcher before the
-// baseline transfer. Returns the reconnected instant so the caller times recovery from it.
+// uxlatForcedReconnect forces one re-handshake reconnect and blocks until both peers rebuild:
+// only the initiator drives it, the responder's probe is a guarded no-op, both "reconnected:"
+// events must fire. Callers must disableKeyUpdate before setup and wire watcher before the
+// baseline transfer. Returns the reconnected instant so the caller times recovery.
 func uxlatForcedReconnect(t *testing.T, tp *TestPair, watcher *reconnectWatcher) time.Time {
 	t.Helper()
 	initiator, responder := rekeyRoles(t, tp)
@@ -222,18 +206,13 @@ func uxlatForcedReconnect(t *testing.T, tp *TestPair, watcher *reconnectWatcher)
 	return time.Now()
 }
 
-// TestUXLatency_ReconnectRecovery forces a reconnect and measures the recovery latency from
-// the reconnected event to the first successful post-reconnect data round trip, asserting it
-// is fast and the data is intact. This is the fold-trigger path.
+// TestUXLatency_ReconnectRecovery forces a reconnect and measures recovery from the reconnected
+// event to the first successful post-reconnect round trip, asserting it is fast and intact.
 //
-// Locality caveat: forcing a reconnect uses HealthMonitor.OnRekeyNeeded, which only drops the
-// sockets when the in-band ratchet is disabled (the re-handshake fallback). So this exercises
-// the re-handshake rotation and resume, which is the user-visible recovery. In production with
-// the ratchet on, onReconnected additionally stages an eager ML-KEM fold in the BACKGROUND
-// (~1 round trip, ~404ms on a real WAN, measured separately); the connection is already usable
-// before the fold commits, and a loopback test cannot isolate the fold's real-link cost. The
-// rotation itself is proven fired by both "reconnected:" events (awaitBoth), not an epoch delta
-// (the ratchet is off on this path, so the writer epoch stays at 0).
+// Forcing a reconnect uses OnRekeyNeeded, which only drops the sockets when the ratchet is
+// disabled (the re-handshake fallback), so this exercises the re-handshake rotation and resume.
+// The rotation is proven fired by both "reconnected:" events, not an epoch delta (the ratchet
+// is off on this path, so the writer epoch stays at 0).
 func TestUXLatency_ReconnectRecovery(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping reconnect-recovery latency in short mode")
@@ -286,10 +265,9 @@ func TestUXLatency_ReconnectRecovery(t *testing.T) {
 }
 
 // TestUXLatency_InteractiveFirstByte measures the latency to open and read the first block of
-// many small shared files with the ratchet forced to rotate constantly versus a baseline, and
-// asserts the forced-rekey median stays within noise. This is the snappiness axis: a per-open
-// rekey stall would shift the forced median. Baseline and forced run as separate subtests so
-// each forced-threshold override is torn down before the next phase.
+// many small files with the ratchet forced versus a baseline, asserting the forced median stays
+// within noise. Baseline and forced run as separate subtests so each threshold override is torn
+// down before the next phase.
 func TestUXLatency_InteractiveFirstByte(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping interactive-first-byte latency in short mode")
@@ -313,9 +291,8 @@ func TestUXLatency_InteractiveFirstByte(t *testing.T) {
 			nFiles, medBase, p90Base, medForced, p90Forced, forcedBumps)
 
 		require.GreaterOrEqualf(t, forcedBumps, uxlatMinBumps, "forced rekey must actually rotate, got %d bumps", forcedBumps)
-		// The ratchet is a local microsecond KDF, so the forced median must not exceed 2x the
-		// baseline. The +5ms absolute slack keeps sub-millisecond loopback medians from flaking
-		// on scheduling jitter, where relative ratios are meaningless.
+		// The forced median must not exceed 2x baseline (the ratchet is a local microsecond KDF).
+		// The +5ms absolute slack keeps sub-millisecond loopback medians from flaking on jitter.
 		require.LessOrEqualf(t, medForced, 2*medBase+5*time.Millisecond,
 			"forced-rekey first-byte median regressed: forced p50=%s vs baseline p50=%s", medForced, medBase)
 	}
@@ -324,22 +301,19 @@ func TestUXLatency_InteractiveFirstByte(t *testing.T) {
 	t.Run("FUSE", func(t *testing.T) { skipIfNoFUSE(t); run(t, true) })
 }
 
-// TestUXLatency_ManySmallFiles syncs a burst of many small files with the ratchet forced to
-// rotate constantly versus a baseline, and asserts the total data-transfer time stays within
-// noise while confirming many rekeys fired. This is the burst-throughput axis: a per-rotation
-// stall or forced flush would inflate the forced total across a large N.
+// TestUXLatency_ManySmallFiles syncs a burst of many small files with the ratchet forced versus
+// a baseline and asserts the total transfer time stays within noise while confirming rekeys
+// fired: a per-rotation stall or forced flush would inflate the forced total across a large N.
 func TestUXLatency_ManySmallFiles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping many-small-files latency in short mode")
 	}
 
 	run := func(t *testing.T, fuse bool, nFiles int) {
-		// Two runs per phase, compared on the MIN: the metric is one wall-clock total
-		// over hundreds of sequential loopback pulls, and a single scheduler/GC stall
-		// on a shared box swings it by ~2x (observed baseline spread 652-971 ms across
-		// back-to-back runs, with forced/base ratios from 0.95 to 1.94 and an identical
-		// ratchet count every time). A REAL per-rotation cost inflates every run and
-		// survives the min; one-off noise does not.
+		// Two runs per phase, compared on the MIN: the metric is one wall-clock total over
+		// hundreds of sequential loopback pulls, and a single scheduler/GC stall swings it by
+		// ~2x. A real per-rotation cost inflates every run and survives the min; one-off noise
+		// does not.
 		var baseTotal, forcedTotal time.Duration
 		var forcedBumps int
 		minPhase := func(name string, forced bool) (time.Duration, int, bool) {
@@ -377,18 +351,15 @@ func TestUXLatency_ManySmallFiles(t *testing.T) {
 			"forced-rekey burst total regressed: forced=%s vs baseline=%s", forcedTotal, baseTotal)
 	}
 
-	// FUSE mount ops are heavier per file, so it uses a smaller burst that still crosses the
-	// forced threshold hundreds of times; non-FUSE runs the full burst.
+	// FUSE mount ops are heavier per file, so it uses a smaller burst; non-FUSE runs the full burst.
 	t.Run("NoFUSE", func(t *testing.T) { run(t, false, 300) })
 	t.Run("FUSE", func(t *testing.T) { skipIfNoFUSE(t); run(t, true, 150) })
 }
 
 // TestUXLatency_LiveEditPropagation repeatedly edits one file in place on the sharer (each
 // revision the same byte length) with the ratchet forced versus a baseline, and asserts the
-// edit-to-visible latency on the peer stays within noise while confirming many rekeys fired.
-// See uxlatEditPropagation for why this is the documented non-FUSE re-share variant of the
-// live-collab scenario (macFUSE same-size page-cache visibility is flaky on loopback), and
-// note it exercises the identical session-layer ratchet below FUSE.
+// edit-to-visible latency stays within noise while confirming many rekeys fired. It uses the
+// non-FUSE re-share path (as uxlatEditPropagation documents), exercising the identical ratchet.
 func TestUXLatency_LiveEditPropagation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping live-edit-propagation latency in short mode")

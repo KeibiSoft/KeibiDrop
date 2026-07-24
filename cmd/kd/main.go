@@ -141,11 +141,9 @@ func runDaemon() {
 	}
 	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "kd")
 
-	// Debug-only: KD_PPROF starts net/http/pprof on the given loopback address (e.g.
-	// 127.0.0.1:6060) for heap/goroutine/allocation profiling during leak hunts and RAM
-	// benchmarks. Off unless set, and refused on any non-loopback address so profiles are never
-	// exposed off-box (tunnel in with `ssh -L` to profile a remote host). Served on its own mux,
-	// so it never leaks onto another listener.
+	// KD_PPROF starts net/http/pprof on the given address for heap/goroutine/alloc profiling.
+	// Debug-only, off unless set; refused on non-loopback addresses so profiles aren't exposed
+	// off-box. Served on its own mux.
 	if addr := os.Getenv("KD_PPROF"); addr != "" {
 		if isLoopbackAddr(addr) {
 			logger.Warn("DEBUG pprof endpoint active (testing only)", "addr", addr)

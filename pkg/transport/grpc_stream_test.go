@@ -11,9 +11,8 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// TestGRPCDownload runs the server-streaming RPC over both transports across a
-// set of corner cases, verifying every byte (pattern), contiguous offsets, and
-// the exact total.
+// TestGRPCDownload runs the server-streaming RPC over both transports across corner
+// cases, verifying every byte, contiguous offsets, and the exact total.
 func TestGRPCDownload(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -65,8 +64,7 @@ func TestGRPCDownload(t *testing.T) {
 }
 
 // TestConcurrentDownloads proves gRPC multiplexes many simultaneous RPCs over the
-// single QUIC stream (HTTP/2 framing rides inside one QUIC stream), and that the
-// TCP baseline does the same over its one TCP conn.
+// single QUIC stream (HTTP/2 framing inside one QUIC stream), and TCP does the same.
 func TestConcurrentDownloads(t *testing.T) {
 	const n = 8
 	const per = 1 << 20 // 1 MiB each
@@ -116,20 +114,15 @@ func TestConcurrentDownloads(t *testing.T) {
 	}
 }
 
-// TestServerStreamCancel verifies the GUARANTEED cancellation property: cancelling
-// a server-stream partway through returns an error to the CLIENT promptly. That
-// holds for both transports and is what matters for UX.
+// TestServerStreamCancel verifies that cancelling a server-stream partway through
+// returns an error to the client promptly, over both transports.
 //
-// The download is deliberately sized to fit inside the initial flow-control window,
-// so the server handler sends it all without blocking and returns cleanly. It does
-// NOT try to make the server unwind on a *large* cancelled stream: over QUIC that
-// can wedge, because gRPC tunnels HTTP/2 over one QUIC stream and the server's Send
-// can block in a QUIC flow-control write that gRPC cannot interrupt (an in-flight
-// net.Conn.Write). TCP avoids it by having the client keep draining the socket.
-// This is the "double flow control" limitation documented in docs/FINDINGS.md; the
-// clean fix is native per-RPC QUIC streams (HTTP/3), out of scope here. In the
-// product the QUIC channel carries control/heartbeats, not big cancellable streams,
-// so it does not bite.
+// The download is deliberately sized to fit inside the initial flow-control window, so
+// the handler sends it all without blocking. It does NOT try to unwind a large
+// cancelled stream: over QUIC that can wedge, because gRPC tunnels HTTP/2 over one QUIC
+// stream and the server's Send can block in a QUIC flow-control write gRPC cannot
+// interrupt. In the product the QUIC channel carries control/heartbeats, not big
+// cancellable streams, so this does not bite.
 func TestServerStreamCancel(t *testing.T) {
 	for _, tr := range transports {
 		t.Run(tr.name, func(t *testing.T) {
@@ -148,11 +141,9 @@ func TestServerStreamCancel(t *testing.T) {
 			}
 			cancel()
 
-			// After cancel, Recv must return a terminal error promptly. On a fast
-			// transport there may already be buffered chunks in flight, so drain
-			// until the error (Canceled, or EOF if the stream happened to finish) —
-			// a single Recv can otherwise return buffered data (nil) before the
-			// cancellation lands.
+			// After cancel, Recv must return a terminal error promptly. Buffered chunks
+			// may still be in flight, so drain until the error rather than asserting on a
+			// single Recv, which can return buffered data before the cancellation lands.
 			done := make(chan error, 1)
 			go func() {
 				for {
@@ -164,7 +155,7 @@ func TestServerStreamCancel(t *testing.T) {
 			}()
 			select {
 			case <-done:
-				// Recv returned a terminal error — the client is not stuck.
+				// Recv returned a terminal error: the client is not stuck.
 			case <-time.After(5 * time.Second):
 				t.Fatal("client Recv did not return an error after cancel")
 			}

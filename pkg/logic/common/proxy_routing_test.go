@@ -13,9 +13,8 @@ import (
 	"google.golang.org/grpc"
 )
 
-// fakeRouteCli records which client each RPC landed on and optionally fails, so the
-// routing (preferFast / preferBulk) is testable without any network. Unused methods
-// come from the embedded nil interface (calling them would panic — the point).
+// fakeRouteCli records which client each RPC landed on and optionally fails, so routing is
+// testable without a network; unused methods come from the embedded nil interface and panic if called.
 type fakeRouteCli struct {
 	bindings.KeibiServiceClient
 	name  string
@@ -39,11 +38,8 @@ func (f fakeRouteCli) StreamFile(_ context.Context, _ *bindings.StreamFileReques
 	return nil, f.note("StreamFile")
 }
 
-// TestProviderRouting pins the channel-routing contract of the dual stream provider:
-//   - on-demand reads prefer QUIC (fast), falling back to TCP (bulk) when QUIC is dead
-//   - bulk StreamFile prefers TCP, falling back to QUIC when TCP is dead — files keep
-//     flowing (slower) until the reconnect brings TCP back
-//   - a single-client provider behaves exactly as before
+// TestProviderRouting pins the dual stream provider's routing contract: reads prefer QUIC
+// (fall back to TCP), bulk StreamFile prefers TCP (falls back to QUIC), single-client unchanged.
 func TestProviderRouting(t *testing.T) {
 	ctx := context.Background()
 

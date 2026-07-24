@@ -121,7 +121,10 @@ protoc:
 	PATH="$$PATH:$$(go env GOPATH)/bin" protoc \
 	       --go_opt=module=github.com/KeibiSoft/KeibiDrop \
 	       --go-grpc_opt=module=github.com/KeibiSoft/KeibiDrop \
-	       --go_out=. --go-grpc_out=. keibidrop.proto
+	       --go_out=. --go-grpc_out=. \
+	       keibidrop.proto \
+	       pkg/transport/proto/bench.proto \
+	       pkg/transport/proto/control/control.proto
 
 # ── Rust helpers ──────────────────────────────────────────
 

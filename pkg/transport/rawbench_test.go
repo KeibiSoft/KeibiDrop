@@ -9,15 +9,12 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// BenchmarkRawTransport measures raw transport throughput with NO gRPC: a single
-// QUIC stream vs a single TCP connection, steady state. This is the baseline that
-// separates the cost of the QUIC transport itself from the cost of tunnelling
-// gRPC/HTTP-2 over it.
+// BenchmarkRawTransport measures raw throughput with no gRPC: a single QUIC stream vs a
+// single TCP connection. This separates the cost of the QUIC transport from the cost of
+// tunnelling gRPC/HTTP-2 over it:
 //
-//   - raw QUIC ~= gRPC-over-QUIC  -> the ceiling is the QUIC transport (macOS
-//     userspace UDP, no GSO); tunnelling is not the problem.
-//   - raw QUIC >> gRPC-over-QUIC  -> the single-stream HTTP/2 tunnel is the
-//     bottleneck and is where to optimize.
+//   - raw QUIC ~= gRPC-over-QUIC -> the ceiling is the QUIC transport, not tunnelling.
+//   - raw QUIC >> gRPC-over-QUIC -> the single-stream HTTP/2 tunnel is the bottleneck.
 func BenchmarkRawTransport(b *testing.B) {
 	const total = 32 << 20 // 32 MiB per op
 

@@ -11,9 +11,8 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// TestPQCHandshakeOverQUIC runs the hybrid ML-KEM-1024 + X25519 handshake over a
-// QUIC stream, then sends ChaCha20-Poly1305-encrypted data both ways. Proves the
-// post-quantum security layer composes with QUIC (both handshake and bulk).
+// TestPQCHandshakeOverQUIC runs the hybrid ML-KEM-1024 + X25519 handshake over a QUIC
+// stream, then sends ChaCha20-Poly1305 data both ways.
 func TestPQCHandshakeOverQUIC(t *testing.T) {
 	p := newConnPair(t)
 	defer p.close()
@@ -69,8 +68,8 @@ func TestPQCHandshakeOverQUIC(t *testing.T) {
 	}
 }
 
-// TestGRPCOverSecureQUIC is the full Phase-2 stack: gRPC (unary + server-stream)
-// over SecureConn (post-quantum) over QUIC. Bytes are verified end to end.
+// TestGRPCOverSecureQUIC runs gRPC (unary + server-stream) over SecureConn (post-quantum)
+// over QUIC, verifying bytes end to end.
 func TestGRPCOverSecureQUIC(t *testing.T) {
 	srv, addr, err := startQUICServerSecure("127.0.0.1:0", benchService{})
 	if err != nil {
@@ -88,7 +87,6 @@ func TestGRPCOverSecureQUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// unary over PQC-secured QUIC
 	reply, err := client.Echo(ctx, &pb.EchoRequest{Payload: []byte("pq-grpc")})
 	if err != nil {
 		t.Fatalf("Echo: %v", err)
@@ -97,7 +95,6 @@ func TestGRPCOverSecureQUIC(t *testing.T) {
 		t.Fatalf("echo mismatch: %q", reply.Payload)
 	}
 
-	// server-stream over PQC-secured QUIC
 	const total = 4 << 20
 	stream, err := client.Download(ctx, &pb.DownloadRequest{TotalBytes: total, ChunkSize: 64 << 10})
 	if err != nil {

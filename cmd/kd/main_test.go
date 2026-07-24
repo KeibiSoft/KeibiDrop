@@ -17,7 +17,7 @@ import (
 )
 
 // isLoopbackAddr must refuse any off-box bind for the debug pprof endpoint, so KD_PPROF can never
-// expose heap/goroutine profiles beyond the local host (Phase 0b: debug knobs stay safe by default).
+// expose profiles beyond the local host.
 func TestIsLoopbackAddr(t *testing.T) {
 	cases := []struct {
 		addr string

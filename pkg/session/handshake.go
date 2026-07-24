@@ -33,12 +33,11 @@ type PeerHandshakeMessage struct {
 }
 
 // keyUpdateBinding returns a fixed, domain-separated tag for the sender's advertised in-band
-// key-update capability. It is mixed into the SEK derivation as a channel binding: the
-// key_update handshake field is plaintext and not covered by the fingerprint check, so
-// binding it makes a flipped bit derive a different key on the two ends of a link (a dead
-// conn, fail-closed) instead of a silent ratchet/fold downgrade. Each direction binds the
-// SENDER's advertised value, so the outbound side binds its own and the inbound side binds
-// what it received. Both tags are >=32 bytes, DeriveKey's per-input minimum.
+// key-update capability, mixed into the SEK derivation as a channel binding: the key_update
+// field is plaintext and not covered by the fingerprint check, so binding it makes a flipped
+// bit derive a different key on the two ends (a dead conn, fail-closed) instead of a silent
+// ratchet/fold downgrade. Each direction binds the SENDER's value. Both tags are >=32 bytes,
+// DeriveKey's per-input minimum.
 func keyUpdateBinding(on bool) []byte {
 	if on {
 		return []byte("KeibiDrop-key-update-capability-binding:enabled-")
@@ -54,9 +53,9 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 
 	logger := session.logger.With("phase", "inbound-handshake")
 
-	// Read handshake: 4-byte big-endian length prefix, then JSON payload.
-	// We must NOT use json.Decoder here because it buffers ahead and would
-	// consume bytes meant for the SecureConn that wraps this connection later.
+	// Read handshake: 4-byte big-endian length prefix, then JSON payload. Must NOT use
+	// json.Decoder: it buffers ahead and would consume bytes meant for the SecureConn that
+	// wraps this connection later.
 	var lenBuf [4]byte
 	if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
 		logger.Error("Failed to read handshake length", "error", err)
@@ -169,8 +168,8 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	session.CipherMu.Unlock()
 	logger.Info("Cipher negotiated", "suite", suite, "peer-offered", msg.SupportedCiphers, "hardware-aes", kbc.HasHardwareAES())
 
-	// Bind the peer's advertised key-update capability into the key so a relay that strips
-	// the plaintext handshake bit derives a different key here (fail-closed). See keyUpdateBinding.
+	// Bind the peer's advertised key-update capability into the key so a relay that strips the
+	// plaintext handshake bit derives a different key here (fail-closed).
 	inboundKey, err := kbc.DeriveKey(suite, seed1, seed2, keyUpdateBinding(msg.KeyUpdate))
 	if err != nil {
 		logger.Error("Failed to derive inbound key", "error", err)
@@ -328,10 +327,9 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 
 	session.SEKOutbound = outboundKey
 
-	// Additional seed for the QUIC control channel, encapsulated to the SAME already-
-	// validated peer keys and carried in this SAME payload so the handshake gains no
-	// extra round trip. It derives an independent key, so the QUIC control channel
-	// never shares key + nonce space with the TCP channel.
+	// Additional seed for the QUIC control channel, encapsulated to the SAME already-validated
+	// peer keys and carried in this SAME payload so the handshake gains no round trip. Derives
+	// an independent key, so the QUIC channel never shares key + nonce space with TCP.
 	quicSeed1 := kbc.GenerateSeed()
 	encQuicSeed1X25519, err := kbc.X25519Encapsulate(quicSeed1, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
 	if err != nil {
@@ -418,11 +416,10 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 	return nil
 }
 
-// deriveQUICInboundKey derives the QUIC control-channel inbound key from the extra
-// "*_quic" seeds an outbound handshake carries in its payload. It reuses the EXACT
-// decapsulation the primary inbound path uses; only the seed fields differ. Returns
-// (nil, nil) when the peer sent no QUIC seeds (an older build), so the caller degrades
-// to a TCP-only session rather than failing.
+// deriveQUICInboundKey derives the QUIC control-channel inbound key from the extra "*_quic"
+// seeds an outbound handshake carries in its payload. Reuses the EXACT decapsulation the
+// primary inbound path uses; only the seed fields differ. Returns (nil, nil) when the peer sent
+// no QUIC seeds (an older build), so the caller degrades to a TCP-only session.
 func deriveQUICInboundKey(session *Session, encSeeds map[string]string, suite kbc.CipherSuite) ([]byte, error) {
 	x25519b64, ok1 := encSeeds["x25519_quic"]
 	mlkemb64, ok2 := encSeeds["mlkem_quic"]
@@ -501,7 +498,7 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 		suite = kbc.CipherChaCha20
 	}
 	// Bind the peer's advertised key-update capability (learned by the preceding inbound
-	// handshake) into the key; must match the dialer's outbound binding. See keyUpdateBinding.
+	// handshake) into the key; must match the dialer's outbound binding.
 	sek, err := kbc.DeriveKey(suite, seed1, sharedKEM, keyUpdateBinding(session.PeerSupportsKeyUpdate))
 	if err != nil {
 		logger.Error("Failed to derive SEK", "error", err)
@@ -536,9 +533,9 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	return nil
 }
 
-// dialWithStableAddr dials a remote address using a net.Dialer that binds to
-// the machine's stable (non-temporary) IPv6 address. This prevents connections
-// from breaking when macOS/Linux deprecates temporary privacy addresses (RFC 4941).
+// dialWithStableAddr dials a remote address using a net.Dialer that binds to the machine's
+// stable (non-temporary) IPv6 address, so connections survive macOS/Linux deprecating temporary
+// privacy addresses (RFC 4941).
 func DialWithStableAddr(network, addr string, timeout time.Duration, logger *slog.Logger) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: timeout}
 
@@ -559,10 +556,9 @@ func DialWithStableAddr(network, addr string, timeout time.Duration, logger *slo
 	return dialer.Dial(network, addr)
 }
 
-// findStableIPv6 returns the first non-temporary, non-deprecated global IPv6 address.
-// On macOS, the stable address is marked "autoconf secured" (vs "autoconf temporary").
-// We pick the first global unicast address on preferred interfaces -- the OS lists
-// the stable address before temporary ones.
+// findStableIPv6 returns the first non-temporary, non-deprecated global IPv6 address. On macOS
+// the stable address is marked "autoconf secured" (vs "autoconf temporary"). Picks the first
+// global unicast address on preferred interfaces; the OS lists the stable address first.
 func findStableIPv6() string {
 	preferred := []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp", "ens"}
 	ifaces, err := net.Interfaces()
@@ -605,9 +601,8 @@ func findStableIPv6() string {
 	return ""
 }
 
-// firstGlobalIPv6 returns the first global unicast IPv6 on the interface.
-// The OS lists the stable address before temporary ones, so the first hit
-// is the one we want.
+// firstGlobalIPv6 returns the first global unicast IPv6 on the interface. The OS lists the
+// stable address before temporary ones, so the first hit is the one we want.
 func firstGlobalIPv6(iface *net.Interface) string {
 	addrs, err := iface.Addrs()
 	if err != nil {

@@ -12,8 +12,7 @@ import (
 )
 
 // twoChannelServers starts the QUIC server (control + interactive) and the TCP server
-// (bulk) for one peer identity, and returns their addresses. Mirrors a real peer
-// listening on both a UDP (QUIC) and TCP endpoint.
+// (bulk) for one peer identity, mirroring a real peer on both a UDP and TCP endpoint.
 func twoChannelServers(t *testing.T, serverID *Identity, clientFP string) (quicAddr, tcpAddr string, stop func()) {
 	t.Helper()
 	qsrv, qa, err := ServeGRPCKD("127.0.0.1:0", benchService{}, serverID, clientFP)
@@ -28,12 +27,10 @@ func twoChannelServers(t *testing.T, serverID *Identity, clientFP string) (quicA
 	return qa.String(), ta.String(), func() { qsrv.Stop(); tsrv.Stop() }
 }
 
-// TestInteractiveFastLane is the two-channel model's payoff: with bulk saturating the
-// TCP channel, a seek on the QUIC channel is isolated from it by transport, while the
-// same seek muxed onto the busy TCP channel head-of-line blocks. This is the
-// library-level version of urgent_bench (109 ms vs 3066 ms on a real WAN). On loopback
-// the absolute gap is smaller (no bottleneck to congest), so it reports both and
-// asserts correctness under load; the decisive magnitude is the WAN result in FINDINGS.
+// TestInteractiveFastLane: with bulk saturating the TCP channel, a seek on the QUIC
+// channel is isolated by transport, while the same seek muxed onto the busy TCP channel
+// head-of-line blocks. On loopback the gap is small (no bottleneck to congest), so this
+// reports both latencies and asserts correctness under load.
 func TestInteractiveFastLane(t *testing.T) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()
@@ -116,10 +113,9 @@ func TestInteractiveFastLane(t *testing.T) {
 	}
 }
 
-// TestManagerBulkReconstructOnMigrate proves the network-change reaction: after the
-// QUIC control plane migrates, the TCP bulk channel (whose 5-tuple died) is
-// reconstructed and works again, and it is a different connection than before (the old
-// one was closed, aborting its in-flight RPCs).
+// TestManagerBulkReconstructOnMigrate: after the QUIC control plane migrates, the TCP
+// bulk channel (whose 5-tuple died) is reconstructed, works again, and is a different
+// connection than before.
 func TestManagerBulkReconstructOnMigrate(t *testing.T) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()
@@ -159,10 +155,9 @@ func TestManagerBulkReconstructOnMigrate(t *testing.T) {
 }
 
 // TestBulkResumeAcrossReconstruct proves resume-by-offset: a bulk transfer interrupted
-// mid-flight by a channel reconstruction (the network-change case) resumes from the
-// last received offset instead of restarting. It asserts completion, byte-correctness,
-// contiguous offsets, and that the server actually saw a StartOffset > 0 (a real
-// resume, not a silent restart).
+// mid-flight by a channel reconstruction resumes from the last received offset. Asserts
+// completion, byte-correctness, contiguous offsets, and that the server saw StartOffset
+// > 0 (a real resume, not a silent restart).
 func TestBulkResumeAcrossReconstruct(t *testing.T) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()

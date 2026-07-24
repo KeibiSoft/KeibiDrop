@@ -19,14 +19,14 @@ type memConn struct {
 	w io.Writer
 }
 
-func (m memConn) Read(p []byte) (int, error)       { return m.r.Read(p) }
-func (m memConn) Write(p []byte) (int, error)      { return m.w.Write(p) }
-func (memConn) Close() error                       { return nil }
-func (memConn) LocalAddr() net.Addr                { return nil }
-func (memConn) RemoteAddr() net.Addr               { return nil }
-func (memConn) SetDeadline(time.Time) error        { return nil }
-func (memConn) SetReadDeadline(time.Time) error    { return nil }
-func (memConn) SetWriteDeadline(time.Time) error   { return nil }
+func (m memConn) Read(p []byte) (int, error)     { return m.r.Read(p) }
+func (m memConn) Write(p []byte) (int, error)    { return m.w.Write(p) }
+func (memConn) Close() error                     { return nil }
+func (memConn) LocalAddr() net.Addr              { return nil }
+func (memConn) RemoteAddr() net.Addr             { return nil }
+func (memConn) SetDeadline(time.Time) error      { return nil }
+func (memConn) SetReadDeadline(time.Time) error  { return nil }
+func (memConn) SetWriteDeadline(time.Time) error { return nil }
 
 // tapConn records every byte written through it before passing it to the real conn,
 // so a test can inspect exactly what went on the wire.
@@ -49,11 +49,9 @@ func (t *tapConn) sent() []byte {
 	return append([]byte(nil), t.wrote...)
 }
 
-// TestKDWireIsCiphertext proves the SecureConn actually encrypts: after the real
-// handshake, a distinctive plaintext marker written by the client must NOT appear in
-// the raw bytes it put on the wire, but must decrypt correctly on the server. This
-// is the confidentiality property end to end, over a plaintext pipe so the only
-// thing encrypting is our layer (not QUIC's TLS).
+// TestKDWireIsCiphertext checks SecureConn encrypts: a plaintext marker the client writes
+// must not appear in the raw wire bytes but must decrypt on the server. Runs over a
+// plaintext pipe so the only thing encrypting is our layer.
 func TestKDWireIsCiphertext(t *testing.T) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()
@@ -126,9 +124,8 @@ func TestKDTamperDetected(t *testing.T) {
 	}
 }
 
-// TestKDBothCipherSuites proves the record layer is correct for both negotiable
-// ciphers. End-to-end tests on this AES-NI machine exercise AES-256-GCM; this also
-// exercises ChaCha20-Poly1305 explicitly, so both wire formats are covered.
+// TestKDBothCipherSuites checks the record layer for both negotiable ciphers, covering
+// AES-256-GCM and ChaCha20-Poly1305 wire formats explicitly.
 func TestKDBothCipherSuites(t *testing.T) {
 	for _, suite := range []kbc.CipherSuite{kbc.CipherChaCha20, kbc.CipherAES256} {
 		key := make([]byte, 32)
@@ -158,10 +155,9 @@ func TestKDBothCipherSuites(t *testing.T) {
 	}
 }
 
-// TestKDSeedDerivation proves the KEM exchange is correct and directional: encap on
-// one side and decap on the other yield the same 32-byte key, and two independent
-// encapsulations yield different keys, so the client-send and server-send keys are
-// independent (no nonce-space sharing across directions).
+// TestKDSeedDerivation checks the KEM exchange is correct and directional: encap and
+// decap yield the same 32-byte key, and two independent encapsulations yield different
+// keys, so the two send directions are independently keyed.
 func TestKDSeedDerivation(t *testing.T) {
 	a, _ := NewIdentity()
 	b, _ := NewIdentity()

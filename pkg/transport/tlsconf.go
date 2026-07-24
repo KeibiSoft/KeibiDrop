@@ -8,15 +8,11 @@ import (
 	"math/big"
 )
 
-// alpnGRPCQUIC is the ALPN token both ends must agree on. QUIC mandates ALPN
-// (unlike TCP where it is optional); a mismatch fails the handshake.
+// alpnGRPCQUIC is the ALPN token both ends must agree on.
 const alpnGRPCQUIC = "kd-grpc-quic"
 
-// serverTLSConfig builds a throwaway, in-memory, self-signed ed25519 cert.
-// QUIC requires TLS 1.3 at the protocol level, so a cert is unavoidable — but
-// this one carries no identity and is never verified. Real confidentiality and
-// peer authentication come from the PQC handshake + SecureConn layer we add in
-// Phase 2; this exists only to satisfy QUIC. No files on disk, by design.
+// serverTLSConfig returns a throwaway self-signed cert. QUIC requires TLS 1.3;
+// peer auth and confidentiality are the SecureConn layer, not this cert.
 func serverTLSConfig() *tls.Config {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -33,11 +29,9 @@ func serverTLSConfig() *tls.Config {
 	}
 }
 
-// clientTLSConfig skips verification (the server cert is a throwaway) and sets
-// the matching ALPN.
 func clientTLSConfig() *tls.Config {
 	return &tls.Config{
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: true, //nolint:gosec // G402: throwaway QUIC cert, auth is the SecureConn layer
 		NextProtos:         []string{alpnGRPCQUIC},
 	}
 }

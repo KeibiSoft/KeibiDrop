@@ -38,3 +38,6 @@ go.sum.bak
 .idea/
 .vscode/
 *.swp
+
+# transport design notes (local artifacts, not shipped)
+pkg/transport/docs/

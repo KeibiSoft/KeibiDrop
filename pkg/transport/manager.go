@@ -17,31 +17,27 @@ import (
 	cpb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control"
 )
 
-// Manager owns one peer's always-on QUIC control plane and decides which transport
-// the data plane should use. It is Phase 1 of the networking library
-// (docs/NETWORKING_LIBRARY_DESIGN.md): the control plane is always QUIC because its
-// migration is what lets a session survive a network change, and it carries the
-// heartbeat that measures link quality. The data-plane conns themselves are Phase 3;
-// what the Manager provides now is the live RTT, the clean/degraded verdict, the
-// migration trigger + event, and the resulting bulk-transport routing decision.
+// Manager owns one peer's always-on QUIC control plane and picks the data-plane
+// transport. The control plane is always QUIC: its migration lets a session survive a
+// network change, and it carries the heartbeat that measures link quality. It exposes
+// live RTT, the clean/degraded verdict, the migration trigger and event, and the
+// bulk-transport routing decision.
 //
-// The control plane runs gRPC over KeibiDrop's PQC handshake over QUIC (SecureKD), on
-// an explicit quic.Transport so the connection can migrate (AddPath needs it). The
-// heartbeat is an Echo RPC for now; a dedicated control service (Ping/Announce/Notify)
-// is a later step.
+// The control plane runs gRPC over the PQC handshake over QUIC (SecureKD), on an
+// explicit quic.Transport so the connection can migrate (AddPath needs it).
 type Manager struct {
 	id         *Identity
 	peerFP     string
 	serverAddr *net.UDPAddr
 
-	cc     *grpc.ClientConn
-	ctl    cpb.ControlClient
-	qconn  *quic.Conn // the control connection (identity survives migration)
+	cc    *grpc.ClientConn
+	ctl   cpb.ControlClient
+	qconn *quic.Conn // the control connection (identity survives migration)
 
 	mu         sync.Mutex
-	transports []*quic.Transport   // kept alive; quic-go ties conn lifetime to them
+	transports []*quic.Transport // kept alive; quic-go ties conn lifetime to them
 	onChange   func(NetworkEvent)
-	bulkCC     *grpc.ClientConn // TCP bulk channel (the "old" transport)
+	bulkCC     *grpc.ClientConn // TCP bulk channel
 	bulkAddr   string           // remote TCP addr, for reconstruct-on-network-change
 
 	rtt      atomic.Int64 // last heartbeat RTT in ns; <0 means the link is dead
@@ -56,8 +52,8 @@ type Quality int
 
 const (
 	QualityUnknown  Quality = iota // no heartbeat sample yet
-	QualityClean                   // LAN / datacenter: low RTT (QUIC+sendmsg_x-ready for bulk)
-	QualityDegraded                // Wi-Fi / WAN: high RTT or jitter (TCP wins bulk here)
+	QualityClean                   // low RTT (LAN/datacenter)
+	QualityDegraded                // high RTT or jitter (Wi-Fi/WAN)
 	QualityDead                    // heartbeat is failing
 )
 
@@ -74,15 +70,12 @@ func (q Quality) String() string {
 	}
 }
 
-// CleanRTTThreshold splits clean from degraded. RTT is a proxy for now; a loss signal
-// (transfer-observed retransmits) refines this later, per the design's open questions.
+// CleanRTTThreshold splits clean from degraded. RTT is a proxy; a loss signal refines
+// this later.
 const CleanRTTThreshold = 20 * time.Millisecond
 
-// DefaultHeartbeat is the control-plane ping interval. Low bandwidth, so its syscall
-// cost is irrelevant (the macOS QUIC ceiling does not apply to the control plane).
+// DefaultHeartbeat is the control-plane ping interval.
 const DefaultHeartbeat = 2 * time.Second
-
-var pingPayload = []byte("kd-control-ping")
 
 // NetworkEvent is delivered to the OnNetworkChange callback when the control plane's
 // local path changes (a migration completed).
@@ -91,10 +84,9 @@ type NetworkEvent struct {
 	NewLocalAddr net.Addr
 }
 
-// DialControl brings up the QUIC control plane to peerAddr ("host:port"), runs the
-// PQC handshake (authenticating the peer against peerFP), does an initial heartbeat
-// (which seeds the RTT and captures the migratable connection), and starts the
-// background heartbeat loop.
+// DialControl brings up the QUIC control plane to peerAddr ("host:port"), runs the PQC
+// handshake (authenticating against peerFP), does an initial heartbeat (seeds RTT,
+// captures the migratable conn), and starts the heartbeat loop.
 func DialControl(ctx context.Context, peerAddr string, id *Identity, peerFP string) (*Manager, error) {
 	serverAddr, err := net.ResolveUDPAddr("udp", peerAddr)
 	if err != nil {
@@ -186,7 +178,7 @@ func (m *Manager) heartbeatLoop() {
 			err := m.pingOnce(ctx)
 			cancel()
 			if err != nil {
-				m.rtt.Store(-1) // mark the link dead; a real impl would trigger migration/relay
+				m.rtt.Store(-1) // mark the link dead
 				continue
 			}
 			m.rtt.Store(int64(time.Since(t0)))
@@ -219,24 +211,18 @@ func (m *Manager) LinkQuality() Quality {
 }
 
 // BulkTransport is the routing decision for a bulk (whole-file) transfer, from the
-// measured link quality. Interactive/seek reads always use QUIC (its own stream) and
-// are not routed here.
+// measured link quality. Interactive/seek reads always use QUIC and are not routed here.
 func (m *Manager) BulkTransport() Transport {
 	return bulkTransportFor(m.LinkQuality())
 }
 
-// quicBulkViable reports whether QUIC bulk is competitive with TCP. Today it is not:
-// quic-go measured 2.7-16x slower than kernel TCP on a real lossy link and is syscall-
-// bound on macOS, so bulk is TCP everywhere. This flips to true once sendmsg_x is wired
-// into the fork's send loop (Phase 4), after which a CLEAN link routes bulk to QUIC
-// (one transport, migration for free). Kept as a flag so the routing rule encodes the
-// intent while staying honest about the current measured reality.
+// quicBulkViable reports whether QUIC bulk is competitive with TCP. Today it is not
+// (quic-go measured 2.7-16x slower than kernel TCP, syscall-bound on macOS), so bulk is
+// TCP everywhere. Flips to true once sendmsg_x is wired into the send loop.
 var quicBulkViable = false
 
-// bulkTransportFor is the pure routing rule, split out so it is testable without a
-// network. Only a clean link with viable QUIC bulk routes to QUIC; everything else
-// (degraded, unknown, dead, or QUIC-bulk-not-yet-viable) uses TCP, the measured bulk
-// winner today.
+// bulkTransportFor is the pure routing rule, split out to be testable without a network.
+// Only a clean link with viable QUIC bulk routes to QUIC; everything else uses TCP.
 func bulkTransportFor(q Quality) Transport {
 	if quicBulkViable && q == QualityClean {
 		return QUIC()
@@ -244,11 +230,10 @@ func bulkTransportFor(q Quality) Transport {
 	return TCP()
 }
 
-// BulkGet streams `total` bytes from the peer's TCP bulk channel into onChunk,
-// transparently resuming from the last received offset if the channel is torn down and
-// reconstructed mid-transfer (e.g. by a network change). It reissues Download with
-// StartOffset = bytes already received, so a network change costs a re-dial + resume,
-// not a restart. Bounded by ctx.
+// BulkGet streams `total` bytes from the peer's TCP bulk channel into onChunk, resuming
+// from the last received offset if the channel is reconstructed mid-transfer (e.g. by a
+// network change). Reissues Download with StartOffset = bytes received, so a network
+// change costs a re-dial and resume, not a restart. Bounded by ctx.
 func (m *Manager) BulkGet(ctx context.Context, total uint64, chunkSize uint32, onChunk func(offset uint64, data []byte)) error {
 	var got uint64
 	for got < total {
@@ -269,7 +254,7 @@ func (m *Manager) BulkGet(ctx context.Context, total uint64, chunkSize uint32, o
 			if !sleepCtx(ctx, 50*time.Millisecond) {
 				return ctx.Err()
 			}
-			continue // retry from got on the (possibly reconstructed) channel
+			continue // retry from got
 		}
 		for {
 			chunk, rerr := stream.Recv()
@@ -298,24 +283,15 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 }
 
 // InteractiveConn returns the QUIC gRPC channel, shared by the control heartbeat and
-// latency-sensitive interactive reads (seeks / cache misses). Bulk runs on the
-// separate TCP channel (BulkConn), so an interactive read on QUIC is isolated from
-// bulk by transport: a cache miss is served in about one round trip (~100 ms on a WAN)
-// instead of queuing behind bulk for seconds. The Manager owns this conn; do not Close
-// it directly (Close the Manager).
-//
-// This is the two-channel model: one QUIC gRPC (interactive + control) and one TCP
-// gRPC (bulk, the transport KeibiDrop already uses). It mirrors KeibiDrop's existing
-// full-duplex TCP pair; the QUIC plane adds its own pair, able to reuse the same port
-// numbers on UDP. Concurrent interactive reads mux over one QUIC stream here; giving
-// each its own stream is the per-stream-key refinement in the design doc.
+// latency-sensitive interactive reads (seeks/cache misses). Bulk runs on the separate
+// TCP channel, so an interactive read is isolated from bulk by transport: a cache miss
+// is served in about one round trip instead of queuing behind bulk. The Manager owns
+// this conn; do not Close it directly (Close the Manager).
 func (m *Manager) InteractiveConn() *grpc.ClientConn { return m.cc }
 
 // MissRead fetches a byte range over the QUIC interactive channel: the FUSE cache-miss
-// path. It shares that channel with control and metadata (all small and latency-
-// sensitive) and is isolated by transport from the TCP bulk transfer, so a miss lands in
-// about one round trip even while a bulk transfer saturates TCP. This is the mechanism
-// that turns a multi-second stall into a ~100 ms fetch.
+// path. Isolated by transport from the TCP bulk transfer, so a miss lands in about one
+// round trip even while bulk saturates TCP.
 func (m *Manager) MissRead(ctx context.Context, offset uint64, length uint32) ([]byte, error) {
 	reply, err := pb.NewBenchServiceClient(m.InteractiveConn()).Read(ctx, &pb.ReadRequest{Offset: offset, Length: length})
 	if err != nil {
@@ -324,10 +300,10 @@ func (m *Manager) MissRead(ctx context.Context, offset uint64, length uint32) ([
 	return reply.Data, nil
 }
 
-// DialBulk brings up the TCP gRPC channel to the peer's bulk address — the "old"
-// transport, which measured faster than QUIC for bulk on lossy links. Idempotent;
-// cached and reused. On a network change the Manager reconstructs this channel (its
-// TCP 5-tuple dies with the address change, which the QUIC control plane survives).
+// DialBulk brings up the TCP gRPC channel to the peer's bulk address, which measured
+// faster than QUIC for bulk on lossy links. Idempotent; cached and reused. On a network
+// change the Manager reconstructs this channel (its TCP 5-tuple dies with the address
+// change, which the QUIC control plane survives).
 func (m *Manager) DialBulk(ctx context.Context, tcpAddr string) error {
 	m.mu.Lock()
 	if m.bulkCC != nil {
@@ -354,10 +330,9 @@ func (m *Manager) BulkConn() *grpc.ClientConn {
 	return m.bulkCC
 }
 
-// reconstructBulk rebuilds the TCP bulk channel after a network change: closing the
-// old conn aborts its in-flight RPCs (the "cancel the TCP calls" that the caller then
-// retries from the last acked offset), then re-dials the same remote from the new
-// local address. Best-effort; a real impl falls back to the relay if the re-dial fails.
+// reconstructBulk rebuilds the TCP bulk channel after a network change: closing the old
+// conn aborts its in-flight RPCs (the caller retries from the last acked offset), then
+// re-dials the same remote from the new local address. Best-effort.
 func (m *Manager) reconstructBulk(ctx context.Context) {
 	m.mu.Lock()
 	old, addr := m.bulkCC, m.bulkAddr
@@ -365,26 +340,25 @@ func (m *Manager) reconstructBulk(ctx context.Context) {
 	if old == nil {
 		return
 	}
-	_ = old.Close() // aborts in-flight bulk RPCs; the caller retries on the new conn
+	_ = old.Close() // aborts in-flight bulk RPCs
 	cc, err := DialGRPCKDOver(TCP(), addr, m.id, m.peerFP)
 	m.mu.Lock()
-	m.bulkCC = cc // nil on failure; a real impl would trigger relay fallback
+	m.bulkCC = cc // nil on failure
 	m.mu.Unlock()
 	_ = err
 }
 
 // OnNetworkChange registers a callback fired when the control plane migrates to a new
-// local path (the "network changed" signal the data plane reacts to).
+// local path.
 func (m *Manager) OnNetworkChange(cb func(NetworkEvent)) {
 	m.mu.Lock()
 	m.onChange = cb
 	m.mu.Unlock()
 }
 
-// Migrate moves the control connection to a fresh local UDP socket (AddPath -> Probe
-// -> Switch), the same mechanism a real Wi-Fi/LTE hop would drive, then fires the
-// network-change event. The old transport is kept alive on purpose: quic-go ties the
-// connection's lifetime to it.
+// Migrate moves the control connection to a fresh local UDP socket (AddPath -> Probe ->
+// Switch), then fires the network-change event. The old transport is kept alive:
+// quic-go ties the connection's lifetime to it.
 func (m *Manager) Migrate(ctx context.Context) error {
 	if m.qconn == nil {
 		return fmt.Errorf("no control connection to migrate")
@@ -411,8 +385,8 @@ func (m *Manager) Migrate(ctx context.Context) error {
 	cb := m.onChange
 	m.mu.Unlock()
 
-	// The QUIC control plane migrated in place; the TCP bulk channel's 5-tuple died
-	// with the address change, so reconstruct it (aborting its in-flight RPCs) now.
+	// The QUIC control plane migrated in place; the TCP bulk channel's 5-tuple died with
+	// the address change, so reconstruct it now.
 	m.reconstructBulk(ctx)
 
 	after := m.qconn.LocalAddr()
@@ -441,10 +415,9 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-// newUDPTransport binds a local UDP socket suitable for reaching serverAddr and wraps
-// it in an explicit quic.Transport (required for migration). Loopback targets bind to
-// the loopback of the SAME family (an IPv4 socket cannot reach ::1); others bind to
-// the unspecified address so the OS picks the right source.
+// newUDPTransport binds a local UDP socket toward serverAddr and wraps it in an explicit
+// quic.Transport (required for migration). Loopback targets bind to the loopback of the
+// same family (an IPv4 socket cannot reach ::1); others bind to the unspecified address.
 func newUDPTransport(serverAddr *net.UDPAddr) (*quic.Transport, error) {
 	var bind *net.UDPAddr
 	if serverAddr.IP != nil && serverAddr.IP.IsLoopback() {

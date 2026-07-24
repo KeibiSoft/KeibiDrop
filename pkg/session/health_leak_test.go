@@ -19,11 +19,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A reconnect stops the old health monitor and starts a fresh one (see onReconnected). If Stop did
-// not actually reap the runLoop goroutine, a long-lived pair that reconnects on every network blip
-// would leak one goroutine per reconnect. This drives many Start/Stop cycles and asserts the
-// goroutine count returns to baseline. Interval is set out of reach so the nil-client heartbeat
-// never fires: this isolates the lifecycle, not the tick.
+// A reconnect stops the old monitor and starts a fresh one; if Stop fails to reap the runLoop
+// goroutine, a pair reconnecting on every blip leaks one per reconnect. Interval is out of reach so
+// the nil-client heartbeat never fires, isolating lifecycle from the tick.
 func TestHealthMonitor_NoGoroutineLeakAcrossRestarts(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	runtime.GC()

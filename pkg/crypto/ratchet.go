@@ -22,9 +22,8 @@ const (
 	labelRatchetMKFold = "KeibiDrop-rekey-ratchet-MK-fold-v1"
 )
 
-// ratchetSalt builds the per-direction, per-epoch HKDF salt: the 4-byte nonce prefix
-// (direction) followed by the 2-byte big-endian epoch. It mirrors the epoch bytes the
-// nonce carries, so the salt and the on-wire epoch always agree.
+// ratchetSalt builds the per-direction, per-epoch HKDF salt: 4-byte nonce prefix (direction)
+// then 2-byte big-endian epoch, mirroring the nonce's epoch bytes so salt and wire agree.
 func ratchetSalt(prefix uint32, epoch uint16) []byte {
 	salt := make([]byte, 6)
 	binary.BigEndian.PutUint32(salt[:4], prefix)
@@ -32,20 +31,18 @@ func ratchetSalt(prefix uint32, epoch uint16) []byte {
 	return salt
 }
 
-// RatchetKeys derives the chaining key and message key for one epoch of a direction's
-// ratchet from the previous chaining key, using HKDF-SHA512 with a per-direction,
-// per-epoch salt and distinct info labels for CK and MK. The message key that goes
-// into the AEAD is therefore independent of the chain secret that carries forward, so
-// leaking the AEAD key does not reveal the chain.
+// RatchetKeys derives the chaining key and message key for one epoch from the previous
+// chaining key via HKDF-SHA512, with a per-direction, per-epoch salt and distinct CK/MK
+// labels. MK is independent of the forward-carried CK, so leaking the AEAD key does not
+// reveal the chain.
 //
-// foldSecret is empty for the plain forward ratchet (forward secrecy rests on the
-// previous CK being one-way and zeroized by the caller). To heal a compromise
-// (post-compromise security), the caller passes the staged 32-byte KEM secret; it is
-// mixed in as extra IKM under distinct fold labels, so a folded epoch never collides
-// with the plain one and the reader can derive both and commit whichever authenticates.
+// foldSecret empty = plain forward ratchet (forward secrecy rests on the previous CK being
+// one-way and zeroized by the caller). Non-empty = post-compromise heal: the staged 32-byte
+// KEM secret is mixed as extra IKM under distinct fold labels, so a folded epoch never
+// collides with the plain one and the reader derives both and commits whichever authenticates.
 func RatchetKeys(prevCK []byte, prefix uint32, epoch uint16, foldSecret []byte) (ck, mk []byte, err error) {
-	// Fixed-length inputs keep the concatenated IKM unambiguous (no other split can
-	// alias it) and fail closed on a malformed caller.
+	// Fixed-length inputs keep the concatenated IKM unambiguous and fail closed on a
+	// malformed caller.
 	if len(prevCK) != KeySize {
 		return nil, nil, fmt.Errorf("chain key must be %d bytes, got %d", KeySize, len(prevCK))
 	}

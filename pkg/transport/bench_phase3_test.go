@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// BenchmarkBulkGet measures the resumable bulk path (Manager.BulkGet over the TCP
-// channel). Compare to BenchmarkDownload/tcp: the resume wrapper (per-chunk callback,
-// offset tracking, retry loop) should add no measurable throughput cost, since a clean
-// transfer never takes the retry branch.
+// BenchmarkBulkGet measures the resumable bulk path (Manager.BulkGet over TCP).
+// Compare to BenchmarkDownload/tcp: the resume wrapper should add no throughput cost,
+// because a clean transfer never takes the retry branch.
 func BenchmarkBulkGet(b *testing.B) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()

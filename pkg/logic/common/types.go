@@ -63,21 +63,19 @@ type KeibiDrop struct {
 	KDClient       bindings.KeibiServiceClient
 	grpcClientConn *grpc.ClientConn
 
-	// QUIC control channel (0.4.0 Track B) — a UDP gRPC pair mirroring the TCP pair,
-	// for control + metadata + surviving IP changes, while file transfer stays on TCP.
-	// Brought up whenever the peer negotiated QUIC keys (SEK*QUIC from the handshake
-	// payload); fail-soft, so a failure just leaves the session TCP-only. See
-	// docs/transport-architecture.html.
-	quicControlClient *grpc.ClientConn
-	quicControlServer *grpc.Server
-	quicControlLn     net.Listener              // generation marker: serveQUICControl only attaches to the current one
-	quicControlMig    *transport.MigratableConn // migration handle: MigrateQUICControl moves the path, gRPC never notices
-	quicControlSC     *session.SecureConn       // dial-side conn: epoch observability across the transport manager (QUICWriterEpoch)
-	quicPeerAddr      string                    // peer's UDP control endpoint, kept for the self-heal redial
-	quicRedialing     atomic.Bool               // single-flight guard: at most one background redial
-	quicHBCancel      context.CancelFunc        // cancels the CURRENT generation's control heartbeat (kd.mu); deterministic exit so soak counts stay flat
-	disconnectDeferrals atomic.Int32            // consecutive health-failure disconnects deferred for active transfers (bounded; see onDisconnect)
-	quicMetaSent      atomic.Uint64             // metadata RPCs that actually rode the QUIC channel (diagnostics/tests)
+	// QUIC control channel: a UDP gRPC pair mirroring the TCP pair, for control, metadata, and
+	// surviving IP changes, while file transfer stays on TCP. Brought up whenever the peer
+	// negotiated QUIC keys (SEK*QUIC from the handshake payload); fail-soft, else TCP-only.
+	quicControlClient   *grpc.ClientConn
+	quicControlServer   *grpc.Server
+	quicControlLn       net.Listener              // generation marker: serveQUICControl only attaches to the current one
+	quicControlMig      *transport.MigratableConn // migration handle: MigrateQUICControl moves the path, gRPC never notices
+	quicControlSC       *session.SecureConn       // dial-side conn: epoch observability across the transport manager (QUICWriterEpoch)
+	quicPeerAddr        string                    // peer's UDP control endpoint, kept for the self-heal redial
+	quicRedialing       atomic.Bool               // single-flight guard: at most one background redial
+	quicHBCancel        context.CancelFunc        // cancels the current generation's control heartbeat (kd.mu)
+	disconnectDeferrals atomic.Int32              // consecutive health-failure disconnects deferred for active transfers (bounded)
+	quicMetaSent        atomic.Uint64             // metadata RPCs that actually rode the QUIC channel (diagnostics/tests)
 
 	// Non-FUSE fallback.
 	SyncTracker *synctracker.SyncTracker
@@ -89,9 +87,8 @@ type KeibiDrop struct {
 	// Collab sync options.
 	PrefetchOnOpen bool
 	PushOnWrite    bool
-	// AutoCache (live_collab) enables the macFUSE auto_cache mount option so a
-	// peer's same-size in-place edit is seen live. Set by the caller from
-	// config.LiveCollab (not a constructor arg). Default false = git-safe.
+	// AutoCache (live_collab) enables the macFUSE auto_cache mount option so a peer's same-size
+	// in-place edit is seen live. Set by the caller from config.LiveCollab. Default false = git-safe.
 	AutoCache         bool
 	PrefetchAutoMB    int // files >= this many MB auto-prefetch on open; set from config.PrefetchAutoMB (0=off)
 	ReadAheadWindowMB int // cap (MB) for predictive sequential read-ahead on on-demand reads; set from config.ReadAheadWindowMB (0=off)
@@ -118,10 +115,9 @@ type KeibiDrop struct {
 	// Event callback (wired by FFI layer to push events to the UI).
 	OnEvent func(string)
 
-	// OnPeerVerified fires with the peer's verified fingerprint the instant the
-	// handshake confirms identity, before any files sync. The handshake only EMITS
-	// this; it knows nothing of what reacts. Wired in setupFilesystem to scope the
-	// FUSE cache to the peer (drop a different peer's view, keep the same peer's).
+	// OnPeerVerified fires with the peer's verified fingerprint the instant the handshake
+	// confirms identity, before any files sync. Wired in setupFilesystem to scope the FUSE
+	// cache to the peer (drop a different peer's view, keep the same peer's).
 	OnPeerVerified func(fp string)
 
 	// Connection resilience.
@@ -129,27 +125,24 @@ type KeibiDrop struct {
 	ReconnectManager *session.ReconnectManager
 	RelayKeepalive   *RelayKeepalive
 
-	// Notification queue — bounded channel to avoid spawning 600+ goroutines
-	// during large clones. A single worker drains and sends sequentially.
+	// Notification queue: bounded channel to avoid spawning 600+ goroutines during large
+	// clones. A single worker drains and sends sequentially.
 	notifyCh chan *bindings.NotifyRequest
 
-	// pendingNotifies counts REMOVE/RENAME/ADD_DIR notifies that are queued or in
-	// flight but not yet delivered. The notify worker has no retry queue and
-	// notifyRestoredFiles replays only ADD_FILE, so a proactive rekey that dropped
-	// the socket while this is non-zero would silently lose the delete/rename and
-	// diverge the peers. onRekeyNeeded defers while it is > 0. See #6.
+	// pendingNotifies counts REMOVE/RENAME/ADD_DIR notifies queued or in flight but not yet
+	// delivered. The worker has no retry queue and only ADD_FILE is replayed, so a rekey that
+	// dropped the socket while this is non-zero would lose the delete/rename. onRekeyNeeded
+	// defers while it is > 0.
 	pendingNotifies atomic.Int64
 
 	// tearingDown is set at the top of Run's ctx.Done teardown so the reconnect goroutine
 	// (onReconnected) bails instead of rebuilding the session/gRPC stack that teardown is
-	// concurrently niling. Serializes the reconnect-vs-teardown lifecycle. See the
-	// SESSION-TEARDOWN-RACE report.
+	// concurrently niling. Serializes the reconnect-vs-teardown lifecycle.
 	tearingDown atomic.Bool
 
-	// eagerFoldInFlight is a single-flight guard for the eager entropy fold: the initiator
-	// runs at most one fold round at a time (a duplicate would be superseded by the
-	// SecureConn's single-use staging anyway). Cleared when the round finishes; a reconnect
-	// re-folds on the fresh session key.
+	// eagerFoldInFlight is a single-flight guard for the eager entropy fold: the initiator runs
+	// at most one fold round at a time. Cleared when the round finishes; a reconnect re-folds on
+	// the fresh session key.
 	eagerFoldInFlight atomic.Bool
 
 	// Active downloads registry for pause/cancel support.
@@ -497,7 +490,7 @@ func (kd *KeibiDrop) cancelContext() {
 func (kd *KeibiDrop) Shutdown() {
 	select {
 	case <-kd.shutdown:
-		// Already closed — nothing to do.
+		// Already closed, nothing to do.
 	default:
 		kd.shutdownOnce.Do(func() { close(kd.shutdown) })
 	}
@@ -523,11 +516,9 @@ func (kd *KeibiDrop) Run() {
 			kd.ReconnectManager = nil
 			kd.RelayKeepalive = nil
 			kd.mu.Unlock()
-			// Swap out the gRPC stack under kd.mu so the reconnect-rebuild path
-			// (onReconnected / startGRPCServer / connectGRPCClientWithRetry), which
-			// publishes these same fields, gets a happens-before instead of racing this
-			// teardown. Stop()/Close() run on the locals OUTSIDE the lock so kd.mu is
-			// never held across a blocking call.
+			// Swap out the gRPC stack under kd.mu so the reconnect-rebuild path, which publishes
+			// these same fields, gets a happens-before instead of racing this teardown.
+			// Stop()/Close() run on the locals outside the lock.
 			kd.mu.Lock()
 			oldServer := kd.grpcServer
 			oldConn := kd.grpcClientConn
@@ -536,9 +527,8 @@ func (kd *KeibiDrop) Run() {
 			kd.KDClient = nil
 			kd.KDSvc = nil
 			kd.mu.Unlock()
-			// Safe to Stop()/Close() here: handleNotifyDisconnect waits
-			// grpcDisconnectGraceDelay before cancelling the context, so the
-			// in-flight DISCONNECT RPC response has flushed. See #122.
+			// Safe to Stop()/Close() here: handleNotifyDisconnect waits grpcDisconnectGraceDelay
+			// before cancelling the context, so the in-flight DISCONNECT response has flushed.
 			if oldServer != nil {
 				oldServer.Stop()
 			}
@@ -546,10 +536,9 @@ func (kd *KeibiDrop) Run() {
 				oldConn.Close()
 			}
 			kd.StopQUICControlChannel()
-			// Nil the session under kd.mu so the detached reconnect-resume goroutine
-			// (onReconnected spawns resumePartialDownloads) and onRekeyNeeded, which
-			// snapshot kd.session under kd.mu, get a real happens-before and never race
-			// this teardown write.
+			// Nil the session under kd.mu so the detached reconnect-resume goroutine and
+			// onRekeyNeeded, which snapshot kd.session under kd.mu, get a happens-before and
+			// never race this teardown write.
 			prevPeerFP := ""
 			kd.mu.Lock()
 			if kd.session != nil {
@@ -559,7 +548,7 @@ func (kd *KeibiDrop) Run() {
 			kd.mu.Unlock()
 			kd.PeerIPv6IP = ""
 
-			// Permanent shutdown — close listener and exit.
+			// Permanent shutdown: close listener and exit.
 			select {
 			case <-kd.shutdown:
 				if kd.FS != nil {
@@ -582,13 +571,11 @@ func (kd *KeibiDrop) Run() {
 			default:
 			}
 
-			// Temporary disconnect — refresh session and context.
-			// Preserve LocalFiles tagged with peer identity so they're only
-			// served back to the SAME peer on reconnect, not leaked to others.
+			// Temporary disconnect: refresh session and context. Preserve LocalFiles tagged
+			// with peer identity so they're only served back to the same peer on reconnect.
 			prevLocal := kd.SyncTracker.LocalFiles
 			// Compute the fresh session outside kd.mu (keygen), then swap under the lock so
-			// background readers (notify flush, relay keepalive, pull workers) snapshot a
-			// consistent pointer instead of racing this write.
+			// background readers snapshot a consistent pointer instead of racing this write.
 			newSess := kd.refreshSession()
 			kd.mu.Lock()
 			kd.session = newSess
@@ -641,9 +628,8 @@ func (kd *KeibiDrop) Run() {
 					continue
 				}
 
-				// Mark running BEFORE the blocking Mount() call so that
-				// external code (tests, FFI) can observe the transition
-				// from running→not-running when a disconnect happens.
+				// Mark running before the blocking Mount() call so external code (tests, FFI) can
+				// observe the running to not-running transition on disconnect.
 				kd.running.Store(true)
 
 				if kd.FS != nil && kd.KDSvc != nil {

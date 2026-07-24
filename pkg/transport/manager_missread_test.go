@@ -10,11 +10,9 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// TestMissReadUnderBulk is the concrete cache-miss path: while a bulk file transfer
-// saturates the TCP channel, a 512 KiB range read (a FUSE miss for KeibiDrop's block
-// size) goes over the QUIC interactive channel and returns fast and byte-correct,
-// instead of queuing behind the bulk transfer for seconds. This is "no 3-4 s freeze"
-// made concrete, with a real range read rather than an Echo stand-in.
+// TestMissReadUnderBulk: while a bulk transfer saturates the TCP channel, a 512 KiB
+// range read (a FUSE miss for KeibiDrop's block size) over the QUIC interactive channel
+// returns fast and byte-correct instead of queuing behind the bulk transfer.
 func TestMissReadUnderBulk(t *testing.T) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()

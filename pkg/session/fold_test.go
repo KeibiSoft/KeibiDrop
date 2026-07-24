@@ -20,10 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The two peers label the same key pair oppositely (peer A's SEKOutbound is peer B's
-// SEKInbound), so FoldSalt must sort the SEKs before deriving. This symmetry is the
-// invariant the whole fold rests on: differing salts would make the two sides derive
-// different fold secrets and every fold would fail.
+// The two peers label the same key pair oppositely, so FoldSalt must sort the SEKs before
+// deriving; differing salts would make the two sides derive different fold secrets.
 func TestSession_FoldSaltSymmetry(t *testing.T) {
 	sekX := randomBytes(t, kbc.KeySize)
 	sekY := randomBytes(t, kbc.KeySize)
@@ -40,8 +38,7 @@ func TestSession_FoldSaltSymmetry(t *testing.T) {
 	require.Equal(t, saltA, saltB, "both peers must derive the same session-bound fold salt")
 }
 
-// FoldSalt fails closed when either SEK is absent: without both session keys there is no
-// session-bound value to salt with.
+// FoldSalt fails closed when either SEK is absent.
 func TestSession_FoldSaltRejectsEmptySEKs(t *testing.T) {
 	_, err := (&Session{}).FoldSalt()
 	require.Error(t, err, "no SEKs")
@@ -53,8 +50,7 @@ func TestSession_FoldSaltRejectsEmptySEKs(t *testing.T) {
 	require.Error(t, err, "inbound SEK missing")
 }
 
-// The fold initiator is elected exactly like the reconnect initiator: the lexicographically
-// lower fingerprint. This keeps a single deterministic driver on both peers.
+// The fold initiator is the lexicographically lower fingerprint (same rule as reconnect).
 func TestSession_IsFoldInitiator(t *testing.T) {
 	lo := &Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb"}
 	hi := &Session{OwnFingerprint: "bbb", ExpectedPeerFingerprint: "aaa"}
@@ -62,9 +58,8 @@ func TestSession_IsFoldInitiator(t *testing.T) {
 	require.False(t, hi.IsFoldInitiator(), "the higher fingerprint responds")
 }
 
-// A full fold exchange without gRPC: the initiator's publics go to the responder's
-// RespondToFold, the initiator finishes with Derive, and both sides land on the same
-// 32-byte secret, which the responder staged on both of its conns.
+// A full fold exchange without gRPC: the initiator's publics go to RespondToFold, it finishes
+// with Derive, and both sides land on the same secret, staged on both responder conns.
 func TestSession_FoldExchangeMatches(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherChaCha20
@@ -95,7 +90,7 @@ func TestSession_FoldExchangeMatches(t *testing.T) {
 	require.NotEmpty(t, resp.EncSeeds["ct"], "response carries the ml-kem ciphertext")
 	require.NotEmpty(t, resp.EncSeeds["x25519"], "response carries the responder's ephemeral public")
 
-	// The initiator derives with its OWN salt (the swapped SEK pair), which must match the
+	// The initiator derives with its own salt (the swapped SEK pair); it must match the
 	// responder's sorted salt for the two secrets to agree.
 	initSalt, err := (&Session{SEKInbound: sekX, SEKOutbound: sekY}).FoldSalt()
 	require.NoError(t, err)
@@ -110,9 +105,8 @@ func TestSession_FoldExchangeMatches(t *testing.T) {
 		"the fold is staged on both conns of the peer")
 }
 
-// A fold round must stage its secret on the ExtraFoldConns (the QUIC control lane) too —
-// same secret, same reader-then-writer staging, nil entries skipped. Guards the hook on
-// the responder side, which never goes through the eager-fold driver.
+// A fold round must stage its secret on the ExtraFoldConns (the QUIC control lane) too, nil
+// entries skipped. Guards the responder-side hook, which skips the eager-fold driver.
 func TestSession_FoldStagesExtraConns(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherChaCha20
@@ -149,9 +143,8 @@ func TestSession_FoldStagesExtraConns(t *testing.T) {
 		"extra conn (outbound prefix) must be staged with the same fold secret")
 }
 
-// A successful responder fold emits one structured event="fold" Info line, so both peers
-// (not just the initiator) surface the fold. Smoke tests and the kd-bench harness key on
-// this marker to confirm a fold committed.
+// A successful responder fold emits one structured event="fold" line, so both peers surface
+// the fold. The kd-bench harness keys on this marker.
 func TestSession_RespondToFoldLogsCommit(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherChaCha20
@@ -188,24 +181,22 @@ func TestSession_RespondToFoldLogsCommit(t *testing.T) {
 		"the fold marker carries the ratchet epoch for the kd-bench parser")
 }
 
-// RespondToFold refuses cleanly when the session is not ready (no conns, no keys), so a
-// stray or forged Rekey RPC cannot drive a fold on a half-built session.
+// RespondToFold refuses when the session is not ready, so a stray or forged Rekey RPC cannot
+// drive a fold on a half-built session.
 func TestSession_RespondToFoldNotReady(t *testing.T) {
 	_, err := (&Session{}).RespondToFold(&bindings.RekeyRequest{})
 	require.ErrorIs(t, err, ErrFoldNotReady)
 }
 
-// InitiateFold needs a gRPC client to talk to the responder; without one it fails fast
-// rather than silently doing nothing.
+// InitiateFold needs a gRPC client; without one it fails fast instead of silently no-oping.
 func TestSession_InitiateFoldRequiresClient(t *testing.T) {
 	err := (&Session{}).InitiateFold(context.Background())
 	require.ErrorIs(t, err, ErrFoldNoClient)
 }
 
-// The deterministic initiator (lower fingerprint) must refuse to answer a fold even when it
-// is otherwise fully ready: only the responder answers. This closes the review's LOW-1, a
-// misbehaving peer calling Rekey out of role can no longer race a conflicting secret into the
-// initiator's staged fold state and reset the conn.
+// The initiator (lower fingerprint) must refuse to answer a fold even when otherwise ready:
+// only the responder answers, so a peer calling Rekey out of role cannot race a conflicting
+// secret into the initiator's staged fold state.
 func TestSession_RespondToFoldRejectsInitiatorRole(t *testing.T) {
 	key := randomKey(t)
 	suite := kbc.CipherChaCha20

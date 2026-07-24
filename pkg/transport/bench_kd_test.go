@@ -9,10 +9,9 @@ import (
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
-// BenchmarkKDHandshake isolates the per-connection cost of KeibiDrop's post-quantum
-// handshake: 2x ML-KEM-1024 encapsulate/decapsulate + 2x X25519 + HKDF-SHA512 + JSON
-// framing, over an in-memory pipe so QUIC's own dial cost is excluded. Identity keys
-// are generated once, outside the loop, so this is the handshake, not keygen.
+// BenchmarkKDHandshake measures the PQC handshake cost (2x ML-KEM-1024 + 2x X25519 +
+// HKDF-SHA512 + JSON framing) over an in-memory pipe. Keys are generated outside the
+// loop, so this measures the handshake, not keygen.
 func BenchmarkKDHandshake(b *testing.B) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()
@@ -34,10 +33,9 @@ func BenchmarkKDHandshake(b *testing.B) {
 	}
 }
 
-// startKDClient mirrors transport.newClient but over KeibiDrop's PQC handshake, so
-// BenchmarkKDDownload compares throughput against BenchmarkDownload/quic. The delta
-// is the double-encryption tax: our SecureConn AEAD on top of QUIC's own packet
-// protection (which, on Go 1.24+, is itself already a post-quantum X25519MLKEM768).
+// startKDClient mirrors newClient but over KeibiDrop's PQC handshake, so
+// BenchmarkKDDownload measures the double-encryption tax against BenchmarkDownload/quic
+// (SecureConn AEAD on top of QUIC's own packet protection).
 func startKDClient(b *testing.B) (pb.BenchServiceClient, func()) {
 	b.Helper()
 	serverID, _ := NewIdentity()
@@ -54,8 +52,8 @@ func startKDClient(b *testing.B) (pb.BenchServiceClient, func()) {
 	return pb.NewBenchServiceClient(cc), func() { _ = cc.Close(); srv.Stop() }
 }
 
-// BenchmarkKDDownload measures streaming throughput over gRPC over KeibiDrop's PQC
-// handshake over QUIC. Read against BenchmarkDownload/quic for the tax.
+// BenchmarkKDDownload measures streaming throughput over gRPC over the PQC handshake
+// over QUIC. Compare to BenchmarkDownload/quic for the encryption tax.
 func BenchmarkKDDownload(b *testing.B) {
 	const total = 64 << 20 // 64 MiB per op
 	client, cleanup := startKDClient(b)

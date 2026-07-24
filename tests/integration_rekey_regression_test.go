@@ -26,14 +26,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// forceOneRotation drives exactly one proactive rekey on the initiator at an idle
-// point and blocks until both peers have re-handshaked. It asserts the responder's
-// probe is a guarded no-op (only the deterministic initiator rotates), then probes
-// the initiator until it actually rotates. The retry matters because OnRekeyNeeded
-// returns false while a REMOVE/RENAME/ADD_DIR notify is still queued (the #6 guard),
-// so a directory-creating scenario must let the notify queue drain first. A false
-// return has no side effects (it bails before touching LastRekeyAt), so probing
-// repeatedly is safe; the first true both starts and commits the single rotation.
+// forceOneRotation drives exactly one proactive rekey on the initiator and blocks until
+// both peers have re-handshaked. It probes until the initiator rotates: OnRekeyNeeded
+// returns false while a notify is still queued (the #6 guard), and a false return has no
+// side effects, so repeated probing is safe.
 func forceOneRotation(t *testing.T, tp *TestPair, initiator, responder *common.KeibiDrop, w *reconnectWatcher, timeout time.Duration) {
 	t.Helper()
 	require.False(t, responder.HealthMonitor.OnRekeyNeeded(), "responder (non-initiator) must not rotate")
@@ -43,11 +39,9 @@ func forceOneRotation(t *testing.T, tp *TestPair, initiator, responder *common.K
 	w.awaitBoth(t, tp, timeout)
 }
 
-// notifyWithRetry sends a raw REMOVE/RENAME notification from a peer, retrying until
-// it succeeds. Right after a rotation the peer's fresh gRPC client (and the far
-// server) are still being rebuilt, so the first call may transiently fail or the
-// client may be briefly nil; the retry gives a clean settle without a blind sleep.
-// The far handler is idempotent for these ops, so a retried delivery is harmless.
+// notifyWithRetry sends a notification, retrying until it succeeds: right after a rotation
+// the peer's gRPC client is still being rebuilt (or briefly nil). The far handler is
+// idempotent for these ops, so a retried delivery is harmless.
 func notifyWithRetry(t *testing.T, from *common.KeibiDrop, req *bindings.NotifyRequest, what string) {
 	t.Helper()
 	WaitForCondition(t, 20*time.Second, 200*time.Millisecond, func() bool {
@@ -79,10 +73,9 @@ func remoteFilePresent(kd *common.KeibiDrop, name string) bool {
 	return ok
 }
 
-// waitRemoteKeyBySuffix blocks until a RemoteFiles key ending in suffix appears and
-// returns that exact key. FUSE writes on the mount reach the no-FUSE peer under an
-// absolute "/dir/file" key; matching on suffix keeps the delete assertions robust to
-// the leading-slash convention while still capturing the real key to assert against.
+// waitRemoteKeyBySuffix blocks until a RemoteFiles key ending in suffix appears and returns
+// it. FUSE writes reach the no-FUSE peer under an absolute "/dir/file" key, so matching on
+// suffix stays robust to the leading-slash convention while capturing the real key.
 func waitRemoteKeyBySuffix(t *testing.T, kd *common.KeibiDrop, suffix string, timeout time.Duration) string {
 	t.Helper()
 	var found string
@@ -100,11 +93,8 @@ func waitRemoteKeyBySuffix(t *testing.T, kd *common.KeibiDrop, suffix string, ti
 	return found
 }
 
-// TestRekeyRegression_NoFUSE_RenameAcrossRotation shares a file, forces one rotation
-// while idle, then renames the file on the source over the re-handshaked session and
-// asserts the peer reflects the rename. It also proves the fresh session still carries
-// byte-identical data (post-rotation round trip), so the rename is exercised on a
-// genuinely rotated session, not the original one.
+// TestRekeyRegression_NoFUSE_RenameAcrossRotation shares a file, forces one rotation while
+// idle, then renames it over the re-handshaked session and asserts the peer reflects the rename.
 func TestRekeyRegression_NoFUSE_RenameAcrossRotation(t *testing.T) {
 	disableKeyUpdate(t)
 
@@ -118,22 +108,17 @@ func TestRekeyRegression_NoFUSE_RenameAcrossRotation(t *testing.T) {
 	watcher := watchReconnect(tp)
 	initiator, responder := rekeyRoles(t, tp)
 
-	// Share the file that will be renamed. It must exist on both sides and be idle
-	// before we force the rotation (a pending notify would defer the rekey).
+	// Share the file to rename; it must be idle before the rotation (a pending notify defers the rekey).
 	content := []byte("a document that gets renamed across a forward-secrecy rotation")
 	src := filepath.Join(tp.AliceSaveDir, "renamable.txt")
 	require.NoError(os.WriteFile(src, content, 0644))
 	require.NoError(tp.Alice.AddFile(src))
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, "renamable.txt", 10*time.Second)
 
-	// One forced rotation while idle.
 	forceOneRotation(t, tp, initiator, responder, watcher, 40*time.Second)
 
-	// The re-handshaked session still carries byte-identical data.
 	rekeyRoundTrip(t, tp.Alice, tp.AliceSaveDir, tp.Bob, tp.BobSaveDir, "flows-after-rekey.txt", []byte("bytes flow on the rotated session"))
 
-	// Rename over the fresh session: the peer must move the entry to the new name and
-	// preserve its size, and drop the old name.
 	notifyWithRetry(t, tp.Alice, &bindings.NotifyRequest{
 		Type:    bindings.NotifyType(types.RenameFile),
 		Path:    "renamed.txt",
@@ -151,9 +136,8 @@ func TestRekeyRegression_NoFUSE_RenameAcrossRotation(t *testing.T) {
 	require.Equal(uint64(len(content)), renamed.Size, "renamed entry must preserve the file size")
 }
 
-// TestRekeyRegression_NoFUSE_RemoveAcrossRotation shares two files, forces one
-// rotation, then removes one over the fresh session and asserts the peer drops the
-// removed one and keeps the other, byte-identical.
+// TestRekeyRegression_NoFUSE_RemoveAcrossRotation shares two files, forces one rotation, then
+// removes one over the fresh session and asserts the peer drops it and keeps the other.
 func TestRekeyRegression_NoFUSE_RemoveAcrossRotation(t *testing.T) {
 	disableKeyUpdate(t)
 
@@ -178,15 +162,12 @@ func TestRekeyRegression_NoFUSE_RemoveAcrossRotation(t *testing.T) {
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, "keep.txt", 10*time.Second)
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, "drop.txt", 10*time.Second)
 
-	// One forced rotation while idle.
 	forceOneRotation(t, tp, initiator, responder, watcher, 40*time.Second)
 
-	// After the rotation the initiator re-notifies its shared files, so both should
-	// still be visible before we remove one.
+	// After the rotation the initiator re-notifies its shared files, so both are visible again.
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, "keep.txt", 15*time.Second)
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, "drop.txt", 15*time.Second)
 
-	// Remove drop.txt over the fresh session.
 	notifyWithRetry(t, tp.Alice, &bindings.NotifyRequest{
 		Type: bindings.NotifyType(types.RemoveFile),
 		Path: "drop.txt",
@@ -195,7 +176,6 @@ func TestRekeyRegression_NoFUSE_RemoveAcrossRotation(t *testing.T) {
 	waitRemoteAbsent(t, tp.Bob, "drop.txt", 10*time.Second)
 	require.True(remoteFilePresent(tp.Bob, "keep.txt"), "the un-removed file must remain on the peer")
 
-	// The kept file must still transfer byte-identical on the rotated session.
 	keepDst := filepath.Join(tp.BobSaveDir, "keep-pulled.txt")
 	WaitForCondition(t, 20*time.Second, 200*time.Millisecond, func() bool {
 		return tp.Bob.PullFile("keep.txt", keepDst) == nil
@@ -205,13 +185,10 @@ func TestRekeyRegression_NoFUSE_RemoveAcrossRotation(t *testing.T) {
 	require.Equal(keepContent, got, "kept file bytes must be identical after the sibling removal")
 }
 
-// TestRekeyRegression_FUSE_NestedDirDeleteAcrossRotation builds a nested directory
-// tree with files on the FUSE peer's mount, forces one rotation, then deletes a
-// subtree on the mount and asserts the no-FUSE peer drops exactly the files under the
-// deleted subtree while the sibling file survives byte-identical. This exercises the
-// FUSE local-change -> peer notify path on the freshly re-handshaked session. It
-// asserts on the files (not the directory entries): a stale-empty-dir edge case is a
-// known pre-existing issue and is out of scope for this rotation regression.
+// TestRekeyRegression_FUSE_NestedDirDeleteAcrossRotation builds a nested tree on the FUSE
+// mount, forces one rotation, then deletes a subtree and asserts the no-FUSE peer drops
+// exactly those files while the sibling survives. It asserts on files, not directory
+// entries: a stale-empty-dir edge case is a known pre-existing issue, out of scope here.
 func TestRekeyRegression_FUSE_NestedDirDeleteAcrossRotation(t *testing.T) {
 	if !isFUSEPresent() {
 		t.Skip("FUSE not available on this platform")
@@ -243,25 +220,21 @@ func TestRekeyRegression_FUSE_NestedDirDeleteAcrossRotation(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(subDir, "b.txt"), bContent, 0644))
 	require.NoError(os.WriteFile(filepath.Join(tp.AliceMountDir, "proj", "keep.txt"), keepContent, 0644))
 
-	// Capture the exact keys the no-FUSE peer sees, so the delete assertion checks the
-	// real entries rather than a guessed path format.
+	// Capture the exact keys the no-FUSE peer sees, so the delete assertion checks real entries.
 	keyA := waitRemoteKeyBySuffix(t, tp.Bob, "proj/sub/a.txt", 20*time.Second)
 	keyB := waitRemoteKeyBySuffix(t, tp.Bob, "proj/sub/b.txt", 20*time.Second)
 	keyKeep := waitRemoteKeyBySuffix(t, tp.Bob, "proj/keep.txt", 20*time.Second)
 
-	// One forced rotation. The initiator retry waits out the ADD_DIR/ADD_FILE notify
-	// queue from building the tree (the #6 guard defers a rekey while notifies pend).
+	// One forced rotation. The initiator retry waits out the ADD_DIR/ADD_FILE notify queue
+	// (the #6 guard defers a rekey while notifies pend).
 	forceOneRotation(t, tp, initiator, responder, watcher, 45*time.Second)
 
-	// Delete the subtree on the mount over the fresh session.
 	require.NoError(os.RemoveAll(subDir))
 
-	// The peer must drop exactly the two files under the deleted subtree.
 	waitRemoteAbsent(t, tp.Bob, keyA, 20*time.Second)
 	waitRemoteAbsent(t, tp.Bob, keyB, 20*time.Second)
 	require.True(remoteFilePresent(tp.Bob, keyKeep), "the sibling file must survive the subtree delete")
 
-	// The surviving sibling must still transfer byte-identical on the rotated session.
 	keepDst := filepath.Join(tp.BobSaveDir, "keep-from-mount.txt")
 	WaitForCondition(t, 20*time.Second, 200*time.Millisecond, func() bool {
 		return tp.Bob.PullFile(keyKeep, keepDst) == nil
@@ -271,20 +244,17 @@ func TestRekeyRegression_FUSE_NestedDirDeleteAcrossRotation(t *testing.T) {
 	require.Equal(keepContent, got, "surviving sibling bytes must be identical after the subtree delete")
 }
 
-// rekeyRegressionBigFileSize is a large (>=64MB) transfer used to prove integrity on a
-// freshly re-handshaked session. It stays well under the 1GB rekey byte threshold so
-// the background health tick never auto-rotates and races the test.
+// rekeyRegressionBigFileSize is a large (>=64MB) transfer, kept well under the 1GB rekey
+// byte threshold so the background health tick never auto-rotates and races the test.
 const rekeyRegressionBigFileSize = 64 * 1024 * 1024
 
-// TestRekeyRegression_NoFUSE_LargeFileAfterRotation rotates FIRST while idle, THEN
-// pulls a large (>=64MB) file over the re-handshaked session and asserts the bytes are
-// identical. This is distinct from the during-transfer F3 defer (already covered): it
-// proves a big transfer stays intact when it runs entirely on a brand-new session.
+// TestRekeyRegression_NoFUSE_LargeFileAfterRotation rotates first while idle, then pulls a
+// large (>=64MB) file over the re-handshaked session and asserts the bytes are identical.
 func TestRekeyRegression_NoFUSE_LargeFileAfterRotation(t *testing.T) {
 	disableKeyUpdate(t)
 
-	// A large transfer plus a reconnect needs headroom so the peer context never tears
-	// the peers down mid-test. Only widens the time budget, not any assertion.
+	// A large transfer plus a reconnect needs headroom so the peer context never tears the
+	// peers down mid-test; this only widens the time budget, not any assertion.
 	tp := SetupPeerPairWithTimeout(t, false, 90*time.Second)
 	require := require.New(t)
 	requireResilienceReady(t, tp)
@@ -295,10 +265,8 @@ func TestRekeyRegression_NoFUSE_LargeFileAfterRotation(t *testing.T) {
 	watcher := watchReconnect(tp)
 	initiator, responder := rekeyRoles(t, tp)
 
-	// Rotate first, while the link is idle.
 	forceOneRotation(t, tp, initiator, responder, watcher, 45*time.Second)
 
-	// Now push a large file over the freshly re-handshaked session and pull it back.
 	big := make([]byte, rekeyRegressionBigFileSize)
 	for i := range big {
 		big[i] = byte(i%251 + 1) // never zero, so a truncated (zero) file never matches
@@ -322,9 +290,8 @@ func TestRekeyRegression_NoFUSE_LargeFileAfterRotation(t *testing.T) {
 	require.True(bytes.Equal(big, got), "large file bytes must be identical after rotation")
 }
 
-// TestRekeyRegression_NoFUSE_MultiFileConcurrentAcrossRotation rotates first, then
-// shares several files at once over the fresh session and asserts every one arrives
-// byte-identical. It guards against a rotation corrupting concurrent shares.
+// TestRekeyRegression_NoFUSE_MultiFileConcurrentAcrossRotation rotates first, then shares
+// several files at once over the fresh session and asserts every one arrives byte-identical.
 func TestRekeyRegression_NoFUSE_MultiFileConcurrentAcrossRotation(t *testing.T) {
 	disableKeyUpdate(t)
 
@@ -338,10 +305,8 @@ func TestRekeyRegression_NoFUSE_MultiFileConcurrentAcrossRotation(t *testing.T) 
 	watcher := watchReconnect(tp)
 	initiator, responder := rekeyRoles(t, tp)
 
-	// Rotate first, while idle.
 	forceOneRotation(t, tp, initiator, responder, watcher, 45*time.Second)
 
-	// Build several distinct files on disk before sharing them.
 	const nFiles = 6
 	names := make([]string, nFiles)
 	contents := make([][]byte, nFiles)
@@ -355,9 +320,9 @@ func TestRekeyRegression_NoFUSE_MultiFileConcurrentAcrossRotation(t *testing.T) 
 		require.NoError(os.WriteFile(filepath.Join(tp.AliceSaveDir, names[i]), b, 0644))
 	}
 
-	// Share them all at once over the rotated session. Each goroutine retries its own
-	// AddFile (the server may still be restarting) and records only its final error;
-	// t.Fatal must stay on the test goroutine, so we assert after the WaitGroup.
+	// Share them all at once. Each goroutine retries its own AddFile (the server may still be
+	// restarting) and records only its final error; t.Fatal must stay on the test goroutine, so
+	// we assert after the WaitGroup.
 	errs := make([]error, nFiles)
 	var wg sync.WaitGroup
 	for i := 0; i < nFiles; i++ {
@@ -381,7 +346,6 @@ func TestRekeyRegression_NoFUSE_MultiFileConcurrentAcrossRotation(t *testing.T) 
 		require.NoError(errs[i], "share %s on the rotated session", names[i])
 	}
 
-	// Every file must arrive byte-identical on the peer.
 	for i := 0; i < nFiles; i++ {
 		WaitForRemoteFile(t, tp.Bob.SyncTracker, names[i], 15*time.Second)
 		dst := filepath.Join(tp.BobSaveDir, names[i])
@@ -394,16 +358,10 @@ func TestRekeyRegression_NoFUSE_MultiFileConcurrentAcrossRotation(t *testing.T) 
 	}
 }
 
-// TestRekeyRegression_FUSE_GitCloneAcrossRotation is the headline real-app stretch
-// case. It is intentionally skipped: forcing a proactive rekey needs the in-process
-// HealthMonitor.OnRekeyNeeded probe, but a realistic FUSE-to-FUSE git clone runs both
-// peers as separate testpeer subprocesses (see integration_fuse_git_test.go), which
-// expose no command to inject a rotation. Driving a real clone into the single
-// in-process FUSE mount while forcing a reconnect mid-clone is timing-heavy and flaky,
-// so per the task guidance we skip rather than ship a flaky test. The rotated-session
-// FUSE data and delete paths are covered by
-// TestRekeyRegression_FUSE_NestedDirDeleteAcrossRotation and, for a fresh receive,
-// TestRekeyRotation_FUSE_RotatesAndDataFlows.
+// TestRekeyRegression_FUSE_GitCloneAcrossRotation is intentionally skipped: forcing a
+// proactive rekey needs the in-process OnRekeyNeeded probe, but a realistic FUSE-to-FUSE
+// git clone runs both peers as subprocesses with no command to inject a rotation, and an
+// in-process clone-with-mid-clone-reconnect is too flaky to ship.
 func TestRekeyRegression_FUSE_GitCloneAcrossRotation(t *testing.T) {
 	if !isFUSEPresent() {
 		t.Skip("FUSE not available on this platform")

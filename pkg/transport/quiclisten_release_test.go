@@ -2,10 +2,8 @@ package transport
 
 import "testing"
 
-// TestQUICListenerReleasesPort proves closing a QUIC listener frees its UDP port
-// immediately, so a reconnect (or the next test) can rebind the same port. The bug it
-// guards: quic.ListenAddr's listener Close did not release the internally-owned socket,
-// so rebinding the same port failed with "address already in use".
+// TestQUICListenerReleasesPort guards a regression where closing a QUIC listener did not
+// release its UDP socket, so rebinding the same port failed with "address already in use".
 func TestQUICListenerReleasesPort(t *testing.T) {
 	ln, err := QUIC().Listen("127.0.0.1:0")
 	if err != nil {
