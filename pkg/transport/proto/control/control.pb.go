@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.6
 // 	protoc        v5.29.3
-// source: proto/control/control.proto
+// source: pkg/transport/proto/control/control.proto
 
 package control
 
@@ -29,7 +29,7 @@ type PingRequest struct {
 
 func (x *PingRequest) Reset() {
 	*x = PingRequest{}
-	mi := &file_proto_control_control_proto_msgTypes[0]
+	mi := &file_pkg_transport_proto_control_control_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -41,7 +41,7 @@ func (x *PingRequest) String() string {
 func (*PingRequest) ProtoMessage() {}
 
 func (x *PingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_control_proto_msgTypes[0]
+	mi := &file_pkg_transport_proto_control_control_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -54,7 +54,7 @@ func (x *PingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
 func (*PingRequest) Descriptor() ([]byte, []int) {
-	return file_proto_control_control_proto_rawDescGZIP(), []int{0}
+	return file_pkg_transport_proto_control_control_proto_rawDescGZIP(), []int{0}
 }
 
 type PingReply struct {
@@ -65,7 +65,7 @@ type PingReply struct {
 
 func (x *PingReply) Reset() {
 	*x = PingReply{}
-	mi := &file_proto_control_control_proto_msgTypes[1]
+	mi := &file_pkg_transport_proto_control_control_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -77,7 +77,7 @@ func (x *PingReply) String() string {
 func (*PingReply) ProtoMessage() {}
 
 func (x *PingReply) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_control_proto_msgTypes[1]
+	mi := &file_pkg_transport_proto_control_control_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -90,7 +90,7 @@ func (x *PingReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingReply.ProtoReflect.Descriptor instead.
 func (*PingReply) Descriptor() ([]byte, []int) {
-	return file_proto_control_control_proto_rawDescGZIP(), []int{1}
+	return file_pkg_transport_proto_control_control_proto_rawDescGZIP(), []int{1}
 }
 
 type AnnounceRequest struct {
@@ -103,7 +103,7 @@ type AnnounceRequest struct {
 
 func (x *AnnounceRequest) Reset() {
 	*x = AnnounceRequest{}
-	mi := &file_proto_control_control_proto_msgTypes[2]
+	mi := &file_pkg_transport_proto_control_control_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -115,7 +115,7 @@ func (x *AnnounceRequest) String() string {
 func (*AnnounceRequest) ProtoMessage() {}
 
 func (x *AnnounceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_control_proto_msgTypes[2]
+	mi := &file_pkg_transport_proto_control_control_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -128,7 +128,7 @@ func (x *AnnounceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnnounceRequest.ProtoReflect.Descriptor instead.
 func (*AnnounceRequest) Descriptor() ([]byte, []int) {
-	return file_proto_control_control_proto_rawDescGZIP(), []int{2}
+	return file_pkg_transport_proto_control_control_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *AnnounceRequest) GetIp() string {
@@ -153,7 +153,7 @@ type AnnounceReply struct {
 
 func (x *AnnounceReply) Reset() {
 	*x = AnnounceReply{}
-	mi := &file_proto_control_control_proto_msgTypes[3]
+	mi := &file_pkg_transport_proto_control_control_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -165,7 +165,7 @@ func (x *AnnounceReply) String() string {
 func (*AnnounceReply) ProtoMessage() {}
 
 func (x *AnnounceReply) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_control_control_proto_msgTypes[3]
+	mi := &file_pkg_transport_proto_control_control_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -178,14 +178,14 @@ func (x *AnnounceReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnnounceReply.ProtoReflect.Descriptor instead.
 func (*AnnounceReply) Descriptor() ([]byte, []int) {
-	return file_proto_control_control_proto_rawDescGZIP(), []int{3}
+	return file_pkg_transport_proto_control_control_proto_rawDescGZIP(), []int{3}
 }
 
-var File_proto_control_control_proto protoreflect.FileDescriptor
+var File_pkg_transport_proto_control_control_proto protoreflect.FileDescriptor
 
-const file_proto_control_control_proto_rawDesc = "" +
+const file_pkg_transport_proto_control_control_proto_rawDesc = "" +
 	"\n" +
-	"\x1bproto/control/control.proto\x12\acontrol\"\r\n" +
+	")pkg/transport/proto/control/control.proto\x12\acontrol\"\r\n" +
 	"\vPingRequest\"\v\n" +
 	"\tPingReply\"<\n" +
 	"\x0fAnnounceRequest\x12\x0e\n" +
@@ -197,25 +197,25 @@ const file_proto_control_control_proto_rawDesc = "" +
 	"\bAnnounce\x12\x18.control.AnnounceRequest\x1a\x16.control.AnnounceReplyBDZBgithub.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control;controlb\x06proto3"
 
 var (
-	file_proto_control_control_proto_rawDescOnce sync.Once
-	file_proto_control_control_proto_rawDescData []byte
+	file_pkg_transport_proto_control_control_proto_rawDescOnce sync.Once
+	file_pkg_transport_proto_control_control_proto_rawDescData []byte
 )
 
-func file_proto_control_control_proto_rawDescGZIP() []byte {
-	file_proto_control_control_proto_rawDescOnce.Do(func() {
-		file_proto_control_control_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_control_control_proto_rawDesc), len(file_proto_control_control_proto_rawDesc)))
+func file_pkg_transport_proto_control_control_proto_rawDescGZIP() []byte {
+	file_pkg_transport_proto_control_control_proto_rawDescOnce.Do(func() {
+		file_pkg_transport_proto_control_control_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_pkg_transport_proto_control_control_proto_rawDesc), len(file_pkg_transport_proto_control_control_proto_rawDesc)))
 	})
-	return file_proto_control_control_proto_rawDescData
+	return file_pkg_transport_proto_control_control_proto_rawDescData
 }
 
-var file_proto_control_control_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
-var file_proto_control_control_proto_goTypes = []any{
+var file_pkg_transport_proto_control_control_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_pkg_transport_proto_control_control_proto_goTypes = []any{
 	(*PingRequest)(nil),     // 0: control.PingRequest
 	(*PingReply)(nil),       // 1: control.PingReply
 	(*AnnounceRequest)(nil), // 2: control.AnnounceRequest
 	(*AnnounceReply)(nil),   // 3: control.AnnounceReply
 }
-var file_proto_control_control_proto_depIdxs = []int32{
+var file_pkg_transport_proto_control_control_proto_depIdxs = []int32{
 	0, // 0: control.Control.Ping:input_type -> control.PingRequest
 	2, // 1: control.Control.Announce:input_type -> control.AnnounceRequest
 	1, // 2: control.Control.Ping:output_type -> control.PingReply
@@ -227,26 +227,26 @@ var file_proto_control_control_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_proto_control_control_proto_init() }
-func file_proto_control_control_proto_init() {
-	if File_proto_control_control_proto != nil {
+func init() { file_pkg_transport_proto_control_control_proto_init() }
+func file_pkg_transport_proto_control_control_proto_init() {
+	if File_pkg_transport_proto_control_control_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_control_control_proto_rawDesc), len(file_proto_control_control_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_transport_proto_control_control_proto_rawDesc), len(file_pkg_transport_proto_control_control_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_proto_control_control_proto_goTypes,
-		DependencyIndexes: file_proto_control_control_proto_depIdxs,
-		MessageInfos:      file_proto_control_control_proto_msgTypes,
+		GoTypes:           file_pkg_transport_proto_control_control_proto_goTypes,
+		DependencyIndexes: file_pkg_transport_proto_control_control_proto_depIdxs,
+		MessageInfos:      file_pkg_transport_proto_control_control_proto_msgTypes,
 	}.Build()
-	File_proto_control_control_proto = out.File
-	file_proto_control_control_proto_goTypes = nil
-	file_proto_control_control_proto_depIdxs = nil
+	File_pkg_transport_proto_control_control_proto = out.File
+	file_pkg_transport_proto_control_control_proto_goTypes = nil
+	file_pkg_transport_proto_control_control_proto_depIdxs = nil
 }

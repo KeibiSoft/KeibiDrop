@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.29.3
-// source: proto/control/control.proto
+// source: pkg/transport/proto/control/control.proto
 
 package control
 
@@ -27,16 +27,13 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Control is the transport's own service, independent of any app. The Manager uses
-// Ping as a heartbeat to measure RTT and detect a dead link; it rides the QUIC channel
-// alongside whatever services the application registers. Keeping it separate is what
-// lets the connection manager be used with any gRPC service, not just the benchmark's.
+// Control is the transport's own service, independent of any app. Ping is the Manager's
+// heartbeat (RTT + dead-link detection); kept separate so the manager works with any gRPC service.
 type ControlClient interface {
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingReply, error)
-	// Announce tells the peer this endpoint moved to a new address (after a QUIC
-	// migration): the control channel survives the move, so it can carry the new
-	// coordinates directly — the receiver re-dials TCP/UDP at the new address instead
-	// of discovering the death by heartbeat timeout and a relay lookup.
+	// Announce tells the peer this endpoint moved (after a QUIC migration). The surviving
+	// control channel carries the new coordinates so the peer re-dials directly, skipping the
+	// heartbeat timeout + relay lookup.
 	Announce(ctx context.Context, in *AnnounceRequest, opts ...grpc.CallOption) (*AnnounceReply, error)
 }
 
@@ -72,16 +69,13 @@ func (c *controlClient) Announce(ctx context.Context, in *AnnounceRequest, opts 
 // All implementations must embed UnimplementedControlServer
 // for forward compatibility.
 //
-// Control is the transport's own service, independent of any app. The Manager uses
-// Ping as a heartbeat to measure RTT and detect a dead link; it rides the QUIC channel
-// alongside whatever services the application registers. Keeping it separate is what
-// lets the connection manager be used with any gRPC service, not just the benchmark's.
+// Control is the transport's own service, independent of any app. Ping is the Manager's
+// heartbeat (RTT + dead-link detection); kept separate so the manager works with any gRPC service.
 type ControlServer interface {
 	Ping(context.Context, *PingRequest) (*PingReply, error)
-	// Announce tells the peer this endpoint moved to a new address (after a QUIC
-	// migration): the control channel survives the move, so it can carry the new
-	// coordinates directly — the receiver re-dials TCP/UDP at the new address instead
-	// of discovering the death by heartbeat timeout and a relay lookup.
+	// Announce tells the peer this endpoint moved (after a QUIC migration). The surviving
+	// control channel carries the new coordinates so the peer re-dials directly, skipping the
+	// heartbeat timeout + relay lookup.
 	Announce(context.Context, *AnnounceRequest) (*AnnounceReply, error)
 	mustEmbedUnimplementedControlServer()
 }
@@ -173,5 +167,5 @@ var Control_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "proto/control/control.proto",
+	Metadata: "pkg/transport/proto/control/control.proto",
 }
