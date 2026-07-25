@@ -205,7 +205,7 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
-	session.Session.Inbound = secure
+	session.installInbound(secure)
 
 	return nil
 }
@@ -411,7 +411,7 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
-	session.Session.Outbound = secure
+	session.installOutbound(secure)
 
 	return nil
 }
@@ -519,7 +519,7 @@ func FinalizeInboundSession(session *Session, conn net.Conn, encSeeds map[string
 	if session.Session == nil {
 		session.Session = &SessionSockets{}
 	}
-	session.Session.Inbound = secure
+	session.installInbound(secure)
 
 	// TODO: Uncomment this and do the transition.
 	/*

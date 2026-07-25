@@ -59,7 +59,7 @@ func (s *Session) ValidateReady() error {
 		return err
 	}
 
-	if s.Session == nil || s.Session.Inbound == nil || s.Session.Outbound == nil {
+	if in, out := s.BothConns(); in == nil || out == nil {
 		err := fmt.Errorf("secure connections not initialized")
 		logger.Error("Session not ready: SecureConn missing", "error", err)
 		return err

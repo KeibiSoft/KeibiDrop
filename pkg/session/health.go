@@ -90,9 +90,8 @@ func NewHealthMonitor(session *Session, client bindings.KeibiServiceClient, logg
 		// from silently disabling the near-wrap re-handshake for a key-update pair.
 		RekeyEnabled: true,
 	}
-	if session != nil && session.Session != nil {
-		m.inbound = session.Session.Inbound
-		m.outbound = session.Session.Outbound
+	if session != nil {
+		m.inbound, m.outbound = session.BothConns()
 	}
 	return m
 }

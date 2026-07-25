@@ -606,10 +606,9 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 		s := kd.session
 		kd.mu.Unlock()
 		// only try if the outbound connection is available
-		if s != nil && s.Session != nil && s.Session.Outbound != nil {
-			// Capture the outbound conn so the dialer closure is safe even
-			// if kd.session is nil'd later by the Stop handler.
-			outboundConn := s.Session.Outbound
+		if outboundConn := s.OutboundConn(); s != nil && outboundConn != nil {
+			// outboundConn is snapshotted under socketsMu, so the dialer closure is
+			// safe even if kd.session is nil'd later by the Stop handler.
 
 			dialer := func(ctx context.Context, _ string) (net.Conn, error) {
 				return outboundConn, nil
@@ -706,11 +705,12 @@ func (kd *KeibiDrop) startGRPCServer() error {
 	if s == nil || s.Session == nil {
 		return ErrInvalidSession
 	}
-	s.GRPCListener = s.Session.Inbound
+	inboundConn := s.InboundConn()
+	s.GRPCListener = inboundConn
 
 	grpcServer := grpc.NewServer(kdServerOptions()...)
 
-	ln := NewSingleConnListener(s.Session.Inbound)
+	ln := NewSingleConnListener(inboundConn)
 
 	svc := &service.KeibidropServiceImpl{
 		Session:     s,

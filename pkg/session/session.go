@@ -7,6 +7,7 @@
 package session
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"net"
@@ -93,6 +94,21 @@ type Session struct {
 	RekeyMu      sync.Mutex
 	LastRekeyAt  time.Time
 	CurrentEpoch uint64
+
+	// Pending-fold custody. Rounds stage per-conn, but a conn installed AFTER a round (the
+	// reconnect handshake swaps sockets mid-round) would miss it while the peer's writer stays
+	// armed, making its first folded bump undecryptable. The session remembers un-retired
+	// rounds so every install adopts them; a reader commit retires session-wide.
+	pendingFoldMu sync.Mutex
+	pendingFolds  [][]byte
+
+	// socketsMu guards the Session pointer and its Inbound/Outbound conn pointers against the
+	// reconnect handshake installing fresh conns while a detached eager-fold goroutine reads
+	// them (same *Session, no other shared lock). A LEAF lock: accessors snapshot a pointer
+	// and release before touching the conn, so it never nests with keyMu/wMu/foldMu. All
+	// Session.Inbound/Outbound access outside the handshake-private construction goes through
+	// the accessors below.
+	socketsMu sync.RWMutex
 
 	logger *slog.Logger
 }
@@ -194,9 +210,64 @@ func (s *Session) ResetInboundCrypto() {
 // SessionSockets holds a duplex connection for peer communication. The two ends are
 // built by the handshake with opposite nonce prefixes (Inbound uses NoncePrefixInbound,
 // Outbound uses NoncePrefixOutbound) so a socket's shared key never reuses a nonce.
+// Access the pointers through the Session accessors (InboundConn/OutboundConn/BothConns/
+// Set*), never directly, so the socketsMu guard holds.
 type SessionSockets struct {
 	Inbound  *SecureConn // Bob -> Alice
 	Outbound *SecureConn // Alice -> Bob
+}
+
+// InboundConn returns the current inbound conn under socketsMu, or nil. The pointer is
+// snapshotted and the lock released before the caller uses it (leaf-lock discipline).
+func (s *Session) InboundConn() *SecureConn {
+	s.socketsMu.RLock()
+	defer s.socketsMu.RUnlock()
+	if s.Session == nil {
+		return nil
+	}
+	return s.Session.Inbound
+}
+
+// OutboundConn returns the current outbound conn under socketsMu, or nil.
+func (s *Session) OutboundConn() *SecureConn {
+	s.socketsMu.RLock()
+	defer s.socketsMu.RUnlock()
+	if s.Session == nil {
+		return nil
+	}
+	return s.Session.Outbound
+}
+
+// BothConns snapshots both directions under one RLock, so a caller that needs a consistent
+// pair (a fold round staging both) never mixes a pre- and post-reconnect conn.
+func (s *Session) BothConns() (inbound, outbound *SecureConn) {
+	s.socketsMu.RLock()
+	defer s.socketsMu.RUnlock()
+	if s.Session == nil {
+		return nil, nil
+	}
+	return s.Session.Inbound, s.Session.Outbound
+}
+
+// SetInboundConn assigns the inbound conn under socketsMu (nil on teardown). Creates the
+// SessionSockets holder on first use.
+func (s *Session) SetInboundConn(c *SecureConn) {
+	s.socketsMu.Lock()
+	defer s.socketsMu.Unlock()
+	if s.Session == nil {
+		s.Session = &SessionSockets{}
+	}
+	s.Session.Inbound = c
+}
+
+// SetOutboundConn assigns the outbound conn under socketsMu (nil on teardown).
+func (s *Session) SetOutboundConn(c *SecureConn) {
+	s.socketsMu.Lock()
+	defer s.socketsMu.Unlock()
+	if s.Session == nil {
+		s.Session = &SessionSockets{}
+	}
+	s.Session.Outbound = c
 }
 
 // NewSession initializes a new session with a timeout deadline.
@@ -221,13 +292,12 @@ func (s *Session) MarkError(err error) {
 	_ = s.Transition(SessionStateError) // errors ignored to prevent panic
 	s.Err = err
 
-	if s.Session != nil {
-		if s.Session.Inbound != nil {
-			_ = s.Session.Inbound.Close()
-		}
-		if s.Session.Outbound != nil {
-			_ = s.Session.Outbound.Close()
-		}
+	in, out := s.BothConns()
+	if in != nil {
+		_ = in.Close()
+	}
+	if out != nil {
+		_ = out.Close()
 	}
 }
 
@@ -238,12 +308,12 @@ func (s *Session) IsVerified() bool {
 
 // ReadyForEncryption returns true when both connections and SEKs are set.
 func (s *Session) ReadyForEncryption() bool {
+	in, out := s.BothConns()
 	return s.State == SessionStateConnected &&
 		s.SEKInbound != nil &&
 		s.SEKOutbound != nil &&
-		s.Session != nil &&
-		s.Session.Inbound != nil &&
-		s.Session.Outbound != nil
+		in != nil &&
+		out != nil
 }
 
 // keyUpdateDisabled gates whether this peer advertises the in-band key-update capability.
@@ -269,15 +339,13 @@ func (s *Session) UseKeyUpdate() bool {
 // maxWriterEpoch returns the higher in-band ratchet epoch across both directions, or 0 if no
 // conns exist. It is the epoch that climbs toward the wrap guard as the ratchet rotates.
 func (s *Session) maxWriterEpoch() uint16 {
-	if s.Session == nil {
-		return 0
-	}
+	in, out := s.BothConns()
 	var e uint16
-	if s.Session.Inbound != nil {
-		e = s.Session.Inbound.WriterEpoch()
+	if in != nil {
+		e = in.WriterEpoch()
 	}
-	if s.Session.Outbound != nil {
-		if oe := s.Session.Outbound.WriterEpoch(); oe > e {
+	if out != nil {
+		if oe := out.WriterEpoch(); oe > e {
 			e = oe
 		}
 	}
@@ -297,9 +365,7 @@ func (s *Session) NearEpochWrap() bool {
 // known, and before the gRPC reader goroutine starts, since SetKeyUpdate is not safe to flip
 // under a live reader.
 func (s *Session) ApplyKeyUpdateNegotiation() {
-	if s.Session == nil {
-		return
-	}
+	in, out := s.BothConns()
 	on := s.UseKeyUpdate()
 	if !on && s.logger != nil {
 		// Post-0.4 every peer supports the in-band ratchet, so a ratchet-less session means an
@@ -308,11 +374,11 @@ func (s *Session) ApplyKeyUpdateNegotiation() {
 		s.logger.Warn("Session running WITHOUT in-band rekey (peer did not negotiate key-update); forward secrecy limited to re-handshake rotations",
 			"own", ownSupportsKeyUpdate(), "peer", s.PeerSupportsKeyUpdate)
 	}
-	if s.Session.Inbound != nil {
-		s.Session.Inbound.SetKeyUpdate(on)
+	if in != nil {
+		in.SetKeyUpdate(on)
 	}
-	if s.Session.Outbound != nil {
-		s.Session.Outbound.SetKeyUpdate(on)
+	if out != nil {
+		out.SetKeyUpdate(on)
 	}
 }
 
@@ -320,13 +386,11 @@ func (s *Session) ApplyKeyUpdateNegotiation() {
 
 // ShouldRekey returns true if either connection has exceeded the rekey threshold.
 func (s *Session) ShouldRekey() bool {
-	if s.Session == nil {
-		return false
-	}
-	if s.Session.Inbound != nil && s.Session.Inbound.ShouldRekey() {
+	in, out := s.BothConns()
+	if in != nil && in.ShouldRekey() {
 		return true
 	}
-	if s.Session.Outbound != nil && s.Session.Outbound.ShouldRekey() {
+	if out != nil && out.ShouldRekey() {
 		return true
 	}
 	return false
@@ -342,4 +406,87 @@ func (s *Session) GetRekeyEpoch() uint64 {
 	s.RekeyMu.Lock()
 	defer s.RekeyMu.Unlock()
 	return s.CurrentEpoch
+}
+
+// rememberPendingFold keeps a session-scope copy of an un-retired fold secret so a conn
+// installed after this round still adopts it. Same cap as the reader set.
+func (s *Session) rememberPendingFold(secret []byte) {
+	s.pendingFoldMu.Lock()
+	defer s.pendingFoldMu.Unlock()
+	s.pendingFolds = append(s.pendingFolds, append([]byte(nil), secret...))
+	if len(s.pendingFolds) > maxStagedFolds {
+		zeroize(s.pendingFolds[0])
+		s.pendingFolds = s.pendingFolds[1:]
+	}
+}
+
+// retirePendingFolds drops rounds STRICTLY OLDER than the committed one and keeps the
+// committed round itself: a later lane may still re-handshake and need it (the peer's
+// writer stays armed with it until that lane also commits). Writers fold generations
+// monotonically, so nothing below the committed round can arrive again. A newer round's
+// commit, or the cap, eventually drops it.
+func (s *Session) retirePendingFolds(committed []byte) {
+	s.pendingFoldMu.Lock()
+	defer s.pendingFoldMu.Unlock()
+	idx := -1
+	for i := range s.pendingFolds {
+		if bytes.Equal(s.pendingFolds[i], committed) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	for i := 0; i < idx; i++ {
+		zeroize(s.pendingFolds[i])
+	}
+	s.pendingFolds = append(s.pendingFolds[:0], s.pendingFolds[idx:]...)
+}
+
+// adoptPendingFolds stages every remembered round on a freshly installed conn's reader,
+// oldest first so the try order matches the peer writer's monotonic folds. Deep-copies
+// under the lock and releases before staging, so it never holds pendingFoldMu across
+// keyMu/foldMu (breaks the latent pendingFoldMu<->keyMu cycle) and the copies cannot race
+// retirePendingFolds' zeroize.
+func (s *Session) adoptPendingFolds(c *SecureConn) {
+	s.pendingFoldMu.Lock()
+	snap := make([][]byte, len(s.pendingFolds))
+	for i, sec := range s.pendingFolds {
+		snap[i] = append([]byte(nil), sec...)
+	}
+	s.pendingFoldMu.Unlock()
+	for _, sec := range snap {
+		c.stageReaderFold(sec)
+	}
+}
+
+// AdoptFoldCustody makes a conn that joins the session AFTER a fold round adopt every
+// un-retired round and retire session-wide when it commits one. Both the TCP install path
+// and the QUIC control lane (whose conns are created outside install*) call it, so no lane
+// can miss a round the peer's writer stays armed with. Safe on any conn before it carries
+// a live reader.
+func (s *Session) AdoptFoldCustody(c *SecureConn) {
+	if c == nil {
+		return
+	}
+	s.adoptPendingFolds(c)
+	c.setFoldCommitHook(s.retirePendingFolds)
+}
+
+// installInbound and installOutbound are the one path that mounts a SecureConn into the
+// session: assign first (publish the conn), then adopt pending fold rounds and wire the
+// commit-retirement hook. Assign-before-adopt is load-bearing: paired with
+// remember-before-snapshot in stageFoldBothConns, it gives every stage/install interleaving
+// a happens-before edge that lands round R on the fresh conn (direct stage or adopt). The
+// conn has no live reader until the handshake returns, so publishing it before adoption
+// exposes nothing.
+func (s *Session) installInbound(c *SecureConn) {
+	s.SetInboundConn(c) // publish under socketsMu
+	s.AdoptFoldCustody(c)
+}
+
+func (s *Session) installOutbound(c *SecureConn) {
+	s.SetOutboundConn(c) // publish under socketsMu
+	s.AdoptFoldCustody(c)
 }

@@ -207,6 +207,21 @@ type SecureReader struct {
 	foldStaged    []foldSecret
 	foldGen       uint64
 	foldCommitted atomic.Bool
+	// commitHook, when set, is told the committed secret so session-scope pending-fold
+	// custody retires in step. Guarded by foldMu; invoked with the conn's keyMu read-held
+	// (from Read), so a hook must never take foldMu or a keyMu write.
+	commitHook func([]byte)
+}
+
+// setFoldCommitHook wires the reader's fold commits to session-scope retirement. Takes
+// keyMu.RLock for the s.r deref, matching stageReaderFold's discipline (s.r is swapped
+// under wMu+keyMu.Lock by UpdateKey).
+func (s *SecureConn) setFoldCommitHook(h func([]byte)) {
+	s.keyMu.RLock()
+	defer s.keyMu.RUnlock()
+	s.r.foldMu.Lock()
+	s.r.commitHook = h
+	s.r.foldMu.Unlock()
 }
 
 // stageFold appends a fold secret to try on a later epoch bump. Keeps every un-retired round:
@@ -354,7 +369,13 @@ func (s *SecureReader) openRatcheted(nonce, ciphertext []byte) ([]byte, error) {
 		s.lastNonce = wireNonce
 		if fold != nil {
 			s.retireFoldAfterCommit(fold) // retire this generation and all older; keep newer
-			s.foldCommitted.Store(true)   // release the responder's gated writers
+			s.foldMu.Lock()
+			h := s.commitHook
+			s.foldMu.Unlock()
+			if h != nil {
+				h(fold) // session-scope custody retires in step
+			}
+			s.foldCommitted.Store(true) // release the responder's gated writers
 		}
 		return plaintext, nil
 	}

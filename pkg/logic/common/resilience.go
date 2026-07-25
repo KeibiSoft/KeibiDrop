@@ -242,12 +242,12 @@ func (kd *KeibiDrop) onRekeyNeeded() bool {
 
 	// Drop the current sockets so both peers re-handshake with fresh keys, then enter the
 	// initiator reconnect role. The responder follows when its health monitor sees the drop.
-	if sess.Session != nil {
-		if sess.Session.Inbound != nil {
-			_ = sess.Session.Inbound.Close()
+	if in, out := sess.BothConns(); in != nil || out != nil {
+		if in != nil {
+			_ = in.Close()
 		}
-		if sess.Session.Outbound != nil {
-			_ = sess.Session.Outbound.Close()
+		if out != nil {
+			_ = out.Close()
 		}
 	}
 	rm.OnDisconnect()

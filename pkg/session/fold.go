@@ -71,10 +71,8 @@ func (s *Session) IsFoldInitiator() bool {
 // foldReady reports whether a fold can be staged: both conns exist and the in-band ratchet
 // was negotiated (a fold applies only through the ratchet, so without it staging is a no-op).
 func (s *Session) foldReady() bool {
-	return s.Session != nil &&
-		s.Session.Inbound != nil &&
-		s.Session.Outbound != nil &&
-		s.UseKeyUpdate()
+	in, out := s.BothConns()
+	return in != nil && out != nil && s.UseKeyUpdate()
 }
 
 // stageFoldBothConns stages the fold secret on both directions of both conns. isInitiator
@@ -82,11 +80,15 @@ func (s *Session) foldReady() bool {
 // own reader commits the initiator's folded frame. Every reader is staged before any writer is
 // armed, so no writer folds before both conns can follow the peer's fold-back.
 func (s *Session) stageFoldBothConns(secret []byte, isInitiator bool) {
-	if s.Session == nil {
-		return
-	}
+	// Remember BEFORE the conns snapshot: this orders custody ahead of the socketsMu-guarded
+	// read of the conns, so a conn being installed concurrently (reconnect swap) either lands
+	// in this snapshot (its Set*Conn happened-before BothConns -> staged directly) or adopts
+	// the round at install (its adopt runs after this remember). Paired with the socketsMu
+	// publish in install*, every interleaving lands the round on the fresh conn.
+	s.rememberPendingFold(secret)
 	conns := make([]*SecureConn, 0, 4)
-	for _, c := range []*SecureConn{s.Session.Inbound, s.Session.Outbound} {
+	in, out := s.BothConns()
+	for _, c := range []*SecureConn{in, out} {
 		if c != nil {
 			conns = append(conns, c)
 		}
@@ -105,6 +107,7 @@ func (s *Session) stageFoldBothConns(secret []byte, isInitiator bool) {
 	// extra conns too.
 	for _, c := range conns {
 		c.stageReaderFold(secret)
+		c.setFoldCommitHook(s.retirePendingFolds)
 	}
 	for _, c := range conns {
 		c.armWriterFold(secret, isInitiator)

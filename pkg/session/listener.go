@@ -76,7 +76,7 @@ func StartListener(session *Session, port int) error {
 	logger.Info("Inbound session fully established and encrypted")
 
 	// Wrap the now-upgraded conn in singleConnListener
-	session.GRPCListener = &singleConnListener{conn: session.Session.Inbound}
+	session.GRPCListener = &singleConnListener{conn: session.InboundConn()}
 
 	return nil
 }

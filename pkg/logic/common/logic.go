@@ -775,9 +775,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 				if err != nil {
 					logger.Warn("LAN inbound accept failed", "error", err)
 					// Close outbound, fall through to direct/bridge.
-					if kd.session.Session != nil && kd.session.Session.Outbound != nil {
-						kd.session.Session.Outbound.Close()
-						kd.session.Session.Outbound = nil
+					if c := kd.session.OutboundConn(); c != nil {
+						c.Close()
+						kd.session.SetOutboundConn(nil)
 					}
 					kd.session.ResetOutboundCrypto()
 					lanConnected = false
@@ -842,9 +842,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 			if needBridge {
 				logger.Info("Falling back to bridge for both directions")
 				// Close the direct outbound; we'll redo both via bridge.
-				if kd.session.Session != nil && kd.session.Session.Outbound != nil {
-					kd.session.Session.Outbound.Close()
-					kd.session.Session.Outbound = nil
+				if c := kd.session.OutboundConn(); c != nil {
+					c.Close()
+					kd.session.SetOutboundConn(nil)
 				}
 				kd.session.ResetOutboundCrypto()
 			}
@@ -1049,9 +1049,9 @@ func (kd *KeibiDrop) CreateRoom() error {
 					// Reset outbound crypto state for bridge handshake.
 					kd.session.ResetOutboundCrypto()
 					// Close direct inbound too; we need both via bridge.
-					if kd.session.Session != nil && kd.session.Session.Inbound != nil {
-						kd.session.Session.Inbound.Close()
-						kd.session.Session.Inbound = nil
+					if c := kd.session.InboundConn(); c != nil {
+						c.Close()
+						kd.session.SetInboundConn(nil)
 					}
 					kd.session.ResetInboundCrypto()
 					useBridge = true

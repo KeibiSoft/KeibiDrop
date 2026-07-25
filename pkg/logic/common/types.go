@@ -605,7 +605,7 @@ func (kd *KeibiDrop) Run() {
 		case s := <-kd.signals:
 			if s == Start {
 				logger.Info("Signal start")
-				if kd.session == nil || kd.session.Session == nil || kd.session.Session.Inbound == nil {
+				if kd.session == nil || kd.session.InboundConn() == nil {
 					logger.Warn("Nil session")
 					continue
 				}
