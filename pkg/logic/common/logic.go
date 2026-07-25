@@ -802,10 +802,13 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 		// 2. Try direct IPv6 P2P (skip if peer has no IPv6, e.g. mobile).
 		var directErr error
-		if kd.PeerIPv6IP != "" {
+		switch {
+		case kd.PeerInboundBlocked(): // dialing it would only burn the timeout
+			directErr = fmt.Errorf("peer advertises a blocked inbound")
+		case kd.PeerIPv6IP != "":
 			peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
 			directErr = session.PerformOutboundHandshake(kd.session, peerAddr)
-		} else {
+		default:
 			directErr = fmt.Errorf("peer has no IPv6 address")
 		}
 
@@ -816,26 +819,34 @@ func (kd *KeibiDrop) JoinRoom() error {
 			// Direct outbound succeeded. Accept inbound with 15s timeout.
 			// If the peer can't reach us (firewall blocks inbound IPv6),
 			// fall back to bridge for both directions.
-			logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
-
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
-			inConn, acceptErr := kd.listener.Accept()
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
-
-			if acceptErr != nil {
-				logger.Warn("Inbound accept failed", "error", acceptErr)
-				needBridge = kd.BridgeAddr != ""
-				if !needBridge {
-					return fmt.Errorf("inbound accept timed out and no bridge configured")
-				}
+			// Nothing reaches our listener, so the peer's dial cannot arrive.
+			if kd.InboundBlocked() && kd.BridgeAddr != "" {
+				logger.Info("Inbound is blocked on this network, taking the bridge without waiting on accept")
+				needBridge = true
 			} else {
-				if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
-					logger.Error("Failed inbound handshake", "error", err)
-					return err
-				}
-				kd.ConnectionMode = "direct"
-				if kd.OnEvent != nil {
-					kd.OnEvent("connection_mode:direct")
+				logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
+
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+				inConn, acceptErr := kd.listener.Accept()
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
+
+				if acceptErr != nil {
+					logger.Warn("Inbound accept failed", "error", acceptErr)
+					kd.markInboundBlocked() // nothing reached us here; skip the wait next time
+					needBridge = kd.BridgeAddr != ""
+					if !needBridge {
+						return fmt.Errorf("inbound accept timed out and no bridge configured")
+					}
+				} else {
+					if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+						logger.Error("Failed inbound handshake", "error", err)
+						return err
+					}
+					kd.markInboundReachable()
+					kd.ConnectionMode = "direct"
+					if kd.OnEvent != nil {
+						kd.OnEvent("connection_mode:direct")
+					}
 				}
 			}
 
@@ -999,6 +1010,12 @@ func (kd *KeibiDrop) CreateRoom() error {
 			useBridge = true
 		}
 
+		// Nothing reaches our listener, so the joiner's dial cannot arrive.
+		if kd.InboundBlocked() && kd.BridgeAddr != "" {
+			logger.Info("Inbound is blocked on this network, skipping direct P2P, using bridge")
+			useBridge = true
+		}
+
 		if !useBridge {
 			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
 		}
@@ -1021,6 +1038,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 				return acceptErr
 			}
 			logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
+			kd.markInboundBlocked() // nothing reached us here; skip the wait next time
 			useBridge = true
 		}
 
@@ -1029,6 +1047,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
 				return err
 			}
+			kd.markInboundReachable()
 
 			addr, ok := conn.RemoteAddr().(*net.TCPAddr)
 			if !ok {

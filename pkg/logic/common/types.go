@@ -145,6 +145,16 @@ type KeibiDrop struct {
 	// the fresh session key.
 	eagerFoldInFlight atomic.Bool
 
+	// Reachability hints. inboundBlocked means nothing reaches our listener; it rides the
+	// encrypted registration so the peer skips a dial that would only time out.
+	// peerInboundBlocked is the same flag from the peer. *On/*At scope the verdict so it
+	// expires instead of pinning us to the relay. See reachability.go.
+	inboundBlocked     atomic.Bool
+	peerInboundBlocked atomic.Bool
+	inboundBlockedOn   atomic.Value // string
+	probedOn           atomic.Value // string: the local address the relay probe last ran on
+	probedAt           atomic.Int64 // unix nano of that probe, so the verdict expires
+
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc
 	activeBitmaps     map[string]*filesystem.ChunkBitmap
@@ -384,6 +394,10 @@ type ConnectionHint struct {
 	IPv6  bool   `json:"ipv6"`           // does this prefer IPv6?
 	Proto string `json:"proto"`          // e.g., "tcp"
 	Note  string `json:"note,omitempty"` // optional: NAT behavior, etc.
+	// InboundBlocked says nothing reaches the address above, so dialing it only burns the
+	// timeout. Inside the encrypted blob, so the relay never sees it; absent on older peers,
+	// which decodes as false.
+	InboundBlocked bool `json:"inbound_blocked,omitempty"`
 }
 
 // EncryptedRegistration is the relay-visible payload (opaque blob).

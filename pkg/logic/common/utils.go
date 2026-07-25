@@ -74,6 +74,10 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		return ErrNilPointer
 	}
 
+	// Learn our reachability before publishing, so the hint is right on the first connect.
+	// Cached, so the keepalive's re-registrations do not re-probe.
+	kd.ProbeInboundReachability(kd.ctx)
+
 	ownFp := s.OwnFingerprint
 
 	lookupToken, encryptionKey, err := deriveRelayAuth(ownFp)
@@ -91,10 +95,11 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 	peerReg := PeerRegistration{
 		Fingerprint: ownFp,
 		Listen: &ConnectionHint{
-			IPv6:  true,
-			IP:    kd.LocalIPv6IP,
-			Proto: "tcp",
-			Port:  kd.inboundPort,
+			IPv6:           true,
+			IP:             kd.LocalIPv6IP,
+			Proto:          "tcp",
+			Port:           kd.inboundPort,
+			InboundBlocked: kd.InboundBlocked(),
 		},
 		LocalAddrs: GetLocalAddrs(),
 		PublicKeys: pkMap,
@@ -287,6 +292,10 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	}
 
 	s.PeerPort = peerReg.Listen.Port
+	kd.peerInboundBlocked.Store(peerReg.Listen.InboundBlocked)
+	if peerReg.Listen.InboundBlocked {
+		logger.Info("Peer advertises a blocked inbound; its direct dial will be skipped")
+	}
 	if isValidIPv6(peerReg.Listen.IP) {
 		kd.PeerIPv6IP = peerReg.Listen.IP
 	} else if peerReg.Listen.IP != "" {
