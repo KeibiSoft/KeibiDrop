@@ -52,7 +52,7 @@ func TestSecureConn_InitiatorWriterFoldsAndReaderFollows(t *testing.T) {
 	pt, err := rOK.Read()
 	require.NoError(t, err)
 	require.Equal(t, []byte("folded payload"), pt)
-	require.True(t, rOK.foldCommitted.Load(), "committing a folded epoch raises the peer-folded flag")
+	require.True(t, rOK.foldCommittedIs(S), "committing a folded epoch records that round as the gate")
 
 	rNo := keyUpdateReader(raw, key, suite, nil)
 	_, err = rNo.Read()
@@ -76,7 +76,7 @@ func TestSecureConn_ReaderPlainFallthroughWhileFoldStaged(t *testing.T) {
 	pt, err := r.Read()
 	require.NoError(t, err, "a plain frame opens while a fold is staged (folded tried first, then plain)")
 	require.Equal(t, []byte("plain frame"), pt)
-	require.False(t, r.foldCommitted.Load(), "a plain commit does not consume the staged fold")
+	require.Nil(t, r.committedFold, "a plain commit does not consume the staged fold")
 	require.NotEmpty(t, r.foldStaged, "the fold stays staged until an actual folded frame arrives")
 }
 
@@ -97,7 +97,7 @@ func TestSecureConn_ResponderWriterGatedUntilPeerFolds(t *testing.T) {
 	require.Equal(t, uint16(0), resp.w.epoch, "a gated responder does not fold on its own")
 	require.NotNil(t, resp.stagedWriterFold, "the fold stays staged while gated")
 
-	resp.r.foldCommitted.Store(true) // its reader saw the initiator's fold
+	resp.r.committedFold = S // its reader saw the initiator fold this round
 	_, err = resp.Write([]byte("healed"))
 	require.NoError(t, err)
 	require.Equal(t, uint16(1), resp.w.epoch, "once ungated the responder folds on the next write")
@@ -141,7 +141,7 @@ func TestSecureConn_FoldRoundTripAcrossPair(t *testing.T) {
 			require.NoError(t, <-errCh)
 
 			require.Greater(t, writer.w.epoch, uint16(0), "the writer folded mid-stream")
-			require.True(t, reader.r.foldCommitted.Load(), "the reader committed the folded epoch")
+			require.True(t, reader.r.foldCommittedIs(S), "the reader committed the folded epoch")
 			require.False(t, writer.done.Load(), "the conn never closed during the fold")
 			require.False(t, reader.done.Load())
 		})
@@ -184,14 +184,14 @@ func TestSecureConn_GatedResponderPlainRatchetsUnderLoadThenFolds(t *testing.T) 
 	require.Equal(t, payload, got, "data is intact while the gated responder plain-ratchets")
 	require.Greater(t, writer.w.epoch, uint16(1), "the responder crossed its ratchet threshold several times under load")
 	require.NotNil(t, writer.stagedWriterFold, "but it stayed gated: the fold is still pending")
-	require.False(t, reader.r.foldCommitted.Load(), "no folded epoch was committed while gated")
+	require.Nil(t, reader.r.committedFold, "no folded epoch was committed while gated")
 	require.False(t, writer.done.Load(), "the conn never tore down under the ordering pressure")
 	require.False(t, reader.done.Load())
 
 	// Phase 2: the responder's reader commits the initiator's fold; the gate opens and the
 	// next write folds, and the reader follows across the folded epoch.
 	epochBeforeFold := writer.w.epoch
-	writer.r.foldCommitted.Store(true) // its reader saw the initiator's fold
+	writer.r.committedFold = S // its reader saw the initiator fold this round
 	go func() { _, e := writer.Write([]byte("post-fold payload")); errCh <- e }()
 	post := make([]byte, len("post-fold payload"))
 	_, err = io.ReadFull(reader, post)
@@ -200,12 +200,12 @@ func TestSecureConn_GatedResponderPlainRatchetsUnderLoadThenFolds(t *testing.T) 
 	require.Equal(t, []byte("post-fold payload"), post, "data is intact across the fold")
 	require.Greater(t, writer.w.epoch, epochBeforeFold, "the ungated responder folded on its next write")
 	require.Nil(t, writer.stagedWriterFold, "the fold is consumed after it applies")
-	require.True(t, reader.r.foldCommitted.Load(), "the reader committed the folded epoch")
+	require.True(t, reader.r.foldCommittedIs(S), "the reader committed the folded epoch")
 }
 
 // Staging must be race-free against concurrent writes and reads: a duplicate Rekey re-staging the
 // same secret cannot tear the fold state. Gated responder so the writer only plain-ratchets (every
-// frame decryptable) while exercising the writer/reader fold fields and foldCommitted under -race.
+// frame decryptable) while exercising the writer/reader fold fields and the gate under -race.
 func TestSecureConn_ConcurrentStageFoldNoRace(t *testing.T) {
 	shrinkRekeyThresholds(t, 4096, 256) // force periodic plain ratchets so the reader hits epoch bumps
 	key := randomKey(t)
@@ -243,7 +243,7 @@ func TestSecureConn_ConcurrentStageFoldNoRace(t *testing.T) {
 	}()
 	wg.Wait()
 
-	require.False(t, reader.r.foldCommitted.Load(),
+	require.Nil(t, reader.r.committedFold,
 		"a gated responder never folds, so no folded epoch is ever committed")
 }
 
@@ -274,7 +274,7 @@ func TestSecureConn_SupersededRoundStillDecryptsThenNewRoundFolds(t *testing.T) 
 	require.NoError(t, <-errCh)
 	require.Equal(t, msg1, got)
 	require.Equal(t, uint16(1), reader.r.epoch, "reader followed the A-folded bump")
-	require.True(t, reader.r.foldCommitted.Load())
+	require.True(t, reader.r.foldCommittedIs(secretA))
 	require.Len(t, reader.r.foldStaged, 1, "round B must stay staged after the older round committed")
 
 	// The writer re-arms with round B and folds it on the next write.
@@ -318,6 +318,43 @@ func TestSecureConn_ReaderKeepsAllFoldGenerations(t *testing.T) {
 	require.NoError(t, <-errCh)
 	require.Equal(t, msg, got)
 	require.Equal(t, uint16(1), reader.r.epoch)
-	require.True(t, reader.r.foldCommitted.Load())
+	require.True(t, reader.r.foldCommittedIs(secrets[0]))
 	require.Len(t, reader.r.foldStaged, len(secrets)-1, "committed generation and older retired, newer kept")
+}
+
+// send delivers one message across a live pair, so a net.Pipe write has its reader.
+func send(t *testing.T, from, to *SecureConn, msg []byte) error {
+	t.Helper()
+	errCh := make(chan error, 1)
+	go func() { _, e := from.Write(msg); errCh <- e }()
+	got := make([]byte, len(msg))
+	if _, err := io.ReadFull(to, got); err != nil {
+		<-errCh
+		return err
+	}
+	require.NoError(t, <-errCh)
+	require.Equal(t, msg, got)
+	return nil
+}
+
+// A second fold round must re-gate the responder's writer.
+func TestSecureConn_ResponderGateIsPerRound(t *testing.T) {
+	key := randomKey(t)
+	initiator, responder := newConnPair(t, key, kbc.CipherChaCha20)
+	initiator.SetKeyUpdate(true)
+	responder.SetKeyUpdate(true)
+
+	S1 := randomBytes(t, kbc.KeySize)
+	initiator.StageEntropyFold(S1, true)
+	responder.StageEntropyFold(S1, false)
+	require.NoError(t, send(t, initiator, responder, []byte("round 1 out")))
+	require.Equal(t, uint16(1), responder.r.epoch, "responder followed the initiator's fold")
+	require.NoError(t, send(t, responder, initiator, []byte("round 1 back")))
+	require.Equal(t, uint16(1), initiator.r.epoch, "initiator followed the responder's fold-back")
+
+	// Round 2 reaches the responder first; the initiator has not staged S2 yet.
+	S2 := randomBytes(t, kbc.KeySize)
+	responder.StageEntropyFold(S2, false)
+	require.NoError(t, send(t, responder, initiator, []byte("round 2 reply")),
+		"the responder must not fold round 2 before the initiator has staged it")
 }

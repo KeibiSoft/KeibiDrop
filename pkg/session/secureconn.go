@@ -200,13 +200,13 @@ type SecureReader struct {
 	lastNonce uint64
 	keyUpdate atomic.Bool
 
-	// Entropy-fold state. foldStaged keeps every un-retired KEM secret (oldest first); the reader
-	// tries them all, so a fold burst has no window to overflow. Guarded by foldMu (staged off the
-	// Read goroutine). foldCommitted latches on the first folded epoch: the responder writer gate.
+	// Entropy-fold state, guarded by foldMu. foldStaged keeps every un-retired KEM secret
+	// (oldest first); the reader tries them all, so a fold burst cannot overflow it.
+	// committedFold is the secret of the last folded epoch opened here: the responder gate.
 	foldMu        sync.Mutex
 	foldStaged    []foldSecret
 	foldGen       uint64
-	foldCommitted atomic.Bool
+	committedFold []byte
 	// commitHook, when set, is told the committed secret so session-scope pending-fold
 	// custody retires in step. Guarded by foldMu; invoked with the conn's keyMu read-held
 	// (from Read), so a hook must never take foldMu or a keyMu write.
@@ -249,10 +249,20 @@ func (s *SecureReader) loadFoldCandidates() [][]byte {
 	return out
 }
 
+// foldCommittedIs reports whether this reader opened its last folded epoch with secret.
+// Per round, not a latch: a later round re-gates until the initiator folds it here.
+func (s *SecureReader) foldCommittedIs(secret []byte) bool {
+	s.foldMu.Lock()
+	defer s.foldMu.Unlock()
+	return s.committedFold != nil && bytes.Equal(s.committedFold, secret)
+}
+
 // retireFoldAfterCommit drops the committed secret and all older: the peer writer folds
 // generations monotonically, so a generation <= committed can never be folded again. Newer stay.
+// Records it too, so the writer gate releases for this round only.
 func (s *SecureReader) retireFoldAfterCommit(committed []byte) {
 	s.foldMu.Lock()
+	s.committedFold = append([]byte(nil), committed...)
 	idx := -1
 	for i := range s.foldStaged {
 		if bytes.Equal(s.foldStaged[i].secret, committed) {
@@ -368,14 +378,13 @@ func (s *SecureReader) openRatcheted(nonce, ciphertext []byte) ([]byte, error) {
 		s.epoch = wireEpoch
 		s.lastNonce = wireNonce
 		if fold != nil {
-			s.retireFoldAfterCommit(fold) // retire this generation and all older; keep newer
+			s.retireFoldAfterCommit(fold) // retires this round and older; opens the gate for it
 			s.foldMu.Lock()
 			h := s.commitHook
 			s.foldMu.Unlock()
 			if h != nil {
 				h(fold) // session-scope custody retires in step
 			}
-			s.foldCommitted.Store(true) // release the responder's gated writers
 		}
 		return plaintext, nil
 	}
@@ -415,7 +424,7 @@ type SecureConn struct {
 	writerMsgsMark  uint64      // msgsSent at the last writer ratchet (guarded by wMu)
 	// stagedWriterFold is the 32-byte KEM secret to fold into this writer's next epoch bump;
 	// foldInitiator marks this peer as the fold initiator, whose writers fold immediately,
-	// versus a responder whose writers wait for the gate (s.r.foldCommitted). Both under wMu.
+	// versus a responder whose writers wait for the gate (s.r.foldCommittedIs). Both under wMu.
 	stagedWriterFold []byte
 	foldInitiator    bool
 	lastRatchetNano  atomic.Int64
@@ -626,15 +635,16 @@ func (s *SecureConn) StageEntropyFold(secret []byte, isInitiator bool) {
 	s.armWriterFold(secret, isInitiator)
 }
 
-// pendingWriterFoldLocked returns the staged fold secret if this writer is cleared to fold on
-// its next bump: a fold is staged, the epoch is below the wrap guard, and this peer either
-// initiated the fold or has seen the initiator's fold on its own reader (the responder gate).
-// Otherwise nil. Called under wMu, so s.r is stable.
+// pendingWriterFoldLocked returns the staged fold secret if this writer may fold on its next
+// bump: staged, below the wrap guard, and either we initiated or our reader committed THIS
+// round. The round must match: a responder derives the secret before the initiator does (it
+// answers the RPC), so a gate left open by an earlier round folds the new secret into the very
+// reply the initiator needs to derive it. Under wMu; wMu -> foldMu is the only order taken.
 func (s *SecureConn) pendingWriterFoldLocked() []byte {
 	if s.stagedWriterFold == nil || s.w.epoch >= epochWrapGuard {
 		return nil
 	}
-	if s.foldInitiator || s.r.foldCommitted.Load() {
+	if s.foldInitiator || s.r.foldCommittedIs(s.stagedWriterFold) {
 		return s.stagedWriterFold
 	}
 	return nil
