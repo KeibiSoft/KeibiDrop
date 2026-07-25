@@ -1,3 +1,14 @@
+//go:build bench
+
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// ABOUTME: benchService implements the bench gRPC service (Echo/Read/Download)
+// ABOUTME: that both transports serve, for throughput and range-read testing.
+
 package transport
 
 import (
@@ -32,16 +43,6 @@ func (benchService) Read(_ context.Context, req *pb.ReadRequest) (*pb.ReadReply,
 		data[i] = byte(req.Offset + uint64(i))
 	}
 	return &pb.ReadReply{Data: data}, nil
-}
-
-// verifyRange checks a range read against Read's position-dependent pattern.
-func verifyRange(data []byte, offset uint64) bool {
-	for i, c := range data {
-		if c != byte(offset+uint64(i)) {
-			return false
-		}
-	}
-	return true
 }
 
 // Download streams req.TotalBytes to the client in chunk_size chunks, each filled with a

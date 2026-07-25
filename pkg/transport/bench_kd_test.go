@@ -1,8 +1,15 @@
+//go:build bench
+
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package transport
 
 import (
 	"context"
-	"io"
 	"net"
 	"testing"
 
@@ -67,16 +74,9 @@ func BenchmarkKDDownload(b *testing.B) {
 		if err != nil {
 			b.Fatalf("download: %v", err)
 		}
-		var got uint64
-		for {
-			chunk, err := stream.Recv()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				b.Fatalf("recv: %v", err)
-			}
-			got += uint64(len(chunk.Data))
+		got, err := drainDownload(stream, nil)
+		if err != nil {
+			b.Fatalf("recv: %v", err)
 		}
 		if got != total {
 			b.Fatalf("short read: %d/%d", got, total)

@@ -1,9 +1,15 @@
+//go:build bench
+
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package transport
 
 import (
 	"context"
-	"sort"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,24 +57,8 @@ func TestInteractiveFastLane(t *testing.T) {
 	inter := pb.NewBenchServiceClient(m.InteractiveConn())
 
 	// Saturate the TCP bulk channel in the background.
-	bulkCtx, bulkCancel := context.WithCancel(ctx)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for bulkCtx.Err() == nil {
-			stream, err := bulk.Download(bulkCtx, &pb.DownloadRequest{TotalBytes: 64 << 20, ChunkSize: 64 << 10})
-			if err != nil {
-				return
-			}
-			for {
-				if _, err := stream.Recv(); err != nil {
-					break
-				}
-			}
-		}
-	}()
-	defer func() { bulkCancel(); wg.Wait() }()
+	stopBulk := saturateBulk(ctx, bulk, 64<<20)
+	defer stopBulk()
 
 	time.Sleep(200 * time.Millisecond) // let the saturator fill the pipe
 
@@ -100,16 +90,11 @@ func TestInteractiveFastLane(t *testing.T) {
 		return err
 	})
 
-	pct := func(d []time.Duration, q float64) time.Duration {
-		s := append([]time.Duration(nil), d...)
-		sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
-		return s[int(q*float64(len(s)-1))]
-	}
 	t.Logf("seek under saturating bulk (loopback):")
-	t.Logf("  muxed on TCP bulk (HoL): p50=%v p99=%v max=%v", pct(muxed, .5), pct(muxed, .99), pct(muxed, 1))
-	t.Logf("  QUIC fast lane         : p50=%v p99=%v max=%v", pct(fast, .5), pct(fast, .99), pct(fast, 1))
-	if pct(fast, .5) > pct(muxed, .5) {
-		t.Logf("  note: fast-lane p50 not lower on loopback (no bottleneck to congest; WAN is where it shows, see FINDINGS)")
+	t.Logf("  muxed on TCP bulk (HoL): p50=%v p99=%v max=%v", pctile(muxed, .5), pctile(muxed, .99), pctile(muxed, 1))
+	t.Logf("  QUIC fast lane         : p50=%v p99=%v max=%v", pctile(fast, .5), pctile(fast, .99), pctile(fast, 1))
+	if pctile(fast, .5) > pctile(muxed, .5) {
+		t.Logf("  note: fast-lane p50 not lower on loopback (no bottleneck to congest; WAN is where it shows)")
 	}
 }
 

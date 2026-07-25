@@ -5,8 +5,8 @@ libkeibidrop.a
 libkeibidrop.h
 keibidrop-cli
 keibidrop
-kd
-cli
+/kd
+/cli
 dist/
 *.test
 

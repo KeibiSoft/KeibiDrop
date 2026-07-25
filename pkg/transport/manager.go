@@ -1,3 +1,14 @@
+//go:build bench
+
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// ABOUTME: Manager owns a peer's always-on QUIC control plane: heartbeat RTT,
+// ABOUTME: link-quality verdict, migration, and the resulting transport routing decision.
+
 package transport
 
 import (
@@ -413,23 +424,4 @@ func (m *Manager) Close() error {
 		_ = tr.Close()
 	}
 	return nil
-}
-
-// newUDPTransport binds a local UDP socket toward serverAddr and wraps it in an explicit
-// quic.Transport (required for migration). Loopback targets bind to the loopback of the
-// same family (an IPv4 socket cannot reach ::1); others bind to the unspecified address.
-func newUDPTransport(serverAddr *net.UDPAddr) (*quic.Transport, error) {
-	var bind *net.UDPAddr
-	if serverAddr.IP != nil && serverAddr.IP.IsLoopback() {
-		if serverAddr.IP.To4() != nil {
-			bind = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}
-		} else {
-			bind = &net.UDPAddr{IP: net.IPv6loopback}
-		}
-	}
-	udp, err := net.ListenUDP("udp", bind)
-	if err != nil {
-		return nil, err
-	}
-	return &quic.Transport{Conn: udp}, nil
 }

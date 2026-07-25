@@ -192,7 +192,7 @@ Only peers with the shared fingerprint (exchanged out-of-band) can derive the co
 
 The handshake derives the session key from long-term identity keys, so on its own it is not forward-secret. Two mechanisms are layered on top.
 
-### Symmetric ratchet (always on)
+### Symmetric ratchet (default on, negotiated)
 
 Each direction advances its key with a one-way KDF ratchet: every epoch derives the next chain key from the current one and discards the old one, so a leak of the live key does not expose earlier epochs. The bump rides an on-wire epoch marker in the nonce, with no pause in the data stream. It rotates at latest every 1 GB, ~1 million messages, or 60 seconds of writing per direction — far under the per-epoch 2⁴⁸ counter space. Rotation happens on the write path itself (make-before-break): the frame that crosses a threshold is already sealed under the next key, so there is no round trip and no pause; an idle direction rotates on its first write after the cadence elapses, so no frame is ever sealed under a key older than the thresholds allow. Both the TCP data pair and the QUIC control lane ratchet this way.
 

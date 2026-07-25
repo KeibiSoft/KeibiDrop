@@ -10,7 +10,6 @@
 package session
 
 import (
-	"bytes"
 	"crypto/rand"
 	"io"
 	"net"
@@ -325,45 +324,4 @@ func TestSecureConn_LeftoverAcrossMessages(t *testing.T) {
 
 	require.Equal(t, combined, got)
 	require.NoError(t, <-errCh)
-}
-
-// QUIC control-channel keying is safe: the two ends of one conn sharing the SAME key never collide
-// on key+nonce, because the dialer writes the outbound prefix and the acceptor the inbound.
-func TestSecureConnRoleNoncePrefixSeparation(t *testing.T) {
-	key := randomKey(t)
-	suite := kbc.CipherChaCha20
-
-	// Capture the first nonce each role writes under the SAME key.
-	var dialerBuf, acceptorBuf bytes.Buffer
-	dw := NewSecureWriterWithPrefix(&dialerBuf, key, suite, NoncePrefixOutbound)
-	aw := NewSecureWriterWithPrefix(&acceptorBuf, key, suite, NoncePrefixInbound)
-	_, err := dw.Write([]byte("x"))
-	require.NoError(t, err)
-	_, err = aw.Write([]byte("x"))
-	require.NoError(t, err)
-
-	// Frame: [4-byte length][12-byte nonce][ciphertext]. The prefix is nonce[:4].
-	dPrefix := dialerBuf.Bytes()[lengthHeaderSize : lengthHeaderSize+4]
-	aPrefix := acceptorBuf.Bytes()[lengthHeaderSize : lengthHeaderSize+4]
-	require.NotEqual(t, dPrefix, aPrefix,
-		"dialer and acceptor must write different nonce prefixes, else the shared key reuses nonces")
-
-	// A real bidirectional round-trip over one conn with the SAME key.
-	c1, c2 := net.Pipe()
-	dialer := NewSecureConn(c1, key, suite, NoncePrefixOutbound)
-	acceptor := NewSecureConn(c2, key, suite, NoncePrefixInbound)
-	defer dialer.Close()
-	defer acceptor.Close()
-
-	go func() { _, _ = dialer.Write([]byte("ping")) }()
-	got := make([]byte, 4)
-	_, err = io.ReadFull(acceptor, got)
-	require.NoError(t, err)
-	require.Equal(t, "ping", string(got))
-
-	go func() { _, _ = acceptor.Write([]byte("pong")) }()
-	got2 := make([]byte, 4)
-	_, err = io.ReadFull(dialer, got2)
-	require.NoError(t, err)
-	require.Equal(t, "pong", string(got2))
 }

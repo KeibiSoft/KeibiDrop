@@ -1,7 +1,16 @@
+//go:build bench
+
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package transport
 
 import (
 	"context"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +23,9 @@ import (
 // before it blocks. It deliberately never calls srv.Stop (that would hang on the
 // wedged handler); process exit reaps the leaked goroutine.
 func TestDiagCancelWedge(t *testing.T) {
+	if os.Getenv("KD_DIAG") == "" {
+		t.Skip("diagnostic harness; set KD_DIAG=1 to run")
+	}
 	var sent atomic.Uint64
 	var done atomic.Bool
 	svc := benchService{sent: &sent, done: &done}

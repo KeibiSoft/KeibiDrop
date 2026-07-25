@@ -1,8 +1,17 @@
+//go:build bench
+
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package transport
 
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"sync"
 	"testing"
@@ -38,22 +47,19 @@ func TestGRPCDownload(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Download: %v", err)
 				}
-				var got uint64
-				for {
-					chunk, err := stream.Recv()
-					if err == io.EOF {
-						break
+				var soFar uint64
+				got, err := drainDownload(stream, func(c *pb.Chunk) error {
+					if c.Offset != soFar {
+						return fmt.Errorf("offset gap: got %d want %d", c.Offset, soFar)
 					}
-					if err != nil {
-						t.Fatalf("recv at %d: %v", got, err)
+					if !verifyChunk(c.Data) {
+						return fmt.Errorf("corrupt chunk at offset %d", c.Offset)
 					}
-					if chunk.Offset != got {
-						t.Fatalf("offset gap: got %d want %d", chunk.Offset, got)
-					}
-					if !verifyChunk(chunk.Data) {
-						t.Fatalf("corrupt chunk at offset %d", chunk.Offset)
-					}
-					got += uint64(len(chunk.Data))
+					soFar += uint64(len(c.Data))
+					return nil
+				})
+				if err != nil {
+					t.Fatalf("recv: %v", err)
 				}
 				if got != tc.total {
 					t.Fatalf("byte count: got %d want %d", got, tc.total)
@@ -86,17 +92,10 @@ func TestConcurrentDownloads(t *testing.T) {
 						errs <- err
 						return
 					}
-					var got uint64
-					for {
-						chunk, err := stream.Recv()
-						if err == io.EOF {
-							break
-						}
-						if err != nil {
-							errs <- err
-							return
-						}
-						got += uint64(len(chunk.Data))
+					got, err := drainDownload(stream, nil)
+					if err != nil {
+						errs <- err
+						return
 					}
 					if got != per {
 						errs <- io.ErrUnexpectedEOF

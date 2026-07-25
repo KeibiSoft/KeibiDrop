@@ -1,9 +1,15 @@
+//go:build bench
+
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package transport
 
 import (
 	"context"
-	"io"
-	"sort"
 	"testing"
 	"time"
 
@@ -59,16 +65,9 @@ func BenchmarkDownload(b *testing.B) {
 				if err != nil {
 					b.Fatalf("download: %v", err)
 				}
-				var got uint64
-				for {
-					chunk, err := stream.Recv()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						b.Fatalf("recv: %v", err)
-					}
-					got += uint64(len(chunk.Data))
+				got, err := drainDownload(stream, nil)
+				if err != nil {
+					b.Fatalf("recv: %v", err)
 				}
 				if got != total {
 					b.Fatalf("short read: %d/%d", got, total)
@@ -82,11 +81,7 @@ func reportLatency(b *testing.B, s []time.Duration) {
 	if len(s) == 0 {
 		return
 	}
-	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
-	pctUS := func(p float64) float64 {
-		idx := int(p * float64(len(s)-1))
-		return float64(s[idx].Microseconds())
-	}
+	pctUS := func(p float64) float64 { return float64(pctile(s, p).Microseconds()) }
 	b.ReportMetric(pctUS(0.50), "p50-us")
 	b.ReportMetric(pctUS(0.90), "p90-us")
 	b.ReportMetric(pctUS(0.99), "p99-us")

@@ -1,3 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// ABOUTME: Transport is the interface both wire protocols implement, plus the
+// ABOUTME: QUIC half (quicTransport, QUIC()) that production dials and listens on.
+
 package transport
 
 import (
@@ -6,10 +15,6 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-
-	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
 // Transport establishes gRPC-ready net.Conns over a wire protocol. Two implementations:
@@ -22,23 +27,9 @@ type Transport interface {
 	Listen(addr string) (net.Listener, error)
 }
 
-// TCP returns a plain-TCP transport.
-func TCP() Transport { return tcpTransport{} }
-
 // QUIC returns a QUIC transport (one bidirectional stream per connection = one
 // net.Conn, mirroring KeibiDrop's per-direction socket).
 func QUIC() Transport { return quicTransport{} }
-
-type tcpTransport struct{}
-
-func (tcpTransport) Dial(ctx context.Context, addr string) (net.Conn, error) {
-	var d net.Dialer
-	return d.DialContext(ctx, "tcp", addr)
-}
-
-func (tcpTransport) Listen(addr string) (net.Listener, error) {
-	return net.Listen("tcp", addr)
-}
 
 type quicTransport struct{}
 
@@ -91,62 +82,21 @@ func quicConfig() *quic.Config {
 	}
 }
 
-// ServeGRPC serves svc over the transport at addr ("127.0.0.1:0" for an ephemeral
-// port). If secure, each accepted conn gets the PQC handshake before gRPC. Returns
-// the grpc server (call Stop) and the bound address.
-func ServeGRPC(tr Transport, addr string, svc pb.BenchServiceServer, secure bool, opts ...grpc.ServerOption) (*grpc.Server, net.Addr, error) {
-	ln, err := tr.Listen(addr)
+// newUDPTransport binds a local UDP socket toward serverAddr and wraps it in an explicit
+// quic.Transport (required for migration). Loopback targets bind to the loopback of the
+// same family (an IPv4 socket cannot reach ::1); others bind to the unspecified address.
+func newUDPTransport(serverAddr *net.UDPAddr) (*quic.Transport, error) {
+	var bind *net.UDPAddr
+	if serverAddr.IP != nil && serverAddr.IP.IsLoopback() {
+		if serverAddr.IP.To4() != nil {
+			bind = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}
+		} else {
+			bind = &net.UDPAddr{IP: net.IPv6loopback}
+		}
+	}
+	udp, err := net.ListenUDP("udp", bind)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	if secure {
-		ln = secureListener{ln}
-	}
-	s := grpc.NewServer(opts...)
-	pb.RegisterBenchServiceServer(s, svc)
-	go func() { _ = s.Serve(ln) }()
-	return s, ln.Addr(), nil
-}
-
-// DialGRPC dials svc over the transport at addr. If secure, the PQC handshake runs
-// (client role) before gRPC sees the conn. The passthrough:/// target keeps
-// grpc.NewClient off the dns resolver.
-func DialGRPC(tr Transport, addr string, secure bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	dialer := func(ctx context.Context, _ string) (net.Conn, error) {
-		c, err := tr.Dial(ctx, addr)
-		if err != nil {
-			return nil, err
-		}
-		if secure {
-			sc, err := Secure(ctx, c, RoleClient)
-			if err != nil {
-				_ = c.Close()
-				return nil, err
-			}
-			return sc, nil
-		}
-		return c, nil
-	}
-	all := append([]grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(dialer),
-	}, opts...)
-	return grpc.NewClient("passthrough:///"+addr, all...)
-}
-
-// Thin wrappers preserving the signatures the tests and benchmarks use.
-func startQUICServer(addr string, svc pb.BenchServiceServer, opts ...grpc.ServerOption) (*grpc.Server, net.Addr, error) {
-	return ServeGRPC(QUIC(), addr, svc, false, opts...)
-}
-
-func startTCPServer(addr string, svc pb.BenchServiceServer, opts ...grpc.ServerOption) (*grpc.Server, net.Addr, error) {
-	return ServeGRPC(TCP(), addr, svc, false, opts...)
-}
-
-func dialQUIC(addr string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	return DialGRPC(QUIC(), addr, false, opts...)
-}
-
-func dialTCP(addr string, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	return DialGRPC(TCP(), addr, false, opts...)
+	return &quic.Transport{Conn: udp}, nil
 }

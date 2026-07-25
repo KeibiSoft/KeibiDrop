@@ -12,7 +12,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -46,8 +45,9 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	logger := kd.logger.With("method", "init-connection-resilience")
 
 	// Debug-only: KD_REKEY_BYTES/KD_REKEY_MSGS lower the rotation thresholds so tests can force
-	// a rekey without moving a gigabyte. Clamped to fire sooner only, never disable.
-	if b, m := envRekeyUint("KD_REKEY_BYTES"), envRekeyUint("KD_REKEY_MSGS"); b != 0 || m != 0 {
+	// a rekey without moving a gigabyte. Clamped to fire sooner only, never disable. The env
+	// read sits behind the debug build tag (rekey_override_debug.go); plain builds get zeros.
+	if b, m := rekeyThresholdOverrideFromEnv(); b != 0 || m != 0 {
 		ab, am := session.ApplyRekeyThresholdOverride(b, m)
 		logger.Warn("DEBUG rekey threshold override active (testing only)", "bytes", ab, "msgs", am)
 	}
@@ -191,20 +191,6 @@ const rekeyCooldown = 60 * time.Second
 // may defer. A transfer blocked on a dead conn never finishes, so an unbounded deferral
 // deadlocks recovery; at the cap the reconnect proceeds and resumption recovers the transfer.
 const maxDisconnectDeferrals = 3
-
-// envRekeyUint reads an unsigned-integer env var for the debug rekey threshold override.
-// Returns 0 when unset, empty, or unparseable, leaving the threshold at its default.
-func envRekeyUint(name string) uint64 {
-	v := os.Getenv(name)
-	if v == "" {
-		return 0
-	}
-	n, err := strconv.ParseUint(v, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n
-}
 
 // onRekeyNeeded rotates the session keys for forward secrecy when idle and past the
 // data/message threshold, via a full re-handshake (drop the sockets, let the reconnect path

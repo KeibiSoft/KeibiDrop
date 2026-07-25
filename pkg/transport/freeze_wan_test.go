@@ -1,11 +1,17 @@
+//go:build bench
+
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package transport
 
 import (
 	"context"
 	"math/rand"
 	"net"
-	"sort"
-	"sync"
 	"testing"
 	"time"
 
@@ -128,24 +134,8 @@ func TestWANFreezeUnderPrefetch(t *testing.T) {
 	})
 
 	// Start the prefetch saturating channel A, then let it fill the pipe.
-	bulkCtx, bulkCancel := context.WithCancel(ctx)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for bulkCtx.Err() == nil {
-			stream, err := bulk.Download(bulkCtx, &pb.DownloadRequest{TotalBytes: 256 << 20, ChunkSize: 64 << 10})
-			if err != nil {
-				return
-			}
-			for {
-				if _, err := stream.Recv(); err != nil {
-					break
-				}
-			}
-		}
-	}()
-	defer func() { bulkCancel(); wg.Wait() }()
+	stop := saturateBulk(ctx, bulk, 256<<20)
+	defer stop()
 	time.Sleep(1 * time.Second) // let the prefetch saturate the link
 
 	// The freeze: random-jump reads muxed onto the busy bulk channel.
@@ -190,13 +180,4 @@ func measureReads(t *testing.T, n int, do func(i int) (time.Duration, error)) []
 		out = append(out, d)
 	}
 	return out
-}
-
-func pctile(d []time.Duration, q float64) time.Duration {
-	if len(d) == 0 {
-		return 0
-	}
-	s := append([]time.Duration(nil), d...)
-	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
-	return s[int(q*float64(len(s)-1))]
 }

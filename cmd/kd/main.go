@@ -16,8 +16,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
-	httppprof "net/http/pprof"
 	"net/url"
 	"os"
 	"os/signal"
@@ -141,28 +139,10 @@ func runDaemon() {
 	}
 	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "kd")
 
-	// KD_PPROF starts net/http/pprof on the given address for heap/goroutine/alloc profiling.
-	// Debug-only, off unless set; refused on non-loopback addresses so profiles aren't exposed
-	// off-box. Served on its own mux.
-	if addr := os.Getenv("KD_PPROF"); addr != "" {
-		if isLoopbackAddr(addr) {
-			logger.Warn("DEBUG pprof endpoint active (testing only)", "addr", addr)
-			mux := http.NewServeMux()
-			mux.HandleFunc("/debug/pprof/", httppprof.Index)
-			mux.HandleFunc("/debug/pprof/cmdline", httppprof.Cmdline)
-			mux.HandleFunc("/debug/pprof/profile", httppprof.Profile)
-			mux.HandleFunc("/debug/pprof/symbol", httppprof.Symbol)
-			mux.HandleFunc("/debug/pprof/trace", httppprof.Trace)
-			pprofSrv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-			go func() {
-				if err := pprofSrv.ListenAndServe(); err != nil {
-					logger.Error("pprof server exited", "error", err)
-				}
-			}()
-		} else {
-			logger.Error("KD_PPROF refused: bind a loopback address (127.0.0.1/::1), never off-box", "addr", addr)
-		}
-	}
+	// Debug-only: KD_PPROF starts a pprof server for heap/goroutine/allocation profiling.
+	// Gated behind the debug build tag (pprof_debug.go / pprof_release.go); a no-op in a
+	// plain build.
+	maybeStartPprof(logger)
 
 	// Create KeibiDrop instance
 	ctx, cancel := context.WithCancel(context.Background())

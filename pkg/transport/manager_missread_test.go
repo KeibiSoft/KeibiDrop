@@ -1,9 +1,15 @@
+//go:build bench
+
+// SPDX-License-Identifier: MPL-2.0
+// Copyright (c) 2025 KeibiSoft S.R.L.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 package transport
 
 import (
 	"context"
-	"sort"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,24 +37,8 @@ func TestMissReadUnderBulk(t *testing.T) {
 
 	// Saturate the TCP bulk channel in the background.
 	bulk := pb.NewBenchServiceClient(m.BulkConn())
-	bulkCtx, bulkCancel := context.WithCancel(ctx)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for bulkCtx.Err() == nil {
-			stream, err := bulk.Download(bulkCtx, &pb.DownloadRequest{TotalBytes: 64 << 20, ChunkSize: 64 << 10})
-			if err != nil {
-				return
-			}
-			for {
-				if _, err := stream.Recv(); err != nil {
-					break
-				}
-			}
-		}
-	}()
-	defer func() { bulkCancel(); wg.Wait() }()
+	stopBulk := saturateBulk(ctx, bulk, 64<<20)
+	defer stopBulk()
 	time.Sleep(200 * time.Millisecond)
 
 	// Cache-miss reads over the QUIC interactive channel, under the bulk load.
@@ -71,11 +61,6 @@ func TestMissReadUnderBulk(t *testing.T) {
 		lat = append(lat, d)
 	}
 
-	pct := func(q float64) time.Duration {
-		s := append([]time.Duration(nil), lat...)
-		sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
-		return s[int(q*float64(len(s)-1))]
-	}
 	t.Logf("512 KiB cache-miss read over QUIC, under saturating TCP bulk (loopback):")
-	t.Logf("  p50=%v  p99=%v  max=%v  (byte-correct)", pct(.5), pct(.99), pct(1))
+	t.Logf("  p50=%v  p99=%v  max=%v  (byte-correct)", pctile(lat, .5), pctile(lat, .99), pctile(lat, 1))
 }

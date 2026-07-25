@@ -1,3 +1,5 @@
+//go:build debug
+
 // ABOUTME: Tests the KD_REKEY_BYTES/KD_REKEY_MSGS env parser for the debug threshold knob.
 // ABOUTME: Unset, empty, or unparseable values must yield 0 (leave the default in place).
 
