@@ -77,7 +77,7 @@ func TestSecureConn_ReaderPlainFallthroughWhileFoldStaged(t *testing.T) {
 	require.NoError(t, err, "a plain frame opens while a fold is staged (folded tried first, then plain)")
 	require.Equal(t, []byte("plain frame"), pt)
 	require.False(t, r.foldCommitted.Load(), "a plain commit does not consume the staged fold")
-	require.NotNil(t, r.stagedFold, "the fold stays staged until an actual folded frame arrives")
+	require.NotEmpty(t, r.foldStaged, "the fold stays staged until an actual folded frame arrives")
 }
 
 // A responder writer must not fold until its own reader commits a folded frame from the initiator:
@@ -275,7 +275,7 @@ func TestSecureConn_SupersededRoundStillDecryptsThenNewRoundFolds(t *testing.T) 
 	require.Equal(t, msg1, got)
 	require.Equal(t, uint16(1), reader.r.epoch, "reader followed the A-folded bump")
 	require.True(t, reader.r.foldCommitted.Load())
-	require.NotNil(t, reader.r.stagedFold, "round B must stay staged after the prior committed")
+	require.Len(t, reader.r.foldStaged, 1, "round B must stay staged after the older round committed")
 
 	// The writer re-arms with round B and folds it on the next write.
 	writer.StageEntropyFold(secretB, true)
@@ -287,6 +287,37 @@ func TestSecureConn_SupersededRoundStillDecryptsThenNewRoundFolds(t *testing.T) 
 	require.NoError(t, <-errCh)
 	require.Equal(t, msg2, got2)
 	require.Equal(t, uint16(2), reader.r.epoch)
-	require.Nil(t, reader.r.stagedFold, "current round consumed")
-	require.Nil(t, reader.r.priorFold, "no stale rounds retained")
+	require.Empty(t, reader.r.foldStaged, "all rounds consumed, none retained")
+}
+
+// A fold-round burst can stage more rounds than any fixed window before the peer writer folds the
+// oldest; the reader must keep every un-retired generation. Overflows the old 1-deep prior.
+func TestSecureConn_ReaderKeepsAllFoldGenerations(t *testing.T) {
+	key := randomKey(t)
+	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
+	writer.SetKeyUpdate(true)
+	reader.SetKeyUpdate(true)
+
+	// Four rounds reach the reader; the writer stays armed with the OLDEST (round 1).
+	secrets := [][]byte{
+		randomBytes(t, kbc.KeySize), randomBytes(t, kbc.KeySize),
+		randomBytes(t, kbc.KeySize), randomBytes(t, kbc.KeySize),
+	}
+	writer.StageEntropyFold(secrets[0], true) // writer folds round 1 on its next write
+	for _, s := range secrets {
+		reader.StageEntropyFold(s, false)
+	}
+	require.Len(t, reader.r.foldStaged, len(secrets), "every staged round is kept")
+
+	msg := randomBytes(t, 256)
+	errCh := make(chan error, 1)
+	go func() { _, e := writer.Write(msg); errCh <- e }()
+	got := make([]byte, len(msg))
+	_, err := io.ReadFull(reader, got)
+	require.NoError(t, err, "the oldest fold generation must still decrypt after a burst")
+	require.NoError(t, <-errCh)
+	require.Equal(t, msg, got)
+	require.Equal(t, uint16(1), reader.r.epoch)
+	require.True(t, reader.r.foldCommitted.Load())
+	require.Len(t, reader.r.foldStaged, len(secrets)-1, "committed generation and older retired, newer kept")
 }

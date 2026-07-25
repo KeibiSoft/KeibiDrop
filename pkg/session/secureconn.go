@@ -174,6 +174,15 @@ func (s *SecureWriter) Write(p []byte) (int, error) {
 	return len(p), nil // number of plaintext bytes consumed
 }
 
+// foldSecret is a staged fold secret with a local monotonic generation, for deterministic retirement.
+type foldSecret struct {
+	gen    uint64
+	secret []byte
+}
+
+// maxStagedFolds caps the un-retired fold set (safety valve; single-flight folds never reach it).
+const maxStagedFolds = 64
+
 // SecureReader reads encrypted messages and decrypts them.
 type SecureReader struct {
 	r    io.Reader
@@ -191,60 +200,56 @@ type SecureReader struct {
 	lastNonce uint64
 	keyUpdate atomic.Bool
 
-	// Fold state for the entropy fold (post-quantum forward secrecy). stagedFold is the
-	// 32-byte KEM secret this direction tries when it next follows an epoch bump; staged off
-	// the Read goroutine, so foldMu guards it. foldCommitted latches once this reader opens a
-	// folded epoch, the signal the writer gate reads to release a responder's writers.
+	// Entropy-fold state. foldStaged keeps every un-retired KEM secret (oldest first); the reader
+	// tries them all, so a fold burst has no window to overflow. Guarded by foldMu (staged off the
+	// Read goroutine). foldCommitted latches on the first folded epoch: the responder writer gate.
 	foldMu        sync.Mutex
-	stagedFold    []byte
-	priorFold     []byte // the superseded round's secret, kept one deep
+	foldStaged    []foldSecret
+	foldGen       uint64
 	foldCommitted atomic.Bool
 }
 
-// stageFold stages the 32-byte KEM secret this receive direction folds when it next follows
-// an epoch bump. Copies, so the caller keeps ownership. A re-stage supersedes a not-yet-
-// applied secret but keeps it one deep in priorFold: a writer armed with the superseded round
-// can still fold it into a bump already in flight, and dropping it made such frames
-// undecryptable. Fold labels are domain-separated per secret, so at most one candidate
-// authenticates; keeping the prior is a correctness window, not a weakening.
+// stageFold appends a fold secret to try on a later epoch bump. Keeps every un-retired round:
+// a burst can stage several before the peer writer folds an older one, so dropping any would make
+// that frame undecryptable. Domain-separated labels mean at most one candidate authenticates.
 func (s *SecureReader) stageFold(secret []byte) {
 	s.foldMu.Lock()
-	if s.stagedFold != nil {
-		zeroize(s.priorFold)
-		s.priorFold = s.stagedFold
+	s.foldGen++
+	s.foldStaged = append(s.foldStaged, foldSecret{gen: s.foldGen, secret: append([]byte(nil), secret...)})
+	if len(s.foldStaged) > maxStagedFolds { // safety valve; single-flight folds never reach it
+		zeroize(s.foldStaged[0].secret)
+		s.foldStaged = s.foldStaged[1:]
 	}
-	s.stagedFold = append([]byte(nil), secret...)
 	s.foldMu.Unlock()
 }
 
-// loadFoldCandidates returns copies of the staged fold secrets to try for a one-epoch
-// advance, newest first: the current round, then the superseded prior (if any).
+// loadFoldCandidates returns the un-retired fold secrets, newest first (common case matches first).
 func (s *SecureReader) loadFoldCandidates() [][]byte {
 	s.foldMu.Lock()
 	defer s.foldMu.Unlock()
-	var out [][]byte
-	if s.stagedFold != nil {
-		out = append(out, append([]byte(nil), s.stagedFold...))
-	}
-	if s.priorFold != nil {
-		out = append(out, append([]byte(nil), s.priorFold...))
+	out := make([][]byte, 0, len(s.foldStaged))
+	for i := len(s.foldStaged) - 1; i >= 0; i-- {
+		out = append(out, append([]byte(nil), s.foldStaged[i].secret...))
 	}
 	return out
 }
 
-// clearFoldAfterCommit drops fold state after a folded epoch was accepted (single-use). If
-// the CURRENT round healed the chain, everything clears. If the PRIOR round healed it, the
-// current round stays staged: the peer's writers re-arm with it and its fold arrives later.
-func (s *SecureReader) clearFoldAfterCommit(committed []byte) {
+// retireFoldAfterCommit drops the committed secret and all older: the peer writer folds
+// generations monotonically, so a generation <= committed can never be folded again. Newer stay.
+func (s *SecureReader) retireFoldAfterCommit(committed []byte) {
 	s.foldMu.Lock()
-	if s.priorFold != nil && bytes.Equal(committed, s.priorFold) {
-		zeroize(s.priorFold)
-		s.priorFold = nil
-	} else {
-		zeroize(s.stagedFold)
-		s.stagedFold = nil
-		zeroize(s.priorFold)
-		s.priorFold = nil
+	idx := -1
+	for i := range s.foldStaged {
+		if bytes.Equal(s.foldStaged[i].secret, committed) {
+			idx = i
+			break
+		}
+	}
+	for i := 0; i <= idx; i++ {
+		zeroize(s.foldStaged[i].secret)
+	}
+	if idx >= 0 {
+		s.foldStaged = append(s.foldStaged[:0], s.foldStaged[idx+1:]...)
 	}
 	s.foldMu.Unlock()
 }
@@ -348,8 +353,8 @@ func (s *SecureReader) openRatcheted(nonce, ciphertext []byte) ([]byte, error) {
 		s.epoch = wireEpoch
 		s.lastNonce = wireNonce
 		if fold != nil {
-			s.clearFoldAfterCommit(fold) // single-use per round; keeps a newer staged round
-			s.foldCommitted.Store(true)  // release the responder's gated writers
+			s.retireFoldAfterCommit(fold) // retire this generation and all older; keep newer
+			s.foldCommitted.Store(true)   // release the responder's gated writers
 		}
 		return plaintext, nil
 	}
