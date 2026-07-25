@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,18 +63,31 @@ func DialQUICControl(ctx context.Context, s *session.Session, peerUDPAddr string
 // stream is wrapped in the session's inbound SecureConn (SEKInboundQUIC). Errors if the
 // peer negotiated no QUIC key.
 func ListenQUICControl(s *session.Session, udpAddr string) (net.Listener, error) {
-	if s == nil {
-		return nil, fmt.Errorf("quic control: nil session")
-	}
-	key := s.SEKInboundQUIC
-	if len(key) == 0 {
-		return nil, fmt.Errorf("quic control: no inbound QUIC key (peer did not negotiate QUIC)")
+	key, err := inboundQUICKey(s)
+	if err != nil {
+		return nil, err
 	}
 	ln, err := transport.QUIC().Listen(udpAddr)
 	if err != nil {
 		return nil, fmt.Errorf("quic control listen %s: %w", udpAddr, err)
 	}
-	return &quicControlListener{Listener: ln, key: key, suite: s.NegotiatedSuite(), keyUpdate: s.UseKeyUpdate()}, nil
+	return newQUICControlListener(s, ln, key), nil
+}
+
+// inboundQUICKey returns the session's inbound QUIC key, erroring when the peer negotiated no
+// QUIC lane, so no listener is bound for a channel that cannot key.
+func inboundQUICKey(s *session.Session) ([]byte, error) {
+	if s == nil {
+		return nil, fmt.Errorf("quic control: nil session")
+	}
+	if len(s.SEKInboundQUIC) == 0 {
+		return nil, fmt.Errorf("quic control: no inbound QUIC key (peer did not negotiate QUIC)")
+	}
+	return s.SEKInboundQUIC, nil
+}
+
+func newQUICControlListener(s *session.Session, ln net.Listener, key []byte) net.Listener {
+	return &quicControlListener{Listener: ln, key: key, suite: s.NegotiatedSuite(), keyUpdate: s.UseKeyUpdate()}
 }
 
 // quicControlListener upgrades every accepted QUIC stream to the inbound control
@@ -114,6 +128,103 @@ func (l *quicControlListener) LastAccepted() *session.SecureConn {
 	return l.last
 }
 
+// relayAddrPrefix marks a quicPeerAddr as a relay room rather than a peer UDP endpoint, so
+// the shared dial path registers with the bridge instead of dialing the peer directly.
+const relayAddrPrefix = "relay:"
+
+// quicDialTimeout bounds one dial attempt of the control channel.
+const quicDialTimeout = 5 * time.Second
+
+// relayQUICRooms returns this peer's (dial, listen) rooms. Direction-tagged like the TCP
+// bridge's pair1/pair2; the fingerprint election hands each peer the opposite pair, so one
+// peer's dialer always meets the other's listener.
+func relayQUICRooms(s *session.Session) (dial, listen string) {
+	if s.IsFoldInitiator() {
+		return "quic1", "quic2"
+	}
+	return "quic2", "quic1"
+}
+
+// listenQUICControlRelay registers the inbound room and serves QUIC on the paired socket.
+func (kd *KeibiDrop) listenQUICControlRelay(ctx context.Context, s *session.Session, room string) (net.Listener, error) {
+	key, err := inboundQUICKey(s)
+	if err != nil {
+		return nil, err
+	}
+	udp, _, err := kd.dialUDPRelayDir(ctx, s, room, kd.logger.With("component", "quic-control"))
+	if err != nil {
+		return nil, err
+	}
+	ln, err := transport.ListenOnConn(udp)
+	if err != nil {
+		_ = udp.Close()
+		return nil, fmt.Errorf("quic control relay listen %s: %w", room, err)
+	}
+	return newQUICControlListener(s, ln, key), nil
+}
+
+// dialQUICControlRelay brings up the outbound channel through the relay's UDP room. No
+// migration handle: see transport.DialOnConn.
+func (kd *KeibiDrop) dialQUICControlRelay(ctx context.Context, s *session.Session, room string) (net.Conn, error) {
+	key := s.SEKOutboundQUIC
+	if len(key) == 0 {
+		return nil, fmt.Errorf("quic control: no outbound QUIC key (peer did not negotiate QUIC)")
+	}
+	udp, relayAddr, err := kd.dialUDPRelayDir(ctx, s, room, kd.logger.With("component", "quic-control"))
+	if err != nil {
+		return nil, err
+	}
+	conn, err := transport.DialOnConn(ctx, udp, relayAddr)
+	if err != nil {
+		_ = udp.Close()
+		return nil, fmt.Errorf("quic control relay dial %s: %w", room, err)
+	}
+	sc := session.NewSecureConn(conn, key, s.NegotiatedSuite(), session.NoncePrefixOutbound)
+	sc.SetKeyUpdate(s.UseKeyUpdate())
+	return sc, nil
+}
+
+// startQUICControlRelay brings the lane up through the relay's UDP rooms. Own goroutine:
+// registration blocks until the peer registers, which must not delay connect.
+func (kd *KeibiDrop) startQUICControlRelay(ctx context.Context, s *session.Session, dialRoom, listenRoom string) {
+	logger := kd.logger.With("component", "quic-control")
+
+	// Dial half first, concurrent with the listen half: our listen room is paired by the PEER's
+	// dial room, so listening first deadlocks both peers until the budget expires.
+	if len(s.SEKOutboundQUIC) != 0 {
+		peerAddr := relayAddrPrefix + dialRoom
+		kd.mu.Lock()
+		current := kd.ctx == ctx
+		if current {
+			kd.quicPeerAddr = peerAddr // generation marker for the maintainer (self-heal redial)
+		}
+		kd.mu.Unlock()
+		if current && kd.quicRedialing.CompareAndSwap(false, true) {
+			go kd.maintainQUICControl(ctx, peerAddr)
+		}
+	}
+
+	ln, err := kd.listenQUICControlRelay(ctx, s, listenRoom)
+	if err != nil {
+		logger.Warn("QUIC relay listen failed; staying TCP-only", "room", listenRoom, "error", err)
+		return
+	}
+	if qln, ok := ln.(*quicControlListener); ok {
+		qln.onAccept = kd.maybeStartEagerFold // set before Serve starts accepting
+	}
+	kd.mu.Lock()
+	superseded := kd.ctx != ctx // a reconnect swapped the generation while we registered
+	if !superseded {
+		kd.quicControlLn = ln
+	}
+	kd.mu.Unlock()
+	if superseded {
+		_ = ln.Close()
+		return
+	}
+	go kd.serveQUICControl(ln, relayAddrPrefix+listenRoom)
+}
+
 // StartQUICControlChannel brings up the QUIC control pair alongside the TCP session: an
 // inbound listener on our UDP port and a background outbound dial to the peer. Fail-soft:
 // any failure logs and leaves the session TCP-only. The outbound dial is backgrounded so
@@ -130,6 +241,15 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 	kd.mu.Unlock()
 	if s == nil || len(s.SEKInboundQUIC) == 0 {
 		logger.Info("peer did not negotiate a QUIC channel; staying TCP-only")
+		return
+	}
+
+	// Bridge mode has no direct path, so a local bind and a peer dial can never meet.
+	if kd.ConnectionMode == "bridge" && kd.BridgeAddr != "" {
+		dialRoom, listenRoom := relayQUICRooms(s)
+		logger.Info("Bridge mode: bringing the QUIC lane up over the relay",
+			"relay", kd.BridgeAddr, "dial", dialRoom, "listen", listenRoom)
+		go kd.startQUICControlRelay(ctx, s, dialRoom, listenRoom)
 		return
 	}
 
@@ -210,8 +330,24 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 		if s == nil {
 			return false
 		}
-		dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		conn, mc, err := DialQUICControl(dctx, s, peerAddr)
+		// A relay room registers with the bridge and yields no migration handle; a direct
+		// endpoint dials the peer. Everything downstream is the same either way.
+		room, relayed := strings.CutPrefix(peerAddr, relayAddrPrefix)
+		timeout := quicDialTimeout
+		if relayed {
+			timeout += udpRelayBudget // the room also waits for the peer to register
+		}
+		dctx, cancel := context.WithTimeout(ctx, timeout)
+		var (
+			conn net.Conn
+			mc   *transport.MigratableConn
+			err  error
+		)
+		if relayed {
+			conn, err = kd.dialQUICControlRelay(dctx, s, room)
+		} else {
+			conn, mc, err = DialQUICControl(dctx, s, peerAddr)
+		}
 		cancel()
 		if err == nil {
 			cc, cErr := grpc.NewClient("passthrough:///quic-control",
@@ -223,14 +359,18 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 			if cErr != nil {
 				logger.Warn("QUIC control client build failed; staying TCP-only", "error", cErr)
 				_ = conn.Close()
-				_ = mc.Close()
+				if mc != nil { // nil on the relay path: not migratable
+					_ = mc.Close()
+				}
 				return false
 			}
 			kd.mu.Lock()
 			if kd.quicPeerAddr != peerAddr { // channel stopped/superseded while we dialed
 				kd.mu.Unlock()
 				_ = cc.Close()
-				_ = mc.Close()
+				if mc != nil { // nil on the relay path: not migratable
+					_ = mc.Close()
+				}
 				return false
 			}
 			hbCtx, hbCancel := context.WithCancel(ctx)
