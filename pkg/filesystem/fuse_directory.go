@@ -292,14 +292,23 @@ func shouldPrefetchOnOpen(prefetchOnOpen bool, autoMB int, size uint64) bool {
 	return size >= uint64(autoMB)*1024*1024
 }
 
+// vcsMetaDirs are the repository metadata directories whose stores are mmap'd, so they must
+// keep the page cache. Match by directory, not extension: the store has no telling suffix
+// (git's "index", pijul's "pristine/db").
+var vcsMetaDirs = []string{".git/", ".pijul/"}
+
 // shouldUseDirectIo determines if a file should bypass kernel page cache.
-// Returns true for files that need real-time sync (write access, not in .git/).
-// Returns false for .git/ files (to allow mmap for git operations).
+// Returns true for files that need real-time sync (write access, not VCS metadata).
+// Returns false for VCS metadata (to allow mmap).
 // Returns false for mmap-dependent files (PDF, images) that apps like Preview need.
 func shouldUseDirectIo(path string, flags int) bool {
-	// .git/ files: allow page cache for mmap (git uses mmap for pack files)
-	if strings.Contains(path, "/.git/") || strings.HasPrefix(path, ".git/") {
-		return false
+	// VCS metadata: keep the page cache so the store can be mmap'd. A direct_io file cannot
+	// be mapped, so the first page touch raises SIGBUS and kills the client. git mmaps its
+	// pack files and index; pijul's pristine is one mmap'd Sanakirja B-tree.
+	for _, dir := range vcsMetaDirs {
+		if strings.Contains(path, "/"+dir) || strings.HasPrefix(path, dir) {
+			return false
+		}
 	}
 
 	// PDF, images, and videos need mmap for Preview.app/QuickTime
