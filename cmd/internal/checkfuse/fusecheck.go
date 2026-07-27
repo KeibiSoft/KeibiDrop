@@ -42,12 +42,9 @@ func IsFUSEPresent() bool {
 		slog.Warn("FUSE darwin check", "path1", path1, "exists1", exists1, "path2", path2, "exists2", exists2)
 		result = exists1 || exists2
 	case "linux":
-		path1 := `/lib/x86_64-linux-gnu/libfuse.so.2`
-		path2 := `/usr/lib/libfuse.so`
-		path3 := `/usr/lib/x86_64-linux-gnu/libfuse3.so`
-		exists1, exists2, exists3 := exists(path1), exists(path2), exists(path3)
-		slog.Warn("FUSE linux check", "path1", path1, "exists1", exists1, "path2", path2, "exists2", exists2, "path3", path3, "exists3", exists3)
-		result = exists1 || exists2 || exists3
+		found := findLinuxFUSE()
+		slog.Warn("FUSE linux check", "found", found)
+		result = found != ""
 	default:
 		slog.Warn("FUSE unsupported OS", "os", runtime.GOOS)
 		result = false
@@ -59,12 +56,46 @@ func IsFUSEPresent() bool {
 		case "darwin":
 			slog.Warn("macFUSE not found. Install it for virtual folder support: https://macfuse.github.io/ or: brew install macfuse")
 		case "linux":
-			slog.Warn("FUSE not found. Install it for virtual folder support: sudo apt install libfuse-dev (Debian/Ubuntu) or sudo dnf install fuse-devel (Fedora)")
+			slog.Warn("FUSE not found. Install it for virtual folder support: sudo apt install fuse3 libfuse3-3 (Debian/Ubuntu) or sudo dnf install fuse3 fuse3-libs (Fedora)")
 		case "windows":
 			slog.Warn("WinFsp not found. Install it for virtual folder support: https://winfsp.dev/rel/ or: choco install winfsp")
 		}
 	}
 	return result
+}
+
+// linuxFUSELibs are the runtime shared objects, FUSE 3 first because it is preferred. Only
+// sonames: the bare libfuse3.so symlink ships in libfuse3-dev, so matching on it would demand
+// a build toolchain from users who just want to mount.
+var linuxFUSELibs = []string{"libfuse3.so.3", "libfuse.so.2"}
+
+// linuxLibDirs are the directories to search, multiarch tuple first. Derived from GOARCH so
+// arm64 and armv7 resolve as well, rather than only x86_64.
+func linuxLibDirs() []string {
+	tuple := map[string]string{
+		"amd64": "x86_64-linux-gnu",
+		"arm64": "aarch64-linux-gnu",
+		"arm":   "arm-linux-gnueabihf",
+		"386":   "i386-linux-gnu",
+	}[runtime.GOARCH]
+
+	dirs := make([]string, 0, 6)
+	if tuple != "" {
+		dirs = append(dirs, "/lib/"+tuple, "/usr/lib/"+tuple)
+	}
+	return append(dirs, "/lib", "/usr/lib", "/usr/lib64", "/usr/local/lib")
+}
+
+// findLinuxFUSE returns the path of the first FUSE runtime library present, or "".
+func findLinuxFUSE() string {
+	for _, lib := range linuxFUSELibs {
+		for _, dir := range linuxLibDirs() {
+			if p := dir + "/" + lib; exists(p) {
+				return p
+			}
+		}
+	}
+	return ""
 }
 
 func exists(path string) bool {

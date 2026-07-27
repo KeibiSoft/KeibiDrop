@@ -378,8 +378,14 @@ func isFUSEPresent() bool {
 			return true
 		}
 	case "linux":
-		if exists("/lib/x86_64-linux-gnu/libfuse.so.2") || exists("/usr/lib/libfuse.so") || exists("/usr/lib/x86_64-linux-gnu/libfuse3.so") {
-			return true
+		// Sonames, not the -dev symlinks, and both multiarch tuples: otherwise a libfuse3-only
+		// or arm64 host reports no FUSE and every FUSE test silently skips.
+		for _, dir := range []string{"/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/lib/aarch64-linux-gnu", "/usr/lib/aarch64-linux-gnu", "/lib", "/usr/lib"} {
+			for _, lib := range []string{"libfuse3.so.3", "libfuse.so.2"} {
+				if exists(dir + "/" + lib) {
+					return true
+				}
+			}
 		}
 	case "windows":
 		for _, p := range []string{
