@@ -63,6 +63,12 @@ func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	// The relay answered, so cache either way: a relay without the endpoint answers 404 every
+	// time, and re-asking on every registration would just add a round trip to each one.
+	kd.probedOn.Store(kd.LocalIPv6IP)
+	kd.probedAt.Store(time.Now().UnixNano())
+
 	if resp.StatusCode != http.StatusOK {
 		logger.Debug("Relay does not offer an inbound probe", "status", resp.StatusCode)
 		return
@@ -71,9 +77,6 @@ func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return
 	}
-
-	kd.probedOn.Store(kd.LocalIPv6IP)
-	kd.probedAt.Store(time.Now().UnixNano())
 	if result.Reachable {
 		kd.markInboundReachable()
 		return

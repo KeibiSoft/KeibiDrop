@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,7 +246,8 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 	}
 
 	// Bridge mode has no direct path, so a local bind and a peer dial can never meet.
-	if kd.ConnectionMode == "bridge" && kd.BridgeAddr != "" {
+	// KEIBIDROP_NO_QUIC_RELAY=1 keeps bridge sessions TCP-only, for A/B against the lane.
+	if kd.ConnectionMode == "bridge" && kd.BridgeAddr != "" && os.Getenv("KEIBIDROP_NO_QUIC_RELAY") != "1" {
 		dialRoom, listenRoom := relayQUICRooms(s)
 		logger.Info("Bridge mode: bringing the QUIC lane up over the relay",
 			"relay", kd.BridgeAddr, "dial", dialRoom, "listen", listenRoom)
