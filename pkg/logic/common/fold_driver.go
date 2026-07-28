@@ -21,6 +21,9 @@ import (
 // single-flight guard. Best-effort: a timeout leaves the session on the handshake key.
 const eagerFoldTimeout = 15 * time.Second
 
+// foldCoalesceDelay batches near-simultaneous lane-wire arrivals into one fold round.
+const foldCoalesceDelay = time.Second
+
 // eagerFoldEligible reports whether this peer should drive an eager fold: it is the fold
 // initiator and the in-band ratchet is active (a fold applies only through the ratchet).
 func eagerFoldEligible(sess *session.Session) bool {
@@ -38,14 +41,32 @@ func (kd *KeibiDrop) maybeStartEagerFold() {
 		return
 	}
 	if !kd.eagerFoldInFlight.CompareAndSwap(false, true) {
-		return // a fold round is already in flight; one at a time
+		kd.eagerFoldRearm.Store(true) // in flight: one follow-up round instead of a lost trigger
+		return
 	}
 	go kd.runEagerFold(sess)
+}
+
+// maybeStartEagerFoldSoon coalesces wire-arrival triggers into one deferred round.
+func (kd *KeibiDrop) maybeStartEagerFoldSoon() {
+	if !kd.eagerFoldScheduled.CompareAndSwap(false, true) {
+		return
+	}
+	time.AfterFunc(foldCoalesceDelay, func() {
+		kd.eagerFoldScheduled.Store(false)
+		kd.maybeStartEagerFold()
+	})
 }
 
 // runEagerFold performs the initiator's fold round and always clears the single-flight guard.
 // Best-effort: any failure leaves the session on the handshake key until a reconnect re-folds.
 func (kd *KeibiDrop) runEagerFold(sess *session.Session) {
+	// LIFO: the guard clears before the rearm re-enters.
+	defer func() {
+		if kd.eagerFoldRearm.Swap(false) {
+			kd.maybeStartEagerFold()
+		}
+	}()
 	defer kd.eagerFoldInFlight.Store(false)
 	logger := kd.logger.With("event", "fold")
 

@@ -40,6 +40,35 @@ func TestMaybeStartEagerFold_SingleFlightGuardBlocksSecond(t *testing.T) {
 
 	kd.maybeStartEagerFold()
 	require.True(t, kd.eagerFoldInFlight.Load(), "a second call is a no-op while a fold is in flight")
+	require.True(t, kd.eagerFoldRearm.Load(), "a trigger during an in-flight round rearms a follow-up")
+}
+
+func TestRunEagerFold_RearmRunsFollowUpThenClears(t *testing.T) {
+	kd := &KeibiDrop{
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		session: &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true},
+	}
+	kd.eagerFoldRearm.Store(true)
+	// No GRPCClient: both the round and its rearmed follow-up fail fast.
+	kd.maybeStartEagerFold()
+	require.Eventually(t, func() bool {
+		return !kd.eagerFoldInFlight.Load() && !kd.eagerFoldRearm.Load()
+	}, 2*time.Second, 5*time.Millisecond, "the follow-up consumes the rearm and both guards clear")
+}
+
+func TestMaybeStartEagerFoldSoon_CoalescesIntoOneTimer(t *testing.T) {
+	kd := &KeibiDrop{
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		session: &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true},
+	}
+	kd.maybeStartEagerFoldSoon()
+	kd.maybeStartEagerFoldSoon()
+	kd.maybeStartEagerFoldSoon()
+	require.True(t, kd.eagerFoldScheduled.Load(), "a burst of arrivals arms exactly one timer")
+	require.False(t, kd.eagerFoldInFlight.Load(), "nothing folds before the coalesce delay")
+	require.Eventually(t, func() bool {
+		return !kd.eagerFoldScheduled.Load() && !kd.eagerFoldInFlight.Load()
+	}, 3*time.Second, 10*time.Millisecond, "the deferred round runs once and clears")
 }
 
 func TestMaybeStartEagerFold_ClearsGuardWhenRoundFails(t *testing.T) {

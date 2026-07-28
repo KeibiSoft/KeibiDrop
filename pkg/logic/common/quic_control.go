@@ -211,7 +211,7 @@ func (kd *KeibiDrop) startQUICControlRelay(ctx context.Context, s *session.Sessi
 		return
 	}
 	if qln, ok := ln.(*quicControlListener); ok {
-		qln.onAccept = kd.maybeStartEagerFold // set before Serve starts accepting
+		qln.onAccept = kd.maybeStartEagerFoldSoon // set before Serve starts accepting
 	}
 	kd.mu.Lock()
 	superseded := kd.ctx != ctx // a reconnect swapped the generation while we registered
@@ -263,7 +263,7 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 		logger.Warn("QUIC control listen failed; staying TCP-only", "addr", inAddr, "error", err)
 	} else {
 		if qln, ok := ln.(*quicControlListener); ok {
-			qln.onAccept = kd.maybeStartEagerFold // set before Serve starts accepting
+			qln.onAccept = kd.maybeStartEagerFoldSoon // set before Serve starts accepting
 		}
 		kd.mu.Lock()
 		kd.quicControlLn = ln
@@ -396,8 +396,7 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 			logger.Info("QUIC control channel connected", "peer", peerAddr)
 			// The control-Ping heartbeat owns QUIC-lane liveness now (metadata rides TCP first).
 			go kd.quicControlHeartbeat(hbCtx, cc)
-			// New wire: re-run the eager fold for the dial-side conn (safe to repeat).
-			kd.maybeStartEagerFold()
+			kd.maybeStartEagerFoldSoon() // new wire: one coalesced round covers it
 			return true
 		}
 		logger.Debug("QUIC control dial attempt failed", "attempt", attempt, "error", err)

@@ -145,6 +145,12 @@ type KeibiDrop struct {
 	// the fresh session key.
 	eagerFoldInFlight atomic.Bool
 
+	// eagerFoldRearm: a trigger during an in-flight round runs one follow-up instead of dropping.
+	eagerFoldRearm atomic.Bool
+
+	// eagerFoldScheduled is the coalescing latch for lane-wire arrival triggers.
+	eagerFoldScheduled atomic.Bool
+
 	// Reachability hints. inboundBlocked means nothing reaches our listener; it rides the
 	// encrypted registration so the peer skips a dial that would only time out.
 	// peerInboundBlocked is the same flag from the peer. *On/*At scope the verdict so it
