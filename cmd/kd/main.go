@@ -139,6 +139,11 @@ func runDaemon() {
 	}
 	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "kd")
 
+	// Debug-only: KD_PPROF starts a pprof server for heap/goroutine/allocation profiling.
+	// Gated behind the debug build tag (pprof_debug.go / pprof_release.go); a no-op in a
+	// plain build.
+	maybeStartPprof(logger)
+
 	// Create KeibiDrop instance
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -897,6 +902,7 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"fuse":              kd.IsFUSE,
 		"mount_path":        kd.ToMount,
 		"save_path":         kd.ToSave,
+		"writer_epoch":      kd.WriterEpoch(),
 	}
 
 	// File counts
@@ -934,6 +940,20 @@ func runClient(cmd string, args []string) {
 }
 
 // --- Helpers ---
+
+// isLoopbackAddr reports whether host:port binds only the loopback interface, so the debug pprof
+// endpoint (KD_PPROF) can never be exposed off-box.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 func writeResponse(conn net.Conn, resp Response) {
 	b, _ := json.Marshal(resp)

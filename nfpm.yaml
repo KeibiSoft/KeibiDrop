@@ -9,9 +9,40 @@ section: net
 priority: optional
 
 depends:
-  - libfuse2
-suggests:
   - fuse3
+
+# Recommends, not Depends: the GUI needs these, the CLIs do not, so a server can skip them.
+recommends:
+  - libx11-6
+  - libx11-xcb1
+  - libxcb1
+  - libxcursor1
+  - libxi6
+  - libxkbcommon0
+  - libxkbcommon-x11-0
+  - libwayland-client0
+  - libwayland-egl1
+  - libegl1
+  - libgl1
+
+overrides:
+  deb:
+    depends:
+      - libfuse3-3 | libfuse2t64 | libfuse2
+  rpm:
+    depends:
+      - fuse3-libs
+    recommends:
+      - libX11
+      - libxcb
+      - libXcursor
+      - libXi
+      - libxkbcommon
+      - libxkbcommon-x11
+      - wayland-libs-client
+      - wayland-libs-egl
+      - libglvnd-egl
+      - libglvnd-glx
 
 contents:
   - src: rust/target/release/keibidrop-rust

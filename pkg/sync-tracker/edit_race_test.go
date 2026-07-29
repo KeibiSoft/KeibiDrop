@@ -51,8 +51,7 @@ func TestConcurrentEditAndRead_Race(t *testing.T) {
 	st.RemoteFilesMu.RUnlock()
 	if f == nil {
 		t.Fatal("file must still exist after concurrent edits")
-	}
-	if f.Size == 0 && f.LastEditTime == 0 {
+	} else if f.Size == 0 && f.LastEditTime == 0 {
 		t.Fatal("file fields should have been updated by at least one writer")
 	}
 }

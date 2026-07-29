@@ -447,23 +447,14 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 	return nil
 }
 
-// Rekey handles key rotation requests for forward secrecy.
+// Rekey drives the responder side of the entropy fold: an ephemeral hybrid-KEM whose shared
+// secret mixes into the session ratchet for post-quantum forward secrecy. Self-synchronizing
+// on the wire (no mid-stream key swap), so a stray or forged Rekey can't brick the connection.
 func (kd *KeibidropServiceImpl) Rekey(_ context.Context, req *bindings.RekeyRequest) (*bindings.RekeyResponse, error) {
-	logger := kd.Logger.With("method", "rekey", "epoch", req.Epoch)
-
 	if kd.Session == nil {
-		logger.Warn("Session not initialized")
-		return nil, status.Error(codes.FailedPrecondition, "session not initialized")
+		return nil, status.Error(codes.FailedPrecondition, "no active session for rekey")
 	}
-
-	resp, err := kd.Session.HandleRekeyRequest(req)
-	if err != nil {
-		logger.Error("Failed to process rekey request", "error", err)
-		return nil, status.Error(codes.Internal, "rekey failed")
-	}
-
-	logger.Info("Rekey request processed successfully")
-	return resp, nil
+	return kd.Session.RespondToFold(req)
 }
 
 // Heartbeat responds to connection health checks.

@@ -40,7 +40,6 @@ func TestSymmetricEncryption(t *testing.T) {
 func TestAsymmetricKeyExchange(t *testing.T) {
 	req := require.New(t)
 
-	// ML-KEM
 	privAlice, pubAlice, err := GenerateMLKEMKeypair()
 	req.NoError(err)
 
@@ -65,44 +64,59 @@ func TestHybridKeyDerivation(t *testing.T) {
 	req.Equal(kek1, kek2, "KEK derivation is not deterministic")
 }
 
+func TestDeriveFoldSalt_DeterministicAndDistinct(t *testing.T) {
+	req := require.New(t)
+	ikm := randomBytes(t, 2*seedSize) // stands in for two concatenated SEKs
+
+	salt1, err := DeriveFoldSalt(ikm)
+	req.NoError(err, "DeriveFoldSalt failed")
+	req.Len(salt1, KeySize, "fold salt must be 32 bytes")
+
+	salt2, err := DeriveFoldSalt(ikm)
+	req.NoError(err)
+	req.Equal(salt1, salt2, "fold salt derivation is not deterministic")
+
+	// A distinct HKDF label means the same input must not collide with the SEK derivations.
+	cc, err := DeriveChaCha20Key(ikm)
+	req.NoError(err)
+	req.NotEqual(cc, salt1, "fold salt must differ from the ChaCha20 SEK for the same input")
+
+	aes, err := DeriveAES256Key(ikm)
+	req.NoError(err)
+	req.NotEqual(aes, salt1, "fold salt must differ from the AES SEK for the same input")
+}
+
 func TestProtocolEndToEndStream(t *testing.T) {
 	req := require.New(t)
 
-	// Generate real key pairs for Alice and Bob
 	alicePrivMLKEM, alicePubMLKEM, _ := GenerateMLKEMKeypair()
 	alicePrivCurve, alicePubCurve, _ := GenerateX25519Keypair()
 
 	bobPrivCurve, bobPubCurve, _ := GenerateX25519Keypair()
 
-	// Bob encapsulates
 	seedKEM, ctKEM := alicePubMLKEM.Encapsulate()
 	seedCurve := randomBytes(t, seedSize)
 	ctCurve, err := X25519Decapsulate(seedCurve, bobPrivCurve, alicePubCurve)
 	req.NoError(err)
 
-	// Alice decapsulates
 	recoveredKEM, err := alicePrivMLKEM.Decapsulate(ctKEM)
 	req.NoError(err)
 	recoveredCurve, err := X25519Decapsulate(ctCurve, alicePrivCurve, bobPubCurve)
 	req.NoError(err)
 
-	// Derive KEKs
 	kekBob, err := DeriveChaCha20Key(seedCurve, seedKEM)
 	req.NoError(err)
 	kekAlice, err := DeriveChaCha20Key(recoveredCurve, recoveredKEM)
 	req.NoError(err)
 	req.Equal(kekAlice, kekBob, "KEK mismatch")
 
-	// Prepare 553 KiB of data
 	src := make([]byte, 553*1024)
 	_, err = rand.Read(src)
 	req.NoError(err)
 
-	// Encrypt with Bob's KEK
 	ciphertext, err := Encrypt(kekBob, src)
 	req.NoError(err)
 
-	// Decrypt with Alice's KEK
 	plaintext, err := Decrypt(kekAlice, ciphertext)
 	req.NoError(err)
 	req.Equal(src, plaintext, "Decrypted stream does not match original")
@@ -152,10 +166,10 @@ func TestDecryptWithAAD_NilAADCompatibleWithEncrypt(t *testing.T) {
 func TestEncrypt_NilAAD_BackCompat(t *testing.T) {
 	req := require.New(t)
 
-	// --- Golden vector: pin the wire format documented as [nonce | Seal(...)] ---
+	// Golden vector: pin the wire format [nonce | Seal(...)].
 	var kek [KeySize]byte
 	for i := range kek {
-		kek[i] = byte(i + 1) // 0x01..0x20
+		kek[i] = byte(i + 1)
 	}
 	var nonce [NonceSize]byte
 	for i := range nonce {
@@ -173,7 +187,7 @@ func TestEncrypt_NilAAD_BackCompat(t *testing.T) {
 	req.NoError(err)
 	req.Equal(plaintext, got)
 
-	// --- Length invariant across plaintext sizes ---
+	// Length invariant across plaintext sizes.
 	kek2 := randomBytes(t, KeySize)
 	cases := []int{0, 1, 1024, 64 * 1024}
 	for _, size := range cases {
@@ -285,7 +299,6 @@ func TestDeriveFileEncryptionKey_RejectsEmptyMaster(t *testing.T) {
 func TestProtocolMimic(t *testing.T) {
 	req := require.New(t)
 
-	// Alice (responder)
 	_, pubAliceMLKEM, _ := GenerateMLKEMKeypair()
 	privAliceX, pubAliceX, _ := GenerateX25519Keypair()
 
@@ -295,7 +308,6 @@ func TestProtocolMimic(t *testing.T) {
 	})
 	req.NoError(err, "Alice fingerprint generation failed")
 
-	// Bob (initiator)
 	seed := randomBytes(t, seedSize)
 	ct, err := X25519Encapsulate(seed, privAliceX, pubAliceX)
 	req.NoError(err)
@@ -304,7 +316,6 @@ func TestProtocolMimic(t *testing.T) {
 	req.NoError(err)
 	req.Equal(seed, recovered, "Decrypted seed mismatch")
 
-	// Fingerprint check
 	fpAliceCheck, err := ProtocolFingerprintV0(map[string][]byte{
 		"x25519": pubAliceX.Bytes(),
 		"mlkem":  pubAliceMLKEM.Bytes(),

@@ -21,7 +21,7 @@ type RelayKeepalive struct {
 	logger *slog.Logger
 
 	// Configuration
-	Interval time.Duration // Refresh interval (default 8 min, relay TTL is 10 min)
+	Interval time.Duration // Refresh interval; must stay under relayEntryTTL (see below)
 
 	// State
 	lastRefresh  atomic.Int64 // Unix timestamp of last successful refresh
@@ -39,9 +39,17 @@ func NewRelayKeepalive(kd *KeibiDrop, logger *slog.Logger) *RelayKeepalive {
 	return &RelayKeepalive{
 		kd:       kd,
 		logger:   logger.With("component", "relay-keepalive"),
-		Interval: 8 * time.Minute, // Refresh before 10 min TTL
+		Interval: defaultKeepaliveInterval,
 	}
 }
+
+// relayEntryTTL is the relay store's entryTTL: it drops registrations it stops seeing, which is
+// what keeps dead clients from hoarding a slot. Refreshing slower leaves a live peer absent
+// from /fetch, which the other side reads as "peer not found".
+const relayEntryTTL = 5 * time.Minute
+
+// defaultKeepaliveInterval leaves room for one miss (a failed refresh waits a full tick).
+const defaultKeepaliveInterval = 2 * time.Minute
 
 // Start begins the background refresh loop.
 func (rk *RelayKeepalive) Start() {

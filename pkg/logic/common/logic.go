@@ -69,7 +69,7 @@ func (kd *KeibiDrop) AddFile(path string) error {
 	defer kd.SyncTracker.LocalFilesMu.Unlock()
 	kd.SyncTracker.LocalFiles[name] = file // upsert: allows retry after failed notification
 
-	_, err = kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+	_, err = kd.sendNotify(context.Background(), &bindings.NotifyRequest{
 		Type: bindings.NotifyType(types.AddFile),
 		Path: file.RelativePath,
 		Attr: &bindings.Attr{
@@ -125,8 +125,12 @@ func (kd *KeibiDrop) UnshareFile(name string) error {
 		return fmt.Errorf("file %q not shared", name)
 	}
 
-	if kd.session != nil && kd.KDClient != nil {
-		_, _ = kd.KDClient.Notify(context.Background(), &bindings.NotifyRequest{
+	kd.mu.Lock()
+	sess := kd.session
+	client := kd.KDClient
+	kd.mu.Unlock()
+	if sess != nil && client != nil {
+		_, _ = client.Notify(context.Background(), &bindings.NotifyRequest{
 			Type: bindings.NotifyType(types.RemoveFile),
 			Path: name,
 		})
@@ -164,7 +168,7 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 	defer kd.SyncTracker.LocalFilesMu.Unlock()
 	kd.SyncTracker.LocalFiles[remoteName] = file
 
-	_, err = kd.session.GRPCClient.Notify(context.Background(), &bindings.NotifyRequest{
+	_, err = kd.sendNotify(context.Background(), &bindings.NotifyRequest{
 		Type: bindings.NotifyType(types.AddFile),
 		Path: remoteName,
 		Attr: &bindings.Attr{
@@ -328,9 +332,15 @@ updateTracker:
 // Intended for benchmarking; production code uses PullFile with defaults.
 func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize, nWorkers int) error {
 	logger := kd.logger.With("method", "pull-file-with-params")
-	if kd.session == nil || kd.session.GRPCClient == nil {
+	// Snapshot the session/client under kd.mu once; the worker goroutines below must
+	// not re-read kd.session, which teardown can nil mid-transfer.
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.GRPCClient == nil {
 		return ErrInvalidSession
 	}
+	client := s.GRPCClient
 	if kd.HealthMonitor != nil {
 		kd.HealthMonitor.TransferStarted()
 		defer kd.HealthMonitor.TransferEnded()
@@ -395,7 +405,7 @@ func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize,
 			wg.Add(1)
 			go func(workerID int) {
 				defer wg.Done()
-				stream, err := kd.session.GRPCClient.Read(dlCtx)
+				stream, err := client.Read(dlCtx)
 				if err != nil {
 					errCh <- fmt.Errorf("worker %d: open stream: %w", workerID, err)
 					dlCancel()
@@ -622,8 +632,18 @@ func (kd *KeibiDrop) waitForPeerFingerprint() error {
 // CreateRoom: start the gRPC server, dial the client with retry, init
 // connection resilience, then either signal ready (no-FUSE) or mount FUSE.
 func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
+	// Clear the teardown latch: a prior Stop() set tearingDown to make an in-flight reconnect
+	// bail, but this is a fresh CreateRoom/JoinRoom (the previous teardown already completed),
+	// so the gRPC-stack publishes below must not be gated off.
+	kd.tearingDown.Store(false)
+
 	kd.filesystemReady = make(chan struct{})
 	kd.filesystemReadyOnce = sync.Once{}
+
+	// Arm the in-band ratchet on both fresh conns before the gRPC readers start. Both
+	// handshakes are done, so the negotiated capability is known.
+	kd.session.ApplyKeyUpdateNegotiation()
+
 	kd.Start()
 
 	// Retry dialing until the gRPC server is ready.
@@ -632,10 +652,17 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 		return err
 	}
 
+	// Bring up the QUIC control channel alongside TCP (fail-soft, non-blocking).
+	kd.StartQUICControlChannel()
+
 	// Start health monitoring, reconnection, and relay keepalive.
 	if err := kd.InitConnectionResilience(); err != nil {
 		logger.Warn("Failed to init connection resilience", "error", err)
 	}
+
+	// Eager fold: make the session forward-secret against later identity-key theft in about one
+	// round trip. Best-effort and initiator-only; a no-op on the responder or with the ratchet off.
+	kd.maybeStartEagerFold()
 
 	if !kd.IsFUSE {
 		// Unblock Run()'s <-filesystemReady so it can process signals.
@@ -719,7 +746,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 	// Connection priority: LAN (2s per addr) → direct IPv6 (15s) → bridge relay.
 	{
-		// 1. Try LAN addresses first (only in local mode — internet mode skips this).
+		// 1. Try LAN addresses first (only in local mode; internet mode skips this).
 		lanConnected := false
 		if kd.IsLocalMode && len(kd.PeerLocalAddrs) > 0 {
 			logger.Info("Trying LAN addresses first", "addrs", kd.PeerLocalAddrs)
@@ -731,7 +758,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 					logger.Info("LAN address failed", "addr", addr, "error", err)
 					continue
 				}
-				// LAN connection succeeded — do handshake on this connection.
+				// LAN connection succeeded, do handshake on this connection.
 				if err := session.PerformOutboundHandshakeOnConn(kd.session, conn); err != nil {
 					conn.Close()
 					logger.Warn("LAN handshake failed", "addr", addr, "error", err)
@@ -741,16 +768,16 @@ func (kd *KeibiDrop) JoinRoom() error {
 				kd.PeerIPv6IP = localAddr
 				lanConnected = true
 
-				// Accept inbound from peer (LAN, should be fast — 5s timeout).
+				// Accept inbound from peer (LAN, should be fast, 5s timeout).
 				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
 				inConn, err := kd.listener.Accept()
 				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
 				if err != nil {
 					logger.Warn("LAN inbound accept failed", "error", err)
 					// Close outbound, fall through to direct/bridge.
-					if kd.session.Session != nil && kd.session.Session.Outbound != nil {
-						kd.session.Session.Outbound.Close()
-						kd.session.Session.Outbound = nil
+					if c := kd.session.OutboundConn(); c != nil {
+						c.Close()
+						kd.session.SetOutboundConn(nil)
 					}
 					kd.session.ResetOutboundCrypto()
 					lanConnected = false
@@ -775,10 +802,13 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 		// 2. Try direct IPv6 P2P (skip if peer has no IPv6, e.g. mobile).
 		var directErr error
-		if kd.PeerIPv6IP != "" {
+		switch {
+		case kd.PeerInboundBlocked(): // dialing it would only burn the timeout
+			directErr = fmt.Errorf("peer advertises a blocked inbound")
+		case kd.PeerIPv6IP != "":
 			peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
 			directErr = session.PerformOutboundHandshake(kd.session, peerAddr)
-		} else {
+		default:
 			directErr = fmt.Errorf("peer has no IPv6 address")
 		}
 
@@ -789,35 +819,43 @@ func (kd *KeibiDrop) JoinRoom() error {
 			// Direct outbound succeeded. Accept inbound with 15s timeout.
 			// If the peer can't reach us (firewall blocks inbound IPv6),
 			// fall back to bridge for both directions.
-			logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
-
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
-			inConn, acceptErr := kd.listener.Accept()
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
-
-			if acceptErr != nil {
-				logger.Warn("Inbound accept failed", "error", acceptErr)
-				needBridge = kd.BridgeAddr != ""
-				if !needBridge {
-					return fmt.Errorf("inbound accept timed out and no bridge configured")
-				}
+			// Nothing reaches our listener, so the peer's dial cannot arrive.
+			if kd.InboundBlocked() && kd.BridgeAddr != "" {
+				logger.Info("Inbound is blocked on this network, taking the bridge without waiting on accept")
+				needBridge = true
 			} else {
-				if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
-					logger.Error("Failed inbound handshake", "error", err)
-					return err
-				}
-				kd.ConnectionMode = "direct"
-				if kd.OnEvent != nil {
-					kd.OnEvent("connection_mode:direct")
+				logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
+
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+				inConn, acceptErr := kd.listener.Accept()
+				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
+
+				if acceptErr != nil {
+					logger.Warn("Inbound accept failed", "error", acceptErr)
+					kd.markInboundBlocked() // nothing reached us here; skip the wait next time
+					needBridge = kd.BridgeAddr != ""
+					if !needBridge {
+						return fmt.Errorf("inbound accept timed out and no bridge configured")
+					}
+				} else {
+					if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+						logger.Error("Failed inbound handshake", "error", err)
+						return err
+					}
+					kd.markInboundReachable()
+					kd.ConnectionMode = "direct"
+					if kd.OnEvent != nil {
+						kd.OnEvent("connection_mode:direct")
+					}
 				}
 			}
 
 			if needBridge {
 				logger.Info("Falling back to bridge for both directions")
-				// Close the direct outbound — we'll redo both via bridge.
-				if kd.session.Session != nil && kd.session.Session.Outbound != nil {
-					kd.session.Session.Outbound.Close()
-					kd.session.Session.Outbound = nil
+				// Close the direct outbound; we'll redo both via bridge.
+				if c := kd.session.OutboundConn(); c != nil {
+					c.Close()
+					kd.session.SetOutboundConn(nil)
 				}
 				kd.session.ResetOutboundCrypto()
 			}
@@ -896,12 +934,9 @@ func LocalConnectRole(myName, peerName, myAddr, peerAddr string) (create bool) {
 	return myAddr < peerAddr
 }
 
-// DecideLocalRole reports whether this peer should create (listen) rather than
-// join (dial) for a local-mode connection to peerName at peerAddr. It feeds
-// LocalConnectRole this peer's own LAN IPv4 and the peer's bare IP (port and
-// zone stripped), so colliding names compare like-for-like and the two sides
-// never both pick join. Callers on every frontend (CLI, desktop UI, mobile)
-// route through this one decider.
+// DecideLocalRole reports whether this peer should create (listen) rather than join (dial) for
+// a local-mode connection to peerName at peerAddr. It feeds LocalConnectRole this peer's LAN
+// IPv4 and the peer's bare IP (port/zone stripped), so colliding names compare like-for-like.
 func DecideLocalRole(myName, peerName, peerAddr string) bool {
 	logger := slog.Default().With("fn", "DecideLocalRole")
 	peerIP := peerAddr
@@ -975,6 +1010,12 @@ func (kd *KeibiDrop) CreateRoom() error {
 			useBridge = true
 		}
 
+		// Nothing reaches our listener, so the joiner's dial cannot arrive.
+		if kd.InboundBlocked() && kd.BridgeAddr != "" {
+			logger.Info("Inbound is blocked on this network, skipping direct P2P, using bridge")
+			useBridge = true
+		}
+
 		if !useBridge {
 			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
 		}
@@ -997,6 +1038,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 				return acceptErr
 			}
 			logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
+			kd.markInboundBlocked() // nothing reached us here; skip the wait next time
 			useBridge = true
 		}
 
@@ -1005,6 +1047,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
 				return err
 			}
+			kd.markInboundReachable()
 
 			addr, ok := conn.RemoteAddr().(*net.TCPAddr)
 			if !ok {
@@ -1024,10 +1067,10 @@ func (kd *KeibiDrop) CreateRoom() error {
 					logger.Warn("Direct outbound to peer failed, falling back to bridge for outbound", "error", err)
 					// Reset outbound crypto state for bridge handshake.
 					kd.session.ResetOutboundCrypto()
-					// Close direct inbound too — we need both via bridge.
-					if kd.session.Session != nil && kd.session.Session.Inbound != nil {
-						kd.session.Session.Inbound.Close()
-						kd.session.Session.Inbound = nil
+					// Close direct inbound too; we need both via bridge.
+					if c := kd.session.InboundConn(); c != nil {
+						c.Close()
+						kd.session.SetInboundConn(nil)
 					}
 					kd.session.ResetInboundCrypto()
 					useBridge = true
@@ -1142,7 +1185,7 @@ func (kd *KeibiDrop) NotifyDisconnect() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err := kd.session.GRPCClient.Notify(ctx, &bindings.NotifyRequest{
+	_, err := kd.sendNotify(ctx, &bindings.NotifyRequest{
 		Type: bindings.NotifyType_DISCONNECT,
 	})
 	if err != nil {

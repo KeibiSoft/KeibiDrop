@@ -16,6 +16,29 @@ import (
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 )
 
+// isLoopbackAddr must refuse any off-box bind for the debug pprof endpoint, so KD_PPROF can never
+// expose profiles beyond the local host.
+func TestIsLoopbackAddr(t *testing.T) {
+	cases := []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:6060", true},
+		{"[::1]:6060", true},
+		{"localhost:6060", true},
+		{"0.0.0.0:6060", false}, // binds all interfaces = off-box
+		{"192.168.1.10:6060", false},
+		{"example.com:6060", false}, // non-literal host we cannot verify = refuse
+		{"6060", false},             // not host:port
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isLoopbackAddr(tc.addr); got != tc.want {
+			t.Errorf("isLoopbackAddr(%q) = %v, want %v", tc.addr, got, tc.want)
+		}
+	}
+}
+
 var testPortBase int32 = 26900
 
 func nextTestPort() int {

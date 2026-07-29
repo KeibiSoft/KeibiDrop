@@ -26,9 +26,8 @@ const (
 	ReconnectStateGaveUp                             // Exhausted all retry attempts
 )
 
-// ReconnectManager handles automatic reconnection when the P2P connection drops.
-// It coordinates with the health monitor and uses a deterministic initiator
-// selection to avoid race conditions.
+// ReconnectManager handles automatic reconnection when the P2P connection drops. It coordinates
+// with the health monitor and uses deterministic initiator selection to avoid race conditions.
 type ReconnectManager struct {
 	session *Session
 	logger  *slog.Logger
@@ -92,9 +91,8 @@ func (r *ReconnectManager) Attempts() int {
 	return int(r.attempts.Load())
 }
 
-// IsReconnectInitiator determines which peer should initiate reconnection.
-// The peer with the lexicographically lower fingerprint is the initiator.
-// This avoids race conditions where both peers try to connect simultaneously.
+// IsReconnectInitiator determines which peer should initiate reconnection: the peer with the
+// lexicographically lower fingerprint, so both peers do not connect simultaneously.
 func (r *ReconnectManager) IsReconnectInitiator() bool {
 	if r.session == nil {
 		return false
@@ -201,6 +199,11 @@ func (r *ReconnectManager) reconnectLoop() {
 			r.state.Store(int32(ReconnectStateConnected))
 			r.attempts.Store(0)
 			logger.Info("Reconnection successful")
+
+			// Arm the ratchet on the fresh conns before OnReconnected rebuilds the gRPC
+			// transport: both handshakes are done so the capability is known, and no reader
+			// goroutine touches these conns yet.
+			r.session.ApplyKeyUpdateNegotiation()
 
 			if r.OnReconnected != nil {
 				r.OnReconnected()

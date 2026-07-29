@@ -18,10 +18,9 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 )
 
-// pullStreamFile downloads using the server-streaming StreamFile RPC.
-// One request, server pushes all chunks — zero per-chunk round-trip overhead.
-// On resume, starts from the first incomplete chunk — no-FUSE downloads
-// are always contiguous so everything after the pause point is missing.
+// pullStreamFile downloads using the server-streaming StreamFile RPC: one request, server
+// pushes all chunks (zero per-chunk round-trip overhead). On resume, starts from the first
+// incomplete chunk (no-FUSE downloads are contiguous, so everything after the pause is missing).
 func (kd *KeibiDrop) pullStreamFile(
 	ctx context.Context,
 	bitmap *filesystem.ChunkBitmap,
@@ -32,6 +31,15 @@ func (kd *KeibiDrop) pullStreamFile(
 	bitmapPath string,
 	logger *slog.Logger,
 ) error {
+	// Snapshot the client under kd.mu; teardown can nil kd.session concurrently.
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.GRPCClient == nil {
+		return ErrInvalidSession
+	}
+	client := s.GRPCClient
+
 	first := bitmap.NextMissing(0)
 	if first < 0 {
 		return nil
@@ -41,7 +49,7 @@ func (kd *KeibiDrop) pullStreamFile(
 		return nil
 	}
 
-	stream, err := kd.session.GRPCClient.StreamFile(ctx, &bindings.StreamFileRequest{
+	stream, err := client.StreamFile(ctx, &bindings.StreamFileRequest{
 		Path:        relPath,
 		StartOffset: startOffset,
 	})
@@ -80,10 +88,9 @@ func (kd *KeibiDrop) pullStreamFile(
 	return nil
 }
 
-// pullParallelRead downloads using N parallel bidirectional Read streams.
-// Each worker owns a shard of chunk indices and processes them sequentially.
-// 4 workers with interleaved shards saturate the link while keeping per-chunk
-// ordering within each stream (required by gRPC).
+// pullParallelRead downloads using N parallel bidirectional Read streams. Each worker owns a
+// shard of chunk indices; interleaved shards saturate the link while keeping per-chunk ordering
+// within each stream (required by gRPC).
 //
 //nolint:unused // kept as alternative strategy for high-latency links
 func (kd *KeibiDrop) pullParallelRead(
@@ -103,6 +110,16 @@ func (kd *KeibiDrop) pullParallelRead(
 		nWorkers = totalChunks
 	}
 
+	// Snapshot the client under kd.mu before spawning workers; teardown can nil
+	// kd.session mid-transfer and the workers must not re-read it.
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.GRPCClient == nil {
+		return ErrInvalidSession
+	}
+	client := s.GRPCClient
+
 	var wg sync.WaitGroup
 	errCh := make(chan error, nWorkers)
 	var chunksWritten atomic.Int32
@@ -112,7 +129,7 @@ func (kd *KeibiDrop) pullParallelRead(
 		go func(workerID int) {
 			defer wg.Done()
 
-			stream, err := kd.session.GRPCClient.Read(ctx)
+			stream, err := client.Read(ctx)
 			if err != nil {
 				errCh <- fmt.Errorf("worker %d: open stream: %w", workerID, err)
 				cancel()

@@ -5,8 +5,8 @@ libkeibidrop.a
 libkeibidrop.h
 keibidrop-cli
 keibidrop
-kd
-cli
+/kd
+/cli
 dist/
 *.test
 
@@ -38,3 +38,41 @@ go.sum.bak
 .idea/
 .vscode/
 *.swp
+
+# transport design notes (local artifacts, not shipped)
+pkg/transport/docs/
+
+# ── Local scratch, notes, artifacts (track deliberately, not by default) ──────
+.claude/
+claude-pointers/
+KeibiDrop-UI-bugs.txt
+ROADMAP.md
+conferences-2026.md
+info_that_might_be_useful.md
+fstest-report.md
+Localsend_*.html
+andrei-patch-from-last-night/
+blog/
+conferences/
+demo-video/
+design/
+latest-demo/
+photo-debug/
+plan-0.4.0/
+playground/
+pleas-trim/
+research/
+fleet/
+*.zip
+
+# Docs are local by default (already-tracked docs stay tracked; add new with -f)
+docs/
+
+# Arch-suffixed build binaries + local logs
+kd-arm64
+kd-x64
+keibidrop-cli-arm64
+libkeibidrop-*.a
+libkeibidrop-*.h
+mount-fuse
+*sanitized*

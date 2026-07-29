@@ -136,6 +136,13 @@ func DeriveAES256Key(sharedSecrets ...[]byte) ([]byte, error) {
 	return deriveKeyInternal(sha512.New, "KeibiDrop-AES-256-GCM-SEK", KeySize, sharedSecrets...)
 }
 
+// DeriveFoldSalt derives the 32-byte session-bound fold salt from the given IKM via
+// HKDF-SHA512 under a distinct label. Both peers pass the same order-normalized SEK
+// material, so they derive an identical salt and agree on the fold secret.
+func DeriveFoldSalt(ikm []byte) ([]byte, error) {
+	return deriveKeyInternal(sha512.New, "KeibiDrop-fold-salt-v1", KeySize, ikm)
+}
+
 func Fingerprint(pub []byte) string {
 	sum := sha512.Sum512(pub)
 	return base64.RawURLEncoding.EncodeToString(sum[:])
@@ -265,8 +272,7 @@ func ParsePeerKeys(pubMap map[string][]byte) (*PeerKeys, error) {
 
 // ========== IDENTITY PERSISTENCE ==========
 
-// deriveKeyInternalWithSalt is like deriveKeyInternal but uses a random salt
-// in HKDF-Extract.
+// deriveKeyInternalWithSalt is deriveKeyInternal with a salt in HKDF-Extract.
 func deriveKeyInternalWithSalt(
 	hash func() hash.Hash,
 	salt []byte,
@@ -297,11 +303,9 @@ func deriveKeyInternalWithSalt(
 	return key, nil
 }
 
-// DeriveFileEncryptionKey derives a 32-byte per-file AEAD key from a master
-// key (e.g. a random 32-byte secret from the OS keychain or a passphrase-
-// derived key) plus a per-file random salt, using HKDF-SHA512 with a
-// distinct info string per use case ("keibidrop-identity-file-v1",
-// "keibidrop-contacts-file-v1", etc.).
+// DeriveFileEncryptionKey derives a 32-byte per-file AEAD key from a master key plus a
+// per-file salt via HKDF-SHA512, with a distinct info string per use case
+// ("keibidrop-identity-file-v1", "keibidrop-contacts-file-v1", etc.).
 func DeriveFileEncryptionKey(masterKey, salt []byte, info string) ([]byte, error) {
 	if len(masterKey) == 0 {
 		return nil, errors.New("master key empty")
@@ -314,10 +318,8 @@ func DeriveFileEncryptionKey(masterKey, salt []byte, info string) ([]byte, error
 
 // ========== PRESENCE ==========
 
-// DerivePresenceKey derives a directional presence token.
-// The poster uses DerivePresenceKey(own, peer) to POST "I'm online for peer".
-// The checker uses DerivePresenceKey(peer, own) to GET "is peer online for me?"
-// Tokens are directional: poster's fingerprint is always first in the derivation.
+// DerivePresenceKey derives a directional presence token: the poster's fingerprint is always
+// first, so the poster calls (own, peer) to POST and the checker calls (peer, own) to GET.
 func DerivePresenceKey(posterFingerprint, checkerFingerprint string) ([]byte, error) {
 	ikm := sha512.Sum512([]byte(posterFingerprint + ":" + checkerFingerprint))
 	return deriveKeyInternal(sha512.New, "keibidrop-presence-v2", KeySize, ikm[:])
@@ -340,23 +342,20 @@ func ExtractRoomPassword(fingerprint string) ([]byte, error) {
 	return decoded[:roomPasswordSize], nil
 }
 
-// DeriveRelayKeys derives lookup and encryption keys from a room password.
-// The room password should be the first 32 bytes of the shared fingerprint.
-// Returns:
-//   - lookupKey: 32 bytes, used as relay index (base64 encoded as Bearer token)
-//   - encryptionKey: 32 bytes, used for ChaCha20-Poly1305 encryption of registration data
+// DeriveRelayKeys derives lookup and encryption keys from a room password (the first 32
+// bytes of the shared fingerprint). lookupKey (32B) is the relay index (base64 Bearer
+// token); encryptionKey (32B) encrypts registration data with ChaCha20-Poly1305.
 func DeriveRelayKeys(roomPassword []byte) (lookupKey []byte, encryptionKey []byte, err error) {
 	if len(roomPassword) < roomPasswordSize {
 		return nil, nil, fmt.Errorf("room password must be at least %d bytes", roomPasswordSize)
 	}
 
-	// Derive lookup key (different label ensures lookup != encryption key).
+	// Different label ensures lookup != encryption key.
 	lookupKey, err = deriveKeyInternal(sha512.New, "keibidrop-relay-lookup-v1", KeySize, roomPassword)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive lookup key: %w", err)
 	}
 
-	// Derive encryption key.
 	encryptionKey, err = deriveKeyInternal(sha512.New, "keibidrop-relay-encrypt-v1", KeySize, roomPassword)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to derive encryption key: %w", err)

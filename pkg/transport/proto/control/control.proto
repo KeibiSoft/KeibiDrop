@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package control;
+
+option go_package = "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control;control";
+
+// Control is the transport's own service, independent of any app. Ping is the Manager's
+// heartbeat (RTT + dead-link detection); kept separate so the manager works with any gRPC service.
+service Control {
+  rpc Ping(PingRequest) returns (PingReply);
+
+  // Announce tells the peer this endpoint moved (after a QUIC migration). The surviving
+  // control channel carries the new coordinates so the peer re-dials directly, skipping the
+  // heartbeat timeout + relay lookup.
+  rpc Announce(AnnounceRequest) returns (AnnounceReply);
+}
+
+message PingRequest {}
+message PingReply {}
+
+message AnnounceRequest {
+  string ip = 1;       // announcer's new address (global IPv6)
+  uint32 tcp_port = 2; // announcer's TCP inbound port (UDP control reuses the number)
+}
+message AnnounceReply {}

@@ -82,15 +82,20 @@ cross-macos-dmg: cross-macos $(DIST)
 TEST_SKIP := BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency|PullFileThroughput|EncryptedGRPC|TransferThroughput|SecureConnThroughput|RoundTripFUSETransfer|FUSEtoFUSE_GitClone
 
 test:
-	go test -v -count=1 -timeout 180s -skip '$(TEST_SKIP)' ./tests/...
+	go test -v -count=1 -timeout 300s -skip '$(TEST_SKIP)' ./tests/...
 
 # Deterministic concurrency-race guards under the race detector. Scoped to the
-# in-process filesystem unit tests (no FUSE mount) so it is fast (~3s) and cannot
-# trip the unrelated cgofuse mount-teardown race that end-to-end FUSE tests hit
-# under -race. Covers the Release async-notify race plus the handle-reuse and
-# prefetch-rename guards.
+# in-process unit tests (no FUSE mount) across pkg/filesystem, pkg/session and
+# pkg/logic/common so it stays fast and cannot trip the unrelated cgofuse
+# mount-teardown race that end-to-end FUSE tests hit under -race. Covers the
+# Release async-notify race, the handle-reuse and prefetch-rename guards, the
+# SecureConn double-close race, and the onRekeyNeeded session-nil race.
 test-race:
-	go test -race -count=1 -timeout 90s ./pkg/filesystem/
+	go test -race -count=1 -timeout 180s ./pkg/filesystem/ ./pkg/session/ ./pkg/logic/common/
+
+# The transport bench harness lives behind -tags bench (not in release builds).
+test-bench:
+	go test -tags bench -count=1 -timeout 180s ./pkg/transport/
 
 # ── Fleet: build + test across the whole REAL fleet (local Mac + Timisoara Linux +
 # Singapore Windows) from ONE call. Encodes each env's quirks once (go PATH, source dir,
@@ -116,11 +121,16 @@ install-proto:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
+# NOTE: the pkg/transport/proto pb files carry a //go:build bench first line;
+# regeneration drops it, re-add after running this target.
 protoc:
 	PATH="$$PATH:$$(go env GOPATH)/bin" protoc \
 	       --go_opt=module=github.com/KeibiSoft/KeibiDrop \
 	       --go-grpc_opt=module=github.com/KeibiSoft/KeibiDrop \
-	       --go_out=. --go-grpc_out=. keibidrop.proto
+	       --go_out=. --go-grpc_out=. \
+	       keibidrop.proto \
+	       pkg/transport/proto/bench.proto \
+	       pkg/transport/proto/control/control.proto
 
 # ── Rust helpers ──────────────────────────────────────────
 

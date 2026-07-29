@@ -41,7 +41,6 @@ func TestPullFileProfile(t *testing.T) {
 
 	tp := SetupPeerPairWithTimeout(t, false, 600*time.Second)
 
-	// Write 1 GB random data to Alice's save dir.
 	data := make([]byte, benchProfile1GB)
 	_, err := rand.Read(data)
 	req.NoError(err)
@@ -52,7 +51,6 @@ func TestPullFileProfile(t *testing.T) {
 
 	WaitForRemoteFile(t, tp.Bob.SyncTracker, "bench_profile_1gb.bin", 30*time.Second)
 
-	// Snapshot memory before.
 	var memBefore, memAfter runtime.MemStats
 	runtime.ReadMemStats(&memBefore)
 
@@ -90,9 +88,9 @@ func TestPullFileProfile(t *testing.T) {
 	req.Equal(int64(benchProfile1GB), info.Size(), "pulled file size mismatch")
 }
 
-// TestSecureConnThroughput measures raw SecureConn write→read throughput
-// over net.Pipe() without gRPC overhead, across three block sizes.
-// A raw-net-pipe sub-test establishes a baseline without encryption.
+// TestSecureConnThroughput measures raw SecureConn write/read throughput over net.Pipe()
+// without gRPC overhead, across three block sizes. A raw-net-pipe sub-test is the unencrypted
+// baseline.
 func TestSecureConnThroughput(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping SecureConn throughput in short mode")
@@ -110,8 +108,8 @@ func TestSecureConnThroughput(t *testing.T) {
 			_, err := rand.Read(key)
 			require.NoError(t, err)
 
-			writer := session.NewSecureConn(c1, key, kbc.CipherAES256)
-			reader := session.NewSecureConn(c2, key, kbc.CipherAES256)
+			writer := session.NewSecureConn(c1, key, kbc.CipherAES256, session.NoncePrefixOutbound)
+			reader := session.NewSecureConn(c2, key, kbc.CipherAES256, session.NoncePrefixInbound)
 
 			buf := make([]byte, bs)
 			_, err = rand.Read(buf)
@@ -204,10 +202,9 @@ func pullFileWithParams(
 	return time.Since(start), err
 }
 
-// TestBlockSizeSweep runs pullFileWithParams over multiple block-size values
-// for a 1 GB file, three repetitions each. Because the session internals are
-// unexported, block size variation is noted in output but the underlying
-// transfer always uses the config default (see pullFileWithParams NOTE).
+// TestBlockSizeSweep runs pullFileWithParams over multiple block-size values for a 1 GB file,
+// three reps each. The session internals are unexported, so block size is noted in output but
+// the underlying transfer always uses the config default.
 func TestBlockSizeSweep(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping block-size sweep in short mode")
@@ -255,10 +252,9 @@ func TestBlockSizeSweep(t *testing.T) {
 	}
 }
 
-// TestWorkerCountSweep runs pullFileWithParams over multiple worker counts for
-// a 1 GB file, three repetitions each. Because the session internals are
-// unexported, worker count variation is noted in output but the underlying
-// transfer always uses the config default (see pullFileWithParams NOTE).
+// TestWorkerCountSweep runs pullFileWithParams over multiple worker counts for a 1 GB file,
+// three reps each. The session internals are unexported, so worker count is noted in output
+// but the underlying transfer always uses the config default.
 func TestWorkerCountSweep(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping worker-count sweep in short mode")

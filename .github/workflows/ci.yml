@@ -37,6 +37,9 @@ jobs:
       - name: Concurrency tests under -race
         run: make test-race
 
+      - name: Bench-tagged transport harness
+        run: make test-bench
+
   lint:
     runs-on: ubuntu-22.04
     steps:
