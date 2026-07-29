@@ -192,3 +192,140 @@ func TestFUSEtoFUSE_Pijul(t *testing.T) {
 		}
 	})
 }
+
+// The shared-single-repo pattern above co-writes one mmap'd pristine from both peers. Pijul's
+// native model is one repository per user, synchronized by pull; over the mount that is a pure
+// on-demand read of the peer's repo. This is the supported profile, mirroring git clone/pull.
+func TestFUSEtoFUSE_PijulPull(t *testing.T) {
+	skipIfNoFUSE(t)
+	if _, err := exec.LookPath("pijul"); err != nil {
+		t.Skip("pijul not installed")
+	}
+	if os.Getenv("SSH_AUTH_SOCK") == "" {
+		t.Skip("pijul needs an ssh agent to sign changes")
+	}
+
+	binary := getTestPeerBinary(t)
+
+	relay := NewMockRelay()
+	defer relay.Close()
+
+	aliceMount := t.TempDir()
+	bobMount := t.TempDir()
+
+	logDir := os.Getenv("KD_PIJUL_LOGDIR") // set to keep peer logs after the run
+	if logDir == "" {
+		logDir = t.TempDir()
+	}
+	peerEnv := func(in, out int, mount string) map[string]string {
+		return map[string]string{
+			"RELAY_URL":     relay.URL(),
+			"INBOUND_PORT":  fmt.Sprintf("%d", in),
+			"OUTBOUND_PORT": fmt.Sprintf("%d", out),
+			"MOUNT_DIR":     mount,
+			"SAVE_DIR":      t.TempDir(),
+			"USE_FUSE":      "1",
+			"LOG_FILE":      filepath.Join(logDir, filepath.Base(mount)+".log"),
+			"KEIBIDROP_LIVE_COLLAB": os.Getenv("KEIBIDROP_LIVE_COLLAB"),
+		}
+	}
+	alice := spawnPeer(t, binary, peerEnv(
+		getFreePortInRange(t, 26700, 26749), getFreePortInRange(t, 26750, 26799), aliceMount))
+	bob := spawnPeer(t, binary, peerEnv(
+		getFreePortInRange(t, 26800, 26849), getFreePortInRange(t, 26850, 26899), bobMount))
+
+	t.Cleanup(func() {
+		for _, p := range []*testPeer{alice, bob} {
+			fmt.Fprintln(p.stdin, "quit")
+			done := make(chan error, 1)
+			go func() { done <- p.cmd.Wait() }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				_ = p.cmd.Process.Kill()
+				<-done
+			}
+		}
+		for _, dir := range []string{aliceMount, bobMount} {
+			forceUnmount(dir)
+			waitForUnmount(dir, 5*time.Second)
+		}
+	})
+
+	require := require.New(t)
+
+	aliceFP := strings.TrimPrefix(alice.send(t, "fingerprint", 5*time.Second), "FP:")
+	bobFP := strings.TrimPrefix(bob.send(t, "fingerprint", 5*time.Second), "FP:")
+	require.Equal("OK", alice.send(t, "register "+bobFP, 5*time.Second))
+	require.Equal("OK", bob.send(t, "register "+aliceFP, 5*time.Second))
+
+	aliceConn := alice.sendAsync(t, "create")
+	WaitForCondition(t, 10*time.Second, 100*time.Millisecond, func() bool {
+		return relay.EntryCount() > 0
+	}, "waiting for relay registration")
+	require.Equal("CONNECTED", bob.send(t, "join", 30*time.Second))
+	require.Equal("CONNECTED", <-aliceConn)
+
+	waitForFUSEMount(t, aliceMount, 15*time.Second)
+	waitForFUSEMount(t, bobMount, 15*time.Second)
+
+	ex := func(t *testing.T, p *testPeer, dir, cmdline string, timeout time.Duration) string {
+		t.Helper()
+		resp := p.send(t, "exec "+dir+" "+cmdline, timeout)
+		require.True(strings.HasPrefix(resp, "EXEC:0:"), "%q failed: %s", cmdline, resp)
+		return strings.TrimPrefix(resp, "EXEC:0:")
+	}
+
+	t.Run("BobStartsRepo", func(t *testing.T) {
+		require.NoError(os.MkdirAll(filepath.Join(bobMount, "proj"), 0o755))
+		ex(t, bob, "proj", "pijul init", 30*time.Second)
+		require.Equal("OK", bob.send(t, "write_file proj/a.txt line-one", 10*time.Second))
+		ex(t, bob, "proj", "pijul add a.txt", 20*time.Second)
+		ex(t, bob, "proj", "pijul record -a -m first --author bob", 60*time.Second)
+	})
+
+	t.Run("AliceClonesFromMount", func(t *testing.T) {
+		WaitForFileOnMount(t, filepath.Join(aliceMount, "proj", ".pijul", "pristine", "db"), 60*time.Second)
+		ex(t, alice, ".", "pijul clone proj proj-alice", 120*time.Second)
+		require.Contains(ex(t, alice, "proj-alice", "pijul log", 30*time.Second), "first")
+		require.Equal("line-one", ex(t, alice, "proj-alice", "cat a.txt", 15*time.Second))
+	})
+
+	t.Run("BobRecordsMore", func(t *testing.T) {
+		require.Equal("OK", bob.send(t, "write_file proj/a.txt line-one-and-two", 10*time.Second))
+		ex(t, bob, "proj", "pijul record -a -m second --author bob", 60*time.Second)
+	})
+
+	t.Run("AlicePullsSecond", func(t *testing.T) {
+		deadline := time.Now().Add(90 * time.Second)
+		var log string
+		for time.Now().Before(deadline) {
+			ex(t, alice, "proj-alice", "pijul pull --all ../proj", 60*time.Second)
+			if log = ex(t, alice, "proj-alice", "pijul log", 30*time.Second); strings.Contains(log, "second") {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+		require.Contains(log, "second", "alice never pulled bob's second change")
+		require.Equal("line-one-and-two", ex(t, alice, "proj-alice", "cat a.txt", 15*time.Second))
+	})
+
+	// The reverse direction: alice records in her repo, bob pulls it through his mount.
+	t.Run("BobPullsAliceChange", func(t *testing.T) {
+		require.Equal("OK", alice.send(t, "write_file proj-alice/a.txt line-three-by-alice", 10*time.Second))
+		ex(t, alice, "proj-alice", "pijul record -a -m third --author alice", 60*time.Second)
+
+		WaitForFileOnMount(t, filepath.Join(bobMount, "proj-alice", ".pijul", "pristine", "db"), 60*time.Second)
+		deadline := time.Now().Add(90 * time.Second)
+		var log string
+		for time.Now().Before(deadline) {
+			ex(t, bob, "proj", "pijul pull --all ../proj-alice", 60*time.Second)
+			if log = ex(t, bob, "proj", "pijul log", 30*time.Second); strings.Contains(log, "third") {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+		require.Contains(log, "third", "bob never pulled alice's change")
+		require.Equal("line-three-by-alice", ex(t, bob, "proj", "cat a.txt", 15*time.Second))
+	})
+}
