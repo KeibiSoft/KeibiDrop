@@ -71,6 +71,47 @@ func TestMaybeStartEagerFoldSoon_CoalescesIntoOneTimer(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond, "the deferred round runs once and clears")
 }
 
+// A trigger whose single-flight CAS fails publishes its rearm as a separate atomic. If the
+// in-flight round retires entirely in the gap between the failed CAS and that publish, the
+// rearm lands with no consumer (no round, no timer) and the trigger is lost. The reclaim path
+// must notice the round is gone and fold anyway. Not -race-detectable (all atomics), so this
+// wedges the interleaving through the eagerFoldRearmGate seam.
+func TestMaybeStartEagerFold_ReclaimsRearmWhenRoundRetiresMidPublish(t *testing.T) {
+	kd := &KeibiDrop{
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		session: &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true},
+	}
+	kd.eagerFoldInFlight.Store(true) // a round R is in flight, so the trigger's CAS fails
+
+	parked := make(chan struct{}, 1) // buffered: the gate signals once even before we receive
+	release := make(chan struct{})
+	origGate := eagerFoldRearmGate
+	eagerFoldRearmGate = func() {
+		select {
+		case parked <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+	t.Cleanup(func() { eagerFoldRearmGate = origGate })
+
+	done := make(chan struct{})
+	go func() { kd.maybeStartEagerFold(); close(done) }()
+	<-parked // the trigger has failed its CAS and is holding before it publishes the rearm
+
+	// R retires exactly as runEagerFold's defers do: clear single-flight, then find no rearm.
+	kd.eagerFoldInFlight.Store(false)
+	require.False(t, kd.eagerFoldRearm.Swap(false), "R's retire finds no rearm to consume yet")
+
+	close(release) // the trigger now publishes its rearm into a world with no round in flight
+	<-done         // and fully returns; without the reclaim the rearm is stranded true here
+
+	require.Eventually(t, func() bool {
+		return !kd.eagerFoldRearm.Load() && !kd.eagerFoldInFlight.Load()
+	}, 2*time.Second, 5*time.Millisecond,
+		"the trigger reclaims its parked rearm, folds once, and both guards clear")
+}
+
 func TestMaybeStartEagerFold_ClearsGuardWhenRoundFails(t *testing.T) {
 	kd := &KeibiDrop{
 		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
