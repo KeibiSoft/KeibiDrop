@@ -37,8 +37,12 @@ type relayProbeResult struct {
 // ProbeInboundReachability asks the relay to dial our listener and records the verdict, cached
 // per local address for probeCacheTTL. Best effort: any failure leaves the mark as it was.
 func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
+	// Snapshot the address up front: the verdict must be tagged with the address it was measured
+	// on, not whatever the address becomes while this up-to-6s probe is in flight. A mid-probe
+	// network change would otherwise pin the new network to the relay for probeCacheTTL.
+	addr := kd.LocalIPv6IP
 	on, ok := kd.probedOn.Load().(string)
-	if ok && on == kd.LocalIPv6IP && time.Since(time.Unix(0, kd.probedAt.Load())) < probeCacheTTL {
+	if ok && on == addr && time.Since(time.Unix(0, kd.probedAt.Load())) < probeCacheTTL {
 		return
 	}
 	logger := kd.logger.With("method", "probe-inbound")
@@ -66,7 +70,7 @@ func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
 
 	// The relay answered, so cache either way: a relay without the endpoint answers 404 every
 	// time, and re-asking on every registration would just add a round trip to each one.
-	kd.probedOn.Store(kd.LocalIPv6IP)
+	kd.probedOn.Store(addr)
 	kd.probedAt.Store(time.Now().UnixNano())
 
 	if resp.StatusCode != http.StatusOK {
@@ -81,14 +85,19 @@ func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
 		kd.markInboundReachable()
 		return
 	}
-	kd.markInboundBlocked()
+	kd.markInboundBlockedOn(addr)
 	logger.Info("Relay could not reach our listener; advertising a blocked inbound so the peer skips its direct dial",
 		"port", kd.inboundPort)
 }
 
-// markInboundBlocked records a timed-out accept, tagged with the address it was seen on.
+// markInboundBlocked records a timed-out accept on the current local address.
 func (kd *KeibiDrop) markInboundBlocked() {
-	kd.inboundBlockedOn.Store(kd.LocalIPv6IP)
+	kd.markInboundBlockedOn(kd.LocalIPv6IP)
+}
+
+// markInboundBlockedOn records a timed-out accept, tagged with the address it was seen on.
+func (kd *KeibiDrop) markInboundBlockedOn(addr string) {
+	kd.inboundBlockedOn.Store(addr)
 	kd.inboundBlocked.Store(true)
 }
 
