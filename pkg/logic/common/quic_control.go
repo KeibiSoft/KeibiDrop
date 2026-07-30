@@ -114,8 +114,8 @@ func (l *quicControlListener) Accept() (net.Conn, error) {
 	l.mu.Lock()
 	l.last = sc
 	l.mu.Unlock()
-	// New wire: re-run the eager fold so this conn gets fresh entropy too. Single-flight
-	// and supersede-idempotent staging make repeats safe.
+	// New wire: signal the fold trigger so this conn gets fresh entropy too. Arrivals coalesce
+	// into one deferred round, so signaling per accepted conn is cheap and safe.
 	if l.onAccept != nil {
 		l.onAccept()
 	}

@@ -156,6 +156,41 @@ func TestReachability_VerdictExpiresSoAFixedRouterIsPickedUp(t *testing.T) {
 	require.False(t, kd.InboundBlocked(), "an expired verdict is re-probed and cleared")
 }
 
+// The verdict must be tagged with the address it was measured on, not whatever the address
+// happens to be when the slow probe returns. If the network changes mid-probe, an old-network
+// "blocked" tagged with the new address would defeat the address-scoping and pin the new
+// network to the relay for probeCacheTTL. The blocking handler wedges the address change into
+// the exact window between the read and the store.
+func TestReachability_ProbeVerdictPinnedToMeasuredAddress(t *testing.T) {
+	handling := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case handling <- struct{}{}:
+		default:
+		}
+		<-release
+		_, _ = io.WriteString(w, `{"reachable":false}`)
+	}))
+	defer srv.Close()
+
+	kd := probeKD(t, srv.URL)
+	origAddr := kd.LocalIPv6IP
+
+	done := make(chan struct{})
+	go func() { kd.ProbeInboundReachability(context.Background()); close(done) }()
+	<-handling // the probe is inside the relay call; the verdict is measured but not yet stored
+
+	kd.LocalIPv6IP = "2001:db8::2" // the network changed while the probe was in flight
+	close(release)
+	<-done
+
+	require.False(t, kd.InboundBlocked(),
+		"a verdict measured on the old address must not pin the new one to the relay")
+	require.Equal(t, origAddr, kd.probedOn.Load(),
+		"the cache key is the measured address, so the new network is free to re-probe")
+}
+
 // The hint is published for the peer and read back from its registration; an older peer that
 // sends no field decodes as false, so the direct path is tried exactly as before.
 func TestReachability_HintTravelsInTheRegistration(t *testing.T) {

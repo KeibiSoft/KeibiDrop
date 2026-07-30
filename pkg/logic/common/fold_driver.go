@@ -30,6 +30,11 @@ func eagerFoldEligible(sess *session.Session) bool {
 	return sess != nil && sess.IsFoldInitiator() && sess.UseKeyUpdate()
 }
 
+// eagerFoldRearmGate is a no-op seam between the failed single-flight CAS and the rearm publish,
+// so a test can wedge the exact interleaving where the in-flight round retires inside that gap.
+// Production leaves it empty.
+var eagerFoldRearmGate = func() {}
+
 // maybeStartEagerFold runs one best-effort ephemeral-KEM fold when this peer is the initiator
 // and the ratchet is on. Snapshots kd.session under kd.mu (teardown nils it concurrently),
 // enforces single-flight, and folds in a goroutine so the caller is never blocked.
@@ -41,7 +46,20 @@ func (kd *KeibiDrop) maybeStartEagerFold() {
 		return
 	}
 	if !kd.eagerFoldInFlight.CompareAndSwap(false, true) {
+		eagerFoldRearmGate()
 		kd.eagerFoldRearm.Store(true) // in flight: one follow-up round instead of a lost trigger
+		// The round can retire completely between the failed CAS and the store above, leaving
+		// the rearm with no consumer; reclaim it and retry rather than parking the trigger.
+		for !kd.eagerFoldInFlight.Load() {
+			if !kd.eagerFoldRearm.Swap(false) {
+				return // a retiring round (or another trigger) took the token and re-entered
+			}
+			if kd.eagerFoldInFlight.CompareAndSwap(false, true) {
+				go kd.runEagerFold(sess)
+				return
+			}
+			kd.eagerFoldRearm.Store(true) // a new round won the CAS; republish for it and recheck
+		}
 		return
 	}
 	go kd.runEagerFold(sess)
