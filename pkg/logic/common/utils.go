@@ -561,6 +561,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		// rather than blocking the FUSE handler.
 		select {
 		case kd.notifyCh <- req:
+			logger.Debug("Local change queued", "action", event.Action, "path", event.Path)
 		default:
 			logger.Warn("Notification queue full, dropping", "path", event.Path)
 		}

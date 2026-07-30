@@ -226,7 +226,8 @@ func TestFUSEtoFUSE_PijulPull(t *testing.T) {
 			"SAVE_DIR":      t.TempDir(),
 			"USE_FUSE":      "1",
 			"LOG_FILE":      filepath.Join(logDir, filepath.Base(mount)+".log"),
-			"KEIBIDROP_LIVE_COLLAB": os.Getenv("KEIBIDROP_LIVE_COLLAB"),
+			// The supported pijul profile: in-place edit visibility needs auto_cache on macOS.
+			"KEIBIDROP_LIVE_COLLAB": "1",
 		}
 	}
 	alice := spawnPeer(t, binary, peerEnv(

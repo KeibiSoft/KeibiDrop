@@ -81,7 +81,7 @@ func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (
 }
 
 func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRequest) (*bindings.NotifyResponse, error) {
-	logger := kd.Logger.With("method", "notify", "req-type", req.Type)
+	logger := kd.Logger.With("method", "notify", "req-type", req.Type, "path", req.Path)
 
 	// Handle DISCONNECT before FS checks — it doesn't need a mounted filesystem.
 	if req.Type == bindings.NotifyType_DISCONNECT {

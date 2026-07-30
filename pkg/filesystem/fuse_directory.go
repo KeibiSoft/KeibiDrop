@@ -297,6 +297,9 @@ func shouldPrefetchOnOpen(prefetchOnOpen bool, autoMB int, size uint64) bool {
 // (git's "index", pijul's "pristine/db").
 var vcsMetaDirs = []string{".git/", ".pijul/"}
 
+// fuseOpLog enables per-op experiment logging (KD_FUSE_OPLOG=1); high volume, off by default.
+var fuseOpLog = os.Getenv("KD_FUSE_OPLOG") == "1"
+
 // shouldUseDirectIo determines if a file should bypass kernel page cache.
 // Returns true for files that need real-time sync (write access, not VCS metadata).
 // Returns false for VCS metadata (to allow mmap).
@@ -412,6 +415,9 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 
 // OpenEx implements FileSystemOpenEx interface for per-file direct_io control.
 func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
+	if fuseOpLog {
+		d.logger.Debug("oplog OpenEx", "path", path, "flags", fi.Flags)
+	}
 	defer d.recoverPanic("OpenEx", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
@@ -788,12 +794,17 @@ func (d *Dir) Destroy() {
 
 func (d *Dir) Flush(path string, fh uint64) (errCode int) {
 	defer d.recoverPanic("Flush", &errCode)
-	// d.logger.Debug("FUSE Flush (stub)", "path", path, "fh", fh)
+	if fuseOpLog {
+		d.logger.Debug("oplog Flush", "path", path, "fh", fh)
+	}
 	return 0 // Return success - actual sync happens in Fsync/Release.
 }
 
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	defer d.recoverPanic("Fsync", &errCode)
+	if fuseOpLog {
+		d.logger.Debug("oplog Fsync", "path", path, "fh", fh, "datasync", datasync)
+	}
 	// d.logger.Info("FUSE fsync", "path", path, "fh", fh)
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "fsync", "path", localPath)
@@ -1288,6 +1299,13 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 
 	v := f.openFileCounter.Release()
 
+	if fuseOpLog {
+		f.metaMu.RLock()
+		d.logger.Debug("oplog Release", "path", path, "fh", fh, "openCount", v,
+			"hadEdits", f.HadEdits, "notRemoteSynced", f.NotRemoteSynced)
+		f.metaMu.RUnlock()
+	}
+
 	// Debug: log ALL relevant state at Release entry
 	// logger.Info("=== RELEASE ===",
 	// 	"path", path,
@@ -1310,8 +1328,12 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		f.metaMu.RLock()
 		notRemoteSynced := f.NotRemoteSynced
 		hadEdits := f.HadEdits
+		localNewer := f.LocalNewer
 		f.metaMu.RUnlock()
-		needsNotify := (notRemoteSynced || hadEdits) && d.OnLocalChange != nil
+		// localNewer gates the no-edit case: a write-mode open+release with zero writes
+		// on a remote-origin file (pijul locks the source pristine RDWR) must not
+		// announce, or the announce steals the owner's authorship on the other side.
+		needsNotify := (hadEdits || (notRemoteSynced && localNewer)) && d.OnLocalChange != nil
 
 		if needsNotify {
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -1709,6 +1731,9 @@ func (d *Dir) Symlink(target string, newpath string) (errCode int) {
 // Note: On windows open does not have a truncate flag,
 // thus Open is immediately followed by Truncate.
 func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
+	if fuseOpLog {
+		d.logger.Debug("oplog Truncate", "path", path, "size", size, "fh", fh)
+	}
 	defer d.recoverPanic("Truncate", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
@@ -1842,6 +1867,9 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 // Utimens sets file access and modification times.
 // We return success but don't persist the changes (timestamps come from underlying storage).
 func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) (errCode int) {
+	if fuseOpLog {
+		d.logger.Debug("oplog Utimens", "path", path)
+	}
 	defer d.recoverPanic("Utimens", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
@@ -1905,6 +1933,9 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	entry, ok := d.OpenFileHandlers[fh]
 	if !ok {
 		d.OpenMapLock.RUnlock()
+		if fuseOpLog {
+			d.logger.Debug("oplog Write MISS", "path", path, "fh", fh, "offset", offset, "len", len(buff))
+		}
 		// macOS fcopyfile() can call Write after Release - try to reopen and write
 		// slog.Warn("FCOPYFILE WORKAROUND", "path", path, "fh", fh, "offset", offset, "len", len(buff))
 		cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -1928,6 +1959,9 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		return n
 	}
 	f := entry.File
+	if fuseOpLog {
+		d.logger.Debug("oplog Write hit", "path", path, "fh", fh, "offset", offset, "len", len(buff))
+	}
 	f.metaMu.Lock()
 	f.HadEdits = true
 	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
@@ -2837,7 +2871,20 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		// size alone: git's HEAD goes from 25 bytes (.invalid placeholder)
 		// to 21 bytes (ref: refs/heads/main), so smaller size can be correct.
 		incomingMtime := stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
-		existingMtime := existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
+		// Compare against the peer-announced watermark, not stat.Mtim: a reader-side
+		// Truncate/Getattr stamps stat.Mtim with local clock, making every genuine
+		// remote update look stale (pijul opens the source pristine RDWR+ftruncate).
+		existingMtime := existing.RemoteMtimeNs
+		if existingMtime == 0 {
+			existingMtime = existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
+		}
+		if incomingMtime > existing.RemoteMtimeNs {
+			existing.RemoteMtimeNs = incomingMtime
+		}
+		if fuseOpLog {
+			d.logger.Debug("oplog AddRemoteFile existing", "path", path, "sizeChanged", sizeChanged,
+				"incomingMtime", incomingMtime, "existingMtime", existingMtime)
+		}
 		if sizeChanged && stat.Size < oldSize && existing.Bitmap != nil && existing.Bitmap.Have() > 0 && incomingMtime < existingMtime {
 			d.RemoteFilesLock.Unlock()
 			return nil
@@ -2893,6 +2940,9 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			// on-demand, mirroring EditRemoteFile. Without this, a peer that
 			// already fully cached the file keeps serving stale content.
 			var oldBitmap, newBitmap *ChunkBitmap
+			if fuseOpLog {
+				d.logger.Debug("oplog same-size verdict", "path", path, "reset", incomingMtime > existingMtime)
+			}
 			if incomingMtime > existingMtime {
 				existing.metaMu.Lock()
 				existing.NotLocalSynced = true
@@ -2952,6 +3002,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		OnLocalChange:   d.OnLocalChange,
 		RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
 		Bitmap:          NewChunkBitmap(stat.Size),
+		RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
 	}
 	d.RemoteFiles[path] = f
 	d.RemoteFilesLock.Unlock()
@@ -3195,6 +3246,7 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 			OnLocalChange:   d.OnLocalChange,
 			RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
 			Bitmap:          NewChunkBitmap(stat.Size),
+			RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
 		}
 		d.RemoteFiles[path] = newFile
 		d.RemoteFilesLock.Unlock()
@@ -3207,10 +3259,18 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 		return nil
 	}
 
-	if stat.Mtim.Time().Before(f.stat.Mtim.Time()) {
+	// Same watermark discipline as AddRemoteFile: stat.Mtim is local-clock-tainted.
+	editRef := f.RemoteMtimeNs
+	if editRef == 0 {
+		editRef = f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec
+	}
+	incomingEditMtime := stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
+	if incomingEditMtime < editRef {
 		d.RemoteFilesLock.Unlock()
-		// logger.Warn("Remote edit rejected - local is newer", "path", path, "remoteMtime", stat.Mtim.Time(), "localMtime", f.stat.Mtim.Time())
 		return syscall.ECANCELED
+	}
+	if incomingEditMtime > f.RemoteMtimeNs {
+		f.RemoteMtimeNs = incomingEditMtime
 	}
 
 	// logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
