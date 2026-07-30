@@ -2850,7 +2850,16 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	}
 	// d.logger.Info("FUSE remote-add", "path", path, "size", stat.Size)
 
+	// Authority handoff: a peer edit of a locally-created file must land on the SAME
+	// object the local maps serve, or reads keep the stale local copy forever.
+	d.AfmLock.RLock()
+	local, hasLocal := d.AllFileMap[path]
+	d.AfmLock.RUnlock()
+
 	d.RemoteFilesLock.Lock()
+	if _, ok := d.RemoteFiles[path]; !ok && hasLocal {
+		d.RemoteFiles[path] = local
+	}
 
 	if existing, ok := d.RemoteFiles[path]; ok {
 		oldSize := existing.stat.Size
