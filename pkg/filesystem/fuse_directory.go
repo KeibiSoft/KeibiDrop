@@ -1330,9 +1330,8 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		hadEdits := f.HadEdits
 		localNewer := f.LocalNewer
 		f.metaMu.RUnlock()
-		// localNewer gates the no-edit case: a write-mode open+release with zero writes
-		// on a remote-origin file (pijul locks the source pristine RDWR) must not
-		// announce, or the announce steals the owner's authorship on the other side.
+		// Do not announce an open that wrote nothing (pijul locks source repos
+		// RDWR). Such an announce makes the owner drop its authority.
 		needsNotify := (hadEdits || (notRemoteSynced && localNewer)) && d.OnLocalChange != nil
 
 		if needsNotify {
@@ -2850,8 +2849,8 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	}
 	// d.logger.Info("FUSE remote-add", "path", path, "size", stat.Size)
 
-	// Authority handoff: a peer edit of a locally-created file must land on the SAME
-	// object the local maps serve, or reads keep the stale local copy forever.
+	// A peer edit of a local file must update the object local reads use.
+	// A parallel entry makes reads serve the stale local copy forever.
 	d.AfmLock.RLock()
 	local, hasLocal := d.AllFileMap[path]
 	d.AfmLock.RUnlock()
@@ -2869,9 +2868,6 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		// AFTER releasing RemoteFilesLock, where Getattr can mutate existing.stat
 		// (the same struct) in place. The local copy keeps that read race-free.
 		newSize := stat.Size
-		existing.metaMu.Lock()
-		existing.LocalNewer = false // Remote has newer content.
-		existing.metaMu.Unlock()
 
 		// Reject stale ADD_FILE only when the incoming mtime is older than
 		// what we already have. A debounced notification for a temp file can
@@ -2880,12 +2876,29 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		// size alone: git's HEAD goes from 25 bytes (.invalid placeholder)
 		// to 21 bytes (ref: refs/heads/main), so smaller size can be correct.
 		incomingMtime := stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
-		// Compare against the peer-announced watermark, not stat.Mtim: a reader-side
-		// Truncate/Getattr stamps stat.Mtim with local clock, making every genuine
-		// remote update look stale (pijul opens the source pristine RDWR+ftruncate).
+		// Compare with the announced watermark, not stat.Mtim. Local Truncate
+		// and Getattr write local time into stat.Mtim and make remote updates
+		// look stale (pijul opens the source pristine RDWR+ftruncate).
 		existingMtime := existing.RemoteMtimeNs
 		if existingMtime == 0 {
 			existingMtime = existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
+		}
+		// A local write outranks an older announcement in flight. A stale ADD
+		// must not overwrite newer local content (model checker finding).
+		// Only real writes set LocalNewer; reader-side stat changes do not.
+		existing.metaMu.Lock()
+		wasLocalNewer := existing.LocalNewer
+		existing.metaMu.Unlock()
+		if wasLocalNewer {
+			if lm := existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec; lm > existingMtime {
+				existingMtime = lm
+			}
+		}
+		accepted := incomingMtime > existingMtime
+		if accepted {
+			existing.metaMu.Lock()
+			existing.LocalNewer = false // Remote has newer content.
+			existing.metaMu.Unlock()
 		}
 		if incomingMtime > existing.RemoteMtimeNs {
 			existing.RemoteMtimeNs = incomingMtime
@@ -2895,6 +2908,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 				"incomingMtime", incomingMtime, "existingMtime", existingMtime)
 		}
 		if sizeChanged && stat.Size < oldSize && existing.Bitmap != nil && existing.Bitmap.Have() > 0 && incomingMtime < existingMtime {
+			d.RemoteFilesLock.Unlock()
+			return nil
+		}
+		// The announcement is older than a local write: keep local authority.
+		if !accepted && wasLocalNewer {
 			d.RemoteFilesLock.Unlock()
 			return nil
 		}
@@ -3272,6 +3290,14 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	editRef := f.RemoteMtimeNs
 	if editRef == 0 {
 		editRef = f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec
+	}
+	f.metaMu.RLock()
+	editLocalNewer := f.LocalNewer
+	f.metaMu.RUnlock()
+	if editLocalNewer {
+		if lm := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; lm > editRef {
+			editRef = lm
+		}
 	}
 	incomingEditMtime := stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
 	if incomingEditMtime < editRef {

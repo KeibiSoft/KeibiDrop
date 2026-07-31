@@ -237,9 +237,9 @@ type File struct {
 
 	HadEdits bool
 
-	// RemoteMtimeNs is the peer-announced mtime watermark (UnixNano), set only from
-	// notifications under RemoteFilesLock. Staleness guards compare against it, never
-	// against stat.Mtim, which local Getattr/Truncate overwrite with local clock.
+	// RemoteMtimeNs is the newest peer-announced mtime (UnixNano). Only
+	// notifications set it, under RemoteFilesLock. Staleness guards use it;
+	// local ops overwrite stat.Mtim and must not join the comparison.
 	RemoteMtimeNs int64
 
 	// WasTruncatedToZero tracks if Truncate(size=0) was explicitly called.
