@@ -25,7 +25,7 @@ import (
 // Handle IDs only increase and never repeat, so a kernel fd number reused after
 // close() causes no race.
 type HandleEntry struct {
-	FD   int   // Kernel file descriptor for syscalls.
+	FD   int // Kernel file descriptor for syscalls.
 	File *File
 }
 
