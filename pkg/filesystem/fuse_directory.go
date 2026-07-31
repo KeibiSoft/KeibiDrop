@@ -2861,7 +2861,13 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 	}
 
 	if existing, ok := d.RemoteFiles[path]; ok {
+		// Snapshot stat fields under metaMu: Getattr mutates existing.stat in
+		// place under the same lock (map lock first, metaMu innermost).
+		existing.metaMu.Lock()
 		oldSize := existing.stat.Size
+		existingStatMtime := existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
+		wasLocalNewer := existing.LocalNewer
+		existing.metaMu.Unlock()
 		sizeChanged := oldSize != stat.Size
 		// Snapshot the incoming size now, BEFORE `existing.stat = stat` aliases this
 		// struct into existing.stat: the size-changed branch reads it for os.Truncate
@@ -2881,18 +2887,13 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		// look stale (pijul opens the source pristine RDWR+ftruncate).
 		existingMtime := existing.RemoteMtimeNs
 		if existingMtime == 0 {
-			existingMtime = existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
+			existingMtime = existingStatMtime
 		}
 		// A local write outranks an older announcement in flight. A stale ADD
 		// must not overwrite newer local content (model checker finding).
 		// Only real writes set LocalNewer; reader-side stat changes do not.
-		existing.metaMu.Lock()
-		wasLocalNewer := existing.LocalNewer
-		existing.metaMu.Unlock()
-		if wasLocalNewer {
-			if lm := existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec; lm > existingMtime {
-				existingMtime = lm
-			}
+		if wasLocalNewer && existingStatMtime > existingMtime {
+			existingMtime = existingStatMtime
 		}
 		accepted := incomingMtime > existingMtime
 		if accepted {
@@ -2907,7 +2908,10 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			d.logger.Debug("oplog AddRemoteFile existing", "path", path, "sizeChanged", sizeChanged,
 				"incomingMtime", incomingMtime, "existingMtime", existingMtime)
 		}
-		if sizeChanged && stat.Size < oldSize && existing.Bitmap != nil && existing.Bitmap.Have() > 0 && incomingMtime < existingMtime {
+		existing.metaMu.Lock()
+		bmSnap := existing.Bitmap
+		existing.metaMu.Unlock()
+		if sizeChanged && stat.Size < oldSize && bmSnap != nil && bmSnap.Have() > 0 && incomingMtime < existingMtime {
 			d.RemoteFilesLock.Unlock()
 			return nil
 		}
@@ -2933,9 +2937,12 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			}
 			// Capture the pre-reset bitmap (hashes to compare) before swapping it,
 			// and the fresh live bitmap reads will now use, for async reconcile.
+			// Swap under metaMu: Release reads the pointer under the same lock.
+			existing.metaMu.Lock()
 			oldBitmap := existing.Bitmap
 			existing.Bitmap = NewChunkBitmap(stat.Size)
 			newBitmap := existing.Bitmap
+			existing.metaMu.Unlock()
 			d.RemoteFilesLock.Unlock()
 
 			// Only truncate if size actually changed — truncating to the same size
@@ -2981,9 +2988,11 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 				}
 				// In-place edit: same byte length, cache left intact, so prefix bytes
 				// still match their stored hashes. Capture for async reconcile.
+				existing.metaMu.Lock()
 				oldBitmap = existing.Bitmap
 				existing.Bitmap = NewChunkBitmap(stat.Size)
 				newBitmap = existing.Bitmap
+				existing.metaMu.Unlock()
 			} else if existing.Bitmap != nil && !existing.Bitmap.IsComplete() {
 				// Same mtime, still incomplete — keep fetching the rest on-demand.
 				existing.metaMu.Lock()
@@ -3287,17 +3296,17 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	}
 
 	// Same watermark discipline as AddRemoteFile: stat.Mtim is local-clock-tainted.
+	// Snapshot under metaMu: Getattr mutates f.stat in place under the same lock.
+	f.metaMu.Lock()
+	editStatMtime := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec
+	editLocalNewer := f.LocalNewer
+	f.metaMu.Unlock()
 	editRef := f.RemoteMtimeNs
 	if editRef == 0 {
-		editRef = f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec
+		editRef = editStatMtime
 	}
-	f.metaMu.RLock()
-	editLocalNewer := f.LocalNewer
-	f.metaMu.RUnlock()
-	if editLocalNewer {
-		if lm := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; lm > editRef {
-			editRef = lm
-		}
+	if editLocalNewer && editStatMtime > editRef {
+		editRef = editStatMtime
 	}
 	incomingEditMtime := stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
 	if incomingEditMtime < editRef {
@@ -3329,9 +3338,11 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	}
 	// Capture the pre-reset bitmap (hashes to compare) and the fresh live bitmap;
 	// the cache is left intact here, so common-prefix bytes still match their hashes.
+	f.metaMu.Lock()
 	oldBitmap := f.Bitmap
 	f.Bitmap = NewChunkBitmap(stat.Size)
 	newBitmap := f.Bitmap
+	f.metaMu.Unlock()
 	d.RemoteFilesLock.Unlock()
 	// Re-mark the proven-unchanged chunks present in the background (full reset stands
 	// on any failure or ineligibility).
