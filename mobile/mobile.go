@@ -50,12 +50,11 @@ type API struct {
 	eventCh   chan string
 	eventOnce sync.Once
 
-	// File list snapshots (taken by RefreshFileList, read by getters).
+	// File list snapshots. RefreshFileList writes them; the getters read them.
 	remoteSnap  fileSnapshot
 	localSnap   fileSnapshot
 	contactSnap contactSnapshot
 
-	// LAN discovery
 	disc *discovery.Service
 
 	mu sync.Mutex
@@ -68,8 +67,7 @@ type contactSnapshot struct {
 }
 
 // Initialize sets up the KeibiDrop engine. Call once before Start.
-// savePath is where received files are stored (app sandbox directory).
-// No FUSE on mobile. prefetchOnOpen and pushOnWrite are ignored.
+// savePath is the app sandbox directory for received files. Mobile has no FUSE.
 func (api *API) Initialize(logFilePath string, relayURL string, inboundPort int, outboundPort int, savePath string) error {
 	wr := os.Stderr
 	if logFilePath != "" {
@@ -106,8 +104,8 @@ func (api *API) Initialize(logFilePath string, relayURL string, inboundPort int,
 		return fmt.Errorf("init failed: %w", err)
 	}
 
-	// Default bridge relay for mobile peers — direct P2P rarely works on mobile
-	// (NAT, carrier-grade NAT, no inbound ports). The bridge is the primary path.
+	// Carrier-grade NAT blocks most direct P2P on mobile.
+	// The bridge relay is the primary path, so set a default.
 	kd.BridgeAddr = "bridge.keibisoft.com:26600"
 
 	api.mu.Lock()
@@ -186,7 +184,7 @@ func (api *API) Stop() error {
 }
 
 // Disconnect ends the current session but keeps the engine alive.
-// You can CreateRoom/JoinRoom again after this.
+// Call CreateRoom or JoinRoom again to start a new session.
 func (api *API) Disconnect() error {
 	if api.kd == nil {
 		return fmt.Errorf("not initialized")
@@ -198,8 +196,8 @@ func (api *API) Disconnect() error {
 
 // --- Peer exchange ---
 
-// Fingerprint returns your local fingerprint code.
-// Share this with your peer via Signal, Telegram, email, etc.
+// Fingerprint returns the local fingerprint code.
+// Send it to the peer over an out-of-band channel.
 func (api *API) Fingerprint() (string, error) {
 	if api.kd == nil {
 		return "", fmt.Errorf("not initialized")
@@ -357,7 +355,7 @@ func (api *API) GetOpStatus() *OpStatus {
 // --- File operations ---
 
 // ImportFile adds a local file to share with the peer.
-// localPath is a path to a file on the device (from file picker, Photos, etc).
+// localPath is a device file path, for example from a file picker.
 func (api *API) ImportFile(localPath string) error {
 	if api.kd == nil {
 		return fmt.Errorf("not initialized")
@@ -365,7 +363,7 @@ func (api *API) ImportFile(localPath string) error {
 	return api.kd.AddFile(localPath)
 }
 
-// ImportFileAs adds a local file with a custom remote name (preserving folder paths).
+// ImportFileAs adds a local file with a custom remote name. The name can keep folder paths.
 func (api *API) ImportFileAs(localPath string, remoteName string) error {
 	if api.kd == nil {
 		return fmt.Errorf("not initialized")
@@ -382,7 +380,7 @@ func (api *API) UnshareFile(name string) error {
 }
 
 // ExportFile downloads a file from the peer and saves it to destPath.
-// destPath is where to write on the device (app sandbox, then share via OS).
+// destPath is the write location on the device, usually in the app sandbox.
 func (api *API) ExportFile(remoteName string, destPath string) error {
 	if api.kd == nil {
 		return fmt.Errorf("not initialized")
@@ -457,7 +455,7 @@ func (api *API) SaveAllFiles() int {
 	return saved
 }
 
-// CancelDownload stops an active download. Partial data is preserved.
+// CancelDownload stops an active download. Partial data stays on disk.
 // Call SaveFile or ExportFile again to resume.
 func (api *API) CancelDownload(remoteName string) error {
 	if api.kd == nil {
@@ -492,8 +490,8 @@ func isInternalFile(name string) bool {
 
 // --- File lists (index-based for gomobile compatibility) ---
 //
-// Snapshots are taken once per poll cycle to avoid races between
-// count/name/size calls. The snapshot is protected by api.mu.
+// One snapshot per poll cycle avoids races between count/name/size calls.
+// api.mu protects the snapshot.
 
 type fileSnapshot struct {
 	names []string
@@ -683,8 +681,7 @@ func (api *API) GetLastError() string {
 	if api.kd == nil {
 		return ""
 	}
-	// Mobile API surfaces errors via return values.
-	// This is a convenience for checking async operation errors.
+	// Direct calls return errors; this reports the last async operation error.
 	if api.op != nil {
 		status, msg := api.op.get()
 		if status == OpStatusFailed {
@@ -699,8 +696,8 @@ func (api *API) GetSavePath() string {
 	return api.savePath
 }
 
-// HasResumableDownload returns true if a .kdbitmap file exists for the given file,
-// meaning a previous download was interrupted and can be resumed.
+// HasResumableDownload reports whether a .kdbitmap file exists for the file.
+// The bitmap marks an interrupted download that can resume.
 func (api *API) HasResumableDownload(remoteName string) bool {
 	localPath := filepath.Join(api.savePath, remoteName)
 	_, err := os.Stat(localPath + ".kdbitmap")
@@ -721,8 +718,8 @@ func (api *API) GetLocalAddress() string {
 	return addr
 }
 
-// SetPeerDirectAddress sets the peer's address for local mode (no relay).
-// Automatically enables local mode (skips relay, uses TOFU handshake).
+// SetPeerDirectAddress sets the peer address for local mode.
+// It also enables local mode: no relay, TOFU handshake.
 func (api *API) SetPeerDirectAddress(addr string) error {
 	if api.kd == nil {
 		return fmt.Errorf("not initialized")
@@ -731,9 +728,8 @@ func (api *API) SetPeerDirectAddress(addr string) error {
 	return api.kd.SetPeerDirectAddress(addr)
 }
 
-// DecideLocalRole reports whether this device should create (true) or join (false)
-// a local-mode connection to peerName at peerAddr. Same decider as the desktop, so
-// the two sides break colliding discovery names the same way.
+// DecideLocalRole reports whether this device creates (true) or joins (false) in local mode.
+// Desktop uses the same rule, so both sides resolve name collisions the same way.
 func (api *API) DecideLocalRole(myName, peerName, peerAddr string) bool {
 	return common.DecideLocalRole(myName, peerName, peerAddr)
 }
@@ -746,7 +742,7 @@ func (api *API) GetConnectionMode() string {
 	return api.kd.ConnectionMode
 }
 
-// SetStrictMode enables/disables strict mode (no data relay fallback).
+// SetStrictMode toggles strict mode, which blocks the data relay fallback.
 func (api *API) SetStrictMode(enabled bool) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
@@ -765,8 +761,8 @@ func (api *API) RelayEndpoint() string {
 
 // --- LAN Discovery ---
 
-// StartDiscovery begins broadcasting presence and listening for peers on the LAN.
-// Also enables local mode (skips relay for connections).
+// StartDiscovery starts the LAN presence broadcast and peer listener.
+// It also enables local mode, so connections skip the relay.
 func (api *API) StartDiscovery() {
 	api.mu.Lock()
 	defer api.mu.Unlock()
@@ -849,9 +845,8 @@ func (api *API) GetDiscoveredPeerAddr(i int) string {
 
 // --- Identity ---
 
-// GenerateMasterKeyHex generates a random 32-byte master key and returns it
-// as a hex string. The native app should persist this in iOS Keychain or
-// Android Keystore, then pass it back on every launch via EnablePersistentIdentity.
+// GenerateMasterKeyHex returns a random 32-byte master key as a hex string.
+// Store it in the platform keychain and pass it to EnablePersistentIdentity on each launch.
 func GenerateMasterKeyHex() (string, error) {
 	key, err := identity.GenerateMasterKey()
 	if err != nil {

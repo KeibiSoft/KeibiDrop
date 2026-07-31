@@ -18,9 +18,8 @@ func IsFUSEPresent() bool {
 	var result bool
 	switch runtime.GOOS {
 	case "windows":
-		// WinFSP registers its DLL in System32 when installed via the MSI/choco with admin.
-		// Fallback: also check the WinFSP installation directory directly (e.g. when
-		// installed without full system registration, or on ARM64 Windows).
+		// The WinFSP installer registers its DLL in System32 only with admin rights.
+		// Also check the install directory for partial installs and ARM64 Windows.
 		paths := []string{
 			`C:\Windows\System32\winfsp-x64.dll`,
 			`C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll`,
@@ -64,13 +63,12 @@ func IsFUSEPresent() bool {
 	return result
 }
 
-// linuxFUSELibs are the runtime shared objects, FUSE 3 first because it is preferred. Only
-// sonames: the bare libfuse3.so symlink ships in libfuse3-dev, so matching on it would demand
-// a build toolchain from users who just want to mount.
+// linuxFUSELibs lists the runtime sonames, FUSE 3 first.
+// The bare libfuse3.so symlink ships only in libfuse3-dev, so do not match it.
 var linuxFUSELibs = []string{"libfuse3.so.3", "libfuse.so.2"}
 
-// linuxLibDirs are the directories to search, multiarch tuple first. Derived from GOARCH so
-// arm64 and armv7 resolve as well, rather than only x86_64.
+// linuxLibDirs returns the search directories, multiarch tuple first.
+// GOARCH selects the tuple so arm64 and armv7 also resolve.
 func linuxLibDirs() []string {
 	tuple := map[string]string{
 		"amd64": "x86_64-linux-gnu",

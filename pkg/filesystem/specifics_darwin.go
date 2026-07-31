@@ -22,14 +22,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// My note is the following:
-// You can increase it to 10MiB or 16MiB, and depending on the processor,
-// it will be faster, but it might cap and downgrade at some point.
-// I cannot provide a realistic best value as I have used different hardware specs
-// for testing and finding this values, and at the end of the day it will be missleading
-// to say: on intel i7 from 2018 Thinkpad 480T (windows + linux), I had 500 MB/s copy speed.
-// But on Mac M3 had 1.2 GB/s sometimes up to 2GB/s
-// And on Mac Intel I did not benchmark yet.
+// Larger values (10-16 MiB) can be faster but can also cap and regress.
+// The best value depends on the hardware; measured copy speed varies widely.
 
 // FilesystemBlockSize is the optimal I/O block size for cp/dd on macOS (2 MiB).
 const FilesystemBlockSize = 2 << 20
@@ -49,8 +43,8 @@ func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNum
 
 func copyFusestatfsFromGostatfs(dst *winfuse.Statfs_t, src *syscall.Statfs_t) {
 	*dst = winfuse.Statfs_t{}
-	// Use our custom block size for better I/O performance with cp/dd
-	// macOS cp uses fcopyfile which respects statfs block size for buffer sizing
+	// Report the custom block size for better cp/dd I/O performance.
+	// macOS cp uses fcopyfile, which sizes its buffer from the statfs block size.
 	dst.Bsize = FilesystemBlockSize
 	dst.Frsize = FilesystemBlockSize
 	// Recalculate block counts: (original_blocks * original_bsize) / new_bsize
@@ -77,7 +71,7 @@ func copyFusestatFromGostat(dst *winfuse.Stat_t, src *syscall.Stat_t) {
 	dst.Atim.Sec, dst.Atim.Nsec = src.Atimespec.Sec, src.Atimespec.Nsec
 	dst.Mtim.Sec, dst.Mtim.Nsec = src.Mtimespec.Sec, src.Mtimespec.Nsec
 	dst.Ctim.Sec, dst.Ctim.Nsec = src.Ctimespec.Sec, src.Ctimespec.Nsec
-	// Use our custom block size for better I/O performance - cp uses st_blksize for buffer sizing
+	// Report the custom block size. cp sizes its read buffer from st_blksize.
 	dst.Blksize = FilesystemBlockSize
 	dst.Blocks = int64(src.Blocks)
 	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtimespec.Sec, src.Birthtimespec.Nsec
@@ -96,7 +90,7 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 	dst.Atim.Sec, dst.Atim.Nsec = src.Atim.Sec, src.Atim.Nsec
 	dst.Mtim.Sec, dst.Mtim.Nsec = src.Mtim.Sec, src.Mtim.Nsec
 	dst.Ctim.Sec, dst.Ctim.Nsec = src.Ctim.Sec, src.Ctim.Nsec
-	// Use our custom block size for better I/O performance
+	// Report the custom block size for better I/O performance.
 	dst.Blksize = FilesystemBlockSize
 	dst.Blocks = src.Blocks
 	dst.Birthtim.Sec, dst.Birthtim.Nsec = src.Birthtim.Sec, src.Birthtim.Nsec
@@ -109,11 +103,11 @@ func syscallStatfs(path string, stat *syscall.Statfs_t) error {
 // getMountOptions returns macOS-specific FUSE mount options.
 // See: https://github.com/macfuse/macfuse/wiki/Mount-Options
 //
-// NOTE: Do NOT add negative_vncache — it caches ENOENT results in the kernel
-// vnode cache. When files arrive from a peer (git clone, file sync), Getattr
+// Do not add negative_vncache: it caches ENOENT results in the kernel vnode
+// cache. When files arrive from a peer (git clone, file sync), Getattr
 // returns ENOENT before the file exists. With negative_vncache, the kernel
-// keeps returning ENOENT even after the file appears, causing "deleted" files
-// in git status and missing files in ls.
+// keeps returning ENOENT after the file appears. Git status then shows
+// "deleted" files and ls misses files.
 func getMountOptions(autoCache bool) []string {
 	opts := []string{
 		"-o", "volname=KeibiDrop",
@@ -122,16 +116,16 @@ func getMountOptions(autoCache bool) []string {
 		"-o", "allow_other",
 		"-o", "defer_permissions", // Defer permission checks to the FS (enables exec for git hooks).
 		// noappledouble removed: Finder needs .DS_Store writes to succeed
-		// for drag-and-drop to work. We filter .DS_Store from peer sync instead.
-		"-o", "iosize=524288", // 512KB — matches ChunkSize, best throughput in benchmarks.
+		// for drag-and-drop. Peer sync filters .DS_Store out instead.
+		"-o", "iosize=524288", // 512KB: matches ChunkSize, best throughput in benchmarks.
 	}
-	// auto_cache (opt-in via live_collab): flush the page cache on open when
-	// mtime/size changed, so a peer's SAME-SIZE in-place edit is seen live —
-	// macFUSE otherwise only drops its data cache on a size change. The cost:
-	// auto_cache DISCARDS dirty mmap pages before writeback, corrupting files
-	// written via mmap (git's index). So it's off by default (git-safe); the
-	// per-file KeepCache=false in OpenEx covers Linux without this hazard, but
-	// is a no-op on macFUSE, which is why the same-size case needs auto_cache here.
+	// auto_cache (opt-in via live_collab) flushes the page cache on open when
+	// mtime/size changed, so a peer's same-size in-place edit shows live.
+	// Without it, macFUSE drops its data cache only on a size change. The cost:
+	// auto_cache discards dirty mmap pages before writeback and corrupts files
+	// written via mmap (git's index). It is therefore off by default (git-safe).
+	// The per-file KeepCache=false in OpenEx covers Linux without this hazard
+	// but is a no-op on macFUSE, so the same-size case needs auto_cache here.
 	if autoCache {
 		opts = append(opts, "-o", "auto_cache")
 	}

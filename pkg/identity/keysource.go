@@ -226,9 +226,8 @@ type passphraseSource struct {
 func (s *passphraseSource) Tier() Tier   { return TierPassphrase }
 func (s *passphraseSource) KDFID() uint8 { return KDFPassphrase }
 
-// Master returns the passphrase as bytes. Per-file key derivation (in Save/Load)
-// passes string(masterBytes) to DerivePassphraseKey so it receives the original
-// passphrase text.
+// Master returns the passphrase as bytes.
+// Save and Load pass string(masterBytes) to DerivePassphraseKey, which must get the original passphrase text.
 func (s *passphraseSource) Master() ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

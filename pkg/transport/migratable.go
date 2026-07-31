@@ -75,8 +75,8 @@ func (m *MigratableConn) Migrate(ctx context.Context) (oldAddr, newAddr net.Addr
 	m.mu.Lock()
 	m.transports = append(m.transports, tr)
 	m.mu.Unlock()
-	// Report the new socket's own address: qconn.LocalAddr() only reflects the new
-	// path once traffic has flowed on it (hence "send right after").
+	// Report the new socket's own address: qconn.LocalAddr() reflects the new path
+	// only after traffic flows on it.
 	return oldAddr, tr.Conn.LocalAddr(), nil
 }
 

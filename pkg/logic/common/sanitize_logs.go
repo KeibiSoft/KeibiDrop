@@ -10,9 +10,9 @@ import (
 	"strings"
 )
 
-// SanitizeLogs reads a log file and returns sanitized content.
-// Redacts file names (keeps extensions), fingerprints, and IP addresses.
-// Keeps timestamps, log levels, method names, error types, sizes, and connection events.
+// SanitizeLogs reads a log file and returns sanitized content. It redacts file
+// names (extensions stay), fingerprints, and IP addresses. It keeps timestamps,
+// log levels, method names, error types, sizes, and connection events.
 func SanitizeLogs(logPath string) (string, error) {
 	data, err := os.ReadFile(logPath) // #nosec G304
 	if err != nil {
@@ -53,7 +53,7 @@ var pathKeys = []string{
 	"mount=", "save=", "prefetch=",
 }
 
-// Safe directory names to keep (not redacted).
+// safeNames lists directory names that redaction keeps.
 var safeNames = map[string]bool{
 	"Documents": true, "KeibiDrop": true, "Received": true,
 	"Mount": true, "Library": true, "Logs": true, "tmp": true,
@@ -99,19 +99,19 @@ func redactPath(path string) string {
 	return strings.Join(parts, "/")
 }
 
-// Fingerprints: base64url strings 40+ chars (fingerprint codes).
+// fingerprintRe matches base64url strings of 40 or more chars.
 var fingerprintRe = regexp.MustCompile(`[A-Za-z0-9_-]{40,}`)
 
 func redactFingerprints(line string) string {
 	return fingerprintRe.ReplaceAllString(line, "<fingerprint-redacted>")
 }
 
-// IPv6 addresses: fe80::..., ::1, or full addresses with brackets.
+// ipv6Re matches IPv6 addresses, with optional zone, brackets, and port.
 var ipv6Re = regexp.MustCompile(`\[?[0-9a-fA-F:]{4,39}(%[a-zA-Z0-9]+)?\]?(:\d+)?`)
 
 func redactIPv6(line string) string {
 	return ipv6Re.ReplaceAllStringFunc(line, func(match string) string {
-		// Don't redact short hex that isn't an IP (like error codes).
+		// Keep short hex that is not an IP, such as error codes.
 		if strings.Count(match, ":") < 2 {
 			return match
 		}
@@ -119,7 +119,6 @@ func redactIPv6(line string) string {
 	})
 }
 
-// IPv4 addresses.
 var ipv4Re = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b`)
 
 func redactIPv4(line string) string {

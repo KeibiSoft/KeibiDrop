@@ -18,11 +18,8 @@ import (
 	"time"
 )
 
-// maybeStartPprof starts net/http/pprof on the KD_PPROF loopback address (e.g.
-// 127.0.0.1:6060) for heap/goroutine/allocation profiling during leak hunts and RAM
-// benchmarks. Off unless set, and refused on any non-loopback address so profiles are
-// never exposed off-box (tunnel in with `ssh -L` to profile a remote host). Served on
-// its own mux, so it never leaks onto another listener.
+// maybeStartPprof starts net/http/pprof on the KD_PPROF address, loopback only.
+// A dedicated mux keeps the handlers off other listeners.
 func maybeStartPprof(logger *slog.Logger) {
 	if addr := os.Getenv("KD_PPROF"); addr != "" {
 		if isLoopbackAddr(addr) {

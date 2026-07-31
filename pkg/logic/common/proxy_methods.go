@@ -20,9 +20,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// mapReadErr translates a gRPC stream error from a remote read into a typed sentinel the
-// filesystem layer can act on without importing gRPC. NotFound means the peer no longer has
-// the file and surfaces as EOF; everything else is an I/O error.
+// mapReadErr maps a gRPC read error to a typed sentinel, so the filesystem layer
+// does not import gRPC. NotFound becomes ErrRemoteFileNotFound, which surfaces as EOF.
 func mapReadErr(err error) error {
 	if status.Code(err) == codes.NotFound {
 		return types.ErrRemoteFileNotFound
@@ -30,20 +29,19 @@ func mapReadErr(err error) error {
 	return err
 }
 
-// Proxy methods to avoid import cycles between the filesystem and the duplex server.
+// Proxy methods prevent import cycles between the filesystem and the duplex server.
 
 type ImplFileStreamProvider struct {
-	cli  bindings.KeibiServiceClient // bulk channel (TCP): StreamFile prefetch
-	fast bindings.KeibiServiceClient // interactive channel (QUIC): on-demand reads + chunk hashes; nil = use cli
+	cli  bindings.KeibiServiceClient // Bulk channel (TCP): StreamFile prefetch.
+	fast bindings.KeibiServiceClient // Interactive channel (QUIC): on-demand reads and chunk hashes. Nil = use cli.
 }
 
 func NewImplStreamProvider(cli bindings.KeibiServiceClient) *ImplFileStreamProvider {
 	return &ImplFileStreamProvider{cli: cli}
 }
 
-// NewImplStreamProviderDual splits traffic across the two channels: bulk StreamFile prefetch
-// on the TCP client, latency-sensitive on-demand reads and chunk hashes on the QUIC client, so
-// a cache miss isn't queued behind a running prefetch.
+// NewImplStreamProviderDual routes bulk prefetch to TCP, on-demand reads and chunk
+// hashes to QUIC. A cache miss then does not queue behind a running prefetch.
 func NewImplStreamProviderDual(bulk, fast bindings.KeibiServiceClient) *ImplFileStreamProvider {
 	return &ImplFileStreamProvider{cli: bulk, fast: fast}
 }
@@ -52,7 +50,7 @@ type ImplRemoteFileStream struct {
 	stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse]
 	handle uint64
 	path   string
-	mu     sync.Mutex // serializes Send+Recv pairs (gRPC streams are not concurrency-safe)
+	mu     sync.Mutex // Serializes Send+Recv pairs. gRPC streams are not concurrency-safe.
 }
 
 func NewImplRemoteFileStream(stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse], inode uint64, path string) *ImplRemoteFileStream {
@@ -63,15 +61,15 @@ func NewImplRemoteFileStream(stream grpc.BidiStreamingClient[bindings.ReadReques
 	}
 }
 func (rfs *ImplRemoteFileStream) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
-	// Serialize Send+Recv: gRPC streams are not safe for concurrent Send/Recv, and FUSE issues
-	// parallel readahead reads, so without this lock the stream framing corrupts.
+	// gRPC streams forbid concurrent Send/Recv. FUSE issues parallel readahead reads.
+	// Without this lock the stream framing corrupts.
 	rfs.mu.Lock()
 	defer rfs.mu.Unlock()
 
 	err := rfs.stream.Send(&bindings.ReadRequest{Handle: rfs.handle, Path: rfs.path, Offset: uint64(offset), Size: uint32(size)})
 	if err != nil {
-		// A Send error (commonly io.EOF) means the server closed the stream after a status;
-		// Recv surfaces the real status (e.g. NotFound when the peer deleted the file).
+		// A Send error, commonly io.EOF, means the server closed the stream after a status.
+		// Recv surfaces the real status, for example NotFound after a peer delete.
 		if _, rerr := rfs.stream.Recv(); rerr != nil {
 			return nil, mapReadErr(rerr)
 		}
@@ -90,8 +88,8 @@ func (rfs *ImplRemoteFileStream) Close() error {
 	return rfs.stream.CloseSend()
 }
 
-// tryThen opens against primary, falling back to secondary on error. Either side may be nil
-// (skipped); the meaningful error surfaces.
+// tryThen opens on primary, then on secondary after an error. It skips nil clients
+// and surfaces the meaningful error.
 func tryThen[T any](primary, secondary bindings.KeibiServiceClient, open func(bindings.KeibiServiceClient) (T, error)) (T, error) {
 	var firstErr error
 	if primary != nil {
@@ -111,15 +109,14 @@ func tryThen[T any](primary, secondary bindings.KeibiServiceClient, open func(bi
 	return zero, firstErr
 }
 
-// preferFast routes latency-sensitive opens: the QUIC interactive client first, the bulk
-// client as fallback (a dead QUIC channel degrades to bulk).
+// preferFast routes latency-sensitive opens: the QUIC client first, then the bulk
+// client. A dead QUIC channel degrades to bulk.
 func preferFast[T any](sp *ImplFileStreamProvider, open func(bindings.KeibiServiceClient) (T, error)) (T, error) {
 	return tryThen(sp.fast, sp.cli, open)
 }
 
-// preferBulk is the mirror for bulk transfers: TCP first (the measured winner), QUIC as
-// fallback. Keeps files flowing when TCP lags or dies mid-session (prefetch and streams
-// continue over QUIC until the reconnect rebuilds TCP; new opens return to it automatically).
+// preferBulk routes bulk transfers: TCP first, because TCP measures faster for bulk.
+// When TCP dies mid-session, transfers continue over QUIC until reconnect rebuilds TCP.
 func preferBulk[T any](sp *ImplFileStreamProvider, open func(bindings.KeibiServiceClient) (T, error)) (T, error) {
 	return tryThen(sp.cli, sp.fast, open)
 }
@@ -135,8 +132,8 @@ func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint
 	return NewImplRemoteFileStream(stream, inode, path), nil
 }
 
-// StreamFile starts a push-based download via the server-streaming StreamFile RPC. Bulk prefers
-// TCP; if TCP is dead it continues over QUIC (preferBulk) until the reconnect brings TCP back.
+// StreamFile starts a push-based download via the server-streaming StreamFile RPC.
+// It uses preferBulk routing: TCP first, QUIC when TCP is dead.
 func (sp *ImplFileStreamProvider) StreamFile(ctx context.Context, path string, startOffset uint64) (types.StreamFileReceiver, error) {
 	stream, err := preferBulk(sp, func(c bindings.KeibiServiceClient) (bindings.KeibiService_StreamFileClient, error) {
 		return c.StreamFile(ctx, &bindings.StreamFileRequest{
@@ -165,8 +162,8 @@ func (r *implStreamFileReceiver) Recv() (data []byte, offset uint64, totalSize u
 	return resp.Data, resp.Offset, resp.TotalSize, nil
 }
 
-// GetChunkHashes requests per-chunk xxh3-64 fingerprints from the peer. Returns
-// codes.Unimplemented if the peer runs older code; the caller decides whether to fall back.
+// GetChunkHashes requests per-chunk xxh3-64 fingerprints from the peer. An older
+// peer returns codes.Unimplemented. The caller decides the fallback.
 func (sp *ImplFileStreamProvider) GetChunkHashes(ctx context.Context, path string, chunkSize, fromChunk, count uint64) (types.ChunkHashReceiver, error) {
 	req := &bindings.GetChunkHashesRequest{
 		Path:      path,
@@ -174,8 +171,8 @@ func (sp *ImplFileStreamProvider) GetChunkHashes(ctx context.Context, path strin
 		FromChunk: fromChunk,
 		Count:     count,
 	}
-	// Chunk hashes are small and latency-sensitive (edit reconciliation): same
-	// preferFast routing as on-demand reads.
+	// Chunk hashes are small and latency-sensitive. They use the same preferFast
+	// routing as on-demand reads.
 	stream, err := preferFast(sp, func(c bindings.KeibiServiceClient) (bindings.KeibiService_GetChunkHashesClient, error) {
 		return c.GetChunkHashes(ctx, req)
 	})
@@ -197,5 +194,5 @@ func (r *implChunkHashReceiver) Recv() (chunkIndex uint64, hash uint64, err erro
 	return resp.ChunkIndex, resp.Hash, nil
 }
 
-// compile-time assertion: ImplFileStreamProvider implements ChunkHasher.
+// Compile-time assertion: ImplFileStreamProvider implements ChunkHasher.
 var _ types.ChunkHasher = (*ImplFileStreamProvider)(nil)

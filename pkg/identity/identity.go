@@ -33,7 +33,7 @@ type DeviceIdentity struct {
 }
 
 // serializedIdentity is the JSON-serializable form of DeviceIdentity.
-// Private key seeds are stored; public keys are derived on load.
+// It stores private key seeds only; public keys derive on load.
 type serializedIdentity struct {
 	SchemaVersion int       `json:"schema_version"`
 	X25519Seed    []byte    `json:"x25519_seed"`
@@ -141,8 +141,8 @@ func (d *DeviceIdentity) Save(configDir string, src MasterKeySource) error {
 		return fmt.Errorf("encrypt identity: %w", err)
 	}
 
-	// Split [nonce | ct+tag], record nonce in header so it is part of the
-	// on-disk wire format (MarshalEnvelope writes it after the 24-byte prefix).
+	// Split [nonce | ct+tag]. The header records the nonce as part of the on-disk
+	// wire format; MarshalEnvelope writes it after the 24-byte prefix.
 	copy(header.Nonce[:], blob[:kbc.NonceSize])
 	ctAndTag := blob[kbc.NonceSize:]
 

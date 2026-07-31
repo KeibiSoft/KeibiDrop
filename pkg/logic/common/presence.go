@@ -18,7 +18,7 @@ import (
 )
 
 // StartPresenceHeartbeat sends periodic presence heartbeats for all contacts.
-// Runs until ctx is cancelled. Should be called after EnablePersistentIdentity.
+// It runs until the caller cancels ctx. Call it after EnablePersistentIdentity.
 func (kd *KeibiDrop) StartPresenceHeartbeat(ctx context.Context) {
 	if kd.Identity == nil || kd.AddressBook == nil || kd.Incognito {
 		return
@@ -28,7 +28,7 @@ func (kd *KeibiDrop) StartPresenceHeartbeat(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	// Immediate first tick.
+	// Send the first heartbeat immediately.
 	kd.sendPresenceForAll(logger)
 
 	for {
@@ -55,7 +55,7 @@ func (kd *KeibiDrop) sendPresenceForAll(logger interface{ Info(string, ...any) }
 	}
 }
 
-// CheckContactPresence returns true if the contact was seen online recently.
+// CheckContactPresence reports whether the relay saw the contact online recently.
 func (kd *KeibiDrop) CheckContactPresence(fingerprint string) bool {
 	if kd.Identity == nil || kd.RelayEndoint == nil {
 		return false

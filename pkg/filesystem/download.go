@@ -19,7 +19,7 @@ import (
 //
 //	[magic 4B] [version 1B] [fileSize 8B] [total 4B] [have 4B] [chunkSize 4B] [bits N*8B]
 //
-// Each field:
+// Field sizes:
 const (
 	bitmapMagicSize     = 4
 	bitmapVersionSize   = 1
@@ -49,15 +49,15 @@ const ChunkSize = 512 * 1024 // 512 KiB
 // Matches typical FUSE readahead parallelism on Linux.
 const StreamPoolSize = 4
 
-// ReadAheadBlock is how much an on-demand read miss fetches in one round trip;
-// capped at the gRPC frame size so the block lands in a single message. The
-// whole block is cached so subsequent reads within it are served locally,
-// turning ~32 round trips per 16 MiB into one.
+// ReadAheadBlock is the amount one on-demand read miss fetches per round trip.
+// The gRPC frame size caps it, so the block lands in a single message. The
+// whole block is cached, so later reads inside it are local. This turns ~32
+// round trips per 16 MiB into one.
 const ReadAheadBlock = config.GRPCStreamBuffer // 16 MiB
 
-// readAheadWindowBlocks converts a predictive read-ahead window expressed in MB
-// (config read_ahead_window_mb) into a count of ReadAheadBlock-sized blocks. A
-// positive sub-block value rounds up to one block; <=0 means read-ahead is off.
+// readAheadWindowBlocks converts a read-ahead window in MB (config
+// read_ahead_window_mb) to a count of ReadAheadBlock-sized blocks. A positive
+// sub-block value rounds up to one block. <=0 turns read-ahead off.
 func readAheadWindowBlocks(mb int) int {
 	if mb <= 0 {
 		return 0
@@ -69,13 +69,13 @@ func readAheadWindowBlocks(mb int) int {
 	return blocks
 }
 
-// ChunkBitmap tracks which chunks of a file have been downloaded.
+// ChunkBitmap tracks which chunks of a file are downloaded.
 // Thread-safe: Has() uses RLock, Set() uses Lock.
-// hashes is nil until the first SetHash call (no fingerprints, e.g. fresh load).
+// hashes stays nil until the first SetHash call (no fingerprints, e.g. fresh load).
 type ChunkBitmap struct {
 	mu        sync.RWMutex
 	bits      []uint64
-	hashes    []uint64 // per-chunk xxh3-64 fingerprints; nil means no fingerprints
+	hashes    []uint64 // Per-chunk xxh3-64 fingerprints. nil means no fingerprints.
 	total     int
 	have      int
 	fileSize  int64
@@ -104,7 +104,7 @@ func NewChunkBitmapWithSize(fileSize int64, chunkSize int) *ChunkBitmap {
 	}
 }
 
-// Has returns true if the chunk at chunkIdx has been downloaded.
+// Has reports whether the chunk at chunkIdx is downloaded.
 func (b *ChunkBitmap) Has(chunkIdx int) bool {
 	if chunkIdx < 0 || chunkIdx >= b.total {
 		return false
@@ -145,7 +145,7 @@ func (b *ChunkBitmap) SetRange(offset int64, size int) {
 	}
 }
 
-// HasRange returns true if all chunks covering [offset, offset+size) are downloaded.
+// HasRange reports whether all chunks covering [offset, offset+size) are downloaded.
 func (b *ChunkBitmap) HasRange(offset int64, size int) bool {
 	if size <= 0 {
 		return true
@@ -174,9 +174,9 @@ func (b *ChunkBitmap) SetHash(chunkIdx int, h uint64) {
 	b.mu.Unlock()
 }
 
-// Hash returns the stored fingerprint for a chunk. Returns (0, false) when hashes
-// were never set (nil slice), the chunk index is out of range, or the chunk is absent.
-// A zero hash value is not treated as absent; only the bit and alloc matter.
+// Hash returns the stored fingerprint for a chunk. It returns (0, false) when
+// hashes is nil, the chunk index is out of range, or the chunk is absent.
+// A zero hash value does not mean absent; only the bit and the alloc matter.
 func (b *ChunkBitmap) Hash(chunkIdx int) (uint64, bool) {
 	if chunkIdx < 0 || chunkIdx >= b.total {
 		return 0, false
@@ -231,8 +231,8 @@ func (b *ChunkBitmap) ChunkSizeBytes() int {
 	return b.chunkSize
 }
 
-// HasHashes reports whether per-chunk fingerprints have been stored on this bitmap.
-// A freshly created or disk-loaded bitmap has no hashes until SetHash is called.
+// HasHashes reports whether the bitmap stores per-chunk fingerprints.
+// A fresh or disk-loaded bitmap has none until the first SetHash call.
 func (b *ChunkBitmap) HasHashes() bool {
 	b.mu.RLock()
 	v := b.hashes != nil
@@ -240,7 +240,7 @@ func (b *ChunkBitmap) HasHashes() bool {
 	return v
 }
 
-// IsComplete returns true if all chunks have been downloaded.
+// IsComplete reports whether all chunks are downloaded.
 func (b *ChunkBitmap) IsComplete() bool {
 	b.mu.RLock()
 	v := b.have == b.total
@@ -259,8 +259,8 @@ func (b *ChunkBitmap) Progress() float64 {
 	return float64(h) / float64(t)
 }
 
-// NextMissing returns the index of the first missing chunk starting from `from`.
-// Returns -1 if no missing chunks remain from that point.
+// NextMissing returns the index of the first missing chunk at or after from.
+// It returns -1 when no missing chunks remain.
 func (b *ChunkBitmap) NextMissing(from int) int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -316,7 +316,7 @@ func (b *ChunkBitmap) Save(path string) error {
 }
 
 // LoadChunkBitmap reads a bitmap from a .kdbitmap file.
-// Returns an error if the file is corrupt or the fileSize doesn't match.
+// It returns an error when the file is corrupt or the fileSize does not match.
 func LoadChunkBitmap(path string, expectedFileSize int64) (*ChunkBitmap, error) {
 	data, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
@@ -339,7 +339,7 @@ func LoadChunkBitmap(path string, expectedFileSize int64) (*ChunkBitmap, error) 
 	have := int(binary.LittleEndian.Uint32(data[offHave:]))
 	chunkSize := int(binary.LittleEndian.Uint32(data[offChunkSize:]))
 	if chunkSize == 0 {
-		chunkSize = ChunkSize // backwards compat
+		chunkSize = ChunkSize // Backward compatibility: old files lack chunkSize.
 	}
 
 	numWords := (total + 63) / 64

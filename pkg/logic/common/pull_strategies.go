@@ -18,9 +18,9 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 )
 
-// pullStreamFile downloads using the server-streaming StreamFile RPC: one request, server
-// pushes all chunks (zero per-chunk round-trip overhead). On resume, starts from the first
-// incomplete chunk (no-FUSE downloads are contiguous, so everything after the pause is missing).
+// pullStreamFile downloads via the server-streaming StreamFile RPC. The server pushes
+// all chunks after one request, with no per-chunk round trip. Resume starts at the
+// first incomplete chunk because no-FUSE downloads are contiguous.
 func (kd *KeibiDrop) pullStreamFile(
 	ctx context.Context,
 	bitmap *filesystem.ChunkBitmap,
@@ -31,7 +31,7 @@ func (kd *KeibiDrop) pullStreamFile(
 	bitmapPath string,
 	logger *slog.Logger,
 ) error {
-	// Snapshot the client under kd.mu; teardown can nil kd.session concurrently.
+	// Snapshot the client under kd.mu. Teardown can nil kd.session concurrently.
 	kd.mu.Lock()
 	s := kd.session
 	kd.mu.Unlock()
@@ -88,9 +88,9 @@ func (kd *KeibiDrop) pullStreamFile(
 	return nil
 }
 
-// pullParallelRead downloads using N parallel bidirectional Read streams. Each worker owns a
-// shard of chunk indices; interleaved shards saturate the link while keeping per-chunk ordering
-// within each stream (required by gRPC).
+// pullParallelRead downloads via N parallel bidirectional Read streams. Each worker
+// owns an interleaved shard of chunk indices. Interleaved shards saturate the link
+// and keep per-stream ordering, which gRPC requires.
 //
 //nolint:unused // kept as alternative strategy for high-latency links
 func (kd *KeibiDrop) pullParallelRead(
@@ -110,8 +110,8 @@ func (kd *KeibiDrop) pullParallelRead(
 		nWorkers = totalChunks
 	}
 
-	// Snapshot the client under kd.mu before spawning workers; teardown can nil
-	// kd.session mid-transfer and the workers must not re-read it.
+	// Snapshot the client under kd.mu before the workers start. Teardown can nil
+	// kd.session mid-transfer, and the workers must not read it again.
 	kd.mu.Lock()
 	s := kd.session
 	kd.mu.Unlock()

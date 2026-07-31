@@ -54,7 +54,7 @@ func ServeGRPC(tr Transport, addr string, svc pb.BenchServiceServer, secure bool
 
 // DialGRPC dials svc over the transport at addr. If secure, the PQC handshake runs
 // (client role) before gRPC sees the conn. The passthrough:/// target keeps
-// grpc.NewClient off the dns resolver (it defaults to dns, unlike the old Dial).
+// grpc.NewClient off its default dns resolver.
 func DialGRPC(tr Transport, addr string, secure bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	dialer := func(ctx context.Context, _ string) (net.Conn, error) {
 		c, err := tr.Dial(ctx, addr)

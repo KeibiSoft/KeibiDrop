@@ -24,8 +24,8 @@ const (
 	CipherAES256   CipherSuite = "aes-256-gcm"
 )
 
-// HasHardwareAES returns true if the CPU has hardware AES acceleration.
-// On x86 this is AES-NI; on ARM64 this is the ARMv8 AES extension.
+// HasHardwareAES reports whether the CPU has hardware AES acceleration.
+// x86 uses AES-NI; ARM64 uses the ARMv8 AES extension.
 func HasHardwareAES() bool {
 	switch runtime.GOARCH {
 	case "amd64":
@@ -47,8 +47,7 @@ func SupportedCiphers() []CipherSuite {
 }
 
 // NegotiateCipher picks the best cipher both peers support.
-// Returns the first cipher from `local` that also appears in `remote`.
-// Falls back to ChaCha20 if no intersection (should never happen).
+// It returns the first cipher from local that also appears in remote, or ChaCha20 when none matches.
 func NegotiateCipher(local, remote []CipherSuite) CipherSuite {
 	remoteSet := make(map[CipherSuite]bool, len(remote))
 	for _, c := range remote {
@@ -64,7 +63,7 @@ func NegotiateCipher(local, remote []CipherSuite) CipherSuite {
 
 // NewAEAD creates an AEAD cipher for the given suite and key.
 // Both AES-256-GCM and ChaCha20-Poly1305 use 32-byte keys, 12-byte nonces,
-// and 16-byte auth tags — the wire format is identical.
+// and 16-byte auth tags; the wire format is identical.
 func NewAEAD(suite CipherSuite, key []byte) (cipher.AEAD, error) {
 	switch suite {
 	case CipherAES256:

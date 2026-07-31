@@ -24,9 +24,9 @@ type FS struct {
 	OpenStreamProvider func() types.FileStreamProvider
 	PrefetchOnOpen     bool
 	PrefetchAutoMB     int
-	ReadAheadWindowMB  int // Unused on Android (no FUSE); present so shared setup code compiles.
+	ReadAheadWindowMB  int // Unused on Android (no FUSE). Present so shared setup code compiles.
 	PushOnWrite        bool
-	AutoCache          bool // Unused on Android (no FUSE); present so shared setup code compiles.
+	AutoCache          bool // Unused on Android (no FUSE). Present so shared setup code compiles.
 }
 
 func NewFS(_ *slog.Logger) *FS { return &FS{} }
@@ -35,11 +35,11 @@ func (fs *FS) Mount(_ string, _ bool, _ string) error { return nil }
 
 func (fs *FS) Unmount() {}
 
-// RefreshCallbacks is a no-op on android — there is no FUSE Root to re-wire.
+// RefreshCallbacks is a no-op on Android: there is no FUSE Root to re-wire.
 func (fs *FS) RefreshCallbacks() {}
 
-// IsMounted always returns false on android — no FUSE host is ever mounted.
+// IsMounted always returns false on Android: no FUSE host is ever mounted.
 func (fs *FS) IsMounted() bool { return false }
 
-// ClearFiles is a no-op on android — there are no FUSE file/dir maps to clear.
+// ClearFiles is a no-op on Android: there are no FUSE file/dir maps to clear.
 func (fs *FS) ClearFiles() {}

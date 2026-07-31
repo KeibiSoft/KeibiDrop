@@ -44,14 +44,14 @@ type KeibiDrop struct {
 	IsFUSE         bool
 	IsLocalMode    bool
 	BridgeAddr     string // TCP bridge relay address for firewall traversal
-	StrictMode     bool   // Disable data relay fallback (direct connections only)
-	ConnectionMode string // "lan", "direct", "bridge" - set after successful connection
+	StrictMode     bool   // Disables the data relay fallback: direct connections only.
+	ConnectionMode string // "lan", "direct", or "bridge". Set after a successful connection.
 	OpInProgress   atomic.Int32
 
 	session *session.Session
 
 	PeerIPv6IP     string
-	PeerLocalAddrs []string // LAN IPs from relay registration (for same-network direct connect)
+	PeerLocalAddrs []string // LAN IPs from the relay registration, for same-network direct connect.
 
 	LocalIPv6IP string
 	inboundPort int
@@ -63,61 +63,60 @@ type KeibiDrop struct {
 	KDClient       bindings.KeibiServiceClient
 	grpcClientConn *grpc.ClientConn
 
-	// QUIC control channel: a UDP gRPC pair mirroring the TCP pair, for control, metadata, and
-	// surviving IP changes, while file transfer stays on TCP. Brought up whenever the peer
-	// negotiated QUIC keys (SEK*QUIC from the handshake payload); fail-soft, else TCP-only.
+	// QUIC control channel: a UDP gRPC pair that mirrors the TCP pair for control,
+	// metadata, and IP-change survival. File transfer stays on TCP. It comes up when the
+	// peer negotiated QUIC keys, and any failure leaves the session TCP-only.
 	quicControlClient   *grpc.ClientConn
 	quicControlServer   *grpc.Server
-	quicControlLn       net.Listener              // generation marker: serveQUICControl only attaches to the current one
-	quicControlMig      *transport.MigratableConn // migration handle: MigrateQUICControl moves the path, gRPC never notices
-	quicControlSC       *session.SecureConn       // dial-side conn: epoch observability across the transport manager (QUICWriterEpoch)
-	quicPeerAddr        string                    // peer's UDP control endpoint, kept for the self-heal redial
-	quicRedialing       atomic.Bool               // single-flight guard: at most one background redial
-	quicHBCancel        context.CancelFunc        // cancels the current generation's control heartbeat (kd.mu)
-	disconnectDeferrals atomic.Int32              // consecutive health-failure disconnects deferred for active transfers (bounded)
-	quicMetaSent        atomic.Uint64             // metadata RPCs that actually rode the QUIC channel (diagnostics/tests)
+	quicControlLn       net.Listener              // Generation marker: serveQUICControl only attaches to the current one.
+	quicControlMig      *transport.MigratableConn // Migration handle: MigrateQUICControl moves the path, and gRPC never notices.
+	quicControlSC       *session.SecureConn       // Dial-side conn: epoch observability for QUICWriterEpoch.
+	quicPeerAddr        string                    // Peer's UDP control endpoint, kept for the self-heal redial.
+	quicRedialing       atomic.Bool               // Single-flight guard: at most one background redial.
+	quicHBCancel        context.CancelFunc        // Cancels the current generation's control heartbeat. Guarded by kd.mu.
+	disconnectDeferrals atomic.Int32              // Bounded count of disconnects deferred for active transfers.
+	quicMetaSent        atomic.Uint64             // Metadata RPCs that rode the QUIC channel. For diagnostics and tests.
 
 	// Non-FUSE fallback.
 	SyncTracker *synctracker.SyncTracker
 
-	// Paths for virtual mount point and for save folder.
+	// Paths for the virtual mount point and the save folder.
 	ToMount string
 	ToSave  string
 
 	// Collab sync options.
 	PrefetchOnOpen bool
 	PushOnWrite    bool
-	// AutoCache (live_collab) enables the macFUSE auto_cache mount option so a peer's same-size
-	// in-place edit is seen live. Set by the caller from config.LiveCollab. Default false = git-safe.
+	// AutoCache enables the macFUSE auto_cache mount option, so a peer's same-size
+	// in-place edit shows live. The caller sets it from config.LiveCollab. False = git-safe.
 	AutoCache         bool
-	PrefetchAutoMB    int // files >= this many MB auto-prefetch on open; set from config.PrefetchAutoMB (0=off)
-	ReadAheadWindowMB int // cap (MB) for predictive sequential read-ahead on on-demand reads; set from config.ReadAheadWindowMB (0=off)
+	PrefetchAutoMB    int // Files >= this many MB auto-prefetch on open. From config.PrefetchAutoMB. 0 = off.
+	ReadAheadWindowMB int // Cap in MB for predictive sequential read-ahead. From config.ReadAheadWindowMB. 0 = off.
 
 	// Signals for loop management.
 	signals      chan TaskSignal
 	running      atomic.Bool
-	stopDone     chan struct{} // closed when Stop handler completes
+	stopDone     chan struct{} // Closed when the Stop handler completes.
 	ctx          context.Context
-	Cancel       context.CancelFunc // exported so FFI layer can call it for app exit
-	shutdown     chan struct{}      // closed by Shutdown() to permanently exit Run()
+	Cancel       context.CancelFunc // Exported so the FFI layer can call it for app exit.
+	shutdown     chan struct{}      // Shutdown closes it to exit Run permanently.
 	shutdownOnce sync.Once
 	mu           sync.Mutex
 
-	// For session refresh.
 	refreshSession func() *session.Session
 
-	// For stopping the grpc server.
+	// gRPC server and readiness signals.
 	grpcServer          *grpc.Server
 	filesystemReady     chan struct{}
 	filesystemReadyOnce sync.Once
 	serverReadyMu       sync.Mutex
 
-	// Event callback (wired by FFI layer to push events to the UI).
+	// Event callback. The FFI layer wires it to push events to the UI.
 	OnEvent func(string)
 
-	// OnPeerVerified fires with the peer's verified fingerprint the instant the handshake
-	// confirms identity, before any files sync. Wired in setupFilesystem to scope the FUSE
-	// cache to the peer (drop a different peer's view, keep the same peer's).
+	// OnPeerVerified fires with the peer's verified fingerprint when the handshake
+	// confirms identity, before any files sync. setupFilesystem wires it to scope the
+	// FUSE cache to the peer: drop another peer's view, keep the same peer's.
 	OnPeerVerified func(fp string)
 
 	// Connection resilience.
@@ -125,24 +124,22 @@ type KeibiDrop struct {
 	ReconnectManager *session.ReconnectManager
 	RelayKeepalive   *RelayKeepalive
 
-	// Notification queue: bounded channel to avoid spawning 600+ goroutines during large
-	// clones. A single worker drains and sends sequentially.
+	// Notification queue: a bounded channel, so large clones do not spawn 600+
+	// goroutines. A single worker drains and sends sequentially.
 	notifyCh chan *bindings.NotifyRequest
 
-	// pendingNotifies counts REMOVE/RENAME/ADD_DIR notifies queued or in flight but not yet
-	// delivered. The worker has no retry queue and only ADD_FILE is replayed, so a rekey that
-	// dropped the socket while this is non-zero would lose the delete/rename. onRekeyNeeded
-	// defers while it is > 0.
+	// pendingNotifies counts REMOVE/RENAME/ADD_DIR notifies queued or in flight. The
+	// worker has no retry queue, and only ADD_FILE replays, so a socket drop here would
+	// lose the delete or rename. onRekeyNeeded defers while it is > 0.
 	pendingNotifies atomic.Int64
 
-	// tearingDown is set at the top of Run's ctx.Done teardown so the reconnect goroutine
-	// (onReconnected) bails instead of rebuilding the session/gRPC stack that teardown is
-	// concurrently niling. Serializes the reconnect-vs-teardown lifecycle.
+	// tearingDown gates the reconnect goroutine: Run's teardown sets it first, so
+	// onReconnected stops instead of rebuilding the stack that teardown nils.
 	tearingDown atomic.Bool
 
-	// eagerFoldInFlight is a single-flight guard for the eager entropy fold: the initiator runs
-	// at most one fold round at a time. Cleared when the round finishes; a reconnect re-folds on
-	// the fresh session key.
+	// eagerFoldInFlight is the single-flight guard for the eager entropy fold: at most
+	// one round at a time. The round clears it on finish. A reconnect re-folds on the
+	// fresh session key.
 	eagerFoldInFlight atomic.Bool
 
 	// eagerFoldRearm: a trigger during an in-flight round runs one follow-up instead of dropping.
@@ -151,26 +148,26 @@ type KeibiDrop struct {
 	// eagerFoldScheduled is the coalescing latch for lane-wire arrival triggers.
 	eagerFoldScheduled atomic.Bool
 
-	// Reachability hints. inboundBlocked means nothing reaches our listener; it rides the
-	// encrypted registration so the peer skips a dial that would only time out.
-	// peerInboundBlocked is the same flag from the peer. *On/*At scope the verdict so it
-	// expires instead of pinning us to the relay. See reachability.go.
+	// Reachability hints. inboundBlocked means nothing reaches the local listener. It
+	// rides the encrypted registration, so the peer skips a doomed dial.
+	// peerInboundBlocked is the same flag from the peer. *On/*At scope the verdict, so
+	// it expires instead of pinning the node to the relay.
 	inboundBlocked     atomic.Bool
 	peerInboundBlocked atomic.Bool
 	inboundBlockedOn   atomic.Value // string
 	probedOn           atomic.Value // string: the local address the relay probe last ran on
-	probedAt           atomic.Int64 // unix nano of that probe, so the verdict expires
+	probedAt           atomic.Int64 // Unix nano of that probe, so the verdict expires.
 
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc
 	activeBitmaps     map[string]*filesystem.ChunkBitmap
 	activeDownloadsMu sync.Mutex
 
-	// Download registry: tracks which bitmaps belong to which peer (privacy-preserving).
+	// Download registry: maps bitmaps to their peer with HMAC tags, not fingerprints.
 	dlRegistry  *downloadRegistry
 	registryKey []byte
 
-	// Preserved shared files from previous session (only served to same peer).
+	// Preserved shared files from the previous session. Served only to the same peer.
 	lastSharedPeerFP string
 	lastSharedFiles  map[string]*synctracker.File
 	sharedStore      *sharedFilesStore
@@ -183,12 +180,12 @@ const (
 	Stop
 )
 
-// Factory-style constructor
+// NewKeibiDrop builds a KeibiDrop and probes the local global IPv6 address.
 func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string, prefetchOnOpen bool, pushOnWrite bool) (*KeibiDrop, error) {
 	ipv6, err := GetGlobalIPv6()
 	if err != nil {
-		// Non-fatal: Android restricts net.Interfaces(). Mobile peers use
-		// the bridge relay (outbound-only), so a local IPv6 isn't required.
+		// Non-fatal: Android restricts net.Interfaces(). Mobile peers use the
+		// outbound-only bridge relay, so a local IPv6 is not required.
 		logger.Warn("Failed to get local IPv6 (non-fatal on mobile)", "error", err)
 		ipv6 = ""
 	}
@@ -196,9 +193,8 @@ func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayUR
 	return NewKeibiDropWithIP(ctx, logger, isFuse, relayURL, inboundPort, defaultOutboundPort, toMount, toSave, prefetchOnOpen, pushOnWrite, ipv6)
 }
 
-// NewKeibiDropWithIP is identical to NewKeibiDrop but accepts an explicit IPv6
-// address instead of probing the network. This enables testing on machines
-// without a global IPv6 address.
+// NewKeibiDropWithIP is NewKeibiDrop with an explicit IPv6 address instead of a
+// network probe. It enables tests on machines without a global IPv6 address.
 func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string, prefetchOnOpen bool, pushOnWrite bool, ipv6Address string) (*KeibiDrop, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
@@ -226,7 +222,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		return nil, err
 	}
 
-	// Wrap incoming context so Cancel is always available for disconnect handling.
+	// Wrap the incoming context, so Cancel is always available for disconnect handling.
 	ctx, cancel := context.WithCancel(ctx)
 
 	kd := &KeibiDrop{
@@ -239,7 +235,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		inboundPort:  inboundPort,
 		listener:     listener,
 		signals:      make(chan TaskSignal, 2),
-		// running is zero-value (false) by default.
+		// running stays false until Start.
 		ctx:             ctx,
 		Cancel:          cancel,
 		shutdown:        make(chan struct{}),
@@ -260,12 +256,11 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 	return kd, nil
 }
 
-// EnableOpts controls how persistent identity is loaded:
-//   - PassphraseProtect: opt into Tier 2 (passphrase-derived key).
-//     Requires PassphraseProvider to be non-nil.
-//   - PassphraseProvider: called once when PassphraseProtect=true to obtain
-//     the user's passphrase. Typical sources: TTY prompt (CLI),
-//     stdin (rustbridge / FFI), test stub.
+// EnableOpts controls how persistent identity loads:
+//   - PassphraseProtect: opt into Tier 2, a passphrase-derived key.
+//     Requires a non-nil PassphraseProvider.
+//   - PassphraseProvider: runs once when PassphraseProtect is true to obtain the
+//     passphrase. Typical sources: TTY prompt, stdin bridge, test stub.
 type EnableOpts struct {
 	PassphraseProtect  bool
 	PassphraseProvider func() (string, error)
@@ -273,7 +268,7 @@ type EnableOpts struct {
 }
 
 // EnablePersistentIdentity replaces ephemeral keys with a stable device identity.
-// Must be called before CreateRoom/JoinRoom. Loads or creates identity from configDir,
+// Call it before CreateRoom/JoinRoom. It loads or creates the identity in configDir,
 // rebuilds the session with stable keys, and loads the address book.
 func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts) error {
 	logger := kd.logger.With("method", "enable-persistent-identity", "configDir", configDir, "passphrase", opts.PassphraseProtect)
@@ -310,7 +305,7 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 
 	kd.Identity = id
 	kd.AddressBook = ab
-	sess.ExtraFoldConns = kd.quicFoldConns // fold rounds cover the QUIC lane too
+	sess.ExtraFoldConns = kd.quicFoldConns // Fold rounds cover the QUIC lane too.
 	kd.mu.Lock()
 	kd.session = sess
 	kd.mu.Unlock()
@@ -330,7 +325,7 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 			logger.Error("Failed to refresh persistent session", "error", err)
 			return nil
 		}
-		s.ExtraFoldConns = kd.quicFoldConns // fold rounds cover the QUIC lane too
+		s.ExtraFoldConns = kd.quicFoldConns // Fold rounds cover the QUIC lane too.
 		return s
 	}
 
@@ -338,16 +333,15 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 	return nil
 }
 
-// EnablePersistentIdentityDefault is a convenience wrapper that uses zero-value
-// EnableOpts (keychain or file tier, no passphrase).
+// EnablePersistentIdentityDefault calls EnablePersistentIdentity with zero-value
+// EnableOpts: keychain or file tier, no passphrase.
 func (kd *KeibiDrop) EnablePersistentIdentityDefault(configDir string) error {
 	return kd.EnablePersistentIdentity(configDir, EnableOpts{})
 }
 
-// ToggleIncognito switches between persistent and ephemeral identity.
-// When enabling incognito: generates fresh ephemeral keys.
-// When disabling: restores persistent identity keys.
-// Returns the new fingerprint.
+// ToggleIncognito switches between persistent and ephemeral identity. Enabling
+// generates fresh ephemeral keys. Disabling restores the persistent keys.
+// It returns the new fingerprint.
 func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, error) {
 	if incognito {
 		kd.Incognito = true
@@ -357,7 +351,7 @@ func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, 
 		if err != nil {
 			return "", fmt.Errorf("init ephemeral session: %w", err)
 		}
-		sess.ExtraFoldConns = kd.quicFoldConns // fold rounds cover the QUIC lane too
+		sess.ExtraFoldConns = kd.quicFoldConns // Fold rounds cover the QUIC lane too.
 		kd.mu.Lock()
 		kd.session = sess
 		kd.mu.Unlock()
@@ -367,7 +361,7 @@ func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, 
 				kd.logger.Error("Failed to refresh ephemeral session", "error", err)
 				return nil
 			}
-			s.ExtraFoldConns = kd.quicFoldConns // fold rounds cover the QUIC lane too
+			s.ExtraFoldConns = kd.quicFoldConns // Fold rounds cover the QUIC lane too.
 			return s
 		}
 		return sess.OwnFingerprint, nil
@@ -395,35 +389,33 @@ type PeerRegistration struct {
 }
 
 type ConnectionHint struct {
-	IP    string `json:"ip"`             // public IP address (either v4 or v6)
-	Port  int    `json:"port"`           // where peer is listening
-	IPv6  bool   `json:"ipv6"`           // does this prefer IPv6?
-	Proto string `json:"proto"`          // e.g., "tcp"
-	Note  string `json:"note,omitempty"` // optional: NAT behavior, etc.
-	// InboundBlocked says nothing reaches the address above, so dialing it only burns the
-	// timeout. Inside the encrypted blob, so the relay never sees it; absent on older peers,
-	// which decodes as false.
+	IP    string `json:"ip"`             // Public IP address, v4 or v6.
+	Port  int    `json:"port"`           // Where the peer listens.
+	IPv6  bool   `json:"ipv6"`           // True when this hint prefers IPv6.
+	Proto string `json:"proto"`          // For example "tcp".
+	Note  string `json:"note,omitempty"` // Optional: NAT behavior notes.
+	// InboundBlocked means nothing reaches the address above, so a dial only burns the
+	// timeout. It rides inside the encrypted blob, so the relay never sees it. Older
+	// peers omit it, which decodes as false.
 	InboundBlocked bool `json:"inbound_blocked,omitempty"`
 }
 
-// EncryptedRegistration is the relay-visible payload (opaque blob).
-// The relay cannot read the contents - only the peers with the shared
-// room password can decrypt it.
+// EncryptedRegistration is the relay-visible payload, an opaque blob. Only peers
+// with the shared room password can decrypt it.
 type EncryptedRegistration struct {
 	Blob   string `json:"blob"`             // base64-encoded ChaCha20-Poly1305 ciphertext
 	Bridge string `json:"bridge,omitempty"` // relay-suggested bridge address (e.g., "fra1.bridge.keibisoft.com:26600")
 	Tier   string `json:"tier,omitempty"`   // bandwidth tier: "free", "priority" (relay metadata, not encrypted)
 }
 
-// Map server status errors to semantic errors.
+// ErrorMapperFunc maps server status errors to semantic errors.
 type ErrorMapperFunc func(statusCode int, err error) error
 
 // InboundPort returns the port this instance listens on for incoming connections.
 func (kd *KeibiDrop) InboundPort() int { return kd.inboundPort }
 
-// UpgradeListenerDualStack replaces the IPv6-only listener with a dual-stack
-// listener that accepts both IPv4 and IPv6. Used when entering local mode
-// (LAN discovery needs IPv4 connectivity).
+// UpgradeListenerDualStack replaces the IPv6-only listener with a dual-stack one.
+// Local mode uses it: LAN discovery needs IPv4 connectivity.
 func (kd *KeibiDrop) UpgradeListenerDualStack() error {
 	kd.mu.Lock()
 	defer kd.mu.Unlock()
@@ -440,7 +432,7 @@ func (kd *KeibiDrop) UpgradeListenerDualStack() error {
 }
 
 // DowngradeListenerIPv6Only replaces the dual-stack listener with an IPv6-only
-// listener. Used when leaving local mode.
+// listener when local mode ends.
 func (kd *KeibiDrop) DowngradeListenerIPv6Only() error {
 	kd.mu.Lock()
 	defer kd.mu.Unlock()
@@ -461,7 +453,7 @@ func (kd *KeibiDrop) IsRunning() bool {
 	return kd.running.Load()
 }
 
-// Running process for KeibiDrop.
+// Start signals the Run loop to begin a session.
 func (kd *KeibiDrop) Start() {
 	kd.signals <- Start
 }
@@ -504,41 +496,40 @@ func (kd *KeibiDrop) cancelContext() {
 	}
 }
 
-// Shutdown permanently stops the Run() goroutine. Use this for app exit.
-// For temporary disconnects (peer left), use Stop() instead.
-// Safe to call multiple times from any goroutine.
+// Shutdown permanently stops the Run goroutine. Use it for app exit. For a
+// temporary disconnect, use Stop. Safe to call many times from any goroutine.
 func (kd *KeibiDrop) Shutdown() {
 	select {
 	case <-kd.shutdown:
-		// Already closed, nothing to do.
+		// Already closed. Nothing to do.
 	default:
 		kd.shutdownOnce.Do(func() { close(kd.shutdown) })
 	}
 	kd.cancelContext()
 }
 
-// Run as a go-routine.
+// Run is the main loop. Call it as a goroutine.
 func (kd *KeibiDrop) Run() {
 	logger := kd.logger.With("method", "run-state")
 	for {
 		select {
 		case <-kd.ctx.Done():
 			logger.Info("Stopping KeibiDrop run instance (ctx cancelled)")
-			// Signal teardown before joining the resilience goroutines so a still-running
-			// onReconnected bails instead of rebuilding the stack we are about to nil.
+			// Signal teardown before joining the resilience goroutines, so a still-running
+			// onReconnected stops instead of rebuilding the stack this teardown nils.
 			kd.tearingDown.Store(true)
 			kd.StopConnectionResilience()
 			// Nil the resilience handles under kd.mu: onDisconnect and onRekeyNeeded snapshot
-			// kd.ReconnectManager / kd.RelayKeepalive, so these writes must pair with them.
-			// Bare assignments only, so kd.mu is never held across a blocking call.
+			// them under the same lock, so these writes pair with those reads. Bare
+			// assignments only, so kd.mu never spans a blocking call.
 			kd.mu.Lock()
 			kd.HealthMonitor = nil
 			kd.ReconnectManager = nil
 			kd.RelayKeepalive = nil
 			kd.mu.Unlock()
-			// Swap out the gRPC stack under kd.mu so the reconnect-rebuild path, which publishes
-			// these same fields, gets a happens-before instead of racing this teardown.
-			// Stop()/Close() run on the locals outside the lock.
+			// Swap out the gRPC stack under kd.mu. The reconnect-rebuild path publishes the
+			// same fields, so it gets a happens-before instead of a race. Stop and Close
+			// run on the locals outside the lock.
 			kd.mu.Lock()
 			oldServer := kd.grpcServer
 			oldConn := kd.grpcClientConn
@@ -547,8 +538,8 @@ func (kd *KeibiDrop) Run() {
 			kd.KDClient = nil
 			kd.KDSvc = nil
 			kd.mu.Unlock()
-			// Safe to Stop()/Close() here: handleNotifyDisconnect waits grpcDisconnectGraceDelay
-			// before cancelling the context, so the in-flight DISCONNECT response has flushed.
+			// Stop and Close are safe here: handleNotifyDisconnect waits grpcDisconnectGraceDelay
+			// before it cancels the context, so the DISCONNECT response has flushed.
 			if oldServer != nil {
 				oldServer.Stop()
 			}
@@ -556,9 +547,8 @@ func (kd *KeibiDrop) Run() {
 				oldConn.Close()
 			}
 			kd.StopQUICControlChannel()
-			// Nil the session under kd.mu so the detached reconnect-resume goroutine and
-			// onRekeyNeeded, which snapshot kd.session under kd.mu, get a happens-before and
-			// never race this teardown write.
+			// Nil the session under kd.mu. The detached resume goroutine and onRekeyNeeded
+			// snapshot kd.session under the same lock, so they never race this write.
 			prevPeerFP := ""
 			kd.mu.Lock()
 			if kd.session != nil {
@@ -568,7 +558,7 @@ func (kd *KeibiDrop) Run() {
 			kd.mu.Unlock()
 			kd.PeerIPv6IP = ""
 
-			// Permanent shutdown: close listener and exit.
+			// Permanent shutdown: close the listener and exit.
 			select {
 			case <-kd.shutdown:
 				if kd.FS != nil {
@@ -592,10 +582,10 @@ func (kd *KeibiDrop) Run() {
 			}
 
 			// Temporary disconnect: refresh session and context. Preserve LocalFiles tagged
-			// with peer identity so they're only served back to the same peer on reconnect.
+			// with the peer identity, so only the same peer gets them back on reconnect.
 			prevLocal := kd.SyncTracker.LocalFiles
-			// Compute the fresh session outside kd.mu (keygen), then swap under the lock so
-			// background readers snapshot a consistent pointer instead of racing this write.
+			// Compute the fresh session outside kd.mu, because keygen is slow. Swap under
+			// the lock, so background readers snapshot a consistent pointer.
 			newSess := kd.refreshSession()
 			kd.mu.Lock()
 			kd.session = newSess
@@ -632,7 +622,6 @@ func (kd *KeibiDrop) Run() {
 
 				logger.Info("Signal start success")
 
-				// prepare serverReady channel
 				go func() {
 					err := kd.startGRPCServer()
 					if err != nil {
@@ -640,7 +629,7 @@ func (kd *KeibiDrop) Run() {
 					}
 				}()
 
-				// Wait for filesystem setup (or context cancellation).
+				// Wait for filesystem setup or context cancellation.
 				select {
 				case <-kd.filesystemReady:
 				case <-kd.ctx.Done():
@@ -648,8 +637,8 @@ func (kd *KeibiDrop) Run() {
 					continue
 				}
 
-				// Mark running before the blocking Mount() call so external code (tests, FFI) can
-				// observe the running to not-running transition on disconnect.
+				// Mark running before the blocking Mount call, so external code observes the
+				// running to not-running transition on disconnect.
 				kd.running.Store(true)
 
 				if kd.FS != nil && kd.KDSvc != nil {

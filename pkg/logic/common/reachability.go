@@ -17,16 +17,15 @@ import (
 	"time"
 )
 
-// Nothing on this host can tell whether the internet reaches our own listener, so the relay
-// answers it by dialing us back (its /probe endpoint). The verdict rides the encrypted
-// registration so the peer skips the doomed dial too. A relay without /probe costs nothing.
+// This host cannot tell whether the internet reaches its listener. The relay answers
+// with a dial-back via its /probe endpoint. The verdict rides the encrypted
+// registration, so the peer skips the doomed dial. A relay without /probe costs nothing.
 
 const probeTimeout = 6 * time.Second
 
-// probeCacheTTL expires a verdict even when the local address is unchanged: swapping a router
-// or its firewall changes reachability while the ISP re-delegates the same prefix. A stale
-// "blocked" cannot self-correct (we tell the peer not to dial and skip our accept, so no
-// inbound can disprove it), so only re-probing clears it.
+// probeCacheTTL expires a verdict even when the local address is unchanged. A router
+// swap changes reachability while the ISP keeps the same prefix. A stale "blocked"
+// cannot self-correct, because no inbound can disprove it. Only a re-probe clears it.
 const probeCacheTTL = 15 * time.Minute
 
 // relayProbeResult is the relay's /probe answer.
@@ -34,12 +33,12 @@ type relayProbeResult struct {
 	Reachable bool `json:"reachable"`
 }
 
-// ProbeInboundReachability asks the relay to dial our listener and records the verdict, cached
-// per local address for probeCacheTTL. Best effort: any failure leaves the mark as it was.
+// ProbeInboundReachability asks the relay to dial the local listener and caches the
+// verdict per local address for probeCacheTTL. Any failure leaves the mark unchanged.
 func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
-	// Snapshot the address up front: the verdict must be tagged with the address it was measured
-	// on, not whatever the address becomes while this up-to-6s probe is in flight. A mid-probe
-	// network change would otherwise pin the new network to the relay for probeCacheTTL.
+	// Snapshot the address up front. The verdict must carry the address it was measured
+	// on, not the address after the probe ends. A mid-probe network change would
+	// otherwise pin the new network to the relay for probeCacheTTL.
 	addr := kd.LocalIPv6IP
 	on, ok := kd.probedOn.Load().(string)
 	if ok && on == addr && time.Since(time.Unix(0, kd.probedAt.Load())) < probeCacheTTL {
@@ -68,8 +67,8 @@ func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// The relay answered, so cache either way: a relay without the endpoint answers 404 every
-	// time, and re-asking on every registration would just add a round trip to each one.
+	// The relay answered, so cache either way. A relay without the endpoint answers 404
+	// every time, and a re-ask would add a round trip to every registration.
 	kd.probedOn.Store(addr)
 	kd.probedAt.Store(time.Now().UnixNano())
 
@@ -95,20 +94,20 @@ func (kd *KeibiDrop) markInboundBlocked() {
 	kd.markInboundBlockedOn(kd.LocalIPv6IP)
 }
 
-// markInboundBlockedOn records a timed-out accept, tagged with the address it was seen on.
+// markInboundBlockedOn records a timed-out accept together with the address that saw it.
 func (kd *KeibiDrop) markInboundBlockedOn(addr string) {
 	kd.inboundBlockedOn.Store(addr)
 	kd.inboundBlocked.Store(true)
 }
 
-// markInboundReachable clears the mark after an inbound connection actually arrived.
+// markInboundReachable clears the mark after an inbound connection arrives.
 func (kd *KeibiDrop) markInboundReachable() {
 	kd.inboundBlocked.Store(false)
 }
 
-// InboundBlocked reports whether to advertise our listener as unreachable. Bound to the
-// address it was observed on: a different address is a different network, so it re-probes
-// rather than letting one bad network pin us to the relay.
+// InboundBlocked reports whether to advertise the listener as unreachable. The mark
+// binds to the address that observed it. A new address is a new network and re-probes,
+// so one bad network cannot pin the node to the relay.
 func (kd *KeibiDrop) InboundBlocked() bool {
 	if !kd.inboundBlocked.Load() {
 		return false

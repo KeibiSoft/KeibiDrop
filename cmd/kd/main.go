@@ -34,7 +34,7 @@ import (
 
 var eventCh = make(chan string, 64)
 
-// Local mode discovery state: names for deterministic tiebreak.
+// Local mode discovery state. The names give a deterministic role tiebreak.
 var (
 	localMyName       string
 	localPeerName     string
@@ -72,14 +72,8 @@ func errResponse(msg string) Response {
 	return Response{OK: false, Error: msg}
 }
 
-// promptPassphraseFromTTY reads a passphrase from the controlling terminal
-// without echoing the input. Used for Tier 2 (passphrase-protect) key loading.
-//
-// Uses os.Stdin.Fd() rather than syscall.Stdin so the call is portable —
-// syscall.Stdin is an int on Unix but a Handle (uintptr) on Windows, and
-// would not compile or behave correctly across both. os.Stdin.Fd() returns
-// the platform-appropriate file descriptor / handle that term.ReadPassword
-// knows how to handle.
+// promptPassphraseFromTTY reads a passphrase from the terminal without echo.
+// It uses os.Stdin.Fd(), not syscall.Stdin, because syscall.Stdin is a Handle on Windows.
 func promptPassphraseFromTTY() (string, error) {
 	fmt.Fprint(os.Stderr, "Passphrase: ")
 	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -95,9 +89,9 @@ func promptPassphraseFromTTY() (string, error) {
 func runDaemon() {
 	sock := socketPath()
 
-	// Clean up stale socket
+	// Remove a stale socket from a dead daemon.
 	if _, err := os.Stat(sock); err == nil {
-		// Try connecting to see if another daemon is running
+		// If the dial succeeds, another daemon owns the socket.
 		conn, err := net.Dial("unix", sock)
 		if err == nil {
 			_ = conn.Close()
@@ -107,7 +101,7 @@ func runDaemon() {
 		_ = os.Remove(sock)
 	}
 
-	// Load config (defaults → config file → env vars).
+	// Config precedence: defaults, then config file, then env vars.
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"config: %s"}`+"\n", err)
@@ -128,7 +122,6 @@ func runDaemon() {
 	isFuse := checkfuse.IsFUSEPresent() && !cfg.NoFUSE
 	isLocal := os.Getenv("KD_LOCAL") != ""
 
-	// Setup logger
 	logWriter := os.Stderr
 	if cfg.LogFile != "" {
 		f, err := os.OpenFile(filepath.Clean(cfg.LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -139,12 +132,10 @@ func runDaemon() {
 	}
 	logger := slog.New(slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelDebug})).With("component", "kd")
 
-	// Debug-only: KD_PPROF starts a pprof server for heap/goroutine/allocation profiling.
-	// Gated behind the debug build tag (pprof_debug.go / pprof_release.go); a no-op in a
-	// plain build.
+	// KD_PPROF starts a pprof server for heap and goroutine profiles.
+	// The debug build tag gates it; a plain build gets a no-op.
 	maybeStartPprof(logger)
 
-	// Create KeibiDrop instance
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -158,7 +149,7 @@ func runDaemon() {
 	kd.IsLocalMode = isLocal
 	kd.BridgeAddr = cfg.BridgeAddr
 	kd.StrictMode = cfg.StrictMode
-	kd.AutoCache = cfg.LiveCollab // live_collab → macFUSE auto_cache (same-size live edits, macOS)
+	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	kd.ReadAheadWindowMB = cfg.ReadAheadWindowMB
 	for _, warn := range cfg.Warnings() {
@@ -195,7 +186,6 @@ func runDaemon() {
 
 	go kd.Run()
 
-	// Listen on Unix socket
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"socket listen: %s"}`+"\n", err)
@@ -204,7 +194,6 @@ func runDaemon() {
 	defer ln.Close()
 	defer os.Remove(sock)
 
-	// Handle signals for clean shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -284,7 +273,7 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 			if err != nil {
 				return errResponse(err.Error())
 			}
-			// Auto-lookup peer name from discovery results for tiebreak.
+			// Look up the peer name from discovery results for the role tiebreak.
 			if name, ok := discoveredPeerMap[req.Args[0]]; ok {
 				localPeerName = name
 			} else if len(req.Args) >= 2 {
@@ -314,9 +303,8 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		if err := kd.SetPeerDirectAddress(peerAddr); err != nil {
 			return errResponse(err.Error())
 		}
-		// Tiebreak on the name we actually advertise (daemonDisc), not a throwaway discovery
-		// instance — otherwise the role tiebreak runs on a name the peer never saw, so both sides
-		// can pick the same role and deadlock (the desktop analog of the mobile reconnect bug).
+		// Tiebreak on the advertised daemonDisc name, not a throwaway instance.
+		// A name the peer never saw lets both sides pick the same role and deadlock.
 		myName := ""
 		if daemonDisc != nil {
 			myName = daemonDisc.Name()
@@ -752,14 +740,14 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 func cmdDiscover(kd *common.KeibiDrop) Response {
 	kd.IsLocalMode = true
 
-	// Start discovery once, keep it running (like rustbridge/mobile do).
+	// Start discovery once and keep it running. Rustbridge and mobile do the same.
 	if daemonDisc == nil {
 		daemonDisc = discovery.New(kd.InboundPort(), slog.Default())
 		_ = daemonDisc.Start()
-		// First call: wait for beacons.
+		// The first call waits for beacons.
 		time.Sleep(6 * time.Second)
 	} else {
-		// Subsequent calls: short wait to refresh.
+		// Later calls only refresh the list, so wait less.
 		time.Sleep(2 * time.Second)
 	}
 
@@ -816,8 +804,8 @@ func cmdConnect(kd *common.KeibiDrop) Response {
 	}
 	defer kd.OpInProgress.Add(-1)
 
-	// In local mode, use name-based tiebreak (same as mobile + Rust UI).
-	// The fingerprint tiebreak in Connect() doesn't work with TOFU.
+	// In local mode, use the name tiebreak. Mobile and the Rust UI use the same rule.
+	// The fingerprint tiebreak in Connect() does not work with TOFU.
 	if kd.IsLocalMode && localMyName != "" && localPeerName != "" {
 		if common.DecideLocalRole(localMyName, localPeerName, kd.PeerIPv6IP) {
 			if err := kd.CreateRoom(); err != nil {
@@ -905,7 +893,6 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"writer_epoch":      kd.WriterEpoch(),
 	}
 
-	// File counts
 	kd.SyncTracker.LocalFilesMu.RLock()
 	data["local_files"] = len(kd.SyncTracker.LocalFiles)
 	kd.SyncTracker.LocalFilesMu.RUnlock()
@@ -941,8 +928,8 @@ func runClient(cmd string, args []string) {
 
 // --- Helpers ---
 
-// isLoopbackAddr reports whether host:port binds only the loopback interface, so the debug pprof
-// endpoint (KD_PPROF) can never be exposed off-box.
+// isLoopbackAddr reports whether addr binds only the loopback interface.
+// This keeps the KD_PPROF debug endpoint off external interfaces.
 func isLoopbackAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {

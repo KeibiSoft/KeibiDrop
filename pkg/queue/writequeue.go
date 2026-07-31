@@ -22,12 +22,8 @@ import (
 	"github.com/zeebo/xxh3"
 )
 
-// WriteQueue persists pending filesystem operations to survive crashes.
-// When the peer is disconnected, operations are queued locally and
-// replayed when the connection is restored.
-//
-// Storage format: One JSON file per operation in a directory.
-// Files are named: {id}_{timestamp}.json
+// WriteQueue persists pending filesystem operations so they survive crashes.
+// While a peer is disconnected, each operation queues as one {id}.json file and replays on reconnect.
 type WriteQueue struct {
 	mu        sync.Mutex
 	dir       string // Directory for persisted operations
@@ -64,10 +60,8 @@ type persistedOp struct {
 	Retries   int    `json:"retries"`
 }
 
-// NewWriteQueue creates a new write queue with file-based persistence.
-// Operations are stored as JSON files in the specified directory.
+// NewWriteQueue creates a write queue that persists operations as JSON files in dir.
 func NewWriteQueue(dir string, sessionID string, logger *slog.Logger) (*WriteQueue, error) {
-	// Ensure directory exists
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create queue directory: %w", err)
 	}
@@ -81,7 +75,6 @@ func NewWriteQueue(dir string, sessionID string, logger *slog.Logger) (*WriteQue
 		MaxBytes:  100 * 1024 * 1024, // 100 MB
 	}
 
-	// Load any pending operations from previous session/crash
 	if err := wq.loadPendingOps(); err != nil {
 		logger.Warn("Failed to load pending ops", "error", err)
 	}
@@ -89,24 +82,24 @@ func NewWriteQueue(dir string, sessionID string, logger *slog.Logger) (*WriteQue
 	return wq, nil
 }
 
-// Close is a no-op for file-based storage (for interface compatibility).
+// Close is a no-op; it exists for interface compatibility.
 func (q *WriteQueue) Close() error {
 	return nil
 }
 
-// EnableQueueing enables operation queueing (call when disconnected).
+// EnableQueueing enables operation queueing. Call it on disconnect.
 func (q *WriteQueue) EnableQueueing() {
 	q.enabled.Store(true)
 	q.logger.Info("Write queueing enabled")
 }
 
-// DisableQueueing disables operation queueing (call when connected).
+// DisableQueueing disables operation queueing. Call it when connected.
 func (q *WriteQueue) DisableQueueing() {
 	q.enabled.Store(false)
 	q.logger.Info("Write queueing disabled")
 }
 
-// IsEnabled returns true if queueing is currently enabled.
+// IsEnabled reports whether queueing is enabled.
 func (q *WriteQueue) IsEnabled() bool {
 	return q.enabled.Load()
 }
@@ -134,7 +127,7 @@ func (q *WriteQueue) totalBytes() int64 {
 }
 
 // Enqueue adds an operation to the queue.
-// Returns nil if queueing is disabled (operation should be sent directly).
+// It returns nil when queueing is off; the caller then sends the operation directly.
 func (q *WriteQueue) Enqueue(op *QueuedOperation) error {
 	if !q.enabled.Load() {
 		return nil // Pass-through when connected
@@ -143,7 +136,6 @@ func (q *WriteQueue) Enqueue(op *QueuedOperation) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	// Check limits
 	if len(q.ops) >= q.MaxOps {
 		return fmt.Errorf("queue full: %d operations", q.MaxOps)
 	}
@@ -154,14 +146,12 @@ func (q *WriteQueue) Enqueue(op *QueuedOperation) error {
 		return fmt.Errorf("queue bytes exceeded: %d + %d > %d", totalBytes, dataSize, q.MaxBytes)
 	}
 
-	// Assign ID and compute checksum
 	op.ID = q.nextID.Add(1)
 	if len(op.Data) > 0 {
 		op.Checksum = xxh3.Hash(op.Data)
 	}
 	op.CreatedAt = time.Now()
 
-	// Persist to file
 	if err := q.persistOp(op); err != nil {
 		return fmt.Errorf("failed to persist operation: %w", err)
 	}
@@ -216,13 +206,11 @@ func (q *WriteQueue) EnqueueRename(oldPath, newPath string) error {
 	})
 }
 
-// ReplayFunc is called for each operation during flush.
-// Returns nil on success, error on failure.
+// ReplayFunc replays one queued operation during Flush.
 type ReplayFunc func(op *QueuedOperation) error
 
-// Flush replays all queued operations using the provided replay function.
-// Successfully replayed operations are removed from the queue.
-// Failed operations are retried up to 3 times before being marked as conflicts.
+// Flush replays all queued operations and removes each success from the queue.
+// A failed operation retries up to 3 times, then leaves the queue as a conflict.
 func (q *WriteQueue) Flush(replay ReplayFunc) []error {
 	q.mu.Lock()
 	ops := make([]*QueuedOperation, len(q.ops))
@@ -235,7 +223,7 @@ func (q *WriteQueue) Flush(replay ReplayFunc) []error {
 
 	q.logger.Info("Flushing write queue", "count", len(ops))
 
-	// Sort by timestamp to maintain ordering
+	// Replay in creation order.
 	sort.Slice(ops, func(i, j int) bool {
 		return ops[i].CreatedAt.Before(ops[j].CreatedAt)
 	})
@@ -244,7 +232,6 @@ func (q *WriteQueue) Flush(replay ReplayFunc) []error {
 	var succeeded []uint64
 
 	for _, op := range ops {
-		// Verify data integrity
 		if len(op.Data) > 0 {
 			checksum := xxh3.Hash(op.Data)
 			if checksum != op.Checksum {
@@ -269,7 +256,7 @@ func (q *WriteQueue) Flush(replay ReplayFunc) []error {
 					"path", op.Path,
 					"error", err)
 				q.totalFailed.Add(1)
-				// Move to conflict handling (remove from queue)
+				// Drop from the queue; conflict handling takes over.
 				succeeded = append(succeeded, op.ID)
 			}
 
@@ -282,7 +269,6 @@ func (q *WriteQueue) Flush(replay ReplayFunc) []error {
 		q.logger.Debug("Operation replayed", "id", op.ID, "type", op.Type, "path", op.Path)
 	}
 
-	// Remove succeeded operations
 	q.removeOps(succeeded)
 
 	q.logger.Info("Flush complete",
@@ -293,12 +279,11 @@ func (q *WriteQueue) Flush(replay ReplayFunc) []error {
 	return errors
 }
 
-// Clear removes all queued operations (use with caution).
+// Clear removes all queued operations and their files.
 func (q *WriteQueue) Clear() error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	// Remove all operation files
 	for _, op := range q.ops {
 		q.deleteOpFile(op.ID)
 	}
@@ -341,7 +326,7 @@ func (q *WriteQueue) persistOp(op *QueuedOperation) error {
 		return err
 	}
 
-	// Write to temp file first, then rename (atomic)
+	// A temp file plus rename keeps the persisted operation atomic.
 	tmpPath := q.opFilename(op.ID) + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return err
@@ -362,7 +347,6 @@ func (q *WriteQueue) loadPendingOps() error {
 			continue
 		}
 
-		// Skip temp files
 		if strings.HasSuffix(entry.Name(), ".tmp") {
 			continue
 		}
@@ -379,7 +363,6 @@ func (q *WriteQueue) loadPendingOps() error {
 			continue
 		}
 
-		// Only load operations from this session
 		if p.SessionID != q.sessionID {
 			continue
 		}
@@ -406,7 +389,6 @@ func (q *WriteQueue) loadPendingOps() error {
 			}
 			op.Data = decoded
 
-			// Verify integrity
 			if xxh3.Hash(op.Data) != op.Checksum {
 				q.logger.Warn("Skipping corrupted operation", "id", op.ID, "path", op.Path)
 				continue
@@ -421,7 +403,6 @@ func (q *WriteQueue) loadPendingOps() error {
 
 	q.nextID.Store(maxID)
 
-	// Sort by creation time
 	sort.Slice(q.ops, func(i, j int) bool {
 		return q.ops[i].CreatedAt.Before(q.ops[j].CreatedAt)
 	})
