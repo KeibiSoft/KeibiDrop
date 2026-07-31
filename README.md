@@ -48,14 +48,16 @@ Another computer's files show up as a folder on yours. Open and edit them in you
 
 ```bash
 brew tap keibisoft/keibidrop
+brew trust keibisoft/keibidrop
 brew install keibidrop
 ```
 
 ### Linux (Debian/Ubuntu)
 
 ```bash
-wget https://github.com/KeibiSoft/KeibiDrop/releases/latest/download/keibidrop_amd64.deb
-sudo dpkg -i keibidrop_amd64.deb
+wget -O keibidrop.deb $(curl -s https://api.github.com/repos/KeibiSoft/KeibiDrop/releases/latest \
+  | grep -o 'https://[^"]*_amd64\.deb')
+sudo apt install ./keibidrop.deb
 ```
 
 ### Windows
