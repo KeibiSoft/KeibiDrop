@@ -20,7 +20,7 @@ import (
 const KeySize = chacha20poly1305.KeySize
 const NonceSize = chacha20poly1305.NonceSize
 const EncOverhead = uint64(chacha20poly1305.NonceSize + chacha20poly1305.Overhead)
-const BlockSize = uint64(2 << 16) // linux cp uses 128KiB blocks; we use double.
+const BlockSize = uint64(2 << 16) // Double the block size that linux cp uses.
 
 // nonceCounterBits is the width of the per-epoch message counter within the nonce. The
 // packed state holds the 16-bit epoch in the high bits, the 48-bit counter in the low bits.
@@ -31,7 +31,7 @@ const nonceCounterMask = (uint64(1) << nonceCounterBits) - 1
 
 // NonceGenerator provides deterministic per-direction AEAD nonces of the form
 // [4-byte prefix][2-byte big-endian epoch][6-byte big-endian counter] = 12 bytes. The prefix
-// distinguishes directions. The epoch (key generation) is bumped by the ratchet; the 48-bit
+// distinguishes directions. The ratchet bumps the epoch (key generation); the 48-bit
 // counter resets to 0 on each bump. Epoch and counter share one atomic word so every Next
 // reads a consistent pair; the caller serializes SetEpoch against Next. At epoch 0 the layout
 // is byte-identical to the old [4-byte prefix][8-byte counter] format, so a ratchet-unaware
@@ -86,8 +86,8 @@ func (ng *NonceGenerator) Epoch() uint16 {
 	return uint16(ng.state.Load() >> nonceCounterBits)
 }
 
-// EncryptWithNonce encrypts using a provided nonce (for counter-based encryption).
-// Returns [nonce | ciphertext+MAC], or error.
+// EncryptWithNonce encrypts with a caller-provided nonce, for counter-based encryption.
+// It returns [nonce | ciphertext+MAC].
 func EncryptWithNonce(kek, plainText []byte, nonce [NonceSize]byte) ([]byte, error) {
 	if len(kek) != KeySize {
 		return nil, errors.New("invalid key size")
@@ -107,9 +107,9 @@ func EncryptWithNonce(kek, plainText []byte, nonce [NonceSize]byte) ([]byte, err
 	return result, nil
 }
 
-// EncryptWithAAD encrypts plainText using KEK with ChaCha20-Poly1305 and authenticated
-// associated data (aad is authenticated but not included in the ciphertext; nil for none).
-// Returns [nonce | ciphertext+MAC], or error.
+// EncryptWithAAD encrypts plainText with KEK using ChaCha20-Poly1305.
+// The aad is authenticated but not included in the ciphertext; pass nil for none.
+// It returns [nonce | ciphertext+MAC].
 func EncryptWithAAD(kek, plainText, aad []byte) ([]byte, error) {
 	if len(kek) != KeySize {
 		return nil, errors.New("invalid key size")
@@ -135,9 +135,9 @@ func EncryptWithAAD(kek, plainText, aad []byte) ([]byte, error) {
 	return result, nil
 }
 
-// DecryptWithAAD decrypts [nonce | ciphertext+MAC] using KEK, verifying the associated
-// data (aad). The aad must match what EncryptWithAAD used, or authentication fails; nil
-// when no AAD was used. Returns plainText or error if authentication fails.
+// DecryptWithAAD decrypts [nonce | ciphertext+MAC] with KEK and verifies the associated data.
+// The aad must match what EncryptWithAAD used, or authentication fails; pass nil when none was used.
+// It returns plainText, or an error on authentication failure.
 func DecryptWithAAD(kek, input, aad []byte) ([]byte, error) {
 	if len(kek) != KeySize {
 		return nil, errors.New("invalid key size")

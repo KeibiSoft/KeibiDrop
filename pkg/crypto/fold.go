@@ -69,8 +69,8 @@ func (fi *FoldInitiator) X25519Public() []byte { return fi.x25519Pub }
 
 // Derive completes the initiator's side: decapsulate the responder's ML-KEM ciphertext,
 // X25519 ECDH with its ephemeral public, combine (salted) into the 32-byte fold secret.
-// The responder public is validated by the constructor. Keys are dropped on return (best-
-// effort; Go has no wipe for these types, so single-round lifetime is the real control).
+// The constructor validates the responder public. Keys drop on return, best-effort;
+// Go has no wipe for these types, so single-round lifetime is the real control.
 func (fi *FoldInitiator) Derive(mlkemCiphertext, respX25519Pub, salt []byte) ([]byte, error) {
 	if fi.mlkemPriv == nil || fi.x25519Priv == nil {
 		return nil, errors.New("fold: initiator already consumed")
@@ -102,7 +102,7 @@ func (fi *FoldInitiator) drop() {
 // EphemeralFoldRespond completes the responder's side: generate an ephemeral X25519 keypair,
 // encapsulate to the initiator's ML-KEM public, X25519 ECDH, combine (salted) into the
 // 32-byte fold secret. Returns the fold secret, ML-KEM ciphertext, and responder X25519
-// public for the initiator to finish. Initiator publics are validated by the constructors.
+// public for the initiator to finish. The constructors validate the initiator publics.
 func EphemeralFoldRespond(initMLKEMPub, initX25519Pub, salt []byte) (foldSecret, mlkemCiphertext, respX25519Pub []byte, err error) {
 	// Fail fast on a short/absent salt, before generating a keypair or encapsulating.
 	if len(salt) < minFoldSaltSize {

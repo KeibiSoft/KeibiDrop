@@ -49,9 +49,9 @@ func (benchService) Read(_ context.Context, req *pb.ReadRequest) (*pb.ReadReply,
 // deterministic pattern (data[j] = byte(j)) for integrity checks. The buffer is filled
 // once and reused, so this stays a throughput test.
 //
-// The loop checks stream.Context() before every send: without it, a handler that blindly
-// sends can bury itself in a flow-control-blocked transport write that gRPC cannot
-// interrupt, so a cancelled or disconnected client would not stop the server.
+// The loop checks stream.Context() before every send. Without the check, a send can
+// block in a flow-control-stalled transport write that gRPC cannot interrupt, and a
+// cancelled or disconnected client then cannot stop the server.
 func (s benchService) Download(req *pb.DownloadRequest, stream pb.BenchService_DownloadServer) error {
 	if s.done != nil {
 		defer s.done.Store(true)

@@ -42,15 +42,15 @@ func (controlService) Ping(_ context.Context, _ *cpb.PingRequest) (*cpb.PingRepl
 	return &cpb.PingReply{}, nil
 }
 
-// This is KeibiDrop's own post-quantum handshake, run over a QUIC stream, providing
-// security instead of relying on QUIC's TLS. It imports pkg/crypto unchanged, so the
-// seed-wrap, ML-KEM-1024 encapsulation, HKDF-SHA512 derivation, cipher negotiation, and
-// fingerprint are byte-identical to the product.
+// This is KeibiDrop's own post-quantum handshake, run over a QUIC stream; it provides the
+// security layer instead of QUIC's TLS. It imports pkg/crypto unchanged, so the seed-wrap,
+// ML-KEM-1024 encapsulation, HKDF-SHA512 derivation, cipher negotiation, and fingerprint
+// are byte-identical to the product.
 //
-// Why a second layer, when Go negotiates X25519MLKEM768 inside QUIC's TLS? TLS gives PQ
-// confidentiality but authenticates with a signature certificate; KeibiDrop's identity
-// keys are KEM keys (X25519 + ML-KEM), and it authenticates a peer by KEM possession
-// bound to a fingerprint, not by a cert. This handshake carries that model.
+// The second layer exists because TLS (even with X25519MLKEM768) gives PQ confidentiality
+// but authenticates with a signature certificate. KeibiDrop's identity keys are KEM keys
+// (X25519 + ML-KEM); it authenticates a peer by KEM possession bound to a fingerprint,
+// not by a cert. This handshake carries that model.
 
 // Identity is a device's persistent post-quantum identity: an X25519 key and an
 // ML-KEM-1024 key. The fingerprint is a hash over the two public keys, the token peers
@@ -60,8 +60,8 @@ type Identity struct {
 	fp   string
 }
 
-// NewIdentity generates a fresh identity (X25519 + ML-KEM-1024). In the product this is
-// loaded from disk instead.
+// NewIdentity generates a fresh identity (X25519 + ML-KEM-1024). The product loads it
+// from disk instead.
 func NewIdentity() (*Identity, error) {
 	kemPriv, kemPub, err := kbc.GenerateMLKEMKeypair()
 	if err != nil {
@@ -97,10 +97,10 @@ type kdHello struct {
 // AEAD-encrypted net.Conn: mutual fingerprint verification, seeds encapsulated to the
 // peer's identity keys, a per-direction SEK from HKDF-SHA512.
 //
-// One bidirectional QUIC stream carries both directions, so we derive two keys: Kc2s
-// (client sends) and Ks2c (server sends). Each side encapsulates the seed for its own
-// send direction, reusing pkg/crypto unchanged. Three frames, no deadlock on a single
-// stream: client writes, reads, writes.
+// One bidirectional QUIC stream carries both directions, so the handshake derives two
+// keys: Kc2s (client sends) and Ks2c (server sends). Each side encapsulates the seed for
+// its own send direction, reusing pkg/crypto unchanged. Three frames, no deadlock on a
+// single stream: client writes, reads, writes.
 func SecureKD(conn net.Conn, id *Identity, expectedPeerFP string, role Role) (net.Conn, error) {
 	switch role {
 	case RoleClient:
@@ -113,7 +113,7 @@ func SecureKD(conn net.Conn, id *Identity, expectedPeerFP string, role Role) (ne
 }
 
 func secureKDClient(conn net.Conn, id *Identity, expectedServerFP string) (net.Conn, error) {
-	// Frame 1: our public keys + supported ciphers.
+	// Frame 1: client public keys + supported ciphers.
 	if err := writeHello(conn, kdHello{Pub: pubMapB64(id.keys), Ciphers: suiteStrings(kbc.SupportedCiphers())}); err != nil {
 		return nil, fmt.Errorf("send client hello: %w", err)
 	}
@@ -134,8 +134,8 @@ func secureKDClient(conn net.Conn, id *Identity, expectedServerFP string) (net.C
 	if err != nil {
 		return nil, fmt.Errorf("derive s2c key: %w", err)
 	}
-	// Frame 3: our encapsulated c2s seed.
-	kc2s, encX, encK, err := encapSeed(id.keys, serverKeys, suite) // key we write with
+	// Frame 3: client's encapsulated c2s seed.
+	kc2s, encX, encK, err := encapSeed(id.keys, serverKeys, suite) // key the client writes with
 	if err != nil {
 		return nil, err
 	}
@@ -159,8 +159,8 @@ func secureKDServer(conn net.Conn, id *Identity, expectedClientFP string) (net.C
 		return nil, err
 	}
 	suite := kbc.NegotiateCipher(kbc.SupportedCiphers(), parseSuites(f1.Ciphers))
-	// Frame 2: our keys, the negotiated suite, and our encapsulated s2c seed.
-	ks2c, encX, encK, err := encapSeed(id.keys, clientKeys, suite) // key we write with
+	// Frame 2: server keys, the negotiated suite, and the encapsulated s2c seed.
+	ks2c, encX, encK, err := encapSeed(id.keys, clientKeys, suite) // key the server writes with
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +196,7 @@ func encapSeed(own *kbc.OwnKeys, peer *kbc.PeerKeys, suite kbc.CipherSuite) (key
 	return key, b64(encX), b64(encK), nil
 }
 
-// decapSeed reverses encapSeed with our private keys, yielding the same SEK.
+// decapSeed reverses encapSeed with the local private keys and yields the same SEK.
 func decapSeed(own *kbc.OwnKeys, peer *kbc.PeerKeys, suite kbc.CipherSuite, encXB64, encKB64 string) ([]byte, error) {
 	encX, err := unb64(encXB64)
 	if err != nil {

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Operation status constants (polled from Swift/Kotlin).
+// Operation status constants. Swift and Kotlin poll these values.
 const (
 	OpStatusIdle      = "idle"
 	OpStatusRunning   = "running"
@@ -20,13 +20,14 @@ const (
 	OpStatusTimeout   = "timeout"
 )
 
-// OpStatus is the result of GetOpStatus(). gomobile-safe (exported fields, simple types).
+// OpStatus is the result of GetOpStatus().
+// Exported fields and simple types keep it gomobile-safe.
 type OpStatus struct {
 	Status  string
 	Message string
 }
 
-// opState tracks async operation progress (thread-safe).
+// opState tracks async operation progress. The mutex makes it safe for concurrent use.
 type opState struct {
 	mu        sync.Mutex
 	status    string

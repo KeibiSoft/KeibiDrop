@@ -12,5 +12,5 @@ package main
 
 import "log/slog"
 
-// maybeStartPprof is a no-op in a plain (non-debug) build; KD_PPROF is unreachable.
+// maybeStartPprof is a no-op in a non-debug build; KD_PPROF has no effect.
 func maybeStartPprof(*slog.Logger) {}

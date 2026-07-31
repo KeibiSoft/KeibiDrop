@@ -1,6 +1,5 @@
-// mount-fuse is a minimal program that mounts a KeibiDrop FUSE filesystem
-// at a given directory without needing a peer connection or relay.
-// Used for fstest POSIX compliance testing.
+// mount-fuse mounts a KeibiDrop FUSE filesystem without a peer or relay.
+// fstest POSIX compliance tests use it.
 //
 // Usage: mount-fuse <mount-point> <save-dir>
 package main

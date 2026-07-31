@@ -17,27 +17,26 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
 
-// eagerFoldTimeout bounds the fold RPC so a stuck round never leaks a goroutine or pins the
-// single-flight guard. Best-effort: a timeout leaves the session on the handshake key.
+// eagerFoldTimeout bounds the fold RPC. A stuck round must not leak a goroutine or
+// pin the single-flight guard. On timeout the session stays on the handshake key.
 const eagerFoldTimeout = 15 * time.Second
 
 // foldCoalesceDelay batches near-simultaneous lane-wire arrivals into one fold round.
 const foldCoalesceDelay = time.Second
 
-// eagerFoldEligible reports whether this peer should drive an eager fold: it is the fold
-// initiator and the in-band ratchet is active (a fold applies only through the ratchet).
+// eagerFoldEligible reports whether this peer must drive an eager fold. It requires
+// the fold-initiator role and an active in-band ratchet.
 func eagerFoldEligible(sess *session.Session) bool {
 	return sess != nil && sess.IsFoldInitiator() && sess.UseKeyUpdate()
 }
 
-// eagerFoldRearmGate is a no-op seam between the failed single-flight CAS and the rearm publish,
-// so a test can wedge the exact interleaving where the in-flight round retires inside that gap.
-// Production leaves it empty.
+// eagerFoldRearmGate is a no-op test seam between the failed CAS and the rearm publish.
+// Tests wedge the window where the round retires in that gap. Production leaves it empty.
 var eagerFoldRearmGate = func() {}
 
-// maybeStartEagerFold runs one best-effort ephemeral-KEM fold when this peer is the initiator
-// and the ratchet is on. Snapshots kd.session under kd.mu (teardown nils it concurrently),
-// enforces single-flight, and folds in a goroutine so the caller is never blocked.
+// maybeStartEagerFold runs one best-effort ephemeral-KEM fold on the eligible initiator.
+// It snapshots kd.session under kd.mu because teardown nils it concurrently.
+// It enforces single-flight and folds in a goroutine, so the caller never blocks.
 func (kd *KeibiDrop) maybeStartEagerFold() {
 	kd.mu.Lock()
 	sess := kd.session
@@ -47,18 +46,18 @@ func (kd *KeibiDrop) maybeStartEagerFold() {
 	}
 	if !kd.eagerFoldInFlight.CompareAndSwap(false, true) {
 		eagerFoldRearmGate()
-		kd.eagerFoldRearm.Store(true) // in flight: one follow-up round instead of a lost trigger
-		// The round can retire completely between the failed CAS and the store above, leaving
-		// the rearm with no consumer; reclaim it and retry rather than parking the trigger.
+		kd.eagerFoldRearm.Store(true) // Request one follow-up round so the trigger is not lost.
+		// The round can retire between the failed CAS and the store above. Then the rearm
+		// has no consumer. Reclaim it and retry; do not park the trigger.
 		for !kd.eagerFoldInFlight.Load() {
 			if !kd.eagerFoldRearm.Swap(false) {
-				return // a retiring round (or another trigger) took the token and re-entered
+				return // A retiring round or another trigger took the token and re-entered.
 			}
 			if kd.eagerFoldInFlight.CompareAndSwap(false, true) {
 				go kd.runEagerFold(sess)
 				return
 			}
-			kd.eagerFoldRearm.Store(true) // a new round won the CAS; republish for it and recheck
+			kd.eagerFoldRearm.Store(true) // A new round won the CAS. Republish for it and recheck.
 		}
 		return
 	}
@@ -77,9 +76,9 @@ func (kd *KeibiDrop) maybeStartEagerFoldSoon() {
 }
 
 // runEagerFold performs the initiator's fold round and always clears the single-flight guard.
-// Best-effort: any failure leaves the session on the handshake key until a reconnect re-folds.
+// On failure the session stays on the handshake key until a reconnect folds again.
 func (kd *KeibiDrop) runEagerFold(sess *session.Session) {
-	// LIFO: the guard clears before the rearm re-enters.
+	// Defers run LIFO. The guard clears before the rearm re-enters.
 	defer func() {
 		if kd.eagerFoldRearm.Swap(false) {
 			kd.maybeStartEagerFold()
@@ -91,10 +90,10 @@ func (kd *KeibiDrop) runEagerFold(sess *session.Session) {
 	ctx, cancel := context.WithTimeout(context.Background(), eagerFoldTimeout)
 	defer cancel()
 
-	// Lane failover, not duplication: one fold round, tried over QUIC first (isolated from TCP
-	// bulk), then TCP with the remaining budget. A half-completed QUIC round is superseded by
-	// the TCP retry (staging is supersede-idempotent); duplicating over both lanes would derive
-	// different secrets (KEM encapsulation is randomized). Fold errors do not demote QUIC.
+	// One round with lane failover: QUIC first, then TCP with the remaining budget.
+	// The TCP retry supersedes a half-completed QUIC round; staging is supersede-idempotent.
+	// KEM encapsulation is randomized, so two lanes would derive different secrets.
+	// Fold errors do not demote QUIC.
 	lane := "tcp"
 	err := ErrNoQUICForFold
 	if qc := kd.QUICKeibiClient(); qc != nil {
@@ -118,6 +117,6 @@ func (kd *KeibiDrop) runEagerFold(sess *session.Session) {
 		"epoch", kd.WriterEpoch(), "dir", "initiate", "lane", lane)
 }
 
-// ErrNoQUICForFold is the sentinel that routes the eager fold to TCP when no QUIC
-// channel is up; it never escapes runEagerFold.
+// ErrNoQUICForFold routes the eager fold to TCP when no QUIC channel is up.
+// It never escapes runEagerFold.
 var ErrNoQUICForFold = errors.New("no quic channel for fold")

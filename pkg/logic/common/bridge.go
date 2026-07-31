@@ -18,7 +18,7 @@ import (
 
 // bridgeRoomToken computes a deterministic 32-byte room token from two
 // fingerprints and a direction label. Both peers compute the same token
-// for a given direction regardless of who is creator vs joiner.
+// for a direction. The creator and joiner roles do not change the token.
 func bridgeRoomToken(ownFingerprint, peerFingerprint, direction string) [32]byte {
 	fps := []string{ownFingerprint, peerFingerprint}
 	sort.Strings(fps)
@@ -26,8 +26,8 @@ func bridgeRoomToken(ownFingerprint, peerFingerprint, direction string) [32]byte
 }
 
 // dialBridgeDir connects to the bridge relay and sends a direction-tagged room token.
-// Using separate tokens for "out" and "in" prevents the bridge from pairing
-// two connections from the same peer (self-pair bug).
+// Separate tokens for "out" and "in" prevent the bridge from pairing
+// two connections from the same peer.
 func (kd *KeibiDrop) dialBridgeDir(direction string, logger *slog.Logger) (net.Conn, error) {
 	conn, err := session.DialWithStableAddr("tcp", kd.BridgeAddr, 15*time.Second, logger)
 	if err != nil {

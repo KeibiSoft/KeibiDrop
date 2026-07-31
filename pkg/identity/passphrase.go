@@ -15,8 +15,8 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// Argon2id parameters per OWASP Password Storage Cheat Sheet (Argon2id
-// baseline as of the plan date 2026-05-02). Recalibrate at major releases.
+// Argon2id parameters follow the OWASP Password Storage Cheat Sheet baseline (2026-05-02).
+// Recalibrate at major releases.
 const (
 	argon2idMemoryKiB = 64 * 1024 // 64 MiB
 	argon2idTime      = 3

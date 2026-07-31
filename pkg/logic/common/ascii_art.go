@@ -12,7 +12,7 @@ import (
 
 var (
 	Version    = "0.3.1"
-	CommitHash = "dev" // default fallback
+	CommitHash = "dev" // Build ldflags overwrite this value.
 )
 
 const keibiLogo = `

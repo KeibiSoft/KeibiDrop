@@ -23,11 +23,10 @@ func ValidPeerPort(port int) bool {
 	return port >= MinPeerPort && port <= MaxPeerPort
 }
 
-const BlockSize = 4 * 1024 * 1024 // 4 MiB - larger chunks = fewer gRPC round-trips over WAN
+const BlockSize = 4 * 1024 * 1024 // 4 MiB. Larger chunks reduce gRPC round-trips over WAN.
 
-// gRPC message size limits
-// IMPORTANT: GRPCStreamBuffer MUST be smaller than GRPCMaxMsgSize
-// to leave room for protobuf framing overhead (~10-20 bytes per message)
+// gRPC message size limits.
+// GRPCStreamBuffer must stay below GRPCMaxMsgSize to leave room for protobuf framing overhead.
 const (
 	GRPCMaxMsgSize   = 20 * 1024 * 1024                  // 20 MiB - max gRPC message size
 	GRPCStreamBuffer = 16 * 1024 * 1024                  // 16 MiB - buffer for streaming reads
@@ -38,8 +37,7 @@ const (
 var _ = [1]struct{}{}[int(GRPCStreamBuffer)-int(GRPCMaxMsgSize)+int(GRPCOverheadRoom)]
 
 // HTTP/2 flow-control tuning for bulk transfer.
-// Go gRPC defaults (64 KiB window, 32 KiB buffers) are designed for small
-// RPC messages and severely throttle large file streams on fast networks.
+// Go gRPC defaults (64 KiB window, 32 KiB buffers) throttle large file streams on fast networks.
 const (
 	GRPCWindowSize   = 16 << 20 // 16 MiB - per-stream and per-connection HTTP/2 window
 	GRPCIOBufferSize = 4 << 20  // 4 MiB  - read/write buffer for gRPC transport

@@ -10,8 +10,8 @@
 
 package common
 
-// rekeyThresholdOverrideFromEnv always returns "no override" in a plain (non-debug)
-// build; the KD_REKEY_BYTES/KD_REKEY_MSGS env read is debug-only.
+// rekeyThresholdOverrideFromEnv always returns "no override" in a non-debug build.
+// The KD_REKEY_BYTES/KD_REKEY_MSGS env read is debug-only.
 func rekeyThresholdOverrideFromEnv() (bytes uint64, msgs uint64) {
 	return 0, 0
 }

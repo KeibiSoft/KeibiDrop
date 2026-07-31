@@ -7,20 +7,8 @@
 // ABOUTME: OS keychain access for the identity master key (Tier 1a).
 // ABOUTME: Wraps go-keyring with base64 encoding and an availability probe.
 
-// keychain.go integrates with github.com/zalando/go-keyring to store a
-// per-install 32-byte master key for at-rest identity-file encryption on
-// desktop platforms. The go-keyring security model is documented at:
-//
-//	https://github.com/zalando/go-keyring/blob/master/SECURITY.md
-//
-// On macOS we use Keychain Services, on Linux libsecret over D-Bus, on
-// Windows the Credential Manager (DPAPI). On systems where none of these
-// are reachable IsKeychainAvailable() returns false and pkg/identity falls
-// back to the file-master tier (~/.config/keibidrop/.master.key).
-//
-// Mobile platforms (iOS / Android) do NOT route through this file. They
-// inject the master key via the ExternalMaster field in KeySourceOpts —
-// see keysource.go.
+// keychain.go stores a per-install 32-byte master key in the OS keychain (go-keyring) for at-rest identity encryption.
+// When no keychain backend is reachable, the file-master tier takes over; mobile injects KeySourceOpts.ExternalMaster instead.
 
 package identity
 
@@ -36,13 +24,12 @@ const (
 	keychainAccountIdentityMasterV1 = "identity-master-key-v1"
 )
 
-// keychainProbeAccount is a throwaway account used by IsKeychainAvailable to
-// test the keychain roundtrip without touching real data.
+// keychainProbeAccount is a throwaway account for the IsKeychainAvailable roundtrip test.
+// It never touches real data.
 const keychainProbeAccount = "identity-availability-probe"
 
-// KeychainGet retrieves a previously stored value by account name and returns
-// the raw bytes (base64-decoded). Returns an error if the account does not
-// exist or the keychain is unavailable.
+// KeychainGet returns the base64-decoded bytes stored under account.
+// It fails when the account is missing or the keychain is unavailable.
 func KeychainGet(account string) ([]byte, error) {
 	encoded, err := keyring.Get(keychainService, account)
 	if err != nil {
@@ -55,8 +42,8 @@ func KeychainGet(account string) ([]byte, error) {
 	return decoded, nil
 }
 
-// KeychainSet stores value under account in the OS keychain. The bytes are
-// base64-encoded before storage because go-keyring accepts strings only.
+// KeychainSet stores value under account in the OS keychain.
+// The value is base64-encoded first because go-keyring accepts strings only.
 func KeychainSet(account string, value []byte) error {
 	encoded := base64.StdEncoding.EncodeToString(value)
 	if err := keyring.Set(keychainService, account, encoded); err != nil {
@@ -73,9 +60,8 @@ func KeychainDelete(account string) error {
 	return nil
 }
 
-// IsKeychainAvailable probes whether the OS keychain is functional by
-// performing a set/get/delete roundtrip with a temporary test value.
-// Returns false on any error (e.g. no D-Bus session, unsupported platform).
+// IsKeychainAvailable probes the OS keychain with a set/get/delete roundtrip on a test value.
+// It returns false on any error, such as no D-Bus session or an unsupported platform.
 func IsKeychainAvailable() bool {
 	probe := []byte("probe")
 	if err := KeychainSet(keychainProbeAccount, probe); err != nil {

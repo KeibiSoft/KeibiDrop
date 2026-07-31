@@ -19,9 +19,8 @@ import (
 	"sync"
 )
 
-// downloadRegistry tracks which partial downloads (.kdbitmap) belong to which peer.
-// The peer identity is stored as an HMAC tag (not the raw fingerprint) so that
-// even if the registry file is decrypted, the actual peer fingerprints are not exposed.
+// downloadRegistry maps partial downloads (.kdbitmap) to their peer. Entries hold an
+// HMAC tag, not the raw fingerprint, so a decrypted registry exposes no fingerprints.
 type downloadRegistry struct {
 	mu      sync.Mutex
 	entries map[string][16]byte
@@ -121,8 +120,8 @@ func (r *downloadRegistry) load() {
 	}
 }
 
-// sharedFilesStore persists what files were shared with which peer.
-// Encrypted at rest, stored in configDir. Never in the shared/FUSE folder.
+// sharedFilesStore persists which files went to which peer. It lives encrypted at
+// rest in configDir, never in the shared/FUSE folder.
 type sharedFilesStore struct {
 	path string
 	key  []byte

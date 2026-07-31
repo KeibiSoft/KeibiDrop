@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const platENODATA = syscall.ENOENT // ENODATA does not exist on Windows; map to ENOENT.
+const platENODATA = syscall.ENOENT // ENODATA does not exist on Windows. Map to ENOENT.
 const platDiskModeIsAuthoritative = false
 
 func platTruncate(path string, size int64) error {
@@ -27,10 +27,10 @@ func platUnlink(path string) error {
 }
 
 func platOpen(path string, flags int, mode uint32) (int, error) {
-	// Use CreateFile directly so we can pass FILE_SHARE_DELETE.
-	// Without this, no other process (or our own Rename/Unlink) can
-	// rename or delete the file while our handle is open — breaking
-	// POSIX semantics that git, compilers, etc. rely on.
+	// Use CreateFile directly to pass FILE_SHARE_DELETE. Without it, no
+	// other process (or this process's Rename/Unlink) can rename or delete
+	// the file while the handle is open. That breaks POSIX semantics that
+	// git and compilers rely on.
 	p, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, err
@@ -66,8 +66,8 @@ func platOpen(path string, flags int, mode uint32) (int, error) {
 	return int(h), nil
 }
 
-// platOpendir opens a directory handle on Windows. syscall.Open can't open
-// directories — we need CreateFile with FILE_FLAG_BACKUP_SEMANTICS.
+// platOpendir opens a directory handle on Windows. syscall.Open cannot open
+// directories, so this uses CreateFile with FILE_FLAG_BACKUP_SEMANTICS.
 func platOpendir(path string) (int, error) {
 	p, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
@@ -79,7 +79,7 @@ func platOpendir(path string) (int, error) {
 		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
 		nil,
 		syscall.OPEN_EXISTING,
-		syscall.FILE_FLAG_BACKUP_SEMANTICS, // Required to open directories
+		syscall.FILE_FLAG_BACKUP_SEMANTICS, // Required to open directories.
 		0,
 	)
 	if err != nil {
@@ -104,7 +104,7 @@ func platPread(fd int, buf []byte, offset int64) (int, error) {
 	var done uint32
 	err := windows.ReadFile(h, buf, &done, &overlapped)
 	if err != nil {
-		// ERROR_HANDLE_EOF is normal — POSIX semantics: return 0 bytes, no error.
+		// ERROR_HANDLE_EOF is normal. POSIX semantics: return 0 bytes, no error.
 		if err == windows.ERROR_HANDLE_EOF {
 			return int(done), nil
 		}
@@ -139,9 +139,9 @@ func platChmod(path string, mode uint32) error {
 	return os.Chmod(path, os.FileMode(mode&0o777))
 }
 
-// platChown is a no-op on Windows: NTFS has no POSIX uid/gid mapping, so chown
-// is only tracked in the in-memory stat. A caller observing the mount via FUSE
-// will see the requested uid/gid; other Windows tooling will not.
+// platChown is a no-op on Windows: NTFS has no POSIX uid/gid mapping, so
+// chown is tracked only in the in-memory stat. A caller that observes the
+// mount via FUSE sees the requested uid/gid. Other Windows tooling does not.
 func platChown(path string, uid int, gid int) error {
 	return nil
 }

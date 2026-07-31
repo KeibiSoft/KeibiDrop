@@ -15,10 +15,8 @@ import (
 	"path/filepath"
 )
 
-// WriteFileAtomic writes data to path using a write-then-rename strategy so
-// that readers never see a partial file. The parent directory is created with
-// mode 0750 if it does not exist. On rename failure a best-effort cleanup of
-// the temporary file is attempted.
+// WriteFileAtomic writes data with write-then-rename so readers never see a partial file.
+// It creates the parent directory with mode 0750 when absent.
 func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 	path = filepath.Clean(path)
 	dir := filepath.Dir(path)

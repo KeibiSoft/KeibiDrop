@@ -19,7 +19,7 @@ import (
 
 // Transport establishes gRPC-ready net.Conns over a wire protocol. Two implementations:
 // TCP (the fast bulk data plane) and QUIC (migration-capable: the always-on control
-// channel and the degraded-link fallback). One interface so both are treated uniformly.
+// channel and the degraded-link fallback). One interface covers both uniformly.
 type Transport interface {
 	// Dial connects to addr and returns a net.Conn ready to carry gRPC.
 	Dial(ctx context.Context, addr string) (net.Conn, error)
@@ -47,9 +47,9 @@ func (quicTransport) Dial(ctx context.Context, addr string) (net.Conn, error) {
 }
 
 func (quicTransport) Listen(addr string) (net.Listener, error) {
-	// Own the UDP socket and Transport explicitly (quic.ListenAddr's listener Close does
-	// NOT release the internally-created socket), so closing the listener frees the port
-	// immediately, required for reconnect on the same port.
+	// Own the UDP socket and Transport explicitly: quic.ListenAddr's listener Close does
+	// not release its internal socket. Explicit ownership frees the port on close, which
+	// reconnect on the same port requires.
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, err
@@ -68,7 +68,7 @@ func (quicTransport) Listen(addr string) (net.Listener, error) {
 	return newQUICListener(ln, tr, udp), nil
 }
 
-// quicConfig is applied to both ends so throughput isn't window-limited. MaxIdleTimeout
+// quicConfig applies to both ends so throughput is not window-limited. MaxIdleTimeout
 // is the dead-peer-detection window; KeepAlivePeriod keeps healthy connections alive
 // well within it.
 func quicConfig() *quic.Config {

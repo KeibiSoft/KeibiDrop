@@ -21,12 +21,12 @@ import (
 	"github.com/zeebo/xxh3"
 )
 
-// HandleEntry maps an opaque FUSE file handle to the actual kernel fd and File metadata.
-// Opaque handles prevent fd-recycling races: the kernel reuses fd numbers after close(),
-// but handle IDs are monotonically increasing and never reused.
+// HandleEntry maps an opaque FUSE handle ID to the kernel fd and File metadata.
+// Handle IDs only increase and never repeat, so a kernel fd number reused after
+// close() causes no race.
 type HandleEntry struct {
-	FD   int   // The actual kernel file descriptor for syscalls.
-	File *File // The File metadata struct.
+	FD   int   // Kernel file descriptor for syscalls.
+	File *File
 }
 
 var nextHandleID atomic.Uint64
@@ -35,7 +35,7 @@ func allocHandleID() uint64 {
 	return nextHandleID.Add(1)
 }
 
-// DownloadState tracks download progress for resumption on reconnect.
+// DownloadState tracks download progress for resume after reconnect.
 type DownloadState struct {
 	TotalSize       atomic.Uint64 // Expected total bytes from peer.
 	BytesDownloaded atomic.Uint64 // Bytes successfully written to local cache.
@@ -43,10 +43,10 @@ type DownloadState struct {
 	StartedAt       atomic.Int64  // Unix nano when download started.
 	LastSuccessAt   atomic.Int64  // Unix nano of last successful read.
 	AttemptCount    atomic.Int32  // Reconnection attempts since last success.
-	MaxRetries      int           // Max retries before giving up (default 5).
+	MaxRetries      int           // Maximum retries before the download stops (default 5).
 
-	// Checksum tracking using xxHash3 (~30GB/s, non-cryptographic).
-	// Used to verify download integrity, not for security (data is already authenticated).
+	// Checksum state uses xxHash3 (~30GB/s, non-cryptographic).
+	// It verifies download integrity, not security. The data is already authenticated.
 	hasher   *xxh3.Hasher
 	hasherMu sync.Mutex
 }
@@ -60,17 +60,16 @@ func (ds *DownloadState) Reset(totalSize uint64) {
 	ds.LastSuccessAt.Store(time.Now().UnixNano())
 	ds.AttemptCount.Store(0)
 
-	// Initialize fresh hasher.
 	ds.hasherMu.Lock()
 	ds.hasher = xxh3.New()
 	ds.hasherMu.Unlock()
 }
 
-// UpdateProgress records successful read progress and updates checksum.
+// UpdateProgress records successful read progress and updates the checksum.
 func (ds *DownloadState) UpdateProgress(offset int64, bytesRead int) {
 	ds.BytesDownloaded.Add(uint64(bytesRead))
 	newOffset := offset + int64(bytesRead)
-	// Only update LastReadOffset if this extends our progress.
+	// Advance LastReadOffset only if the new offset is larger.
 	for {
 		current := ds.LastReadOffset.Load()
 		if newOffset <= current {
@@ -85,7 +84,7 @@ func (ds *DownloadState) UpdateProgress(offset int64, bytesRead int) {
 }
 
 // UpdateChecksum adds data to the running checksum.
-// Call this with the actual bytes received (in order received, not by offset).
+// Pass bytes in receive order, not offset order.
 func (ds *DownloadState) UpdateChecksum(data []byte) {
 	ds.hasherMu.Lock()
 	if ds.hasher != nil {
@@ -104,7 +103,7 @@ func (ds *DownloadState) Checksum() uint64 {
 	return ds.hasher.Sum64()
 }
 
-// CanRetry checks if we should attempt reconnection.
+// CanRetry reports whether the download can try another reconnect.
 func (ds *DownloadState) CanRetry() bool {
 	maxRetries := ds.MaxRetries
 	if maxRetries == 0 {
@@ -127,24 +126,18 @@ func (ds *DownloadState) Progress() float64 {
 	return float64(ds.BytesDownloaded.Load()) / float64(total) * 100
 }
 
-// IsComplete returns true if all bytes have been downloaded.
+// IsComplete reports whether all bytes are downloaded.
 func (ds *DownloadState) IsComplete() bool {
 	total := ds.TotalSize.Load()
 	return total > 0 && ds.BytesDownloaded.Load() >= total
 }
 
-// The plan is like this:
-// Mounted filesystem for Alice is visible at "mountedPath".
-// When Alice adds files from her machine to the filesystem,
-// *Blip blip blop*, a new File{} gets created which represents
-// a "symlink" to the original file which Bob can now access.
-// For folders it's a bit different, as it does not create a "symlink"
-// in the sense that Bob can navigate outside of the mapped folder
-// but in the sense that Dir{} is mapped to the underlying one
-// and all the children of the underlying one are mapped inside our Dir{}.
+// Mapping model: the mounted filesystem is visible at "mountedPath".
+// A shared file maps to a File{} that points to the source path, like a symlink.
+// A shared folder maps to a Dir{}. Children of the source directory map to
+// entries inside the Dir{}. The peer cannot navigate outside the mapped folder.
 
-// Note: I use a tree hierarchy, not the most efficient way when it comes to lookups.
-// I might flatten it in the future.
+// The hierarchy is a tree, not a flat map. Tree lookups cost more.
 // Root -> Dir -> Dir -> File
 //    | -> File
 //    | -> Dir -> File
@@ -152,16 +145,16 @@ func (ds *DownloadState) IsComplete() bool {
 type Dir struct {
 	logger *slog.Logger
 
-	Inode uint64 `json:"inode"` // Inodes must be unique and not re-used.
+	Inode uint64 `json:"inode"` // Inodes must be unique and never reused.
 	Name  string `json:"name"`
 
-	RelativePath   string `json:"relativePath"`      // Relative (to root) path in the mounted filesystem.
-	RealPathOfFile string `json:"pathOnLocalSystem"` // The Path on the local system.
+	RelativePath   string `json:"relativePath"`      // Path relative to the mount root.
+	RealPathOfFile string `json:"pathOnLocalSystem"` // Path on the local system.
 
 	PeerLastEdit   uint64 `json:"peerLastEdit"`
 	IsLocalPresent bool   `json:"isLocalPresent"`
 
-	LocalDownloadFolder string // The folder where the files from the peer are downloaded.
+	LocalDownloadFolder string // Folder that stores files downloaded from the peer.
 
 	Parent *Dir
 	Root   *Dir
@@ -181,45 +174,45 @@ type Dir struct {
 	OpenStreamProvider func() types.FileStreamProvider
 
 	// Collab sync options (propagated from FS).
-	PrefetchOnOpen bool // If true, fetch entire file on Open() and write to local disk.
-	PrefetchAutoMB int  // files >= this many MB auto-prefetch on open (0=off)
-	PushOnWrite    bool // If true, async push deltas to peer on Write().
+	PrefetchOnOpen bool // If true, Open() fetches the whole file and writes it to local disk.
+	PrefetchAutoMB int  // Files at or above this many MB prefetch on open (0=off).
+	PushOnWrite    bool // If true, Write() pushes deltas to the peer asynchronously.
 
-	// ReadAheadWindowBlocks caps predictive sequential read-ahead: on sequential
-	// reads, up to this many ReadAheadBlock-sized blocks are fetched ahead of the
-	// read head so a high-RTT link does not stall at each block boundary. The
-	// in-use window self-tunes by hit/miss feedback and never exceeds this cap; a
-	// slow consumer (e.g. video) settles well below it. 0 = off (pure on-demand,
-	// the prior behavior). Derived from config read_ahead_window_mb.
+	// ReadAheadWindowBlocks caps predictive sequential read-ahead. Sequential
+	// reads fetch up to this many ReadAheadBlock-sized blocks ahead of the read
+	// head, so a high-RTT link does not stall at each block boundary. The in-use
+	// window self-tunes by hit/miss feedback and never exceeds this cap. A slow
+	// consumer (e.g. video) settles well below it. 0 = off (pure on-demand).
+	// The value comes from config read_ahead_window_mb.
 	ReadAheadWindowBlocks int
 
-	// raPrefetchCalls counts read-ahead prefetch issuances (one per block the read
-	// head crosses, NOT per read) — an observability counter; tests assert it stays
-	// sparse (proportional to blocks, not to the number of small reads).
+	// raPrefetchCalls counts read-ahead prefetch calls for observability: one per
+	// block the read head crosses, not one per read. Tests assert the count stays
+	// proportional to blocks, not to the number of small reads.
 	raPrefetchCalls atomic.Int64
 
 	RemoteFilesLock sync.RWMutex
 	RemoteFiles     map[string]*File
 
-	// PrefetchSem limits concurrent prefetch goroutines.
-	// Without this, a large clone (600+ files) spawns 600+ simultaneous
-	// StreamFile gRPC streams which overwhelm the connection.
+	// PrefetchSem limits concurrent prefetch goroutines. Without a limit, a large
+	// clone (600+ files) opens 600+ parallel StreamFile gRPC streams and
+	// overwhelms the connection.
 	PrefetchSem chan struct{}
 
-	// Cancelled during FS.Unmount() to unblock FUSE handlers stuck on gRPC.
+	// FS.Unmount() cancels FsCtx to unblock FUSE handlers stuck on gRPC.
 	FsCtx context.Context
 }
 
 type File struct {
 	logger *slog.Logger
 
-	Inode           uint64 `json:"inode"` // Inodes must be unique and not re-used.
+	Inode           uint64 `json:"inode"` // Inodes must be unique and never reused.
 	CurrentHandleID uint64 // Opaque FUSE handle ID for the currently-open fd.
 	Name            string `json:"name"`
 
-	RelativePath string `json:"relativePath"` // Relative (to root) path in the mounted filesystem.
+	RelativePath string `json:"relativePath"` // Path relative to the mount root.
 
-	RealPathOfFile string // The Path on the local system.
+	RealPathOfFile string // Path on the local system.
 
 	Parent *Dir
 	Root   *Dir
@@ -237,16 +230,16 @@ type File struct {
 
 	HadEdits bool
 
-	// WasTruncatedToZero tracks if Truncate(size=0) was explicitly called.
-	// Used with HadEdits to distinguish legitimate empty files from transient states.
+	// WasTruncatedToZero records an explicit Truncate(size=0) call. With
+	// HadEdits, it separates legitimate empty files from transient states.
 	WasTruncatedToZero bool
 
-	// LastNotifiedSize tracks the file size we last sent to peer in ADD_FILE.
-	// Used to avoid sending duplicate notifications with same size during file copy.
+	// LastNotifiedSize is the file size last sent to the peer in ADD_FILE. It
+	// prevents duplicate same-size notifications during a file copy.
 	LastNotifiedSize int64
 
-	// PeerStoppedSharing is set when peer sends REMOVE_FILE but download is in progress.
-	// Once download completes (Release with 0 open handles), the file reference is removed.
+	// PeerStoppedSharing is set when the peer sends REMOVE_FILE during a download.
+	// On Release with 0 open handles, the code removes the file reference.
 	PeerStoppedSharing bool
 
 	openFileCounter OpenFileCounter
@@ -255,7 +248,7 @@ type File struct {
 	StreamPool     *StreamPool        // Pool of parallel gRPC streams for on-demand reads.
 	StreamCancel   context.CancelFunc // Cancel function for the stream context.
 	CacheFD        *os.File           // Persistent cache file descriptor for on-demand writes.
-	CacheWg        sync.WaitGroup     // Tracks in-flight async cache writes; waited on in Release.
+	CacheWg        sync.WaitGroup     // Tracks in-flight async cache writes. Release waits for them.
 
 	// fetchMu guards inflight: in-flight read-ahead block fetches keyed by block
 	// start offset. Concurrent reads of the same block coalesce onto the leader's
@@ -264,40 +257,40 @@ type File struct {
 	inflight map[int64]*blockFetch
 
 	// Predictive read-ahead detector state, guarded by raMu. raMu is a leaf lock:
-	// held only for these few field updates, never across I/O or another lock.
+	// hold it only for these field updates, never across I/O or another lock.
 	//
-	// CRITICAL: FUSE delivers the reads of one sequential scan IN PARALLEL across
-	// worker threads, so they arrive at this handler OUT OF ORDER. A "is this read
-	// right after the previous one?" stride test therefore sees constant backward
-	// jumps and classifies every read as a seek — read-ahead would never fire. So we
-	// track the read head as a HIGH-WATER MARK (raHeadOffset = max end offset seen)
-	// and classify each read by its DISTANCE from that mark: within +/- a window it
-	// belongs to the current stream (parallel laggards included); far away it is a
-	// real seek. Order-independent by construction.
+	// CRITICAL: FUSE delivers the reads of one sequential scan in parallel across
+	// worker threads, so they arrive here out of order. A stride test against the
+	// previous read sees constant backward jumps and classifies every read as a
+	// seek, so read-ahead never fires. The detector instead tracks the read head
+	// as a high-water mark (raHeadOffset = max end offset seen). It classifies
+	// each read by distance from that mark: within +/- a window the read belongs
+	// to the current stream (parallel laggards included); far away it is a real
+	// seek. The test does not depend on arrival order.
 	//
-	// raStreamActive: a stream is established (false on a fresh file / right after a
-	// seek). raStreamBytes: bytes actually read since the stream began (reset on
-	// seek) — the thumbnail gate fires read-ahead only once REAL consumption passes a
-	// threshold, so a scattered probe (which advances the head but reads almost
-	// nothing) never prefetches. raHeadOffset: the stream's leading edge (high-water
-	// mark). raWindowBlocks: blocks to keep ahead (1 after a seek, primed to the cap
-	// on a confirmed stream). raPrefetchedTo: the prefetch frontier (next block index
-	// not yet prefetched), so read-ahead fires at most once per block the head crosses,
-	// not on every small read.
+	// raStreamActive: a stream is established (false on a fresh file or right
+	// after a seek). raStreamBytes: bytes read since the stream began (reset on
+	// seek). The thumbnail gate fires read-ahead only after real consumption
+	// passes a threshold, so a scattered probe, which advances the head but reads
+	// almost nothing, never prefetches. raHeadOffset: the stream's leading edge
+	// (high-water mark). raWindowBlocks: blocks to keep ahead (1 after a seek,
+	// primed to the cap on a confirmed stream). raPrefetchedTo: the prefetch
+	// frontier (next block index not yet prefetched). Read-ahead fires at most
+	// once per block the head crosses, not on every small read.
 	raMu           sync.Mutex
 	raStreamActive bool
 	raStreamBytes  int64
 	raHeadOffset   int64
 	raWindowBlocks int
 	raPrefetchedTo int64
-	raPrefetching  bool               // a sequential prefetch goroutine is in flight (one per file)
-	raCancel       context.CancelFunc // cancels the in-flight prefetch range (called on a seek)
+	raPrefetching  bool               // A sequential prefetch goroutine is in flight (one per file).
+	raCancel       context.CancelFunc // Cancels the in-flight prefetch range. Called on a seek.
 
 	// Download resumption state.
 	Download DownloadState
 
-	// Bitmap tracks which 512 KiB chunks have been downloaded from the remote peer.
-	// nil for local-origin files or empty files (size=0).
+	// Bitmap tracks which 512 KiB chunks are downloaded from the remote peer.
+	// It is nil for local-origin files and empty files (size=0).
 	Bitmap *ChunkBitmap
 
 	// PrefetchCancel cancels the background prefetch goroutine for this file.
@@ -307,14 +300,14 @@ type File struct {
 
 	stat *winfuse.Stat_t
 
-	// metaMu guards the File's mutable metadata that concurrent FUSE ops reach
-	// through DIFFERENT map locks (AllFileMap/AfmLock vs OpenFileHandlers/
-	// OpenMapLock) — which therefore do NOT mutually exclude: the *stat struct
-	// (Getattr mutates it in place while Read/OpenEx read Size/Mode) and the
-	// sync-state bools IsLocalPresent/LocalNewer/NotLocalSynced/NotRemoteSynced/
-	// HadEdits. Confirmed by the race detector. Always taken INNERMOST: after any
-	// map lock, and never acquire a map lock while holding it (so it cannot
-	// deadlock).
+	// metaMu guards the File's mutable metadata. Concurrent FUSE ops reach that
+	// metadata through different map locks (AllFileMap/AfmLock vs
+	// OpenFileHandlers/OpenMapLock), so those locks do not mutually exclude.
+	// Guarded: the *stat struct (Getattr mutates it in place while Read/OpenEx
+	// read Size/Mode) and the sync-state bools IsLocalPresent/LocalNewer/
+	// NotLocalSynced/NotRemoteSynced/HadEdits. The race detector confirms this.
+	// Lock order: metaMu is innermost. Take it after any map lock. Never take a
+	// map lock while holding metaMu; this prevents deadlock.
 	metaMu sync.RWMutex
 }
 
@@ -325,14 +318,12 @@ func (f *File) CountOpenDescriptors() uint64 {
 	return f.openFileCounter.CountOpenDescriptors()
 }
 
-// Use it as a singleton only when setting up the filesystem.
-// (In the mount command).
-// I do not enforce it as a singleton, as my philospohy
-// is to not have package global var, just a
-// call chain of functions from the entrypoint of
-// the program.
+// Create a single OpenFileCounter at filesystem setup (the mount command).
+// The package does not enforce this: it keeps no package globals; state
+// passes down the call chain from the program entrypoint.
 
-// Create and Open calls must have a corresponding Release call.
+// OpenFileCounter counts open file handles.
+// Each Create and Open call must have a matching Release call.
 type OpenFileCounter struct {
 	mu      *sync.Mutex
 	counter uint64
@@ -344,8 +335,8 @@ func (ofc *OpenFileCounter) Open() {
 	ofc.counter++
 }
 
-// OpenIfActive bumps the count and returns true only if it was already >0, so
-// a handle whose last Release is tearing it down is not reused.
+// OpenIfActive increments the count and returns true only if it was already >0.
+// This prevents reuse of a handle whose last Release runs teardown.
 func (ofc *OpenFileCounter) OpenIfActive() bool {
 	ofc.mu.Lock()
 	defer ofc.mu.Unlock()

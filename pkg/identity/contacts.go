@@ -38,7 +38,7 @@ type AddressBook struct {
 }
 
 // LoadAddressBook loads the encrypted address book from configDir using src.
-// Returns an empty address book if the file does not exist.
+// It returns an empty address book when the file does not exist.
 func LoadAddressBook(configDir string, src MasterKeySource) (*AddressBook, error) {
 	ab := &AddressBook{configDir: configDir, src: src}
 
@@ -123,7 +123,7 @@ func (ab *AddressBook) Save() error {
 	return WriteFileAtomic(path, MarshalEnvelope(header, ctAndTag), 0o600)
 }
 
-// Add adds a contact. Returns error if fingerprint already exists.
+// Add adds a contact. It returns an error when the fingerprint already exists.
 func (ab *AddressBook) Add(name, fingerprint string) error {
 	ab.mu.Lock()
 	defer ab.mu.Unlock()

@@ -23,10 +23,10 @@ func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 		return 0
 	}
 
-	// Cross-platform error mapping using Go's os.Err* sentinels.
-	// On Windows, raw syscall.Errno values are Windows error codes (e.g.
-	// ERROR_ALREADY_EXISTS = 183), NOT POSIX errno values that cgofuse expects.
-	// These sentinel checks work correctly on all platforms.
+	// Cross-platform error mapping via Go's os.Err* sentinels. On Windows, raw
+	// syscall.Errno values are Windows error codes (e.g. ERROR_ALREADY_EXISTS =
+	// 183), not the POSIX errno values cgofuse expects. The sentinel checks
+	// work on all platforms.
 	var posixErr syscall.Errno
 	switch {
 	case errors.Is(err, os.ErrExist):
@@ -44,7 +44,7 @@ func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 	}
 
 	// Platform-specific fallback: extract raw syscall.Errno.
-	// Correct on Linux/macOS (Errno = POSIX); lossy on Windows for unmapped errors.
+	// Correct on Linux/macOS (Errno = POSIX). Lossy on Windows for unmapped errors.
 	e := os.NewSyscallError(name, err)
 	var targetErr syscall.Errno
 
@@ -54,13 +54,12 @@ func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 		return syscall.EIO
 	}
 
-	// Only log unexpected errors, not common expected ones
-	// ENOENT (no such file) is normal for xattr lookups and Getattr on non-existent files
-	// Errno 93 (ENOATTR on macOS) is normal for xattr lookups
+	// Log only unexpected errors. ENOENT is normal for xattr lookups and for
+	// Getattr on absent files. Errno 93 (ENOATTR on macOS) is normal for xattr lookups.
 	if targetErr != syscall.ENOENT && int(targetErr) != 93 {
 		slog.Warn("FUSE error conversion", "syscall", name, "error", err, "errno", targetErr)
 	}
-	// cgoFuse uses -errno
+	// cgofuse uses -errno.
 	return -targetErr
 }
 
@@ -78,7 +77,7 @@ func getNameFromPath(path string) string {
 }
 
 // remoteChildrenForDir returns the direct file and directory children of dirPath
-// found within the remoteFiles map. Prevents phantom entries at wrong directory level.
+// found in the remoteFiles map. This prevents phantom entries at the wrong directory level.
 func remoteChildrenForDir(remoteFiles map[string]*File, dirPath string) (files map[string]struct{}, dirs map[string]struct{}) {
 	files = make(map[string]struct{})
 	dirs = make(map[string]struct{})

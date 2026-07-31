@@ -30,25 +30,24 @@ type FS struct {
 	OpenStreamProvider func() types.FileStreamProvider
 
 	// Collab sync options (set from env before Mount).
-	PrefetchOnOpen    bool // If true, fetch entire file on Open() and write to local disk.
-	PrefetchAutoMB    int  // files >= this many MB auto-prefetch on open (0=off; PrefetchOnOpen forces any size)
-	ReadAheadWindowMB int  // cap (MB) for predictive sequential read-ahead on on-demand reads (0=off). Converted to blocks per Dir.
-	PushOnWrite       bool // If true, async push deltas to peer on Write().
-	AutoCache         bool // If true (live_collab), add the macFUSE auto_cache mount option so a peer's same-size in-place edit is seen live. Trades off mmap-write integrity (git) on macOS; no-op on Linux/Windows.
+	PrefetchOnOpen    bool // If true, Open() fetches the whole file and writes it to local disk.
+	PrefetchAutoMB    int  // Files at or above this many MB prefetch on open (0=off; PrefetchOnOpen forces any size).
+	ReadAheadWindowMB int  // MB cap for predictive sequential read-ahead (0=off). Each Dir converts it to blocks.
+	PushOnWrite       bool // If true, Write() pushes deltas to the peer asynchronously.
+	AutoCache         bool // If true (live_collab), add macFUSE auto_cache so a peer's same-size in-place edit shows live. Costs mmap-write integrity (git) on macOS; no-op on Linux/Windows.
 
-	// Host.
 	host *winfuse.FileSystemHost
 	Root *Dir
 
-	// Cancelled during Unmount to unblock FUSE handlers waiting on gRPC.
+	// Unmount cancels ctx to unblock FUSE handlers waiting on gRPC.
 	ctx        context.Context
 	cancel     context.CancelFunc
 	mountPoint string
 
-	// cacheOwnerFP is the actual fingerprint of the peer whose files are currently
-	// cached/shown. Connecting to a DIFFERENT peer drops the cache first (so a
-	// peer's artifacts never leak to the next), while the SAME peer reconnecting or
-	// resuming a session keeps the cache — no re-fetch, files still there.
+	// cacheOwnerFP is the actual fingerprint of the peer whose files are
+	// cached/shown. A connection to a different peer drops the cache first, so
+	// one peer's artifacts never leak to the next. The same peer on reconnect
+	// or resume keeps the cache: no re-fetch, files still there.
 	cacheOwnerFP string
 	cacheOwnerMu sync.Mutex
 }
@@ -62,9 +61,9 @@ func NewFS(logger *slog.Logger) *FS {
 	}
 }
 
-// Mount blocks for the lifetime of the FUSE session. It returns an error
-// immediately if the mount point is invalid or host.Mount() refuses to come
-// up; on success it returns nil only after a clean unmount.
+// Mount blocks for the lifetime of the FUSE session. It returns an error at
+// once if the mount point is invalid or host.Mount() fails. On success it
+// returns nil only after a clean unmount.
 func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error {
 	fs.logger.Warn("FUSE Mount starting",
 		"mountPoint", mountPoint,
@@ -76,8 +75,8 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	// Clean up stale FUSE mounts from a previous crash.
 	if runtime.GOOS != "windows" {
 		if _, err := os.Stat(cleanMountPoint); err == nil {
-			// Try reading the directory. If it fails with "device not configured",
-			// the mount point has a stale FUSE mount that needs force-unmounting.
+			// Read the directory as a probe. A "device not configured" failure
+			// means a stale FUSE mount that needs a force-unmount.
 			if _, readErr := os.ReadDir(cleanMountPoint); readErr != nil {
 				fs.logger.Warn("Stale FUSE mount detected, force-unmounting",
 					"mountPoint", cleanMountPoint, "error", readErr)
@@ -91,9 +90,9 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		}
 	}
 
-	// On Windows, normalise drive-letter mount points for WinFSP:
-	//   "K:."  (filepath.Clean("K:"))  → "K:"
-	//   "K:\"  (filepath.Clean("K:\")) → "K:"
+	// On Windows, normalize drive-letter mount points for WinFSP:
+	//   "K:."  (filepath.Clean("K:"))  -> "K:"
+	//   "K:\"  (filepath.Clean("K:\")) -> "K:"
 	// WinFSP expects a bare drive letter without a trailing separator.
 	if runtime.GOOS == "windows" && len(cleanMountPoint) >= 2 && cleanMountPoint[1] == ':' {
 		stripped := cleanMountPoint[:2]
@@ -106,8 +105,8 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		return fmt.Errorf("invalid mount point %q", mountPoint)
 	}
 
-	// WinFSP rejects an existing mount path; clear a stale empty dir left by a crash or
-	// older build. os.Remove only deletes an empty dir, so no data is lost.
+	// WinFSP rejects an existing mount path. Remove a stale empty dir left by a
+	// crash or an older build. os.Remove only deletes an empty dir, so no data is lost.
 	if isWindowsDirMountPoint(runtime.GOOS, cleanMountPoint) {
 		if fi, statErr := os.Stat(cleanMountPoint); statErr == nil && fi.IsDir() {
 			_ = os.Remove(cleanMountPoint)
@@ -126,7 +125,6 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		PeerLastEdit:   0,
 		Parent:         nil,
 
-		// IDK about this one.
 		LocalDownloadFolder: filepath.Clean(downloadPath),
 
 		OpenMapLock:      sync.RWMutex{},
@@ -151,7 +149,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		RemoteFilesLock: sync.RWMutex{},
 		RemoteFiles:     make(map[string]*File),
 
-		PrefetchSem: make(chan struct{}, 8), // max 8 concurrent prefetches
+		PrefetchSem: make(chan struct{}, 8), // Maximum 8 concurrent prefetches.
 	}
 
 	root.Root = root
@@ -169,8 +167,8 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	ok := fs.host.Mount(cleanMountPoint, opts)
 	if !ok {
 		// Reset host/Root so IsMounted() reports false. Otherwise a failed mount
-		// leaves them set, and the next reconnect takes the "already mounted,
-		// waiting" branch and never retries — hanging the mount permanently.
+		// leaves them set. The next reconnect then takes the "already mounted,
+		// waiting" branch, never retries, and hangs the mount permanently.
 		fs.host = nil
 		fs.Root = nil
 		fs.logger.Error("FUSE Mount failed", "mountPoint", cleanMountPoint)
@@ -184,7 +182,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	return nil
 }
 
-// isWindowsDirMountPoint is true for a Windows mount path that is a dir, not a drive ("K:").
+// isWindowsDirMountPoint reports whether p is a Windows directory mount path, not a drive ("K:").
 func isWindowsDirMountPoint(goos, p string) bool {
 	return goos == "windows" && (len(p) != 2 || p[1] != ':')
 }
@@ -220,8 +218,8 @@ func (fs *FS) Unmount() {
 }
 
 // RefreshCallbacks updates the Root's callbacks to match the FS-level ones.
-// Call after setupFilesystem re-wires OnLocalChange/OpenStreamProvider for
-// a new session, so the persistent Root uses the new session's gRPC client.
+// Call it after setupFilesystem re-wires OnLocalChange/OpenStreamProvider,
+// so the persistent Root uses the new session's gRPC client.
 func (fs *FS) RefreshCallbacks() {
 	if fs.Root != nil {
 		fs.Root.OnLocalChange = fs.OnLocalChange
@@ -230,15 +228,14 @@ func (fs *FS) RefreshCallbacks() {
 	}
 }
 
-// IsMounted returns true if the FUSE host is active.
+// IsMounted reports whether the FUSE host is active.
 func (fs *FS) IsMounted() bool {
 	return fs.host != nil && fs.Root != nil
 }
 
-// ClearFiles cancels in-flight operations and clears all file/dir maps
-// without unmounting. The mount stays alive as an empty folder. Used on
-// disconnect so the same mount can be reused on reconnect (cgofuse only
-// allows one mount per process).
+// ClearFiles cancels in-flight operations and clears all file/dir maps.
+// The mount stays alive as an empty folder, so a reconnect after disconnect
+// reuses it (cgofuse allows only one mount per process).
 func (fs *FS) ClearFiles() {
 	fs.cancel()
 	if fs.Root != nil {
@@ -263,40 +260,40 @@ func (fs *FS) ClearFiles() {
 	}
 }
 
-// CancelInFlight cancels in-flight reads/prefetches and resets the FUSE context but
-// PRESERVES the cached file view (maps + bitmaps). Used on a disconnect from a peer we
-// may reconnect to or resume with: the same peer reconnecting finds its files still
-// there and resumes on-demand with no re-fetch. The full ClearFiles wipe is reserved
-// for switching to a DIFFERENT peer (see EnsurePeerScope).
+// CancelInFlight cancels in-flight reads/prefetches and resets the FUSE
+// context. It preserves the cached file view (maps + bitmaps). Use it on a
+// disconnect from a peer that may reconnect or resume: the same peer finds
+// its files still there and resumes on-demand with no re-fetch. The full
+// ClearFiles wipe is only for a switch to a different peer (see EnsurePeerScope).
 func (fs *FS) CancelInFlight() {
 	fs.cancel()
 	if fs.Root != nil {
 		fs.drainInFlightOperations()
 	}
-	// Fresh context so the next session's reads aren't born cancelled.
+	// Fresh context so the next session's reads do not start cancelled.
 	fs.ctx, fs.cancel = context.WithCancel(context.Background())
 	if fs.Root != nil {
 		fs.Root.FsCtx = fs.ctx
 	}
 }
 
-// EnsurePeerScope binds the cached file view to a peer identity. Connecting to a
-// DIFFERENT peer than the one whose files are cached drops the cache first, so one
-// peer's artifacts never leak to the next; the SAME peer (reconnect, or a later
-// session) keeps it, so files are still there with no re-fetch. The first peer adopts
-// the (empty) cache without clearing. Idempotent and cheap on repeat calls. fp is the
-// peer's ACTUAL verified fingerprint, so this is correct in TOFU mode too.
+// EnsurePeerScope binds the cached file view to a peer identity. A different
+// peer than the cached one drops the cache first, so one peer's artifacts
+// never leak to the next. The same peer (reconnect or later session) keeps
+// the cache with no re-fetch. The first peer adopts the empty cache without
+// a clear. Repeat calls are idempotent and cheap. fp is the peer's actual
+// verified fingerprint, so this is correct in TOFU mode too.
 func (fs *FS) EnsurePeerScope(fp string) {
 	if fp == "" {
-		return // unknown identity — never risk a spurious wipe
+		return // Unknown identity: never risk a spurious wipe.
 	}
 	fs.cacheOwnerMu.Lock()
 	defer fs.cacheOwnerMu.Unlock()
 	if fs.cacheOwnerFP == fp {
-		return // same peer — keep the cache
+		return // Same peer: keep the cache.
 	}
 	if fs.cacheOwnerFP != "" {
-		fs.ClearFiles() // different peer — drop the previous peer's view
+		fs.ClearFiles() // Different peer: drop the previous peer's view.
 	}
 	fs.cacheOwnerFP = fp
 }
@@ -312,13 +309,13 @@ func (fs *FS) forceUnmount() {
 	case "linux":
 		_ = exec.Command("fusermount", "-u", mp).Run() // #nosec G204
 	case "windows":
-		// WinFsp handles cleanup via host.Unmount(); no force path needed.
+		// WinFsp cleans up via host.Unmount(). No force path is needed.
 	}
 }
 
 // drainInFlightOperations cancels all prefetch goroutines and closes all
-// stream pools on open file handles so that pending FUSE Read/Open handlers
-// unblock immediately instead of waiting for gRPC timeouts.
+// stream pools on open file handles. Pending FUSE Read/Open handlers then
+// unblock at once instead of waiting for gRPC timeouts.
 func (fs *FS) drainInFlightOperations() {
 	root := fs.Root
 	if root == nil {
@@ -336,9 +333,9 @@ func (fs *FS) drainInFlightOperations() {
 	}
 	root.AfmLock.RUnlock()
 
-	// 2. Close all stream pools on open file handles. This causes any
-	//    in-flight pool.ReadAt() call (inside a FUSE Read handler) to
-	//    return an error immediately instead of blocking on the 10s timeout.
+	// 2. Close all stream pools on open file handles. An in-flight
+	//    pool.ReadAt() call inside a FUSE Read handler then fails at once
+	//    instead of blocking on the 10s timeout.
 	root.OpenMapLock.Lock()
 	for _, entry := range root.OpenFileHandlers {
 		if entry.File != nil {

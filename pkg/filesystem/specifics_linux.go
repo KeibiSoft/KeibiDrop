@@ -22,10 +22,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// On linux cp (1) works with 126 KiB file block size.
-// Setting this value for the StatFS ensures optimal speed.
+// On Linux, cp(1) works with 126 KiB file block size.
+// This value in StatFS gives optimal speed.
 
-const FilesystemBlockSize = 2 << 17 // 256 KiB - optimal for Linux cp (uses 128 KiB blocks)
+const FilesystemBlockSize = 2 << 17 // 256 KiB. Optimal for Linux cp (uses 128 KiB blocks).
 
 func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNumberFreeBytes uint64, err error) {
 	stat := unix.Statfs_t{}
@@ -41,10 +41,10 @@ func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNum
 
 func copyFusestatfsFromGostatfs(dst *winfuse.Statfs_t, src *syscall.Statfs_t) {
 	*dst = winfuse.Statfs_t{}
-	// VERY IMPORTANT: report our optimized FilesystemBlockSize here too, and
-	// rescale the block counts so total/free BYTES stay correct — statfs blocks
-	// are in bsize units, so a larger bsize means proportionally fewer blocks
-	// (blocks*bsize is invariant). Skipping the rescale would misreport df by 64x.
+	// IMPORTANT: report the optimized FilesystemBlockSize here too, and rescale
+	// the block counts so total/free bytes stay correct. statfs blocks are in
+	// bsize units, so a larger bsize means proportionally fewer blocks
+	// (blocks*bsize is invariant). Without the rescale, df misreports by 64x.
 	srcBsize := uint64(src.Bsize)
 	if srcBsize == 0 {
 		srcBsize = 1
@@ -73,9 +73,9 @@ func copyFusestatFromGostat(dst *winfuse.Stat_t, src *syscall.Stat_t) {
 	dst.Atim.Sec, dst.Atim.Nsec = int64(src.Atim.Sec), int64(src.Atim.Nsec)
 	dst.Mtim.Sec, dst.Mtim.Nsec = int64(src.Mtim.Sec), int64(src.Mtim.Nsec)
 	dst.Ctim.Sec, dst.Ctim.Nsec = int64(src.Ctim.Sec), int64(src.Ctim.Nsec)
-	// VERY IMPORTANT: always report our optimized FilesystemBlockSize, never the
-	// backing FS's st_blksize. cp/dd/rsync size their read buffer from it; a small
-	// buffer is catastrophic on Linux FUSE (~33 vs ~232 MB/s).
+	// IMPORTANT: always report the optimized FilesystemBlockSize, never the
+	// backing FS's st_blksize. cp/dd/rsync size their read buffer from it. A
+	// small buffer is catastrophic on Linux FUSE (~33 vs ~232 MB/s).
 	dst.Blksize = FilesystemBlockSize
 	dst.Blocks = int64(src.Blocks)
 }
@@ -93,7 +93,7 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 	dst.Atim.Sec, dst.Atim.Nsec = src.Atim.Sec, src.Atim.Nsec
 	dst.Mtim.Sec, dst.Mtim.Nsec = src.Mtim.Sec, src.Mtim.Nsec
 	dst.Ctim.Sec, dst.Ctim.Nsec = src.Ctim.Sec, src.Ctim.Nsec
-	// VERY IMPORTANT: always our optimized FilesystemBlockSize, never the source's
+	// IMPORTANT: always the optimized FilesystemBlockSize, never the source's
 	// (often a remote peer's stat). Small read buffers crawl on Linux FUSE.
 	dst.Blksize = FilesystemBlockSize
 	dst.Blocks = src.Blocks
@@ -105,20 +105,20 @@ func syscallStatfs(path string, stat *syscall.Statfs_t) error {
 }
 
 // getMountOptions returns Linux-specific FUSE mount options.
-// nonempty: allow mounting on directories that already contain files.
+// nonempty: allow mounts on directories that already contain files.
 // allow_other: let other users (e.g. postgres, mysql) access the mount.
 //
 //	Requires user_allow_other in /etc/fuse.conf.
 //
-// Note: NOT using default_permissions — it makes the kernel enforce POSIX
-// chown rules (only root can chown), which blocks database init flows where
-// MySQL/PostgreSQL need to chown their data directories.
+// default_permissions is absent on purpose: it makes the kernel enforce
+// POSIX chown rules (only root can chown). That blocks database init flows
+// where MySQL/PostgreSQL chown their data directories.
 //
-// The autoCache (live_collab) flag is intentionally ignored on Linux: libfuse
-// invalidates the page cache on open when FOPEN_KEEP_CACHE is absent (which
-// OpenEx sets for remote files via KeepCache=false), so a peer's same-size
-// in-place edit is already seen live WITHOUT auto_cache — and without the
-// auto_cache mmap-writeback hazard that corrupts git on macOS. Linux gets both
+// The autoCache (live_collab) flag is ignored on Linux on purpose: libfuse
+// invalidates the page cache on open when FOPEN_KEEP_CACHE is absent (OpenEx
+// sets that for remote files via KeepCache=false). A peer's same-size
+// in-place edit therefore shows live without auto_cache, and without the
+// auto_cache mmap-writeback hazard that corrupts git on macOS. Linux gets
 // live collab and mmap safety for free, so there is nothing to toggle here.
 func getMountOptions(_ bool) []string {
 	return []string{"-o", "nonempty,allow_other,max_read=131072"}
