@@ -16,8 +16,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -275,37 +275,35 @@ func forceUnmount(dir string) {
 
 // waitForUnmount polls until the given directory no longer appears as a mount point.
 // Handles macOS symlink resolution (/var -> /private/var).
+// isFUSEMounted reports whether dir is a live mount point: its device id
+// differs from its parent's. Touches only the two paths. A mount-table walk
+// (`mount`) blocks on ANY wedged mount in the system, so one zombie mount
+// poisoned every later test run; this cannot.
+func isFUSEMounted(dir string) bool {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	pi, err := os.Stat(filepath.Dir(dir))
+	if err != nil {
+		return false
+	}
+	fs, ok1 := fi.Sys().(*syscall.Stat_t)
+	ps, ok2 := pi.Sys().(*syscall.Stat_t)
+	if !ok1 || !ok2 {
+		return false
+	}
+	return fs.Dev != ps.Dev
+}
+
 func waitForUnmount(dir string, timeout time.Duration) {
 	// Windows: WinFSP unmounts synchronously via host.Unmount(); no polling needed.
 	if runtime.GOOS == "windows" {
 		return
 	}
-
-	// Build list of path variants to check in mount output.
-	// On macOS, /var is a symlink to /private/var, but `mount` uses /private/var.
-	checks := []string{dir}
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != dir {
-		checks = append(checks, resolved)
-	}
-	if runtime.GOOS == "darwin" && strings.HasPrefix(dir, "/var/") {
-		checks = append(checks, "/private"+dir)
-	}
-
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		out, err := exec.Command("mount").Output()
-		if err != nil {
-			return
-		}
-		mounts := string(out)
-		found := false
-		for _, check := range checks {
-			if strings.Contains(mounts, check) {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !isFUSEMounted(dir) {
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -354,15 +352,24 @@ func WaitForFileAbsent(t *testing.T, path string, timeout time.Duration) {
 	}, "waiting for file removal at: "+path)
 }
 
-// getFreePortInRange finds an available TCP6 port within [low, high].
+// getFreePortInRange finds an available TCP port within [low, high].
+// A tcp6-only probe sets V6ONLY and misses IPv4 holders (a daemon on
+// 127.0.0.1 kept passing the probe, then the peer under test collided).
+// The dual-stack wildcard bind conflicts with any listener on the port;
+// the explicit v4-loopback bind covers v6only-configured hosts.
 func getFreePortInRange(t *testing.T, low, high int) int {
 	t.Helper()
 	for port := low; port <= high; port++ {
-		ln, err := net.Listen("tcp6", fmt.Sprintf("[::]:%d", port))
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err != nil {
 			continue // port in use
 		}
 		ln.Close()
+		ln4, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue // port in use
+		}
+		ln4.Close()
 		return port
 	}
 	t.Fatalf("no free port found in range [%d, %d]", low, high)

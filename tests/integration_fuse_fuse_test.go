@@ -146,7 +146,9 @@ func getTestPeerBinary(t *testing.T) string {
 			return
 		}
 		binPath := filepath.Join(tmpDir, binName)
-		cmd := exec.Command("go", "build", "-o", binPath, "./tests/cmd/testpeer/") //#nosec G204
+		// -buildvcs=false: fleet boxes run from rsynced trees whose git state
+		// (ownership, staleness) fails VCS stamping and killed every suite.
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", binPath, "./tests/cmd/testpeer/") //#nosec G204
 		// Use the project root as working directory
 		// Find project root by looking for go.mod
 		cwd, _ := os.Getwd()

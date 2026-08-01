@@ -200,7 +200,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		err := kd.FS.Root.AddRemoteFile(logger, req.Path, req.Name, statFromAttr(req.Attr))
+		err := kd.FS.Root.AddRemoteFileWithBase(logger, req.Path, req.Name, statFromAttr(req.Attr), req.BaseMtimeNs)
 		if err != nil {
 			return nil, ErrGRPCInvalidArgument
 		}

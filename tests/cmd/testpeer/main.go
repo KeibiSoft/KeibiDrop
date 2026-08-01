@@ -277,6 +277,48 @@ func main() {
 			escaped := strings.ReplaceAll(strings.TrimRight(string(out), "\n"), "\n", "\\n")
 			fmt.Printf("EXEC:%d:%s\n", exitCode, escaped)
 
+		case "dlbytes":
+			// dlbytes <rel> — bytes fetched from the peer for a tracked file.
+			// Reads Download.BytesDownloaded; 0 when untracked.
+			if len(args) < 2 {
+				fmt.Println("ERR:usage: dlbytes <rel>")
+				continue
+			}
+			rel := "/" + strings.TrimPrefix(args[1], "/")
+			var n uint64
+			if kd.FS != nil && kd.FS.Root != nil {
+				kd.FS.Root.RemoteFilesLock.RLock()
+				if f, ok := kd.FS.Root.RemoteFiles[rel]; ok {
+					n = f.Download.BytesDownloaded.Load()
+				}
+				kd.FS.Root.RemoteFilesLock.RUnlock()
+			}
+			fmt.Printf("DLBYTES:%d\n", n)
+
+		case "exec_sh":
+			// exec_sh <dir-relative-to-mount> <shell-command-line>
+			// The line runs through sh -c, so quotes and parens survive
+			// (gimp script-fu batch lines break under space-splitting exec).
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: exec_sh <dir> <command-line>")
+				continue
+			}
+			dir := filepath.Join(mountDir, args[1])
+			cmdline := strings.Join(args[2:], " ")
+			cmd := exec.Command("sh", "-c", cmdline) // #nosec G204 -- test harness, args from stdin
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			exitCode := 0
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					exitCode = exitErr.ExitCode()
+				} else {
+					exitCode = -1
+				}
+			}
+			escaped := strings.ReplaceAll(strings.TrimRight(string(out), "\n"), "\n", "\\n")
+			fmt.Printf("EXEC:%d:%s\n", exitCode, escaped)
+
 		case "quit":
 			_ = kd.UnmountFilesystem()
 			cancel()

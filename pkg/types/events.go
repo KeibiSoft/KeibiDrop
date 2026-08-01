@@ -43,6 +43,9 @@ type FileEvent struct {
 	OldPath string          // for renames: the source path
 	Action  FileAction      // type of event
 	Attr    *keibidrop.Attr // file attributes (from Stat_t)
+	// BaseMtimeNs is the newest peer version the sender had accepted when this
+	// edit session started. 0 = unknown; the receiver then never preserves.
+	BaseMtimeNs int64
 }
 
 // FileStreamProvider is a factory for RemoteFileStream and StreamFile.

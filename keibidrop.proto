@@ -129,6 +129,11 @@ message NotifyRequest {
   string name = 3;
   Attr attr = 4;
   string old_path = 5;  // For RENAME operations: the source path.
+  // The newest peer version (RemoteMtimeNs) the sender had accepted for this
+  // file when its edit session started. The receiver preserves a conflict
+  // copy exactly when base < the version it holds: the edit provably never
+  // saw it. 0 = unknown: never preserve (plain last-writer-wins).
+  int64 base_mtime_ns = 6;
 }
 
 message NotifyResponse {

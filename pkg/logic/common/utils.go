@@ -532,9 +532,10 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		}
 
 		req := &bindings.NotifyRequest{
-			Type:    bindings.NotifyType(event.Action), // #nosec G115 -- action values are small enums
-			Path:    event.Path,
-			OldPath: event.OldPath, // For RENAME operations.
+			Type:        bindings.NotifyType(event.Action), // #nosec G115 -- action values are small enums
+			Path:        event.Path,
+			OldPath:     event.OldPath, // For RENAME operations.
+			BaseMtimeNs: event.BaseMtimeNs,
 		}
 
 		// Attr may be nil for removal events.

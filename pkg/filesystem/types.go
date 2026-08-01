@@ -242,6 +242,12 @@ type File struct {
 	// local ops overwrite stat.Mtim and must not join the comparison.
 	RemoteMtimeNs int64
 
+	// EditBaseMtimeNs snapshots RemoteMtimeNs at the FIRST dirtying op of an
+	// edit session (guarded by metaMu, taken when NotRemoteSynced flips to
+	// true). The announce carries it so the receiver can prove a concurrent
+	// edit: base < the version it holds means the edit never saw it.
+	EditBaseMtimeNs int64
+
 	// WasTruncatedToZero tracks if Truncate(size=0) was explicitly called.
 	// Used with HadEdits to distinguish legitimate empty files from transient states.
 	WasTruncatedToZero bool

@@ -965,12 +965,17 @@ func (*CloseResponse) Descriptor() ([]byte, []int) {
 }
 
 type NotifyRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Type          NotifyType             `protobuf:"varint,1,opt,name=type,proto3,enum=keibidrop.NotifyType" json:"type,omitempty"`
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Attr          *Attr                  `protobuf:"bytes,4,opt,name=attr,proto3" json:"attr,omitempty"`
-	OldPath       string                 `protobuf:"bytes,5,opt,name=old_path,json=oldPath,proto3" json:"old_path,omitempty"` // For RENAME operations: the source path.
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Type    NotifyType             `protobuf:"varint,1,opt,name=type,proto3,enum=keibidrop.NotifyType" json:"type,omitempty"`
+	Path    string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Name    string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Attr    *Attr                  `protobuf:"bytes,4,opt,name=attr,proto3" json:"attr,omitempty"`
+	OldPath string                 `protobuf:"bytes,5,opt,name=old_path,json=oldPath,proto3" json:"old_path,omitempty"` // For RENAME operations: the source path.
+	// The newest peer version (RemoteMtimeNs) the sender had accepted for this
+	// file when its edit session started. The receiver preserves a conflict
+	// copy exactly when base < the version it holds: the edit provably never
+	// saw it. 0 = unknown: never preserve (plain last-writer-wins).
+	BaseMtimeNs   int64 `protobuf:"varint,6,opt,name=base_mtime_ns,json=baseMtimeNs,proto3" json:"base_mtime_ns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1038,6 +1043,13 @@ func (x *NotifyRequest) GetOldPath() string {
 		return x.OldPath
 	}
 	return ""
+}
+
+func (x *NotifyRequest) GetBaseMtimeNs() int64 {
+	if x != nil {
+		return x.BaseMtimeNs
+	}
+	return 0
 }
 
 type NotifyResponse struct {
@@ -1589,13 +1601,14 @@ const file_keibidrop_proto_rawDesc = "" +
 	"\fCloseRequest\x12\x16\n" +
 	"\x06handle\x18\x01 \x01(\x04R\x06handle\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\"\x0f\n" +
-	"\rCloseResponse\"\xa2\x01\n" +
+	"\rCloseResponse\"\xc6\x01\n" +
 	"\rNotifyRequest\x12)\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x15.keibidrop.NotifyTypeR\x04type\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12#\n" +
 	"\x04attr\x18\x04 \x01(\v2\x0f.keibidrop.AttrR\x04attr\x12\x19\n" +
-	"\bold_path\x18\x05 \x01(\tR\aoldPath\"(\n" +
+	"\bold_path\x18\x05 \x01(\tR\aoldPath\x12\"\n" +
+	"\rbase_mtime_ns\x18\x06 \x01(\x03R\vbaseMtimeNs\"(\n" +
 	"\x0eNotifyResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\"\x84\x01\n" +
 	"\x12BatchNotifyRequest\x12>\n" +
