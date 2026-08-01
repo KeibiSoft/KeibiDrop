@@ -245,6 +245,48 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		waitConverged(t, alice, bob, conflicts[0], 60*time.Second)
 	})
 
+	// T3b for swaps: the reader swap-saves a WORKING COPY taken from version
+	// v1 while the owner concurrently edits to v2. The rename announce
+	// declares base=v1; the owner holds v2 with authority, so its bytes are
+	// preserved as a conflict sibling instead of silently clobbered.
+	t.Run("SwapSaveStaleBase", func(t *testing.T) {
+		listConflicts := func(p *testPeer) []string {
+			resp := ex(t, p, ".", "ls", 15*time.Second)
+			var out []string
+			for _, name := range strings.Split(resp, "\\n") {
+				if strings.Contains(name, "swapc.conflict-") {
+					out = append(out, strings.TrimSpace(name))
+				}
+			}
+			return out
+		}
+		require.Equal("OK", bob.send(t, "write_file swapc.txt owner-v1", 10*time.Second))
+		WaitForFileOnMount(t, filepath.Join(aliceMount, "swapc.txt"), 60*time.Second)
+		waitConverged(t, alice, bob, "swapc.txt", 60*time.Second)
+
+		// Alice takes her working copy of v1.
+		ex(t, alice, ".", "cp swapc.txt swapc.txt.work", 15*time.Second)
+		require.Equal("OK", alice.send(t, "write_file swapc.txt.work reader-swap-version", 10*time.Second))
+
+		// Concurrent finish: owner's in-place edit debounces 200 ms; the
+		// reader's swap RENAME announces immediately and crosses it.
+		require.Equal("OK", bob.send(t, "write_file swapc.txt owner-v2-concurrent", 10*time.Second))
+		ex(t, alice, ".", "mv -f swapc.txt.work swapc.txt", 15*time.Second)
+
+		waitConverged(t, alice, bob, "swapc.txt", 60*time.Second)
+		WaitForCondition(t, 60*time.Second, 500*time.Millisecond, func() bool {
+			return len(listConflicts(alice)) >= 1 && len(listConflicts(bob)) >= 1
+		}, "waiting for the swap conflict copy on both peers")
+
+		canonical := strings.TrimSpace(ex(t, bob, ".", "cat swapc.txt", 15*time.Second))
+		conflicts := listConflicts(bob)
+		require.Len(conflicts, 1, "exactly one conflict copy expected")
+		preserved := strings.TrimSpace(ex(t, bob, ".", "cat "+conflicts[0], 15*time.Second))
+		require.ElementsMatch([]string{"owner-v2-concurrent", "reader-swap-version"},
+			[]string{canonical, preserved}, "both concurrent versions must survive")
+		waitConverged(t, alice, bob, conflicts[0], 60*time.Second)
+	})
+
 	// C.5 metric: a big-file app save (copy, patch one region, swap) must NOT
 	// refetch the whole file on the reader — the reconcile path keeps chunks
 	// whose xxh3 matches. dlbytes reads the reader's fetched-byte counter.

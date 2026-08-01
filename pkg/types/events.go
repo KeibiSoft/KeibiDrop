@@ -35,6 +35,12 @@ const (
 	EditFile
 	RenameFile
 	RenameDir
+	// CancelPendingNotify never reaches the wire: it tells the notify worker
+	// to drop a queued ADD/EDIT for the path. Emitted when an acceptance
+	// replaces local content — the queued announce describes bytes that no
+	// longer exist, and its flush-time attr refresh would stamp the PEER'S
+	// content with a fresh local mtime and bounce it back as "newer".
+	CancelPendingNotify
 )
 
 // FileEvent represents a filesystem change

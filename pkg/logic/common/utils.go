@@ -468,6 +468,11 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 				}
 
 				switch req.Type {
+				case cancelPendingSentinel:
+					// Local-only: an acceptance replaced this path's content, so
+					// a queued announce describes dead bytes. Never sent.
+					delete(pending, req.Path)
+					continue
 				case bindings.NotifyType_ADD_FILE, bindings.NotifyType_EDIT_FILE:
 					// Per-path debounce: update pending and reset deadline.
 					// Only send when the path is stable for 200ms.
@@ -481,6 +486,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					if old, exists := pending[req.OldPath]; exists {
 						delete(pending, req.OldPath)
 						old.req.Path = req.Path // retarget to new path
+						// The temp's own base (-1 for a fresh working copy) does
+						// not describe the swap; the rename's declared base does.
+						old.req.BaseMtimeNs = req.BaseMtimeNs
 						pending[req.Path] = old
 					}
 					immediate = append(immediate, req)
@@ -536,6 +544,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			Path:        event.Path,
 			OldPath:     event.OldPath, // For RENAME operations.
 			BaseMtimeNs: event.BaseMtimeNs,
+		}
+		if event.Action == types.CancelPendingNotify {
+			req.Type = cancelPendingSentinel
 		}
 
 		// Attr may be nil for removal events.
@@ -662,6 +673,10 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 // then tear down; without this wait the teardown races the response write and crashes the
 // server or leaks the Serve()/ClientConn goroutines. Declared as var so tests can shrink it.
 var grpcDisconnectGraceDelay = 250 * time.Millisecond
+
+// cancelPendingSentinel marks a worker-local request (drop the queued
+// ADD/EDIT for the path). Outside every proto value; never serialized.
+const cancelPendingSentinel bindings.NotifyType = 999
 
 // handleNotifyDisconnect runs the post-DISCONNECT teardown: clear the FUSE view (keeping the
 // mount alive for reconnect), then sleep the grace window so the in-flight DISCONNECT response

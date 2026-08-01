@@ -295,61 +295,102 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Rename file", "oldPath", req.OldPath, "newPath", req.Path)
 
 		if kd.FS != nil && kd.FS.Root != nil {
-			// Rename the file on disk FIRST, before updating maps.
-			// The prefetch deferred cleanup also tries to rename, but it races with
-			// this handler — if prefetch finishes before RENAME arrives, the deferred
-			// cleanup sees no path change and skips the disk rename.
 			oldDiskPath := filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.OldPath))
 			newDiskPath := filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
-			if err := os.MkdirAll(filepath.Dir(newDiskPath), 0o755); err != nil {
-				logger.Warn("Failed to create dirs for rename", "error", err)
-			}
-			if err := os.Rename(oldDiskPath, newDiskPath); err != nil {
-				// Not fatal — file may not exist yet (prefetch still in progress),
-				// or prefetch deferred cleanup already moved it.
-				if !os.IsNotExist(err) {
-					logger.Warn("Disk rename failed", "from", oldDiskPath, "to", newDiskPath, "error", err)
+
+			// A swap whose declared base is older than LOCAL authority must not
+			// clobber the disk before the acceptance verdict (which preserves
+			// the local bytes as a conflict copy). Git-style flows never trip
+			// this: their targets hold no local authority.
+			conflictSkip := kd.FS.Root.SwapWouldConflict(req.Path, req.BaseMtimeNs)
+
+			if conflictSkip {
+				// The temp's prefetched bytes (if any) refetch under the
+				// canonical name after the verdict; drop the litter.
+				if rmErr := os.Remove(oldDiskPath); rmErr != nil && !os.IsNotExist(rmErr) {
+					logger.Warn("Failed to drop swap temp", "path", oldDiskPath, "error", rmErr)
 				}
 			} else {
-				logger.Info("Renamed file on disk", "from", oldDiskPath, "to", newDiskPath)
+				// Rename the file on disk FIRST, before updating maps.
+				// The prefetch deferred cleanup also tries to rename, but it races with
+				// this handler — if prefetch finishes before RENAME arrives, the deferred
+				// cleanup sees no path change and skips the disk rename.
+				if err := os.MkdirAll(filepath.Dir(newDiskPath), 0o755); err != nil {
+					logger.Warn("Failed to create dirs for rename", "error", err)
+				}
+				if err := os.Rename(oldDiskPath, newDiskPath); err != nil {
+					// Not fatal — file may not exist yet (prefetch still in progress),
+					// or prefetch deferred cleanup already moved it.
+					if !os.IsNotExist(err) {
+						logger.Warn("Disk rename failed", "from", oldDiskPath, "to", newDiskPath, "error", err)
+					}
+				} else {
+					logger.Info("Renamed file on disk", "from", oldDiskPath, "to", newDiskPath)
+				}
 			}
+
+			// Peek for a local object at the target BEFORE the map re-key:
+			// map locks stay sequential, never nested.
+			kd.FS.Root.AfmLock.Lock()
+			localTarget, hasLocalTarget := kd.FS.Root.AllFileMap[req.Path]
+			kd.FS.Root.AfmLock.Unlock()
 
 			// Cancel any in-flight prefetch for the old path before
 			// updating maps — prevents it from racing with disk rename
 			// or subsequent Open on the new path.
 			kd.FS.Root.RemoteFilesLock.Lock()
 			file, exists := kd.FS.Root.RemoteFiles[req.OldPath]
+			target, targetTracked := kd.FS.Root.RemoteFiles[req.Path]
+			// A DISTINCT object already at the target (tracked OR local-only):
+			// never blind-replace it — retire the temp's entry and let the
+			// acceptance path update the canonical object (split-brain guard,
+			// same disease ADD_FILE had).
+			collision := exists && ((targetTracked && target != file) ||
+				(hasLocalTarget && localTarget != file))
 			if exists {
 				if file.PrefetchCancel != nil {
 					file.PrefetchCancel()
 					file.PrefetchCancel = nil
 				}
 				delete(kd.FS.Root.RemoteFiles, req.OldPath)
-				file.RelativePath = req.Path
-				file.Name = filepath.Base(req.Path)
-				file.RealPathOfFile = newDiskPath
-				kd.FS.Root.RemoteFiles[req.Path] = file
-				logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
+				if !collision {
+					file.RelativePath = req.Path
+					file.Name = filepath.Base(req.Path)
+					file.RealPathOfFile = newDiskPath
+					kd.FS.Root.RemoteFiles[req.Path] = file
+					logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
+				}
 			}
 			kd.FS.Root.RemoteFilesLock.Unlock()
 
-			// Also update AllFileMap.
+			// Also update AllFileMap. If the target keeps a distinct object
+			// (collision), only retire the old-path entry.
 			kd.FS.Root.AfmLock.Lock()
 			if f, ok := kd.FS.Root.AllFileMap[req.OldPath]; ok {
 				delete(kd.FS.Root.AllFileMap, req.OldPath)
-				f.RelativePath = req.Path
-				f.Name = filepath.Base(req.Path)
-				f.RealPathOfFile = newDiskPath
-				kd.FS.Root.AllFileMap[req.Path] = f
+				tgtLocal, hasTgtLocal := kd.FS.Root.AllFileMap[req.Path]
+				if !collision && (!hasTgtLocal || tgtLocal == f) {
+					f.RelativePath = req.Path
+					f.Name = filepath.Base(req.Path)
+					f.RealPathOfFile = newDiskPath
+					kd.FS.Root.AllFileMap[req.Path] = f
+				}
 			}
 			kd.FS.Root.AfmLock.Unlock()
+
+			// Collision or conflict: the target object is canonical; run the
+			// announced state through the acceptance path (watermark, conflict
+			// preserve, bitmap reset/reconcile, prefetch).
+			if (collision || conflictSkip) && req.Attr != nil {
+				_ = kd.FS.Root.AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
+			}
 
 			// Check if the renamed file needs re-downloading.
 			// Cases: (a) file doesn't exist locally (prefetch was still
 			// in progress on the old path and got cancelled above),
 			// (b) file exists but has wrong size (git index-pack appends
 			// 20-byte SHA-1 checksum between the initial write and rename).
-			if exists && req.Attr != nil && req.Attr.Size > 0 {
+			if exists && !collision && !conflictSkip && req.Attr != nil && req.Attr.Size > 0 {
 				needsRedownload := false
 				localInfo, statErr := os.Stat(newDiskPath)
 				if statErr != nil {
@@ -363,7 +404,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				}
 
 				if needsRedownload {
-					_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr))
+					_ = kd.FS.Root.AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
 				}
 			}
 
@@ -372,7 +413,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			// RENAME arrives immediately. If the target already exists in
 			// RemoteFiles (e.g., .git/HEAD), trigger re-download now so the
 			// peer doesn't read stale content during the debounce window.
-			if !exists && req.Attr != nil && req.Attr.Size > 0 {
+			if !exists && !collision && !conflictSkip && req.Attr != nil && req.Attr.Size > 0 {
 				// The rename's SOURCE was a transient temp the peer never received
 				// (git writes tmp_pack_XXX / *.lock then renames to the FINAL name),
 				// so neither map had it and the disk rename above failed with
@@ -384,7 +425,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				// propagated → peer ".git/objects" empty → "bad object HEAD".
 				logger.Info("Rename of untracked source: materializing destination",
 					"path", req.Path, "size", req.Attr.Size)
-				_ = kd.FS.Root.AddRemoteFile(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr))
+				_ = kd.FS.Root.AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
 			}
 		}
 

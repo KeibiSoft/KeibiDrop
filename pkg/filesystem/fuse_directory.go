@@ -651,7 +651,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fh.metaMu.Lock()
 		fh.IsLocalPresent = true
 		if !fh.NotRemoteSynced {
-			fh.EditBaseMtimeNs = fh.RemoteMtimeNs
+			fh.EditBaseMtimeNs = max(fh.RemoteMtimeNs, fh.LastAnnouncedMtimeNs)
 		}
 		fh.NotRemoteSynced = true
 		fh.metaMu.Unlock()
@@ -1382,6 +1382,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 								base := f.EditBaseMtimeNs
 								f.NotRemoteSynced = false
 								f.HadEdits = false
+								f.LastAnnouncedMtimeNs = recheckStat.Mtim.Sec*1e9 + recheckStat.Mtim.Nsec
 								f.metaMu.Unlock()
 								d.OnLocalChange(types.FileEvent{
 									Path:        path,
@@ -1405,6 +1406,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 					base := f.EditBaseMtimeNs
 					f.NotRemoteSynced = false
 					f.HadEdits = false
+					f.LastAnnouncedMtimeNs = finalStat.Mtim.Sec*1e9 + finalStat.Mtim.Nsec
 					f.metaMu.Unlock()
 					d.OnLocalChange(types.FileEvent{
 						Path:        path,
@@ -1418,6 +1420,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				base := f.EditBaseMtimeNs
 				f.NotRemoteSynced = false
 				f.HadEdits = false
+				f.LastAnnouncedMtimeNs = stgo.Mtim.Sec*1e9 + stgo.Mtim.Nsec
 				f.metaMu.Unlock()
 				d.OnLocalChange(types.FileEvent{
 					Path:        path,
@@ -1545,6 +1548,12 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	cleanNewPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
 	logger := d.logger.With("method", "rename", "old-path", cleanOldPath, "new-path", cleanNewPath)
 
+	// A rename ONTO a tracked file is an app swap-save. Declare the target's
+	// identity at swap time as the announce base: the receiver then preserves
+	// its bytes when they are provably newer. Identity at swap time can only
+	// overstate the true session base, so this never fires a false copy.
+	swapBase := d.targetIdentity(newpath)
+
 	// On Windows, rename fails if source OR target has an open handle.
 	// Close any handles we hold on either path before attempting the rename.
 	if runtime.GOOS == "windows" {
@@ -1572,6 +1581,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	d.AfmLock.Unlock()
 
 	// Update internal maps to reflect the rename
+	var movedLocal *File
 	d.AfmLock.Lock()
 	if f, ok := d.AllFileMap[oldpath]; ok {
 		delete(d.AllFileMap, oldpath)
@@ -1579,6 +1589,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		f.Name = getNameFromPath(newpath)
 		f.RealPathOfFile = cleanNewPath
 		d.AllFileMap[newpath] = f
+		movedLocal = f
 	}
 	d.AfmLock.Unlock()
 
@@ -1610,7 +1621,22 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		f.Name = getNameFromPath(newpath)
 		f.RealPathOfFile = cleanNewPath
 		d.RemoteFiles[newpath] = f
-		// logger.Info("Updated RemoteFiles for rename", "oldpath", oldpath, "newpath", newpath)
+	} else if movedLocal != nil {
+		// A LOCAL file swapped over a tracked target: the moved object is the
+		// content now, so it must also be the tracked object. Leaving the old
+		// target entry made later acceptances run on a stale parallel object
+		// (split-brain) while this object silently lost the swap.
+		if old, ok := d.RemoteFiles[newpath]; ok && old != movedLocal {
+			old.metaMu.Lock()
+			watermark := old.RemoteMtimeNs
+			old.metaMu.Unlock()
+			movedLocal.metaMu.Lock()
+			if watermark > movedLocal.RemoteMtimeNs {
+				movedLocal.RemoteMtimeNs = watermark
+			}
+			movedLocal.metaMu.Unlock()
+			d.RemoteFiles[newpath] = movedLocal
+		}
 	}
 	d.RemoteFilesLock.Unlock()
 
@@ -1623,13 +1649,19 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		var attr *keibidrop.Attr
 		if stgo, statErr := platLstat(cleanNewPath); statErr == nil {
 			attr = types.StatToAttr(&stgo)
+			if movedLocal != nil {
+				movedLocal.metaMu.Lock()
+				movedLocal.LastAnnouncedMtimeNs = stgo.Mtim.Sec*1e9 + stgo.Mtim.Nsec
+				movedLocal.metaMu.Unlock()
+			}
 		}
 
 		d.OnLocalChange(types.FileEvent{
-			Path:    newpath,
-			OldPath: oldpath,
-			Action:  types.RenameFile,
-			Attr:    attr,
+			Path:        newpath,
+			OldPath:     oldpath,
+			Action:      types.RenameFile,
+			Attr:        attr,
+			BaseMtimeNs: swapBase,
 		})
 	}
 
@@ -1780,8 +1812,12 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		if f.NotRemoteSynced {
 			baseSnap = f.EditBaseMtimeNs
 		} else {
-			baseSnap = f.RemoteMtimeNs
+			baseSnap = max(f.RemoteMtimeNs, f.LastAnnouncedMtimeNs)
 		}
+		// Do NOT stamp LastAnnouncedMtimeNs here: a truncate is usually the
+		// first act of an O_TRUNC save whose open skipped the session flip
+		// (remote-open path). Stamping made the follow-up Write adopt the
+		// truncate's own time as its base, hiding real conflicts.
 		f.metaMu.Unlock()
 	}
 	d.AfmLock.Unlock()
@@ -1979,9 +2015,10 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	f.metaMu.Lock()
 	f.HadEdits = true
 	if !f.NotRemoteSynced {
-		// First dirtying op of this edit session: record which peer version
-		// the edit starts from. The announce carries it (conflict proof).
-		f.EditBaseMtimeNs = f.RemoteMtimeNs
+		// First dirtying op of this edit session: record which version the
+		// edit starts from — the newest this file has shown the world.
+		// The announce carries it (conflict proof).
+		f.EditBaseMtimeNs = max(f.RemoteMtimeNs, f.LastAnnouncedMtimeNs)
 	}
 	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
 	f.NotRemoteSynced = true // File content changed - notify peer on Release with new size
@@ -2876,11 +2913,70 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) (errCo
 
 // Notes: I am confident that it is not a good idea to use syscall errors for GRPC called methods.
 
+// targetIdentity returns the announce-visible version of the file at path:
+// the newest accepted announcement, raised by a local write when we hold
+// authority. 0 = untracked (no identity to conflict with).
+func (d *Dir) targetIdentity(path string) int64 {
+	d.RemoteFilesLock.RLock()
+	f := d.RemoteFiles[path]
+	d.RemoteFilesLock.RUnlock()
+	if f == nil {
+		d.AfmLock.Lock()
+		f = d.AllFileMap[path]
+		d.AfmLock.Unlock()
+	}
+	if f == nil {
+		return 0
+	}
+	f.metaMu.Lock()
+	id := f.RemoteMtimeNs
+	if f.LocalNewer && f.stat != nil {
+		if m := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; m > id {
+			id = m
+		}
+	}
+	f.metaMu.Unlock()
+	return id
+}
+
+// SwapWouldConflict reports whether a swap arriving for path with the given
+// declared base would hit LOCAL authority it provably never saw. The rename
+// handler must then not clobber the disk before the acceptance verdict runs.
+func (d *Dir) SwapWouldConflict(path string, baseMtimeNs int64) bool {
+	if baseMtimeNs == 0 {
+		return false
+	}
+	d.RemoteFilesLock.RLock()
+	f := d.RemoteFiles[path]
+	d.RemoteFilesLock.RUnlock()
+	if f == nil {
+		d.AfmLock.Lock()
+		f = d.AllFileMap[path]
+		d.AfmLock.Unlock()
+	}
+	if f == nil {
+		return false
+	}
+	f.metaMu.Lock()
+	localNewer := f.LocalNewer
+	id := f.RemoteMtimeNs
+	if localNewer && f.stat != nil {
+		if m := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; m > id {
+			id = m
+		}
+	}
+	f.metaMu.Unlock()
+	return localNewer && baseMtimeNs < id
+}
+
 // conflictNames builds the sibling names for a preserved conflict version:
-// report.docx -> report.conflict-20260801-104512.docx (UTC). Bumps a numeric
-// suffix until the real path is free.
+// report.docx -> report.conflict-20260801-104512-123456789.docx (UTC). The
+// nanosecond part keeps the two peers' simultaneous preserves from colliding
+// on one name and LWW-fighting each other. Bumps a numeric suffix until the
+// real path is free.
 func conflictNames(relPath, realPath string) (string, string) {
-	stamp := time.Now().UTC().Format("20060102-150405")
+	now := time.Now()
+	stamp := now.UTC().Format("20060102-150405") + "-" + strconv.Itoa(now.Nanosecond())
 	ext := filepath.Ext(relPath)
 	stem := strings.TrimSuffix(relPath, ext)
 	rel := stem + ".conflict-" + stamp + ext
@@ -2989,6 +3085,16 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		// version we hold: it provably never saw our bytes (model v2, T3b).
 		// Turn-taking edits carry base == our version and never trip this.
 		conflict := accepted && wasLocalNewer && baseMtimeNs != 0 && baseMtimeNs < existingMtime
+		if fuseOpLog {
+			d.logger.Debug("oplog conflict predicate", "path", path, "accepted", accepted,
+				"wasLocalNewer", wasLocalNewer, "base", baseMtimeNs, "identity", existingMtime, "conflict", conflict)
+		}
+		if accepted && d.OnLocalChange != nil {
+			// A queued announce for this path describes the replaced content.
+			// Its flush-time attr refresh would stamp the PEER'S bytes with a
+			// fresh local mtime and bounce them back as a newer edit.
+			d.OnLocalChange(types.FileEvent{Path: path, Action: types.CancelPendingNotify})
+		}
 		if accepted {
 			existing.metaMu.Lock()
 			existing.LocalNewer = false // Remote has newer content.
