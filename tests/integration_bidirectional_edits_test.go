@@ -577,6 +577,36 @@ func TestFUSEtoFUSE_EditorSaves(t *testing.T) {
 			waitConverged(t, bob, alice, "art.png", 60*time.Second)
 		})
 	}
+
+	// CAD tier: OpenSCAD renders headlessly — source text in the mount, the
+	// tool writes a fresh STL over the target (render class). The reverse leg
+	// re-renders the OWNER's model from the reader's side.
+	scadBin := ""
+	if p, err := exec.LookPath("openscad"); err == nil {
+		scadBin = p
+	} else if runtime.GOOS == "darwin" {
+		for _, c := range []string{"/Applications/OpenSCAD.app/Contents/MacOS/OpenSCAD", "/Applications/OpenSCAD-2021.01.app/Contents/MacOS/OpenSCAD"} {
+			if _, err := os.Stat(c); err == nil {
+				scadBin = c
+				break
+			}
+		}
+	}
+	if scadBin != "" {
+		t.Run("OpenSCADRenderOverwrite", func(t *testing.T) {
+			require.Equal("OK", bob.send(t, "write_file model.scad cube([4,4,4]);", 10*time.Second))
+			ex(t, bob, ".", scadBin+" -o model.stl model.scad", 180*time.Second)
+			WaitForFileOnMount(t, filepath.Join(aliceMount, "model.stl"), 60*time.Second)
+			waitConverged(t, alice, bob, "model.stl", 60*time.Second)
+
+			// Alice edits the source and re-renders over the owner's STL
+			// through her own mount.
+			require.Equal("OK", alice.send(t, "write_file model.scad sphere(3);", 10*time.Second))
+			waitConverged(t, bob, alice, "model.scad", 60*time.Second)
+			ex(t, alice, ".", scadBin+" -o model.stl model.scad", 180*time.Second)
+			waitConverged(t, bob, alice, "model.stl", 60*time.Second)
+		})
+	}
 }
 
 // Large-asset tier (KD_BIG=1): the bidirectional flows at video-asset scale.
