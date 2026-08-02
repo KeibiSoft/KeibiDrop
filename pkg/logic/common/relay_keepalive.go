@@ -14,14 +14,14 @@ import (
 	"time"
 )
 
-// RelayKeepalive maintains relay registration by periodically refreshing
-// before the TTL expires. This ensures peers can always find each other.
+// RelayKeepalive refreshes the relay registration before the TTL expires, so peers
+// can always find each other.
 type RelayKeepalive struct {
 	kd     *KeibiDrop
 	logger *slog.Logger
 
 	// Configuration
-	Interval time.Duration // Refresh interval; must stay under relayEntryTTL (see below)
+	Interval time.Duration // Refresh interval. Must stay under relayEntryTTL.
 
 	// State
 	lastRefresh  atomic.Int64 // Unix timestamp of last successful refresh
@@ -43,12 +43,12 @@ func NewRelayKeepalive(kd *KeibiDrop, logger *slog.Logger) *RelayKeepalive {
 	}
 }
 
-// relayEntryTTL is the relay store's entryTTL: it drops registrations it stops seeing, which is
-// what keeps dead clients from hoarding a slot. Refreshing slower leaves a live peer absent
-// from /fetch, which the other side reads as "peer not found".
+// relayEntryTTL mirrors the relay store's entryTTL. The relay drops registrations it
+// stops seeing, so dead clients cannot hoard slots. A slower refresh leaves a live
+// peer absent from /fetch, which the peer reads as "peer not found".
 const relayEntryTTL = 5 * time.Minute
 
-// defaultKeepaliveInterval leaves room for one miss (a failed refresh waits a full tick).
+// defaultKeepaliveInterval leaves room for one miss. A failed refresh waits a full tick.
 const defaultKeepaliveInterval = 2 * time.Minute
 
 // Start begins the background refresh loop.
@@ -57,7 +57,7 @@ func (rk *RelayKeepalive) Start() {
 	defer rk.mu.Unlock()
 
 	if rk.cancel != nil {
-		return // Already running
+		return // Already running.
 	}
 
 	rk.ctx, rk.cancel = context.WithCancel(context.Background())
@@ -77,7 +77,7 @@ func (rk *RelayKeepalive) Stop() {
 	}
 }
 
-// Pause temporarily disables refresh (e.g., when disconnected).
+// Pause disables refresh, for example while disconnected.
 func (rk *RelayKeepalive) Pause() {
 	rk.paused.Store(true)
 	rk.logger.Debug("Relay keepalive paused")
@@ -89,8 +89,8 @@ func (rk *RelayKeepalive) Resume() {
 	rk.logger.Debug("Relay keepalive resumed")
 }
 
-// ForceRefresh immediately refreshes the relay registration.
-// Call this on IP change or reconnection.
+// ForceRefresh refreshes the relay registration immediately.
+// Call it on IP change or reconnection.
 func (rk *RelayKeepalive) ForceRefresh() error {
 	rk.mu.Lock()
 	defer rk.mu.Unlock()
@@ -145,8 +145,8 @@ func (rk *RelayKeepalive) refresh() error {
 	return nil
 }
 
-// CheckIPChange detects if the local IP has changed and refreshes if needed.
-// Call this periodically or on network state change.
+// CheckIPChange refreshes the relay registration when the local IP changes.
+// Call it periodically or on network state change.
 func (rk *RelayKeepalive) CheckIPChange() error {
 	newIP, err := GetGlobalIPv6()
 	if err != nil {

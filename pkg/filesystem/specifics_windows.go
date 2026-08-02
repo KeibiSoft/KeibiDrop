@@ -30,22 +30,22 @@ func copyFusestatFromFusestat(dst *winfuse.Stat_t, src *winfuse.Stat_t) {
 		return
 	}
 	*dst = *src
-	// VERY IMPORTANT: always our optimized FilesystemBlockSize, never the source's
-	// (often a remote peer's stat). Small read buffers crawl on FUSE. st_blocks is
-	// 512-byte units, derived from size — keep it consistent with statFromFileInfo.
+	// IMPORTANT: always the optimized FilesystemBlockSize, never the source's
+	// (often a remote peer's stat). Small read buffers crawl on FUSE. st_blocks
+	// is in 512-byte units, derived from size. Keep it consistent with statFromFileInfo.
 	dst.Blksize = int64(FilesystemBlockSize)
 	dst.Blocks = (dst.Size + 511) / 512
 }
 
-// The autoCache (live_collab) flag is intentionally ignored on Windows: WinFsp
-// manages its own cache coherence and invalidates on file-info change, so a
-// peer's same-size in-place edit is reflected without an auto_cache equivalent
-// (and without the mmap hazard). There is nothing to toggle here.
+// The autoCache (live_collab) flag is ignored on Windows on purpose: WinFsp
+// manages its own cache coherence and invalidates on file-info change. A
+// peer's same-size in-place edit shows without an auto_cache equivalent and
+// without the mmap hazard. There is nothing to toggle here.
 func getMountOptions(_ bool) []string {
-	// uid=-1,gid=-1: instruct WinFSP to resolve ownership against the calling
-	// process's token rather than a fixed UID/GID.  This is the Windows
-	// equivalent of macOS's "allow_other,defer_permissions" — without it,
-	// WinFSP treats the current user as "other" (mode 0755 → no write),
-	// causing every Create/Write call to return ERROR_ACCESS_DENIED.
+	// uid=-1,gid=-1: WinFSP resolves ownership against the calling process's
+	// token, not a fixed UID/GID. This is the Windows equivalent of macOS's
+	// "allow_other,defer_permissions". Without it, WinFSP treats the current
+	// user as "other" (mode 0755: no write), and every Create/Write call
+	// returns ERROR_ACCESS_DENIED.
 	return []string{"-o", "uid=-1,gid=-1"}
 }

@@ -14,8 +14,8 @@ import (
 type File struct {
 	Name string
 
-	RelativePath   string // Relative (to root) path in the mounted filesystem.
-	RealPathOfFile string // The Path on the local system.
+	RelativePath   string // Path relative to the root of the mounted filesystem.
+	RealPathOfFile string // Path on the local filesystem.
 
 	LastEditTime uint64 // Use time.Now().UnixNano().
 	CreatedTime  uint64

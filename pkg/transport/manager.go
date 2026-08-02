@@ -227,9 +227,9 @@ func (m *Manager) BulkTransport() Transport {
 	return bulkTransportFor(m.LinkQuality())
 }
 
-// quicBulkViable reports whether QUIC bulk is competitive with TCP. Today it is not
-// (quic-go measured 2.7-16x slower than kernel TCP, syscall-bound on macOS), so bulk is
-// TCP everywhere. Flips to true once sendmsg_x is wired into the send loop.
+// quicBulkViable reports whether QUIC bulk is competitive with TCP. It is not:
+// quic-go measures 2.7-16x slower than kernel TCP (syscall-bound on macOS), so bulk is
+// TCP everywhere. Flip to true once sendmsg_x lands in the send loop.
 var quicBulkViable = false
 
 // bulkTransportFor is the pure routing rule, split out to be testable without a network.

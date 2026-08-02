@@ -22,20 +22,20 @@ const (
 	OpRmdir
 )
 
-// QueuedOperation represents a pending filesystem operation to be sent to peer.
+// QueuedOperation is a pending filesystem operation to send to the peer.
 type QueuedOperation struct {
-	ID        uint64        // Monotonic operation ID
-	Type      OperationType // Type of operation
-	Path      string        // Relative path in mounted filesystem
-	OldPath   string        // For RENAME operations: the source path
-	Data      []byte        // For WRITE: the data to write
-	Offset    int64         // For WRITE: file offset
-	Size      int64         // File size (for CREATE/EDIT)
-	Mode      uint32        // File mode/permissions
-	Mtime     int64         // Modification time (unix nano)
-	Checksum  uint64        // xxHash3 of Data (for integrity verification)
-	CreatedAt time.Time     // When this operation was queued
-	Retries   int           // Number of replay attempts
+	ID        uint64 // Monotonic operation ID
+	Type      OperationType
+	Path      string    // Relative path in the mounted filesystem
+	OldPath   string    // Source path for RENAME
+	Data      []byte    // Data to write, for WRITE
+	Offset    int64     // File offset, for WRITE
+	Size      int64     // File size, for CREATE/EDIT
+	Mode      uint32    // File mode and permissions
+	Mtime     int64     // Modification time (unix nano)
+	Checksum  uint64    // xxHash3 of Data, for integrity checks
+	CreatedAt time.Time // Queue time
+	Retries   int       // Replay attempt count
 }
 
 // FileVersion tracks file state for conflict detection.

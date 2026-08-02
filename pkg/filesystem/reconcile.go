@@ -9,10 +9,10 @@
 
 package filesystem
 
-// reconcileBitmap builds the post-edit bitmap that keeps only chunks whose content is
-// proven unchanged (our stored hash == the peer's hash for the same chunk span) and
-// leaves the rest unset to be re-fetched on demand. Returns (newBitmap, true) on
-// success, or (nil, false) when the caller must fall back to a full reset.
+// reconcileBitmap builds the post-edit bitmap. It keeps only chunks proven
+// unchanged (stored hash == peer hash for the same chunk span) and leaves the
+// rest unset for on-demand re-fetch. It returns (newBitmap, true) on success,
+// or (nil, false) when the caller must fall back to a full reset.
 func reconcileBitmap(old *ChunkBitmap, oldSize, newSize int64, peerHashes map[int]uint64) (*ChunkBitmap, bool) {
 	if old == nil || newSize <= 0 || !old.HasHashes() || len(peerHashes) == 0 {
 		return nil, false

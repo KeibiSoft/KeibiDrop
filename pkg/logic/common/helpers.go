@@ -20,14 +20,13 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 )
 
-// preferredLANIfaces lists interface-name prefixes to prefer when choosing a
-// LAN address: physical Wi-Fi/Ethernet first. Shared by GetLinkLocalAddress,
-// GetGlobalIPv6, and GetDiscoveryLANAddress (intentionally the same order).
+// preferredLANIfaces lists interface-name prefixes for LAN address choice, physical
+// Wi-Fi/Ethernet first. GetLinkLocalAddress, GetGlobalIPv6, and GetDiscoveryLANAddress
+// must share this order.
 var preferredLANIfaces = []string{"en0", "eth0", "wlan0", "en1", "wlp", "enp"}
 
-// GetLinkLocalAddress finds a link-local IPv6 address on this machine and
-// returns it formatted as "ip%zone:port" for direct LAN peer connections.
-// Falls back to loopback (::1) when no link-local interface is available.
+// GetLinkLocalAddress returns a link-local IPv6 address as "ip%zone:port" for direct
+// LAN peer connections. It falls back to loopback when no link-local interface exists.
 func GetLinkLocalAddress(port int) (string, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -57,8 +56,8 @@ func GetLinkLocalAddress(port int) (string, error) {
 	}
 
 	if len(candidates) > 0 {
-		// Prefer common LAN interfaces: en0 (macOS WiFi), eth0/wlan0 (Linux).
-		// Avoid utun*, awdl*, llw*, ap* (VPN, AirDrop, low-latency WLAN, access point).
+		// Prefer common LAN interfaces: en0 (macOS Wi-Fi), eth0/wlan0 (Linux).
+		// Avoid utun*, awdl*, llw*, ap*: VPN, AirDrop, low-latency WLAN, access point.
 		preferred := preferredLANIfaces
 		for _, pref := range preferred {
 			for _, c := range candidates {
@@ -67,7 +66,7 @@ func GetLinkLocalAddress(port int) (string, error) {
 				}
 			}
 		}
-		// No preferred match, pick first non-virtual candidate.
+		// No preferred match. Pick the first non-virtual candidate.
 		for _, c := range candidates {
 			skip := strings.HasPrefix(c.iface, "utun") ||
 				strings.HasPrefix(c.iface, "awdl") ||
@@ -76,12 +75,12 @@ func GetLinkLocalAddress(port int) (string, error) {
 				return fmt.Sprintf("%s%%%s:%d", c.ip.String(), c.iface, port), nil
 			}
 		}
-		// All candidates are virtual, use first one anyway.
+		// All candidates are virtual. Use the first one.
 		c := candidates[0]
 		return fmt.Sprintf("%s%%%s:%d", c.ip.String(), c.iface, port), nil
 	}
 
-	// Fallback: accept loopback for local testing.
+	// Fall back to loopback for local testing.
 	for _, iface := range ifaces {
 		addrs, _ := iface.Addrs()
 		for _, addr := range addrs {
@@ -98,8 +97,8 @@ func GetLinkLocalAddress(port int) (string, error) {
 	return "", fmt.Errorf("no link-local or loopback IPv6 address found")
 }
 
-// virtualIfacePrefixes names interface kinds whose address LAN peers never see
-// (Docker/VPN/bridges/AirDrop), so the discovery-address scan skips them.
+// virtualIfacePrefixes lists interface kinds whose addresses LAN peers never see.
+// The discovery-address scan skips them.
 var virtualIfacePrefixes = []string{"docker", "veth", "br-", "br0", "tun", "tap", "utun", "virbr", "wg", "awdl", "llw"}
 
 func isVirtualIface(name string) bool {
@@ -111,10 +110,9 @@ func isVirtualIface(name string) bool {
 	return false
 }
 
-// GetDiscoveryLANAddress returns this machine's private IPv4 on a preferred LAN
-// interface, in the same form peers see it via discovery. The local-connect
-// tiebreak uses it so equal names compare IPv4-vs-IPv4 (symmetric). Returns ""
-// when no private IPv4 is available.
+// GetDiscoveryLANAddress returns this machine's private IPv4 in the form peers see
+// via discovery. The local-connect tiebreak needs the same form on both sides.
+// It returns "" when no private IPv4 exists.
 func GetDiscoveryLANAddress() string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -152,11 +150,10 @@ func GetDiscoveryLANAddress() string {
 	return pick("")
 }
 
-// ParsePeerDirectAddress parses a direct LAN peer address in any form the
-// codebase produces or stores: "ip", "ip:port", "ip%zone", "ip%zone:port",
-// "[ip]:port", or "[ip%zone]:port". Returns the bare IP with the zone always
-// split off into zone ("" when absent) and the port (0 when absent). The IP
-// must be link-local, loopback, or private; IPv6 link-local requires a zone.
+// ParsePeerDirectAddress parses a direct LAN peer address in any stored form: "ip",
+// "ip:port", "ip%zone", "ip%zone:port", "[ip]:port", or "[ip%zone]:port".
+// It returns the bare IP, the zone ("" when absent), and the port (0 when absent).
+// The IP must be link-local, loopback, or private. IPv6 link-local requires a zone.
 func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err error) {
 	if addr == "" {
 		return "", "", 0, fmt.Errorf("empty address")
@@ -176,8 +173,8 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 	case net.ParseIP(addr) != nil:
 		// Bare IP, no zone, no port.
 	case colon > pct:
-		// "ipv4:port", "ip%zone:port", or unbracketed "ipv6:port" such as
-		// "::1:26431": zones hold no colons, so the last colon splits the port.
+		// "ipv4:port", "ip%zone:port", or unbracketed "ipv6:port" such as "::1:26431".
+		// Zones hold no colons, so the last colon splits the port.
 		if colon == 0 {
 			return "", "", 0, fmt.Errorf("invalid address format %q", addr)
 		}
@@ -191,7 +188,6 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 		return "", "", 0, fmt.Errorf("invalid address format %q", addr)
 	}
 
-	// Split the zone off the host, if any.
 	var zoned bool
 	ip, zone, zoned = strings.Cut(host, "%")
 	if zoned && zone == "" {
@@ -202,7 +198,7 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 	if parsedIP == nil {
 		return "", "", 0, fmt.Errorf("invalid IP %q", ip)
 	}
-	// IPv4 with zone makes no sense, but accept for consistency.
+	// An IPv4 zone has no meaning. Accept it for consistency.
 	if !parsedIP.IsLinkLocalUnicast() && !parsedIP.IsLoopback() && !parsedIP.IsPrivate() {
 		return "", "", 0, fmt.Errorf("address must be link-local, loopback, or private: %q", ip)
 	}
@@ -238,7 +234,7 @@ func GetLocalIPv6() (string, error) {
 				continue
 			}
 			if ip.To16() != nil && ip.To4() == nil {
-				// allow loopback + ULA + link-local
+				// Loopback, ULA, and link-local are all acceptable.
 				return ip.String(), nil
 			}
 		}
@@ -246,18 +242,15 @@ func GetLocalIPv6() (string, error) {
 	return "", fmt.Errorf("no IPv6 address found")
 }
 
-// GetGlobalIPv6 returns a stable (non-temporary) global IPv6 address.
-// On macOS/Linux, privacy extensions (RFC 4941) generate temporary addresses
-// that rotate periodically. Connections bound to a temporary address break
-// when the OS deprecates it. This function prefers stable addresses by
-// collecting all candidates and picking the best one.
+// GetGlobalIPv6 returns a stable, non-temporary global IPv6 address.
+// RFC 4941 privacy extensions rotate temporary addresses. Connections bound to a
+// temporary address break when the OS deprecates it.
 func GetGlobalIPv6() (string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "", err
 	}
 
-	// Preferred interfaces for LAN (same order as GetLinkLocalAddress).
 	preferred := preferredLANIfaces
 
 	type candidate struct {
@@ -296,13 +289,12 @@ func GetGlobalIPv6() (string, error) {
 	}
 
 	if len(candidates) == 0 {
-		// Fallback to any local IPv6 for testing.
+		// Fall back to any local IPv6 for testing.
 		return GetLocalIPv6()
 	}
 
-	// Prefer candidates on preferred interfaces (en0, eth0, etc.).
-	// The first address on a preferred interface is typically the stable one;
-	// temporary addresses are appended after the stable/secured address.
+	// The first address on a preferred interface is usually the stable one.
+	// The OS appends temporary addresses after it.
 	for _, pref := range preferred {
 		for _, c := range candidates {
 			if strings.HasPrefix(c.iface, pref) {
@@ -311,13 +303,11 @@ func GetGlobalIPv6() (string, error) {
 		}
 	}
 
-	// No preferred interface match, return first candidate.
 	return candidates[0].ip, nil
 }
 
-// GetLocalAddrs returns all private/link-local IP addresses for LAN discovery.
-// These are included in the relay registration so peers on the same network
-// can connect directly without going through the bridge relay.
+// GetLocalAddrs returns all private and link-local IP addresses for LAN discovery.
+// The relay registration includes them, so same-network peers can connect directly.
 func GetLocalAddrs() []string {
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -329,7 +319,7 @@ func GetLocalAddrs() []string {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
-		// Skip virtual/docker/VPN interfaces
+		// Skip virtual, Docker, and VPN interfaces.
 		name := iface.Name
 		if strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "veth") ||
 			strings.HasPrefix(name, "br-") || strings.HasPrefix(name, "utun") {

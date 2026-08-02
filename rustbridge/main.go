@@ -66,7 +66,7 @@ func sortedLocalKeys() []string {
 
 var kd *common.KeibiDrop
 
-// Error reporting: thread-safe last error string.
+// Last error string. The mutex makes access thread-safe.
 var (
 	lastErrorMu  sync.Mutex
 	lastErrorMsg string
@@ -82,7 +82,7 @@ func setLastError(err error) {
 	}
 }
 
-// Event queue: bounded channel for UI events.
+// eventChan is a bounded queue for UI events.
 var eventChan = make(chan string, 64)
 
 //export KD_Initialize
@@ -94,10 +94,8 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	m := C.GoString(toMount)
 	s := C.GoString(toSave)
 	fuse := useFUSE != 0
-	// Tri-state for the two collab-sync flags: a negative value means "use the
-	// config" (the single source of truth), so the UI passes -1 and the engine's
-	// config value wins (config.Load above already applied any env override). A
-	// 0 or 1 from older callers is still honored, so the C ABI is unchanged.
+	// The two collab-sync flags are tri-state: negative means use the config value.
+	// 0 or 1 from older callers still wins, so the C ABI is unchanged.
 	prefetch := cfg.PrefetchOnOpen
 	if prefetchOnOpen >= 0 {
 		prefetch = prefetchOnOpen != 0
@@ -107,7 +105,6 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		push = pushOnWrite != 0
 	}
 
-	// Fill in defaults for empty values.
 	if r == "" {
 		r = cfg.Relay
 	}
@@ -130,7 +127,6 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		return -1
 	}
 
-	// Setup log file from config if available.
 	var logWriter = os.Stdout
 	if cfg.LogFile != "" {
 		if f, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
@@ -140,7 +136,6 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	handler := slog.NewTextHandler(logWriter, &slog.HandlerOptions{Level: slog.LevelDebug})
 	logger := slog.New(handler).With("component", "rustbridge")
 
-	// Ensure directories exist.
 	_ = config.EnsureDirectories(cfg)
 
 	ctx, c := context.WithCancel(context.Background())
@@ -163,8 +158,8 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		if cfg.PassphraseProtect && os.Getenv("KD_PASSPHRASE_FROM_STDIN") == "1" {
 			opts.PassphraseProvider = readPassphraseFromStdin
 		} else if cfg.PassphraseProtect {
-			// Passphrase required but stdin sentinel not set; disable tier 2 for
-			// this session. Rust UI will provide a dedicated FFI in a later release.
+			// The stdin sentinel is not set, so disable tier 2 for this session.
+			// The Rust UI has no passphrase FFI yet.
 			opts.PassphraseProtect = false
 		}
 		if err := kd.EnablePersistentIdentity(config.ConfigDir(), opts); err != nil {
@@ -181,7 +176,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	if cfg.StrictMode {
 		kd.StrictMode = true
 	}
-	kd.AutoCache = cfg.LiveCollab // live_collab → macFUSE auto_cache (same-size live edits, macOS)
+	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	kd.ReadAheadWindowMB = cfg.ReadAheadWindowMB
 	for _, warn := range cfg.Warnings() {
@@ -232,9 +227,8 @@ func KD_Connect() C.int {
 	return 0
 }
 
-// KD_DecideLocalRole reports whether this peer should create (1) or join (0) a
-// local-mode connection to peerName at peerAddr. Same decider as the CLI and
-// mobile so all frontends break colliding names the same way.
+// KD_DecideLocalRole reports whether this peer creates (1) or joins (0) in local mode.
+// CLI and mobile use the same rule, so all frontends resolve name collisions the same way.
 //
 //export KD_DecideLocalRole
 func KD_DecideLocalRole(myName, peerName, peerAddr *C.char) C.int {
@@ -612,8 +606,7 @@ func KD_SetupEventCallbacks() {
 		}
 	}
 
-	// Reconnect manager events (reconnecting/reconnected/gave_up) are
-	// wired centrally in wireReconnectEvents via kd.OnEvent.
+	// wireReconnectEvents wires the reconnect manager events through kd.OnEvent.
 }
 
 func pushEvent(evt string) {
@@ -846,10 +839,8 @@ func KD_SanitizeLogs(destPath *C.char) C.int {
 	return 0
 }
 
-// readPassphraseFromStdin reads a single line from stdin for use as a passphrase.
-// Only called when KD_PASSPHRASE_FROM_STDIN=1 is set. Uses a line reader so
-// passphrases containing spaces are preserved verbatim (fmt.Fscan would
-// truncate at the first whitespace).
+// readPassphraseFromStdin reads one stdin line as the passphrase when KD_PASSPHRASE_FROM_STDIN=1.
+// A line reader keeps spaces; fmt.Fscan would truncate at the first whitespace.
 func readPassphraseFromStdin() (string, error) {
 	r := bufio.NewReader(os.Stdin)
 	line, err := r.ReadString('\n')

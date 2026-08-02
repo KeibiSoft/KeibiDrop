@@ -33,7 +33,7 @@ func platOpen(path string, flags int, mode uint32) (int, error) {
 	return syscall.Open(path, flags, mode)
 }
 
-// platOpendir opens a directory — on Unix, O_DIRECTORY works fine with Open.
+// platOpendir opens a directory. On Unix, Open accepts O_DIRECTORY.
 func platOpendir(path string) (int, error) {
 	return syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
 }

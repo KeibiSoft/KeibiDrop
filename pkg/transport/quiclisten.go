@@ -24,7 +24,7 @@ import (
 type quicListener struct {
 	ln     *quic.Listener
 	tr     *quic.Transport // owned; Close stops the transport
-	udp    net.PacketConn  // the UDP socket; quic-go does NOT close a user-provided Conn, so we do
+	udp    net.PacketConn  // the UDP socket; quic-go does not close a user-provided Conn, so Close does
 	conns  chan net.Conn
 	errc   chan error
 	closed chan struct{}

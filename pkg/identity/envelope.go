@@ -40,9 +40,8 @@ var (
 	errEnvelopeUnsupportedKDF = errors.New("identity: unknown KDF identifier")
 )
 
-// EnvelopeHeader contains the decoded fields from the first 24 bytes of the
-// envelope. Salt and Nonce are decoded separately; the raw header bytes live
-// in the serialised form produced by MarshalEnvelope.
+// EnvelopeHeader contains the decoded fields from the first 24 bytes of the envelope.
+// Salt and Nonce decode separately; MarshalEnvelope produces the raw serialized form.
 type EnvelopeHeader struct {
 	KDFID    uint8
 	Flags    uint8
@@ -71,7 +70,7 @@ func MarshalEnvelope(h EnvelopeHeader, ciphertextWithTag []byte) []byte {
 }
 
 // ParseEnvelope decodes an envelope buffer into its header and ciphertext.
-// Returns typed errors for invalid / unsupported envelopes.
+// It returns typed errors for invalid or unsupported envelopes.
 func ParseEnvelope(buf []byte) (EnvelopeHeader, []byte, error) {
 	minLen := envelopeHeaderSize + envelopeNonceSize
 	if len(buf) < minLen {
@@ -117,8 +116,8 @@ func (h EnvelopeHeader) AAD() []byte {
 	return buf
 }
 
-// IsV1Envelope returns true when buf starts with the correct magic bytes and
-// is long enough to contain a complete header + nonce.
+// IsV1Envelope reports whether buf starts with the envelope magic and
+// is long enough to hold a complete header plus nonce.
 func IsV1Envelope(buf []byte) bool {
 	if len(buf) < envelopeHeaderSize+envelopeNonceSize {
 		return false

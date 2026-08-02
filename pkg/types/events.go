@@ -13,16 +13,11 @@ import (
 	keibidrop "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 )
 
-// ErrRemoteFileNotFound is returned by RemoteFileStream.ReadAt when the peer
-// reports the file no longer exists (gRPC NotFound), as opposed to a transient
-// fetch failure (timeout, connection loss, server I/O error). The on-demand read
-// path uses this to distinguish a genuinely gone file (surface EOF, e.g. git's
-// transient .keep files) from a stall (surface EIO, so a media player does not
-// see a false end-of-file mid-stream). Defined here, in the shared types package,
-// so the filesystem package can check it without importing gRPC.
+// ErrRemoteFileNotFound reports that the peer no longer has the file (gRPC NotFound), not a transient fetch failure.
+// On-demand reads map it to EOF and map stalls to EIO. It lives here so the filesystem package avoids a gRPC import.
 var ErrRemoteFileNotFound = errors.New("remote file not found")
 
-// FileAction maps local FS events
+// FileAction identifies the type of a local filesystem event.
 type FileAction int
 
 const (
@@ -45,32 +40,32 @@ const (
 
 // FileEvent represents a filesystem change
 type FileEvent struct {
-	Path    string          // relative path in the FS (new path for renames)
-	OldPath string          // for renames: the source path
-	Action  FileAction      // type of event
-	Attr    *keibidrop.Attr // file attributes (from Stat_t)
-	// BaseMtimeNs is the newest peer version the sender had accepted when this
-	// edit session started. 0 = unknown; the receiver then never preserves.
+	Path    string // Relative path in the FS; the new path for renames.
+	OldPath string // Source path for renames.
+	Action  FileAction
+	Attr    *keibidrop.Attr // File attributes from Stat_t.
+	// BaseMtimeNs is the newest peer version the sender accepted when the edit
+	// session started. 0 means unknown; the receiver then keeps no conflict copy.
 	BaseMtimeNs int64
 }
 
 // FileStreamProvider is a factory for RemoteFileStream and StreamFile.
 type FileStreamProvider interface {
 	OpenRemoteFile(ctx context.Context, inode uint64, path string) (RemoteFileStream, error)
-	// StreamFile starts a push-based download: server sends all chunks
+	// StreamFile starts a push-based download. The server sends all chunks
 	// from startOffset to EOF without per-chunk round-trips.
 	StreamFile(ctx context.Context, path string, startOffset uint64) (StreamFileReceiver, error)
 }
 
 type RemoteFileStream interface {
-	// ReadAt sends offset & size, receives exactly those bytes.
+	// ReadAt sends offset and size and receives exactly those bytes.
 	ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error)
 	Close() error
 }
 
 // StreamFileReceiver receives pushed chunks from the server.
 type StreamFileReceiver interface {
-	// Recv returns the next chunk. Returns io.EOF when the stream ends.
+	// Recv returns the next chunk. It returns io.EOF when the stream ends.
 	Recv() (data []byte, offset uint64, totalSize uint64, err error)
 }
 
@@ -79,9 +74,8 @@ type ChunkHashReceiver interface {
 	Recv() (chunkIndex uint64, hash uint64, err error)
 }
 
-// ChunkHasher is implemented by providers that support the GetChunkHashes RPC. A
-// provider that does not implement it (older peer, test fake) signals via the failed
-// type assertion at the call site that the caller must fall back.
+// ChunkHasher marks providers that support the GetChunkHashes RPC.
+// Callers type-assert and fall back when a provider (older peer, test fake) lacks it.
 type ChunkHasher interface {
 	GetChunkHashes(ctx context.Context, path string, chunkSize, fromChunk, count uint64) (ChunkHashReceiver, error)
 }

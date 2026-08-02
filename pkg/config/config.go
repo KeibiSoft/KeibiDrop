@@ -18,7 +18,7 @@ import (
 )
 
 // Config holds all user-configurable settings.
-// Resolution order: built-in defaults → config file → environment variables.
+// Values resolve in this order: built-in defaults, config file, environment variables.
 type Config struct {
 	Relay             string `toml:"relay"`
 	SavePath          string `toml:"save_path"`
@@ -31,11 +31,11 @@ type Config struct {
 	NoFUSE            bool   `toml:"no_fuse"`
 	Incognito         bool   `toml:"incognito"`
 	PrefetchOnOpen    bool   `toml:"prefetch_on_open"`
-	PrefetchAutoMB    int    `toml:"prefetch_auto_mb"`     // auto-prefetch files >= this many MB (sequential fill + on-demand jumps). Default 0 = off (pure on-demand) — aggressive prefetch saturates constrained/relay links and starves seeks. Set >0 only on a fat link. prefetch_on_open=true forces prefetch for any size.
-	ReadAheadWindowMB int    `toml:"read_ahead_window_mb"` // cap for predictive sequential read-ahead on on-demand reads: keep up to this many MB of upcoming blocks in flight so a high-RTT link does not stall at each 16 MiB block boundary (video playback, sequential reads). The in-use window self-tunes by hit/miss feedback and never exceeds this; a slow consumer settles well below it. Default 64. Set 0 to disable (pure on-demand, no look-ahead).
+	PrefetchAutoMB    int    `toml:"prefetch_auto_mb"`     // Prefetch files at or above this many MB. Default 0 is off because prefetch saturates slow links and starves seeks.
+	ReadAheadWindowMB int    `toml:"read_ahead_window_mb"` // Cap in MB for sequential read-ahead; prevents stalls at block boundaries on high-RTT links. Self-tunes below the cap. Default 64; 0 disables.
 	PushOnWrite       bool   `toml:"push_on_write"`
-	LiveCollab        bool   `toml:"live_collab"`        // prioritize seeing peers' same-size in-place edits live (macFUSE auto_cache); trades off local mmap-write integrity (git). See note in template.
-	PassphraseProtect bool   `toml:"passphrase_protect"` // opt into Tier 2 (Argon2id passphrase) for identity at-rest encryption
+	LiveCollab        bool   `toml:"live_collab"`        // Show peers' same-size in-place edits live (macFUSE auto_cache); risks local mmap-write integrity (git).
+	PassphraseProtect bool   `toml:"passphrase_protect"` // Enable Tier 2 identity at-rest encryption with an Argon2id passphrase.
 }
 
 const DefaultRelay = "https://keibidroprelay.keibisoft.com/"
@@ -51,8 +51,8 @@ func DefaultConfig() Config {
 		InboundPort:       InboundPort,
 		OutboundPort:      OutboundPort,
 		BridgeAddr:        DefaultBridge,
-		PrefetchAutoMB:    0,  // default off: pure on-demand (instant open, fetch only what's read). Aggressive prefetch saturates constrained/relay links and freezes seeks; opt in (>0) only on a fat link.
-		ReadAheadWindowMB: 64, // default on: bounded predictive read-ahead so on-demand sequential reads (video) do not stall at each 16 MiB boundary over a high-RTT link. Self-tuning under this cap; 0 disables.
+		PrefetchAutoMB:    0,  // Off by default: prefetch saturates slow links and freezes seeks.
+		ReadAheadWindowMB: 64, // On by default: prevents sequential-read stalls on high-RTT links.
 	}
 	switch runtime.GOOS {
 	case "darwin":
@@ -64,7 +64,7 @@ func DefaultConfig() Config {
 }
 
 // ConfigDir returns the config directory path (~/.config/keibidrop/).
-// Override with KEIBIDROP_CONFIG_DIR for testing multiple instances on one machine.
+// KEIBIDROP_CONFIG_DIR overrides it, so tests can run multiple instances on one machine.
 func ConfigDir() string {
 	if d := os.Getenv("KEIBIDROP_CONFIG_DIR"); d != "" {
 		return d
@@ -78,12 +78,11 @@ func ConfigPath() string {
 	return filepath.Join(ConfigDir(), "config.toml")
 }
 
-// Load reads the config file (if it exists) and applies environment variable overrides.
-// Missing config file is not an error — defaults are used.
+// Load reads the config file, if present, and applies environment variable overrides.
+// A missing config file is not an error; defaults apply.
 func Load() (Config, error) {
 	cfg := DefaultConfig()
 
-	// Load config file if it exists.
 	path := ConfigPath()
 	if _, err := os.Stat(path); err == nil {
 		if _, err := toml.DecodeFile(path, &cfg); err != nil {
@@ -91,8 +90,7 @@ func Load() (Config, error) {
 		}
 	}
 
-	// Environment variables override config file.
-	// Support both KEIBIDROP_ prefix (Rust UI / CLI) and KD_ prefix (kd daemon).
+	// Overrides accept the KEIBIDROP_ prefix (Rust UI, CLI) and the KD_ prefix (kd daemon).
 	applyEnvOverrides(&cfg)
 
 	// Resolve relative paths to absolute.
@@ -115,9 +113,8 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// EnsureDirectories creates save_path, the log dir, and (except on Windows) mount_path:
-// WinFSP makes the mount point itself and rejects an existing path, while libfuse and
-// macFUSE require it to exist.
+// EnsureDirectories creates save_path, the log directory, and, except on Windows, mount_path.
+// WinFSP creates the mount point itself and rejects an existing path; libfuse and macFUSE require it.
 func EnsureDirectories(cfg Config) error {
 	for _, d := range directoriesToEnsure(cfg, runtime.GOOS) {
 		if d == "" {
@@ -130,7 +127,7 @@ func EnsureDirectories(cfg Config) error {
 	return nil
 }
 
-// directoriesToEnsure returns the dirs to create; mount_path is excluded on Windows.
+// directoriesToEnsure returns the directories to create. The list excludes mount_path on Windows.
 func directoriesToEnsure(cfg Config, goos string) []string {
 	dirs := []string{cfg.SavePath, filepath.Dir(cfg.LogFile)}
 	if goos != "windows" {
@@ -139,8 +136,8 @@ func directoriesToEnsure(cfg Config, goos string) []string {
 	return dirs
 }
 
-// WriteDefault creates a default config file with comments at the standard path.
-// Does nothing if the file already exists.
+// WriteDefault creates a commented default config file at the standard path.
+// It does nothing when the file exists.
 func WriteDefault() error {
 	path := ConfigPath()
 	if _, err := os.Stat(path); err == nil {
@@ -331,12 +328,8 @@ func envFirst(names ...string) string {
 	return ""
 }
 
-// envBool resolves a boolean-valued env var from the given names. The second
-// return value reports whether any of the vars was set; when false the caller
-// should leave the existing (default / config-file) value untouched rather than
-// forcing it to false. A present value is parsed leniently: "0", "false",
-// "no", "off" (any case) → false; anything else → true. This fixes the old
-// presence-only behaviour where e.g. NO_FUSE=false wrongly enabled the flag.
+// envBool resolves a boolean env var from the given names; set=false means keep the current value.
+// "0", "false", "no", "off" (any case) parse false, all else true, so NO_FUSE=false stays off.
 func envBool(names ...string) (val bool, set bool) {
 	v := envFirst(names...)
 	if v == "" {
@@ -350,21 +343,8 @@ func envBool(names ...string) (val bool, set bool) {
 	}
 }
 
-// Warnings returns notes about flag combinations that are redundant or carry a
-// known tradeoff, for the caller to log at startup. None are fatal — there is
-// no combination that crashes or that the program must refuse. The cases are:
-//
-//   - no_fuse disables the FUSE mount, so the mount-tuning flags prefetch_on_open
-//     and live_collab have nothing to act on (the no-FUSE AddFile/PullFile API is
-//     used instead). They are silently ignored; we surface that here.
-//   - live_collab on macOS enables the macFUSE auto_cache mount option, which
-//     fixes same-size live-edit visibility but can corrupt files written via mmap
-//     (notably git's index). That is a deliberate tradeoff, flagged so it is not
-//     a surprise. On Linux/Windows live_collab is a no-op (both already work).
-//
-// Note prefetch_on_open and live_collab are NOT mutually exclusive: prefetch
-// fills the local disk cache while auto_cache governs the kernel page cache —
-// they operate at different layers and compose cleanly.
+// Warnings returns startup notes for redundant or tradeoff flag combinations; none are fatal.
+// prefetch_on_open and live_collab act on different cache layers and compose cleanly.
 func (c Config) Warnings() []string {
 	var w []string
 	if c.NoFUSE {

@@ -15,9 +15,8 @@ import (
 	"strconv"
 )
 
-// envRekeyUint reads an unsigned-integer env var for the debug rekey threshold override
-// (KD_REKEY_BYTES / KD_REKEY_MSGS). It returns 0 when unset, empty, or unparseable, which
-// leaves the corresponding threshold at its production default.
+// envRekeyUint reads an unsigned-integer env var for the debug rekey override.
+// It returns 0 when the value is unset or invalid, which keeps the production default.
 func envRekeyUint(name string) uint64 {
 	v := os.Getenv(name)
 	if v == "" {

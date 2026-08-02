@@ -131,7 +131,7 @@ func DeriveChaCha20Key(sharedSecrets ...[]byte) ([]byte, error) {
 }
 
 // DeriveAES256Key derives a 32-byte symmetric key for AES-256-GCM.
-// Uses a different HKDF label for domain separation from ChaCha20 keys.
+// A different HKDF label keeps domain separation from ChaCha20 keys.
 func DeriveAES256Key(sharedSecrets ...[]byte) ([]byte, error) {
 	return deriveKeyInternal(sha512.New, "KeibiDrop-AES-256-GCM-SEK", KeySize, sharedSecrets...)
 }
@@ -303,9 +303,8 @@ func deriveKeyInternalWithSalt(
 	return key, nil
 }
 
-// DeriveFileEncryptionKey derives a 32-byte per-file AEAD key from a master key plus a
-// per-file salt via HKDF-SHA512, with a distinct info string per use case
-// ("keibidrop-identity-file-v1", "keibidrop-contacts-file-v1", etc.).
+// DeriveFileEncryptionKey derives a 32-byte per-file AEAD key from a master key and a per-file salt via HKDF-SHA512.
+// Each use case passes a distinct info string, such as "keibidrop-identity-file-v1" or "keibidrop-contacts-file-v1".
 func DeriveFileEncryptionKey(masterKey, salt []byte, info string) ([]byte, error) {
 	if len(masterKey) == 0 {
 		return nil, errors.New("master key empty")
@@ -318,8 +317,8 @@ func DeriveFileEncryptionKey(masterKey, salt []byte, info string) ([]byte, error
 
 // ========== PRESENCE ==========
 
-// DerivePresenceKey derives a directional presence token: the poster's fingerprint is always
-// first, so the poster calls (own, peer) to POST and the checker calls (peer, own) to GET.
+// DerivePresenceKey derives a directional presence token; the poster's fingerprint always comes first.
+// The poster calls (own, peer) to POST; the checker calls (peer, own) to GET.
 func DerivePresenceKey(posterFingerprint, checkerFingerprint string) ([]byte, error) {
 	ikm := sha512.Sum512([]byte(posterFingerprint + ":" + checkerFingerprint))
 	return deriveKeyInternal(sha512.New, "keibidrop-presence-v2", KeySize, ikm[:])
@@ -330,7 +329,7 @@ func DerivePresenceKey(posterFingerprint, checkerFingerprint string) ([]byte, er
 const roomPasswordSize = 32
 
 // ExtractRoomPassword extracts the first 32 bytes from a base64-encoded fingerprint.
-// This "room password" is shared out-of-band and used to derive relay encryption keys.
+// Peers share this room password out-of-band; it derives the relay encryption keys.
 func ExtractRoomPassword(fingerprint string) ([]byte, error) {
 	decoded, err := base64.RawURLEncoding.DecodeString(fingerprint)
 	if err != nil {

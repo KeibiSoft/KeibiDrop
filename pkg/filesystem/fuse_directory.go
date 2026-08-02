@@ -140,11 +140,11 @@ func (d *Dir) Chmod(path string, mode uint32) (errCode int) {
 
 	d.AfmLock.Lock()
 	if f, ok := d.AllFileMap[path]; ok && f.stat != nil {
-		// Guard the stat write under metaMu: OpenEx/prefetch read f.stat.Mode on the
-		// same *File via metaMu (a different lock than AfmLock), so a bare write here
-		// races their reads. metaMu is innermost; AfmLock stays held. Take a value
-		// snapshot of the stat under metaMu so the notify below builds its Attr from a
-		// stable copy, without holding either lock across StatToAttr's allocation.
+		// Guard the stat write under metaMu. OpenEx/prefetch read f.stat.Mode on
+		// the same *File via metaMu, a different lock than AfmLock, so a bare
+		// write here races their reads. metaMu is innermost; AfmLock stays held.
+		// Take a value snapshot under metaMu so the notify below builds its Attr
+		// from a stable copy, with no lock held across StatToAttr's allocation.
 		f.metaMu.Lock()
 		applyMode(f.stat)
 		statSnap := *f.stat
@@ -204,9 +204,9 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
 		chownGid = -1
 	}
 	if err := platChown(cleanPath, chownUid, chownGid); err != nil {
-		// EPERM: caller isn't root / lacks CAP_CHOWN — expected for non-privileged flows.
-		// ENOENT: file vanished between lookup and chown — race, not our bug.
-		// ENOSYS: platform has no chown (Windows) — in-memory update below still applies.
+		// EPERM: caller is not root and lacks CAP_CHOWN. Expected for non-privileged flows.
+		// ENOENT: file vanished between lookup and chown. A benign race.
+		// ENOSYS: platform has no chown (Windows). The in-memory update below still applies.
 		if !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOENT) && !errors.Is(err, syscall.ENOSYS) {
 			d.logger.Warn("Chown: disk chown failed, in-memory stat will diverge",
 				"path", cleanPath, "uid", chownUid, "gid", chownGid, "error", err)
@@ -253,36 +253,25 @@ func (d *Dir) Chown(path string, uid uint32, gid uint32) (errCode int) {
 
 // Create creates a new file.
 //
-// From open(2) man page on Intel macOS:
+// oflag includes exactly one access mode: O_RDONLY, O_WRONLY, or O_RDWR.
+// O_APPEND, O_CREAT, O_TRUNC, and O_EXCL can be OR'd in. Use winfuse.O_ACCMODE
+// to extract the access mode (portable across macOS/Linux/Windows).
 //
-//	"The flags specified for the oflag argument must include exactly one of
-//	 the following file access modes:
-//	   O_RDONLY    open for reading only
-//	   O_WRONLY    open for writing only
-//	   O_RDWR      open for reading and writing
-//
-//	 In addition any combination of the following values can be or'ed in oflag:
-//	   O_APPEND    append on each write
-//	   O_CREAT     create file if it does not exist
-//	   O_TRUNC     truncate size to 0
-//	   O_EXCL      error if O_CREAT and the file exists"
-//
-// Use winfuse.O_ACCMODE to extract access mode (portable across macOS/Linux/Windows).
 // Create is dead on all platforms: cgofuse routes creates through CreateEx
-// (which we implement; see host.go create dispatch). It is kept only to satisfy
-// fuse.FileSystemInterface. Delegate to CreateEx so there is ONE implementation
-// — no duplicated logic to drift, and it stays correct if it were ever called.
+// (see host.go create dispatch). It exists only to satisfy
+// fuse.FileSystemInterface. It delegates to CreateEx so one implementation
+// exists: no duplicated logic to drift, and it stays correct if ever called.
 func (d *Dir) Create(path string, flags int, mode uint32) (errCode int, retFh uint64) {
 	fi := winfuse.FileInfo_t{Flags: flags}
 	errc := d.CreateEx(path, mode, &fi)
 	return errc, fi.Fh
 }
 
-// shouldPrefetchOnOpen decides whether to background-prefetch a file of the given
-// size on Open: forced when prefetchOnOpen is set, otherwise auto for files
-// >= autoMB megabytes (autoMB <= 0 disables auto). Smaller files stay pure
-// on-demand (instant open, fetch only what's read). Prefetch always cooperates
-// with on-demand jumps, so a seek into a not-yet-filled region never lags.
+// shouldPrefetchOnOpen decides whether Open starts a background prefetch for a
+// file of the given size. prefetchOnOpen forces it; otherwise files >= autoMB
+// megabytes auto-prefetch (autoMB <= 0 disables auto). Smaller files stay pure
+// on-demand: instant open, fetch only what is read. Prefetch cooperates with
+// on-demand jumps, so a seek into a not-yet-filled region never lags.
 func shouldPrefetchOnOpen(prefetchOnOpen bool, autoMB int, size uint64) bool {
 	if prefetchOnOpen {
 		return true
@@ -298,25 +287,26 @@ func shouldPrefetchOnOpen(prefetchOnOpen bool, autoMB int, size uint64) bool {
 // (git's "index", pijul's "pristine/db").
 var vcsMetaDirs = []string{".git/", ".pijul/"}
 
-// fuseOpLog enables per-op experiment logging (KD_FUSE_OPLOG=1); high volume, off by default.
+// fuseOpLog enables per-op experiment logging (KD_FUSE_OPLOG=1). High volume,
+// off by default.
 var fuseOpLog = os.Getenv("KD_FUSE_OPLOG") == "1"
 
-// shouldUseDirectIo determines if a file should bypass kernel page cache.
-// Returns true for files that need real-time sync (write access, not VCS metadata).
-// Returns false for VCS metadata (to allow mmap).
-// Returns false for mmap-dependent files (PDF, images) that apps like Preview need.
+// shouldUseDirectIo reports whether a file must bypass the kernel page cache.
+// True for files that need real-time sync (write access, not VCS metadata).
+// False for VCS metadata (mmap must work) and for mmap-dependent files
+// (PDF, images) that apps like Preview need.
 func shouldUseDirectIo(path string, flags int) bool {
 	// VCS metadata: keep the page cache so the store can be mmap'd. A direct_io file cannot
 	// be mapped, so the first page touch raises SIGBUS and kills the client. git mmaps its
-	// pack files and index; pijul's pristine is one mmap'd Sanakirja B-tree.
+	// pack files and index. pijul's pristine is one mmap'd Sanakirja B-tree.
 	for _, dir := range vcsMetaDirs {
 		if strings.Contains(path, "/"+dir) || strings.HasPrefix(path, dir) {
 			return false
 		}
 	}
 
-	// PDF, images, and videos need mmap for Preview.app/QuickTime
-	// These apps open files with O_RDWR but need mmap to read content.
+	// PDF, images, and videos need mmap for Preview.app/QuickTime.
+	// These apps open files with O_RDWR but read content via mmap.
 	lowerPath := strings.ToLower(path)
 	mmapExtensions := []string{".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".heic", ".webp", ".mov", ".mp4"}
 	for _, ext := range mmapExtensions {
@@ -325,21 +315,20 @@ func shouldUseDirectIo(path string, flags int) bool {
 		}
 	}
 
-	// Write access: use direct_io for real-time sync
+	// Write access: use direct_io for real-time sync.
 	accessMode := flags & winfuse.O_ACCMODE
 	if accessMode == winfuse.O_WRONLY || accessMode == winfuse.O_RDWR {
 		return true
 	}
 
 	// Windows: WinFsp's cache manager otherwise serves stale bytes after an
-	// accepted remote update — reads never reach this layer again (the third
-	// cache of law 2). Remote visibility beats read caching; the mmap
-	// carve-outs above still apply.
+	// accepted remote update, because reads never reach this layer again.
+	// Remote visibility beats read caching. The mmap carve-outs above apply.
 	if runtime.GOOS == "windows" {
 		return true
 	}
 
-	// Read-only: allow page cache
+	// Read-only: allow the page cache.
 	return false
 }
 
@@ -378,10 +367,10 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 	// Without this, files created with mode 0444 (read-only) cannot be reopened for write.
 	createMode := mode & 0o777
 	if createMode&0o200 == 0 {
-		createMode |= 0o200 // Add owner write permission
+		createMode |= 0o200 // Add owner write permission.
 	}
 	if createMode == 0 {
-		createMode = 0o644 // Default if mode was 0
+		createMode = 0o644 // Default when mode is 0.
 	}
 
 	fd, err := platOpen(localPath, flags, createMode)
@@ -423,7 +412,6 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 	d.AllFileMap[relativePath] = f
 	d.OpenFileHandlers[handleID] = &HandleEntry{FD: fd, File: f}
 
-	// Set per-file direct_io
 	fi.Fh = handleID
 	fi.DirectIo = shouldUseDirectIo(path, flags)
 	// logger.Info("Created file", "fd", fd, "directIo", fi.DirectIo)
@@ -448,12 +436,12 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	hasCreate := flags&syscall.O_CREAT != 0
 	hasExcl := flags&syscall.O_EXCL != 0
 
-	// Snapshot whether this path is a known remote file BEFORE taking AfmLock.
-	// This check used to run in the !ok branch below while AfmLock was held, which
-	// inverts the codebase lock order (RemoteFilesLock -> Adm -> AfmLock, used by
-	// Getattr and AddRemoteFile) and deadlocks under Go's RWMutex writer-preference
-	// when an AddRemoteFile writer is pending. The value only seeds a new File's
-	// LocalNewer below; a microsecond-stale read self-corrects on the next announce.
+	// Snapshot whether this path is a known remote file before AfmLock is taken.
+	// A RemoteFilesLock read under AfmLock inverts the codebase lock order
+	// (RemoteFilesLock -> Adm -> AfmLock, used by Getattr and AddRemoteFile) and
+	// deadlocks under Go's RWMutex writer-preference when an AddRemoteFile
+	// writer is pending. The value only seeds a new File's LocalNewer below; a
+	// microsecond-stale read self-corrects on the next announce.
 	d.RemoteFilesLock.RLock()
 	_, isRemoteFile := d.RemoteFiles[path]
 	d.RemoteFilesLock.RUnlock()
@@ -485,7 +473,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 				RelativePath:    path,
 				RealPathOfFile:  localPath,
 				IsLocalPresent:  fileExists,
-				LocalNewer:      !isRemoteFile, // Remote files should not be marked as local newer
+				LocalNewer:      !isRemoteFile, // A remote file must not be marked local newer.
 				OnLocalChange:   d.OnLocalChange,
 				StreamProvider:  d.OpenStreamProvider(),
 				stat:            &winfuse.Stat_t{},
@@ -498,13 +486,13 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		}
 	}
 
-	// File already opened - reuse the existing shared handle, but ONLY while it is
-	// still active. OpenIfActive atomically bumps the open count iff it is >0; the
-	// kernel calls Release once per open(), so each open must add a count or a
-	// racing async Release of an earlier handle drops the count to 0 and tears
-	// down the shared fd/pool — leaving this open's Read with ok=false, which then
-	// blind-preads the sparse cache file and returns zeros. If the count just hit
-	// 0 (last handle being torn down), fall through to a fresh open.
+	// The file is already open: reuse the shared handle, but only while it is
+	// still active. OpenIfActive increments the open count only if it is >0.
+	// The kernel calls Release once per open(), so each open must add a count.
+	// Otherwise a racing async Release of an earlier handle drops the count to
+	// 0 and tears down the shared fd/pool; this open's Read then sees ok=false,
+	// blind-preads the sparse cache file, and returns zeros. If the count just
+	// hit 0 (last handle in teardown), fall through to a fresh open.
 	if fh.openFileCounter.OpenIfActive() {
 		handleID := fh.CurrentHandleID
 		d.AfmLock.Unlock()
@@ -519,38 +507,38 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	fh.metaMu.RUnlock()
 	d.AfmLock.Unlock()
 
-	// Check if remote has newer version
+	// Check whether the remote has a newer version.
 	remoteHasUpdate := false
 	var remoteTotalSize uint64
 	needsRemark := false
 	d.RemoteFilesLock.RLock()
 	remoteFile, hasRemote := d.RemoteFiles[path]
 	if hasRemote {
-		// Read this File's metadata (stat/NotLocalSynced) under metaMu — Release and
-		// the notify handlers write them under metaMu (reached via a different map
-		// lock). Logic unchanged; this only makes the reads race-free.
+		// Read this File's metadata (stat/NotLocalSynced) under metaMu. Release
+		// and the notify handlers write them under metaMu, reached via a
+		// different map lock. This only makes the reads race-free.
 		remoteFile.metaMu.RLock()
 		// logger.Info("=== REMOTE CHECK ===", "path", path, "hasRemote", hasRemote, "NotLocalSynced", remoteFile.NotLocalSynced)
 		if remoteFile.stat != nil {
 			remoteTotalSize = uint64(remoteFile.stat.Size)
 		}
-		// Only consider streaming from the peer when our local copy is NOT
-		// authoritative. A local write or rename sets LocalNewer=true (e.g. git's
-		// atomic index.lock→index on commit); the local content then wins. Without
+		// Stream from the peer only when the local copy is not authoritative.
+		// A local write or rename sets LocalNewer=true (e.g. git's atomic
+		// index.lock->index on commit); the local content then wins. Without
 		// this guard, the incomplete-download check below fires whenever
-		// Download.BytesDownloaded — which only counts REMOTE fetches — lags the
-		// stat.Size that refreshFileStat updated from the local write, so we
-		// re-stream the peer's stale bytes over our just-written file. That is the
-		// "git index file corrupt" we lose on Linux (and usually win on macOS).
-		// Peer edits set LocalNewer=false, so live-collab still streams here.
+		// Download.BytesDownloaded (it counts only remote fetches) lags the
+		// stat.Size that refreshFileStat updated from the local write. The
+		// peer's stale bytes then re-stream over the just-written file: the
+		// "git index file corrupt" failure on Linux (macOS usually wins the
+		// race). Peer edits set LocalNewer=false, so live-collab still streams.
 		if !localNewer {
 			if remoteFile.NotLocalSynced {
 				// logger.Info("Remote has newer version, streaming from remote", "path", path)
 				remoteHasUpdate = true
 			} else if remoteTotalSize > 0 {
-				// Even if NotLocalSynced=false, verify download is actually complete.
-				// IMPORTANT: Can't use file size because pre-allocation makes file look complete.
-				// Use Download.BytesDownloaded which tracks actual bytes received.
+				// Even when NotLocalSynced=false, verify the download is complete.
+				// File size is unusable: pre-allocation makes the file look complete.
+				// Download.BytesDownloaded tracks the bytes actually received.
 				bytesDownloaded := remoteFile.Download.BytesDownloaded.Load()
 				if bytesDownloaded < remoteTotalSize {
 					// logger.Info("Download incomplete, re-streaming from remote", "bytesDownloaded", bytesDownloaded, "remoteSize", remoteTotalSize)
@@ -563,7 +551,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	}
 	d.RemoteFilesLock.RUnlock()
 
-	// Re-mark for streaming outside of read lock
+	// Re-mark for streaming outside the read lock.
 	if needsRemark && hasRemote {
 		d.RemoteFilesLock.Lock()
 		if rf, ok := d.RemoteFiles[path]; ok {
@@ -574,7 +562,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		d.RemoteFilesLock.Unlock()
 	}
 
-	// Open locally if we have newer local version
+	// Open locally when the local version is newer.
 	if isLocalPresent && localNewer {
 		accessMode := flags & winfuse.O_ACCMODE
 		// logger.Info("Opening local file", "flags", flags, "accessMode", accessMode, "localPath", localPath)
@@ -596,7 +584,6 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 			case winfuse.O_RDWR:
 				sysFlags = syscall.O_RDWR
 			}
-			// Add append flag if present
 			if flags&syscall.O_APPEND != 0 {
 				sysFlags |= syscall.O_APPEND
 			}
@@ -624,16 +611,14 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		}
 	}
 
-	// Handle case where file needs to be created (O_CREAT or file doesn't exist)
+	// Create the file when O_CREAT is set and no local copy exists.
 	if hasCreate && !isLocalPresent {
-		// Create parent directories if needed
 		parentDir := filepath.Dir(localPath)
 		if err := os.MkdirAll(parentDir, 0750); err != nil {
 			logger.Error("Failed to create parent directories", "error", err)
 			return -winfuse.EIO
 		}
 
-		// Determine access mode for creation
 		accessMode := flags & winfuse.O_ACCMODE
 		var sysFlags int
 		switch accessMode {
@@ -646,7 +631,6 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		default:
 			sysFlags = syscall.O_RDWR | syscall.O_CREAT
 		}
-		// Add truncate if present
 		if flags&syscall.O_TRUNC != 0 {
 			sysFlags |= syscall.O_TRUNC
 		}
@@ -682,16 +666,16 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		return 0
 	}
 
-	// If we get here with isLocalPresent=false and no hasCreate, this is a remote file
+	// isLocalPresent=false without hasCreate means a remote file.
 	if !isLocalPresent && !hasCreate {
-		// Continue to remote file handling below
+		// Continue to remote-file handling below.
 	} else if isLocalPresent && localNewer {
-		// This case was already handled above, but guard against logic errors
+		// The branch above handles this case. Guard against logic errors.
 		logger.Error("Logic error: isLocalPresent && localNewer should have been handled")
 		return -winfuse.EIO
 	}
 
-	// Remote file - check for partial download or create cache file
+	// Remote file: check for a partial download or create the cache file.
 	var existingLocalSize int64
 	localStat, err := os.Stat(localPath)
 	if err == nil {
@@ -699,7 +683,6 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		// logger.Info("Found existing partial download", "existingSize", existingLocalSize)
 	}
 
-	// Create parent directories
 	parentDir := filepath.Dir(localPath)
 	if err := os.MkdirAll(parentDir, 0755); err != nil {
 		logger.Error("Failed to create parent directories", "error", err)
@@ -723,7 +706,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		return int(convertOsErrToSyscallErrno("open", err))
 	}
 
-	// Open stream pool + cache FD for reading (network call - no locks held)
+	// Open the stream pool + cache FD (network call, no locks held).
 	var pool *StreamPool
 	var streamCancel context.CancelFunc
 	var cacheFD *os.File
@@ -731,7 +714,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fsp := d.OpenStreamProvider()
 		streamCtx, cancel := context.WithCancel(d.FsCtx)
 		streamCancel = cancel
-		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // on-demand jumps; prefetch uses StreamFile separately
+		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // On-demand jumps. Prefetch uses StreamFile separately.
 		if err != nil {
 			cancel()
 			_ = platClose(fd)
@@ -771,47 +754,48 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fh.CacheFD = cacheFD
 		fh.Download.Reset(remoteTotalSize)
 
-		// Pre-allocate local file to expected size for out-of-order writes.
-		// Without this, non-sequential reads (e.g., video moov atom at end) can cause corruption.
-		// macOS reads video files non-sequentially (header, then trailer at end, then content).
+		// Pre-allocate the local file to the expected size for out-of-order writes.
+		// Without this, non-sequential reads (e.g. a video moov atom at the end)
+		// can corrupt the file. macOS reads video non-sequentially (header,
+		// trailer, then content).
 		if existingLocalSize == 0 && remoteTotalSize > 0 {
 			_ = os.Truncate(localPath, int64(remoteTotalSize))
 		}
 
-		// NOTE: We intentionally do NOT use local file size for resume tracking.
-		// Pre-allocation creates a full-size file with zeros, which would falsely
-		// indicate the download is complete. We only trust Download.BytesDownloaded
-		// which is tracked explicitly by Read() operations.
+		// Local file size is not used for resume tracking on purpose.
+		// Pre-allocation creates a full-size file of zeros, which falsely marks
+		// the download complete. Trust only Download.BytesDownloaded, which
+		// Read() operations track explicitly.
 	}
 	d.OpenMapLock.Unlock()
 	d.AfmLock.Unlock()
 
-	// Prefetch-on-open (Netflix-style): fill the rest of the file in the background
-	// while on-demand reads serve immediate seeks; the two cooperate via the chunk
-	// bitmap (prefetch skips chunks reads already got). Strategy: force when
-	// PrefetchOnOpen, otherwise auto for files >= PrefetchAutoMB — large files get
-	// wire-speed sequential fill + lag-free jumps, while small files stay pure
-	// on-demand (instant open, fetch only what's read). Guarded so a second handle
-	// on the same file doesn't start a duplicate.
+	// Prefetch-on-open: fill the rest of the file in the background while
+	// on-demand reads serve immediate seeks. The two cooperate via the chunk
+	// bitmap: prefetch skips chunks reads already got. Force when PrefetchOnOpen;
+	// otherwise auto for files >= PrefetchAutoMB. Large files get wire-speed
+	// sequential fill plus lag-free jumps; small files stay pure on-demand
+	// (instant open, fetch only what is read). The guard stops a second handle
+	// on the same file from starting a duplicate.
 	if remoteHasUpdate && shouldPrefetchOnOpen(d.PrefetchOnOpen, d.PrefetchAutoMB, remoteTotalSize) && fh.PrefetchCancel == nil {
 		d.startPrefetch(logger, fh, path)
 	}
 
 	fi.Fh = handleID
 	fi.DirectIo = shouldUseDirectIo(path, flags)
-	// Remote file: don't let the kernel keep the page cache across opens. A peer
-	// can edit the file underneath us (live collab); macFUSE only drops its data
-	// cache on a size change, so a same-size in-place edit would keep serving
-	// stale pages. KeepCache=false makes each open re-read through our Read
-	// handler, which the reset bitmap then re-fetches. This is per-file, so
-	// local mmap writes (git's index) keep their cache and stay consistent —
-	// unlike the global auto_cache mount option, which corrupts them.
+	// Remote file: do not let the kernel keep the page cache across opens. A
+	// peer can edit the file underneath (live collab). macFUSE drops its data
+	// cache only on a size change, so a same-size in-place edit would keep
+	// serving stale pages. KeepCache=false makes each open re-read through the
+	// Read handler, which the reset bitmap then re-fetches. This is per-file:
+	// local mmap writes (git's index) keep their cache and stay consistent,
+	// unlike with the global auto_cache mount option, which corrupts them.
 	fi.KeepCache = false
 	// logger.Info("Opened for remote streaming", "fh", fd, "directIo", fi.DirectIo, "remoteHasUpdate", remoteHasUpdate, "fhNotLocalSynced", fh.NotLocalSynced, "poolNil", fh.StreamPool == nil)
 	return 0
 }
 
-// Called on unmount.
+// Destroy runs on unmount.
 func (d *Dir) Destroy() {
 	// d.logger.Info("Destroy")
 }
@@ -821,7 +805,7 @@ func (d *Dir) Flush(path string, fh uint64) (errCode int) {
 	if fuseOpLog {
 		d.logger.Debug("oplog Flush", "path", path, "fh", fh)
 	}
-	return 0 // Return success - actual sync happens in Fsync/Release.
+	return 0 // Success. The real sync happens in Fsync/Release.
 }
 
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
@@ -853,10 +837,10 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	// Handle not found or EBADF: fd was already closed (Release called before Fsync).
 	// This is a FUSE race condition. Workaround: open, fsync, close.
 	{
-		// Open with write access — FlushFileBuffers on Windows requires it.
+		// Open with write access. FlushFileBuffers on Windows requires it.
 		fd, openErr := platOpen(localPath, syscall.O_RDWR, 0)
 		if openErr != nil {
-			// File might have been renamed/deleted - that's OK, data was already written
+			// The file may be renamed or deleted. The data is already written.
 			return 0
 		}
 
@@ -874,7 +858,7 @@ func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) (errCode int) {
 	defer d.recoverPanic("Fsyncdir", &errCode)
 	// d.logger.Debug("FUSE Fsyncdir (stub)", "path", path, "datasync", datasync, "fh", fh)
-	return 0 // Return success - directory syncs are no-ops for our use case.
+	return 0 // Success. Directory syncs are no-ops here.
 }
 
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int) {
@@ -882,16 +866,17 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 	if e := checkPath(path); e != 0 {
 		return e
 	}
-	// NOTE: Do NOT log getattr — called 200,000+ times during large clones.
+	// Do not log getattr: large clones call it 200,000+ times.
 	// Synchronous logging on this hot path causes 30-second hangs.
 	logger := d.logger.With("method", "get-attr", "path", path, "fh", fh)
 
-	// Hide .kdbitmap sidecar files from FUSE — they're internal download state.
+	// Hide .kdbitmap sidecar files from FUSE: they are internal download state.
 	if strings.HasSuffix(path, ".kdbitmap") {
 		return -winfuse.ENOENT
 	}
 
-	// CRITICAL: Lock order is RemoteFilesLock → Adm → AfmLock (prevents deadlock with AddRemoteFile)
+	// CRITICAL: lock order is RemoteFilesLock -> Adm -> AfmLock.
+	// This order prevents deadlock with AddRemoteFile.
 	d.RemoteFilesLock.RLock()
 	isRemote := len(d.RemoteFiles) != 0
 	d.RemoteFilesLock.RUnlock()
@@ -908,31 +893,29 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
-	// Check if the file is on remote, and add it to local tree.
+	// Check whether the file is remote, and add it to the local tree.
 	if isRemote {
 		remFile, okRemote := d.RemoteFiles[path]
 		if okRemote {
-			// See if the file is also present locally. Do the lstat BEFORE taking
-			// metaMu: the syscall needs nothing from remFile (cleanPath derives from
-			// path only), and holding metaMu across it would stall every other op on
-			// this File (Read/OpenEx/Write/Release) behind a slow lstat.
+			// Check whether the file is also present locally. Do the lstat before
+			// metaMu is taken: the syscall needs nothing from remFile (cleanPath
+			// derives from path only), and metaMu held across it would stall every
+			// other op on this File (Read/OpenEx/Write/Release) behind a slow lstat.
 			stgo, lstatErr := platLstat(cleanPath)
-			// Guard remFile.stat under its metaMu for the rest of the branch: it is
-			// mutated in place below while Read/OpenEx read it via a DIFFERENT lock
-			// (OpenMapLock). Every path here returns, so the defer releases metaMu
-			// (innermost) before the map locks, so there is no deadlock.
+			// Guard remFile.stat under its metaMu for the rest of the branch: the
+			// code below mutates it in place while Read/OpenEx read it via a
+			// different lock (OpenMapLock). Every path here returns, so the defer
+			// releases metaMu (innermost) before the map locks; no deadlock.
 			remFile.metaMu.Lock()
 			defer remFile.metaMu.Unlock()
 			if lstatErr != nil {
-				// Ok file not locally. Just add it, and download it on Open.
+				// The file is not local. Add it; Open downloads it.
 				copyFusestatFromFusestat(stat, remFile.stat)
 				d.AllFileMap[path] = remFile
-				// All good.
 				return 0
 			}
 
-			// Ok, file is also locally present, but we already got the pointer to it.
-			// Let's see if the stats are ok.
+			// The file is also present locally. Compare the stats.
 
 			auxStat := &stgo
 
@@ -959,8 +942,8 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 
 	stgo, lstatErr := platLstat(cleanPath)
 	if lstatErr != nil {
-		// ENOENT is normal — macOS probes hundreds of paths (Spotlight, fsevents,
-		// .DS_Store, etc.). Only log unexpected errors.
+		// ENOENT is normal: macOS probes hundreds of paths (Spotlight, fsevents,
+		// .DS_Store). Log only unexpected errors.
 		if !os.IsNotExist(lstatErr) {
 			logger.Error("Failed to lstat path", "clean-path", cleanPath, "error", lstatErr)
 		}
@@ -968,7 +951,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 		return int(cerr)
 	}
 
-	// Note: We do not use Lampert timestamps, last edit wins.
+	// No Lamport timestamps: the last edit wins.
 
 	*stat = stgo
 	gtAtim := func(fst, snd winfuse.Timespec) bool {
@@ -990,8 +973,8 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 
 	f, ok := d.AllFileMap[path]
 	// Guard the shared *stat under the File's metaMu: Getattr mutates f.stat in
-	// place here while Read/OpenEx read it through OpenMapLock — a different lock,
-	// hence the data race. metaMu is innermost (no map lock taken under it).
+	// place here while Read/OpenEx read it through OpenMapLock, a different
+	// lock, hence the data race. metaMu is innermost (no map lock under it).
 	if ok && f != nil {
 		f.metaMu.Lock()
 		if f.stat != nil && gtAtim(f.stat.Mtim, stat.Mtim) {
@@ -1015,11 +998,11 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 		found = ok
 	}
 
-	// TODO: Sigh, refactor later.
+	// TODO: Refactor this function.
 
 	// File not found in tree.
 
-	// In an ideal world: do not stat again :<.
+	// The second stat is avoidable.
 	finfo, err := os.Stat(cleanPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -1036,7 +1019,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 				AfmLock:             sync.RWMutex{},
 				Inode:               stat.Ino,
 				RelativePath:        path,
-				LocalDownloadFolder: cleanPath, // Maybe remove the last segment?
+				LocalDownloadFolder: cleanPath, // TODO: Verify whether to drop the last path segment.
 				IsLocalPresent:      true,
 				Root:                d,
 				OpenFileHandlers:    make(map[uint64]*HandleEntry),
@@ -1104,7 +1087,7 @@ func (d *Dir) Link(oldpath string, newpath string) (errCode int) {
 		return e
 	}
 	// d.logger.Debug("FUSE Link (stub - not supported)", "oldPath", oldpath, "newPath", newpath, "inode", d.Inode)
-	// Hard links not supported - return EPERM (more accurate than ENOSYS).
+	// Hard links are not supported. EPERM is more accurate than ENOSYS.
 	return -winfuse.EPERM
 }
 
@@ -1124,8 +1107,8 @@ func (d *Dir) MkdirFromPeer(path string, mode uint32) (errCode int) {
 func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode int) {
 	// d.logger.Info("FUSE mkdir", "path", path, "mode", mode, "notifyPeer", notifyPeer)
 
-	// Root directory always exists. WinFSP calls Mkdir("\") on mount and on
-	// every file notification — return success immediately.
+	// The root directory always exists. WinFSP calls Mkdir("\") on mount and
+	// on every file notification. Return success at once.
 	cp := filepath.Clean(path)
 	if cp == "." || cp == string(filepath.Separator) || cp == "/" || cp == "\\" {
 		return 0
@@ -1135,11 +1118,11 @@ func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode 
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := platMkdir(cleanPath, mode)
 	if err != nil {
-		// On Windows, FUSE may call Mkdir for directories that already exist
+		// On Windows, FUSE can call Mkdir for directories that already exist
 		// (e.g. during git clone when peer notifications race with local ops).
-		// Treat EEXIST as success — the directory exists, which is what we want.
+		// Treat EEXIST as success: the directory exists, which is the goal.
 		if errors.Is(err, os.ErrExist) {
-			// Not an error — proceed to update internal state below.
+			// Not an error. Update internal state below.
 		} else {
 			logger.Error("Failed to mkdir", "path", cleanPath, "error", err)
 			return int(convertOsErrToSyscallErrno("mkdir", err))
@@ -1209,12 +1192,12 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 	return 0
 }
 
-// Open is dead on all platforms: cgofuse routes opens through OpenEx (which we
-// implement — see host.go's open dispatch), proven by the suite passing with this
-// returning ENOSYS on Linux+macOS. It exists only to satisfy the base
-// fuse.FileSystemInterface; OpenEx is the real (default) open path. Delegate to
-// it so there is no duplicated open logic to drift — that duplication is what hid
-// the handle-counter bug, now fixed once in OpenEx.
+// Open is dead on all platforms: cgofuse routes opens through OpenEx (see
+// host.go's open dispatch). The suite passes with this returning ENOSYS on
+// Linux+macOS. It exists only to satisfy the base fuse.FileSystemInterface;
+// OpenEx is the real open path. It delegates to OpenEx so no duplicated open
+// logic can drift. That duplication hid the handle-counter bug, now fixed
+// once in OpenEx.
 func (d *Dir) Open(path string, flags int) (errCode int, retFh uint64) {
 	fi := winfuse.FileInfo_t{Flags: flags}
 	errc := d.OpenEx(path, &fi)
@@ -1270,7 +1253,7 @@ func (d *Dir) Readdir(path string, fill func(name string, stat *winfuse.Stat_t, 
 		}
 	}
 
-	// Add remote files/dirs that don't exist locally, filtered to direct children of this path.
+	// Add remote files/dirs absent locally, filtered to direct children of this path.
 	d.RemoteFilesLock.RLock()
 	defer d.RemoteFilesLock.RUnlock()
 	remoteFiles, remoteDirs := remoteChildrenForDir(d.RemoteFiles, path)
@@ -1295,7 +1278,7 @@ func (d *Dir) Readlink(path string) (errCode int, target string) {
 		return e, ""
 	}
 	// d.logger.Debug("FUSE Readlink (stub)", "path", path, "inode", d.Inode)
-	// No symlinks in our filesystem - return EINVAL (not a symlink).
+	// The filesystem has no symlinks. Return EINVAL (not a symlink).
 	return -winfuse.EINVAL, ""
 }
 
@@ -1333,8 +1316,8 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		fh, entry, ok = d.resolveHandleByPath(path)
 	}
 	if !ok {
-		// handle not in map - either already released, or was a late fcopyfile handle
-		// Don't try to close - just return success
+		// The handle is not in the map: already released, or a late fcopyfile handle.
+		// Do not close. Return success.
 		// logger.Warn("Release called for unknown fh (already released or fcopyfile race)")
 		return 0
 	}
@@ -1349,7 +1332,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		f.metaMu.RUnlock()
 	}
 
-	// Debug: log ALL relevant state at Release entry
+	// Debug: log all relevant state at Release entry.
 	// logger.Info("=== RELEASE ===",
 	// 	"path", path,
 	// 	"openCount", v,
@@ -1367,7 +1350,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 
 		delete(d.OpenFileHandlers, fh)
 
-		// SINGLE notification path: notify peer if file was created OR edited locally
+		// Single notification path: notify the peer when the file was created or edited locally.
 		f.metaMu.RLock()
 		notRemoteSynced := f.NotRemoteSynced
 		hadEdits := f.HadEdits
@@ -1381,23 +1364,23 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 			stgo, lstatErr := platLstat(cleanPath)
 			if lstatErr != nil {
-				// File was deleted between close and notification — skip notification
+				// The file was deleted between close and notification. Skip the notification.
 				return 0
 			}
 
 			// logger.Info("Release lstat result", "path", path, "size", stgo.Size)
 
 			if !hadEdits {
-				// No FUSE Write calls seen. Data arrived via fcopyfile (Finder
-				// drag-and-drop) which bypasses FUSE Write entirely. The lstat
-				// size may be partial because fcopyfile is still flushing.
-				// Defer notification with exponential back-off until the file
-				// size stabilizes (two consecutive lstats return the same size).
+				// No FUSE Write calls seen. The data arrived via fcopyfile (Finder
+				// drag-and-drop), which bypasses FUSE Write entirely. The lstat
+				// size can be partial because fcopyfile still flushes. Defer the
+				// notification with back-off until the file size stabilizes
+				// (consecutive lstats return the same size).
 				go func() {
 					// Wait for fcopyfile to finish. Require 3 consecutive lstats
-					// with the same size, starting after a 500ms initial delay.
-					// fcopyfile on large files can pause between writes, so 2
-					// matches isn't enough (469 MB -> 469 MB -> then 611 MB).
+					// with the same size, after a 500ms initial delay. fcopyfile
+					// on large files can pause between writes, so 2 matches are
+					// not enough (469 MB -> 469 MB -> then 611 MB).
 					time.Sleep(500 * time.Millisecond)
 					prevSize := int64(-1)
 					stableCount := 0
@@ -1433,7 +1416,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 						}
 						prevSize = recheckStat.Size
 					}
-					// Timed out waiting for stable size. Send what we have.
+					// Timeout on stable size. Send the current stat.
 					finalStat, finalErr := platLstat(cleanPath)
 					if finalErr != nil {
 						return
@@ -1468,11 +1451,11 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		}
 
 		// Reset sync state for future opens. Guard under metaMu (OpenEx reads
-		// IsLocalPresent/NotLocalSynced via AfmLock — a different lock). Released
-		// BEFORE the AfmLock acquisition below to avoid a metaMu->AfmLock cycle.
+		// IsLocalPresent/NotLocalSynced via AfmLock, a different lock). Release
+		// metaMu before the AfmLock acquisition below to avoid a metaMu->AfmLock cycle.
 		f.metaMu.Lock()
 		f.IsLocalPresent = true
-		// Only mark as synced if download is actually COMPLETE.
+		// Mark as synced only when the download is complete.
 		// Use ChunkBitmap (preferred) or BytesDownloaded as fallback.
 		if f.Bitmap != nil {
 			if f.Bitmap.IsComplete() {
@@ -1487,7 +1470,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			case expectedSize > 0 && bytesDownloaded >= expectedSize:
 				f.NotLocalSynced = false
 			case expectedSize > 0:
-				// Download incomplete, keeping NotLocalSynced=true
+				// Download incomplete: keep NotLocalSynced=true.
 			default:
 				cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 				if localInfo, statErr := os.Stat(cleanPath); statErr == nil && localInfo.Size() > 0 {
@@ -1497,7 +1480,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		}
 		f.metaMu.Unlock()
 
-		// If peer stopped sharing and download is now complete, remove from AllFileMap.
+		// The peer stopped sharing and the download completed: remove from AllFileMap.
 		if f.PeerStoppedSharing {
 			d.AfmLock.Lock()
 			delete(d.AllFileMap, path)
@@ -1505,8 +1488,8 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			// logger.Info("Removed file reference after download completed (peer stopped sharing)", "path", path)
 		}
 
-		// Get pool/cacheFD/cancel references, clear under lock, then close OUTSIDE lock
-		// to avoid holding OpenMapLock during network I/O.
+		// Take pool/cacheFD/cancel references, clear them under the lock, then
+		// close outside the lock. OpenMapLock must not be held during network I/O.
 		pool := f.StreamPool
 		streamCancel := f.StreamCancel
 		cacheFD := f.CacheFD
@@ -1516,13 +1499,13 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		if pool != nil || cacheFD != nil {
 			d.OpenMapLock.Unlock()
 			unlocked = true
-			// Abort in-flight network reads FIRST so CacheWg.Wait() below cannot
-			// block on a read-ahead goroutine stuck in a 16 MiB fetch. Cancelling
-			// the stream context and closing the pool make any in-flight
-			// pool.ReadAt return promptly (mirrors drainInFlightOperations); the
-			// read-ahead goroutine then bails and calls CacheWg.Done(). The async
-			// cache writer touches only cacheFD, not the pool, so closing the pool
-			// before waiting is safe for it.
+			// Abort in-flight network reads first so CacheWg.Wait() below cannot
+			// block on a read-ahead goroutine stuck in a 16 MiB fetch. The stream
+			// context cancel plus the pool close make any in-flight pool.ReadAt
+			// return promptly (mirrors drainInFlightOperations); the read-ahead
+			// goroutine then exits and calls CacheWg.Done(). The async cache
+			// writer touches only cacheFD, not the pool, so the pool close before
+			// the wait is safe for it.
 			if streamCancel != nil {
 				streamCancel()
 			}
@@ -1537,7 +1520,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 					logger.Error("Failed to close cache FD", "error", closeErr)
 				}
 			}
-			return 0 // Already unlocked, just return
+			return 0 // Already unlocked. Return.
 		}
 	}
 
@@ -1557,9 +1540,9 @@ func (d *Dir) Releasedir(path string, fh uint64) (errCode int) {
 	return 0
 }
 
-// Mac OS High Level apps use Rename SWAP, which is really fun from my experience.
-// Note: cgofuse does not expose renamex_np with RENAME_SWAP flag.
-// When apps try atomic rename-swap, we fall back to basic rename.
+// Rename renames a file or directory. macOS apps use atomic rename-swap
+// (renamex_np with RENAME_SWAP), which cgofuse does not expose. Such
+// requests fall back to a basic rename.
 func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	defer d.recoverPanic("Rename", &errCode)
 	if e := checkPath(oldpath); e != 0 {
@@ -1584,14 +1567,14 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	cleanNewPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
 	logger := d.logger.With("method", "rename", "old-path", cleanOldPath, "new-path", cleanNewPath)
 
-	// A rename ONTO a tracked file is an app swap-save. Declare the target's
+	// A rename onto a tracked file is an app swap-save. Declare the target's
 	// identity at swap time as the announce base: the receiver then preserves
 	// its bytes when they are provably newer. Identity at swap time can only
 	// overstate the true session base, so this never fires a false copy.
 	swapBase := d.targetIdentity(newpath)
 
-	// On Windows, rename fails if source OR target has an open handle.
-	// Close any handles we hold on either path before attempting the rename.
+	// On Windows, rename fails when source or target has an open handle.
+	// Close all held handles on either path before the rename.
 	if runtime.GOOS == "windows" {
 		d.OpenMapLock.Lock()
 		for fh, entry := range d.OpenFileHandlers {
@@ -1642,13 +1625,13 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		return int(convertOsErrToSyscallErrno("rename", err))
 	}
 
-	// Remove destination entry from AllFileMap if it existed (rename-over-existing).
-	// Do NOT remove from RemoteFiles — the peer still tracks this file.
+	// Remove the destination entry from AllFileMap (rename-over-existing).
+	// Do not remove it from RemoteFiles: the peer still tracks this file.
 	d.AfmLock.Lock()
 	delete(d.AllFileMap, newpath)
 	d.AfmLock.Unlock()
 
-	// Update internal maps to reflect the rename
+	// Update internal maps to reflect the rename.
 	var movedLocal *File
 	d.AfmLock.Lock()
 	if f, ok := d.AllFileMap[oldpath]; ok {
@@ -1661,7 +1644,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	}
 	d.AfmLock.Unlock()
 
-	// Update AllDirMap if a directory was renamed
+	// Update AllDirMap when a directory was renamed.
 	d.Adm.Lock()
 	if dir, ok := d.AllDirMap[oldpath]; ok {
 		delete(d.AllDirMap, oldpath)
@@ -1671,7 +1654,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	}
 	d.Adm.Unlock()
 
-	// Refresh stats after map update
+	// Refresh stats after the map update.
 	oldParent := filepath.Dir(oldpath)
 	newParent := filepath.Dir(newpath)
 	d.refreshDirStat(oldParent)
@@ -1681,7 +1664,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	d.refreshFileStat(newpath)
 	d.refreshDirStat(newpath)
 
-	// Also update RemoteFiles if the file was remote
+	// Also update RemoteFiles when the file was remote.
 	d.RemoteFilesLock.Lock()
 	if f, ok := d.RemoteFiles[oldpath]; ok {
 		delete(d.RemoteFiles, oldpath)
@@ -1771,13 +1754,13 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 				return int(convertOsErrToSyscallErrno("rmdir", err))
 			}
 		} else {
-			// Real error (not empty, permission denied, etc.) - fail regardless.
+			// Real error (not empty, permission denied): fail.
 			logger.Error("Failed to remove dir", "error", err)
 			return int(convertOsErrToSyscallErrno("rmdir", err))
 		}
 	}
 
-	// Rmdir succeeded on disk, clean up the map entry.
+	// Rmdir succeeded on disk. Remove the map entry.
 	d.Adm.Lock()
 	delete(d.AllDirMap, path)
 	d.Adm.Unlock()
@@ -1786,7 +1769,7 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 		d.OnLocalChange(types.FileEvent{
 			Path:   path,
 			Action: types.RemoveDir,
-			Attr:   nil, // No attributes needed for removal
+			Attr:   nil, // No attributes are needed for removal.
 		})
 		// logger.Info("Notified peer about removed directory", "path", path)
 	}
@@ -1832,12 +1815,12 @@ func (d *Dir) Symlink(target string, newpath string) (errCode int) {
 		return e
 	}
 	// d.logger.Debug("FUSE Symlink (stub - not supported)", "target", target, "newpath", newpath, "inode", d.Inode)
-	// Symlinks not supported - return EPERM.
+	// Symlinks are not supported. Return EPERM.
 	return -winfuse.EPERM
 }
 
-// Note: On windows open does not have a truncate flag,
-// thus Open is immediately followed by Truncate.
+// Truncate sets the file size. On Windows, open has no truncate flag, so
+// Open is followed at once by Truncate.
 func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 	if fuseOpLog {
 		d.logger.Debug("oplog Truncate", "path", path, "size", size, "fh", fh)

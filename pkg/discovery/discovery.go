@@ -3,12 +3,8 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
-// Package discovery implements LAN peer discovery using UDP multicast.
-// No third-party dependencies — uses only net and encoding/json from stdlib.
-//
-// Peers broadcast a small JSON beacon on a multicast group every few seconds.
-// Each beacon contains a random two-word name (rotated per session) and the
-// listening port. No fingerprints or identity info is broadcast.
+// Package discovery implements LAN peer discovery over UDP multicast, stdlib only.
+// Beacons carry a random per-session two-word name and the listen port; no fingerprints, no identity data.
 package discovery
 
 import (
@@ -221,8 +217,7 @@ func (s *Service) listen(ctx context.Context) {
 			continue
 		}
 
-		// Skip our own beacons (matched by stable per-session id, not name, so a
-		// peer that randomly picked the same name is still discovered).
+		// Self-match uses the per-session id, not the name, so a same-named peer still appears.
 		if isSelfBeacon(beacon, s.instanceID) {
 			continue
 		}

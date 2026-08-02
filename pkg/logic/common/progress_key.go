@@ -10,17 +10,15 @@ package common
 
 import "strings"
 
-// resolveKeyWithFallback returns the canonical key and true when exists(key)
-// using the same three-step precedence that KD_GetFileSizeByName and
-// KD_SaveFileByName apply:
+// resolveKeyWithFallback returns the canonical key and true when exists(key).
+// It applies the same three-step precedence as KD_GetFileSizeByName and
+// KD_SaveFileByName:
 //
 //  1. exact name
 //  2. "/" + name  (bare query, slash-keyed map entry)
 //  3. strings.TrimPrefix(name, "/")  (slash query, bare map entry)
 //
-// An exact match always wins; the two fallbacks are only tried in order when
-// the exact key is absent.  Returns ("", false) when none of the three forms
-// is present.
+// It returns ("", false) when no form matches.
 func resolveKeyWithFallback(name string, exists func(string) bool) (string, bool) {
 	if exists(name) {
 		return name, true

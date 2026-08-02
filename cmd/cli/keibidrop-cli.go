@@ -28,7 +28,7 @@ import (
 
 var eventCh = make(chan string, 64)
 
-// Local mode discovery state: names for deterministic tiebreak.
+// Local mode discovery state. The names give a deterministic role tiebreak.
 var (
 	cliLocalMyName       string
 	cliLocalPeerName     string
@@ -357,9 +357,9 @@ func (c *cliContext) executor(in string) {
 		os.Exit(0)
 
 	default:
-		// TODO: Shell passthrough mode (tmate-style)
-		// Uncomment to enable shell commands without / prefix
-		// Required imports: "os/exec", "runtime"
+		// TODO: Add a shell passthrough mode like tmate.
+		// Uncomment the block to run shell commands without a / prefix.
+		// Add the imports "os/exec" and "runtime".
 		/*
 			// Cross-platform shell execution
 			var cmd *exec.Cmd
@@ -589,7 +589,7 @@ func connectPeer(kd *common.KeibiDrop) {
 		return
 	}
 
-	// In local mode, use name-based tiebreak (same as mobile + Rust UI).
+	// In local mode, use the name tiebreak. Mobile and the Rust UI use the same rule.
 	if kd.IsLocalMode && cliLocalMyName != "" && cliLocalPeerName != "" {
 		iAmCreator := common.DecideLocalRole(cliLocalMyName, cliLocalPeerName, kd.PeerIPv6IP)
 		role := "joiner"
@@ -684,14 +684,8 @@ func deleteFile(kd *common.KeibiDrop, path string) {
 	fmt.Println("Unshared:", path)
 }
 
-// promptPassphraseFromTTY reads a passphrase from the controlling terminal
-// without echoing the input. Used for Tier 2 (passphrase-protect) key loading.
-//
-// Uses os.Stdin.Fd() rather than syscall.Stdin so the call is portable —
-// syscall.Stdin is an int on Unix but a Handle (uintptr) on Windows, and
-// would not compile or behave correctly across both. os.Stdin.Fd() returns
-// the platform-appropriate file descriptor / handle that term.ReadPassword
-// knows how to handle.
+// promptPassphraseFromTTY reads a passphrase from the terminal without echo.
+// It uses os.Stdin.Fd(), not syscall.Stdin, because syscall.Stdin is a Handle on Windows.
 func promptPassphraseFromTTY() (string, error) {
 	fmt.Fprint(os.Stderr, "Passphrase: ")
 	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -712,7 +706,6 @@ func main() {
 	// Write default config on first run.
 	_ = config.WriteDefault()
 
-	// Ensure save/mount/log directories exist.
 	if err := config.EnsureDirectories(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create directories: %v\n", err)
 		os.Exit(1)
@@ -725,7 +718,6 @@ func main() {
 	}
 	fmt.Println("Connecting to relay:", relayURL.String())
 
-	// Setup logger.
 	wr := os.Stderr
 	if cfg.LogFile != "" {
 		f, err := os.OpenFile(filepath.Clean(cfg.LogFile),
@@ -755,7 +747,7 @@ func main() {
 		color.Red("Fatal: %v", err)
 		os.Exit(1) //nolint:gocritic
 	}
-	kd.AutoCache = cfg.LiveCollab // live_collab → macFUSE auto_cache (same-size live edits, macOS)
+	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	for _, warn := range cfg.Warnings() {
 		logger.Warn("config flag note", "note", warn)
