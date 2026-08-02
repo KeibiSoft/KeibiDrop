@@ -8,12 +8,14 @@ package tests
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -31,17 +33,32 @@ type testPeer struct {
 	mu     sync.Mutex // serializes command/response pairs
 }
 
-// quitDump SIGQUITs the peer so its goroutine dump lands in the .stderr file
-// before the test dies. A peer that stops answering commands is deadlocked;
-// the dump is the evidence, and only the peer's own runtime can produce it.
+// quitDump captures a wedged peer's stacks before the test dies. gdb first
+// when present: the observed wedge is a hot spinner that blocks the runtime's
+// own stop-the-world, so a SIGQUIT dump hangs with it — ptrace stops threads
+// at the kernel level and does not need the runtime's cooperation. Then
+// SIGQUIT for the Go-level dump (lands in the .stderr file when it can).
 func quitDump(p *testPeer) {
 	if runtime.GOOS == "windows" {
 		return
 	}
-	if p.cmd != nil && p.cmd.Process != nil {
-		_ = p.cmd.Process.Signal(syscall.SIGQUIT)
-		time.Sleep(1500 * time.Millisecond)
+	if p.cmd == nil || p.cmd.Process == nil {
+		return
 	}
+	pid := p.cmd.Process.Pid
+	if gdb, err := exec.LookPath("gdb"); err == nil {
+		if out, ferr := os.Create(fmt.Sprintf("/tmp/kd-gdb-%d.txt", pid)); ferr == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			cmd := exec.CommandContext(ctx, gdb, "-p", strconv.Itoa(pid), "-batch",
+				"-ex", "set pagination off", "-ex", "thread apply all bt")
+			cmd.Stdout, cmd.Stderr = out, out
+			_ = cmd.Run()
+			cancel()
+			_ = out.Close()
+		}
+	}
+	_ = p.cmd.Process.Signal(syscall.SIGQUIT)
+	time.Sleep(1500 * time.Millisecond)
 }
 
 // sendMultiLine sends a command and reads response lines until termLine (or a line

@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -262,8 +263,19 @@ func main() {
 				continue
 			}
 			dir := filepath.Join(mountDir, args[1])
-			cmd := exec.Command(args[2], args[3:]...) // #nosec G204 -- test harness, args from stdin
-			cmd.Dir = dir
+			// cd AFTER execve, never via cmd.Dir: Go chdirs in the vfork
+			// child BEFORE exec, inside OUR OWN mount. The vfork parent
+			// keeps its P with preemption off; when a GC stop-the-world
+			// is in flight the chdir's FUSE request is never served and
+			// the whole peer freezes (core.4785 thread 16).
+			var cmd *exec.Cmd
+			if runtime.GOOS == "windows" {
+				cmd = exec.Command(args[2], args[3:]...) // #nosec G204 -- test harness, args from stdin
+				cmd.Dir = dir
+			} else {
+				shArgs := append([]string{"-c", `cd "$0" && exec "$@"`, dir}, args[2:]...)
+				cmd = exec.Command("sh", shArgs...) // #nosec G204 -- test harness, args from stdin
+			}
 			out, err := cmd.CombinedOutput()
 			exitCode := 0
 			if err != nil {
@@ -305,8 +317,8 @@ func main() {
 			}
 			dir := filepath.Join(mountDir, args[1])
 			cmdline := strings.Join(args[2:], " ")
-			cmd := exec.Command("sh", "-c", cmdline) // #nosec G204 -- test harness, args from stdin
-			cmd.Dir = dir
+			// Same vfork hazard as "exec": cd inside the shell, not cmd.Dir.
+			cmd := exec.Command("sh", "-c", fmt.Sprintf("cd %q && { %s; }", dir, cmdline)) // #nosec G204 -- test harness, args from stdin
 			out, err := cmd.CombinedOutput()
 			exitCode := 0
 			if err != nil {

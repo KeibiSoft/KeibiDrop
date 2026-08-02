@@ -548,22 +548,32 @@ func TestFUSEtoFUSE_EditorSaves(t *testing.T) {
 			gimpBin = "/Applications/GIMP.app/Contents/MacOS/gimp"
 		}
 	}
+	// GIMP 2.x and 3.x have incompatible script-fu APIs (layer-new arg order,
+	// file-png-save gone in 3.x, edit-fill renamed, interpreter must be named)
+	// and the batch interpreter HANGS on a mismatch instead of erroring.
+	// Select the script pair by major version; anything else skips.
+	gimpCreate, gimpInvert := "", ""
 	if gimpBin != "" {
-		// The scripts below use the 2.x script-fu API. GIMP 3.x changed it
-		// (layer-new arg order, file-png-save gone) and its batch interpreter
-		// HANGS on the mismatch instead of erroring. Skip until 3.x scripts.
-		if out, verr := exec.Command(gimpBin, "--version").CombinedOutput(); verr != nil || !strings.Contains(string(out), "version 2.") {
-			gimpBin = ""
+		out, verr := exec.Command(gimpBin, "--version").CombinedOutput()
+		switch {
+		case verr == nil && strings.Contains(string(out), "version 2."):
+			gimpCreate = gimpBin + ` -i -d -f -b '(let* ((img (car (gimp-image-new 64 64 RGB))) (lay (car (gimp-layer-new img 64 64 RGB-IMAGE "l" 100 LAYER-MODE-NORMAL)))) (gimp-image-insert-layer img lay 0 -1) (gimp-context-set-foreground (list 40 90 200)) (gimp-image-select-rectangle img CHANNEL-OP-REPLACE 8 8 48 48) (gimp-edit-fill lay FILL-FOREGROUND) (gimp-selection-none img) (gimp-image-flatten img) (file-png-save RUN-NONINTERACTIVE img (car (gimp-image-get-active-drawable img)) "art.png" "art" 0 9 1 1 1 1 1) (gimp-quit 0))'`
+			gimpInvert = gimpBin + ` -i -d -f -b '(let* ((img (car (gimp-file-load RUN-NONINTERACTIVE "art.png" "art.png")))) (gimp-image-flatten img) (gimp-drawable-invert (car (gimp-image-get-active-drawable img)) FALSE) (file-png-save RUN-NONINTERACTIVE img (car (gimp-image-get-active-drawable img)) "art.png" "art" 0 9 1 1 1 1 1) (gimp-quit 0))'`
+		case verr == nil && strings.Contains(string(out), "version 3."):
+			// 3.x: gimp-file-save takes (run-mode image file); flatten
+			// returns the drawable; load takes no raw-name.
+			gimpCreate = gimpBin + ` -i -d -f --batch-interpreter=plug-in-script-fu-eval -b '(let* ((img (car (gimp-image-new 64 64 RGB))) (lay (car (gimp-layer-new img "l" 64 64 RGB-IMAGE 100 LAYER-MODE-NORMAL)))) (gimp-image-insert-layer img lay 0 -1) (gimp-context-set-foreground (list 40 90 200)) (gimp-image-select-rectangle img CHANNEL-OP-REPLACE 8 8 48 48) (gimp-drawable-edit-fill lay FILL-FOREGROUND) (gimp-selection-none img) (gimp-image-flatten img) (gimp-file-save RUN-NONINTERACTIVE img "art.png") (gimp-quit 0))'`
+			gimpInvert = gimpBin + ` -i -d -f --batch-interpreter=plug-in-script-fu-eval -b '(let* ((img (car (gimp-file-load RUN-NONINTERACTIVE "art.png"))) (lay (car (gimp-image-flatten img)))) (gimp-drawable-invert lay FALSE) (gimp-file-save RUN-NONINTERACTIVE img "art.png") (gimp-quit 0))'`
 		}
 	}
-	if gimpBin != "" {
+	if gimpCreate != "" {
 		t.Run("GimpExportOverwrite", func(t *testing.T) {
-			exSh(t, bob, ".", gimpBin+` -i -d -f -b '(let* ((img (car (gimp-image-new 64 64 RGB))) (lay (car (gimp-layer-new img 64 64 RGB-IMAGE "l" 100 LAYER-MODE-NORMAL)))) (gimp-image-insert-layer img lay 0 -1) (gimp-context-set-foreground (list 40 90 200)) (gimp-image-select-rectangle img CHANNEL-OP-REPLACE 8 8 48 48) (gimp-edit-fill lay FILL-FOREGROUND) (gimp-selection-none img) (gimp-image-flatten img) (file-png-save RUN-NONINTERACTIVE img (car (gimp-image-get-active-drawable img)) "art.png" "art" 0 9 1 1 1 1 1) (gimp-quit 0))'`, 180*time.Second)
+			exSh(t, bob, ".", gimpCreate, 180*time.Second)
 			WaitForFileOnMount(t, filepath.Join(aliceMount, "art.png"), 60*time.Second)
 			waitConverged(t, alice, bob, "art.png", 60*time.Second)
 
 			// Alice inverts the owner's image through her mount and saves over it.
-			exSh(t, alice, ".", gimpBin+` -i -d -f -b '(let* ((img (car (gimp-file-load RUN-NONINTERACTIVE "art.png" "art.png")))) (gimp-image-flatten img) (gimp-drawable-invert (car (gimp-image-get-active-drawable img)) FALSE) (file-png-save RUN-NONINTERACTIVE img (car (gimp-image-get-active-drawable img)) "art.png" "art" 0 9 1 1 1 1 1) (gimp-quit 0))'`, 180*time.Second)
+			exSh(t, alice, ".", gimpInvert, 180*time.Second)
 			waitConverged(t, bob, alice, "art.png", 60*time.Second)
 		})
 	}
