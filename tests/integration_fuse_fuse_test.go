@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,6 +29,19 @@ type testPeer struct {
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
 	mu     sync.Mutex // serializes command/response pairs
+}
+
+// quitDump SIGQUITs the peer so its goroutine dump lands in the .stderr file
+// before the test dies. A peer that stops answering commands is deadlocked;
+// the dump is the evidence, and only the peer's own runtime can produce it.
+func quitDump(p *testPeer) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if p.cmd != nil && p.cmd.Process != nil {
+		_ = p.cmd.Process.Signal(syscall.SIGQUIT)
+		time.Sleep(1500 * time.Millisecond)
+	}
 }
 
 // sendMultiLine sends a command and reads response lines until termLine (or a line
@@ -55,6 +69,7 @@ func (p *testPeer) sendMultiLine(t *testing.T, command string, termLine string, 
 		}()
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
+			quitDump(p)
 			t.Fatalf("sendMultiLine: timeout waiting for %q after command %q (got so far: %v)", termLine, command, lines)
 		}
 		select {
@@ -64,6 +79,7 @@ func (p *testPeer) sendMultiLine(t *testing.T, command string, termLine string, 
 				return lines
 			}
 		case <-time.After(remaining):
+			quitDump(p)
 			t.Fatalf("sendMultiLine: timeout waiting for %q after command %q (got so far: %v)", termLine, command, lines)
 		}
 	}
@@ -93,6 +109,7 @@ func (p *testPeer) send(t *testing.T, command string, timeout time.Duration) str
 	case line := <-done:
 		return line
 	case <-time.After(timeout):
+		quitDump(p)
 		t.Fatalf("timeout waiting for response to %q", command)
 		return ""
 	}
@@ -187,8 +204,18 @@ func spawnPeer(t *testing.T, binary string, env map[string]string) *testPeer {
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
-	// Capture stderr for debugging
-	cmd.Stderr = os.Stderr
+	// Peer stderr goes to a FILE, never to our own stderr. A leaked peer
+	// holding the inherited go-test output pipe blocks the `go test` tool
+	// forever after a timeout panic, and SIGQUIT goroutine dumps of a wedged
+	// peer need a destination that survives the test binary's death.
+	stderrPath := env["LOG_FILE"]
+	if stderrPath == "" {
+		stderrPath = filepath.Join(t.TempDir(), "peer.log")
+	}
+	if f, ferr := os.Create(stderrPath + ".stderr"); ferr == nil {
+		cmd.Stderr = f
+		t.Cleanup(func() { _ = f.Close() })
+	}
 
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)

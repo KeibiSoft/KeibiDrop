@@ -287,6 +287,46 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		waitConverged(t, alice, bob, conflicts[0], 60*time.Second)
 	})
 
+	// EDIT arrivals carry a base too: a bare truncate crosses a concurrent
+	// write. The truncate announces EDIT_FILE with its session base; whichever
+	// side loses LWW preserves its version as a conflict sibling. Before the
+	// base threading, EDIT arrivals were plain LWW and dropped the loser.
+	t.Run("TruncateCrossingConflict", func(t *testing.T) {
+		if _, err := exec.LookPath("truncate"); err != nil {
+			t.Skip("truncate(1) not available; EDIT-base predicate covered by pkg unit tests")
+		}
+		listConflicts := func(p *testPeer) []string {
+			resp := ex(t, p, ".", "ls", 15*time.Second)
+			var out []string
+			for _, name := range strings.Split(resp, "\\n") {
+				if strings.Contains(name, "tcross.conflict-") {
+					out = append(out, strings.TrimSpace(name))
+				}
+			}
+			return out
+		}
+		require.Equal("OK", bob.send(t, "write_file tcross.txt seed-content-longer-than-four", 10*time.Second))
+		WaitForFileOnMount(t, filepath.Join(aliceMount, "tcross.txt"), 60*time.Second)
+		waitConverged(t, alice, bob, "tcross.txt", 60*time.Second)
+
+		// Crossing inside the debounce window: bob rewrites, alice bare-truncates.
+		require.Equal("OK", bob.send(t, "write_file tcross.txt bob-concurrent-full-rewrite", 10*time.Second))
+		ex(t, alice, ".", "truncate -s 4 tcross.txt", 15*time.Second)
+
+		waitConverged(t, alice, bob, "tcross.txt", 60*time.Second)
+		WaitForCondition(t, 60*time.Second, 500*time.Millisecond, func() bool {
+			return len(listConflicts(alice)) >= 1 && len(listConflicts(bob)) >= 1
+		}, "waiting for the crossing conflict copy on both peers")
+
+		canonical := strings.TrimSpace(ex(t, bob, ".", "cat tcross.txt", 15*time.Second))
+		conflicts := listConflicts(bob)
+		require.Len(conflicts, 1, "exactly one conflict copy expected")
+		preserved := strings.TrimSpace(ex(t, bob, ".", "cat "+conflicts[0], 15*time.Second))
+		require.ElementsMatch([]string{"bob-concurrent-full-rewrite", "seed"},
+			[]string{canonical, preserved}, "both crossing versions must survive")
+		waitConverged(t, alice, bob, conflicts[0], 60*time.Second)
+	})
+
 	// C.5 metric: a big-file app save (copy, patch one region, swap) must NOT
 	// refetch the whole file on the reader — the reconcile path keeps chunks
 	// whose xxh3 matches. dlbytes reads the reader's fetched-byte counter.

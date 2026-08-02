@@ -337,7 +337,15 @@ func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) {
 		return
 	}
 	req.Attr.Size = info.Size()
-	req.Attr.ModificationTime = uint64(info.ModTime().UnixNano())
+	// Never regress the announced mtime. The enqueue-time stamp is the
+	// writer's identity: Write raises stat with the Go clock AFTER the pwrite
+	// lands, so the disk mtime is always slightly older. Announcing the older
+	// disk time made near-simultaneous writers mutually reject each other's
+	// announce and diverge forever (both identities above both announces).
+	// Disk wins only when genuinely newer (append after release).
+	if diskM := uint64(info.ModTime().UnixNano()); diskM > req.Attr.ModificationTime {
+		req.Attr.ModificationTime = diskM
+	}
 }
 
 // isDebouncedNotify reports whether a notify type is per-path debounced (ADD_FILE/EDIT_FILE).

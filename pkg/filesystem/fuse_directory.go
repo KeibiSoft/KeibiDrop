@@ -1814,6 +1814,11 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		f.stat.Mtim = st.Mtim
 		statSnap = *f.stat
 		haveSnap = true
+		if sizeChanged {
+			// A bare truncate is a content edit: claim authority so a
+			// crossing peer edit is judged against it and can be preserved.
+			f.LocalNewer = true
+		}
 		if f.NotRemoteSynced {
 			baseSnap = f.EditBaseMtimeNs
 		} else {
@@ -3493,13 +3498,29 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 }
 
 func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t) error {
+	return d.EditRemoteFileWithBase(logger, path, name, stat, 0)
+}
+
+// EditRemoteFileWithBase is EditRemoteFile plus the announcement's declared
+// base (see NotifyRequest.base_mtime_ns). Base 0 means unknown: plain LWW,
+// never a conflict copy.
+func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t, baseMtimeNs int64) error {
 	// Normalize to FUSE convention: paths must have leading "/".
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
 	// d.logger.Info("FUSE remote-edit", "path", path, "size", stat.Size)
 
+	// A peer edit of a local file must update the object local reads use
+	// (same adoption as AddRemoteFileWithBase).
+	d.AfmLock.RLock()
+	local, hasLocal := d.AllFileMap[path]
+	d.AfmLock.RUnlock()
+
 	d.RemoteFilesLock.Lock()
+	if _, ok := d.RemoteFiles[path]; !ok && hasLocal {
+		d.RemoteFiles[path] = local
+	}
 
 	f, ok := d.RemoteFiles[path]
 	if !ok {
@@ -3535,8 +3556,9 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	f.metaMu.Lock()
 	editStatMtime := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec
 	editLocalNewer := f.LocalNewer
-	f.metaMu.Unlock()
 	editRef := f.RemoteMtimeNs
+	oldSize := f.stat.Size
+	f.metaMu.Unlock()
 	if editRef == 0 {
 		editRef = editStatMtime
 	}
@@ -3548,18 +3570,51 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 		d.RemoteFilesLock.Unlock()
 		return syscall.ECANCELED
 	}
+	// The edit is concurrent when its declared base is older than the version
+	// we hold: it provably never saw our bytes (same predicate as ADD).
+	conflict := editLocalNewer && baseMtimeNs != 0 && baseMtimeNs < editRef
+	if fuseOpLog {
+		d.logger.Debug("oplog conflict predicate (edit)", "path", path,
+			"wasLocalNewer", editLocalNewer, "base", baseMtimeNs, "identity", editRef, "conflict", conflict)
+	}
+	if d.OnLocalChange != nil {
+		// A queued announce for this path describes the replaced content. Its
+		// flush-time attr refresh would stamp the PEER'S bytes with a fresh
+		// local mtime and bounce them back as a newer edit.
+		d.OnLocalChange(types.FileEvent{Path: path, Action: types.CancelPendingNotify})
+	}
+	f.metaMu.Lock()
 	if incomingEditMtime > f.RemoteMtimeNs {
 		f.RemoteMtimeNs = incomingEditMtime
+	}
+	f.metaMu.Unlock()
+
+	// Snapshot sizes as unaliased locals before f.stat = stat: afterwards f.stat is
+	// the same struct Getattr may mutate, so reading it post-unlock would race.
+	newSize := stat.Size
+
+	// Preserve the losing local version before the acceptance clobbers it.
+	// A rename is O(1); the canonical name re-fetches the winner in full.
+	var conflictRel, conflictReal string
+	if conflict && f.RealPathOfFile != "" {
+		conflictRel, conflictReal = conflictNames(path, f.RealPathOfFile)
+		if renErr := os.Rename(f.RealPathOfFile, conflictReal); renErr != nil {
+			logger.Warn("Conflict preserve failed, last-writer-wins", "path", path, "error", renErr)
+			conflictRel, conflictReal = "", ""
+		} else {
+			_ = os.Remove(BitmapPath(f.RealPathOfFile))
+			if cf, cErr := os.OpenFile(f.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
+				_ = cf.Truncate(newSize)
+				_ = cf.Close()
+			}
+			logger.Info("Concurrent edit: local version preserved", "path", path, "conflict", conflictRel)
+		}
 	}
 
 	// logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
 	// Content changed: mark unsynced and reset bitmap + cancel prefetch so reads
 	// re-fetch on-demand. The field stores go under metaMu (innermost); the
 	// PrefetchCancel/Download/Bitmap resets stay outside it.
-	// Snapshot sizes as unaliased locals before f.stat = stat: afterwards f.stat is
-	// the same struct Getattr may mutate, so reading it post-unlock would race.
-	oldSize := f.stat.Size
-	newSize := stat.Size
 	f.metaMu.Lock()
 	f.stat = stat
 	f.LocalNewer = false    // Remote has newer content.
@@ -3578,6 +3633,11 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	f.Bitmap = NewChunkBitmap(stat.Size)
 	newBitmap := f.Bitmap
 	f.metaMu.Unlock()
+	if conflictRel != "" {
+		// The local bytes moved to the conflict name: nothing cached
+		// remains, so reconcile must not claim proven chunks.
+		oldBitmap = nil
+	}
 	d.RemoteFilesLock.Unlock()
 	// Re-mark the proven-unchanged chunks present in the background (full reset stands
 	// on any failure or ineligibility).
@@ -3585,5 +3645,8 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	d.AfmLock.Lock()
 	d.AllFileMap[path] = f
 	d.AfmLock.Unlock()
+	if conflictRel != "" {
+		d.registerConflictCopy(logger, conflictRel, conflictReal)
+	}
 	return nil
 }
