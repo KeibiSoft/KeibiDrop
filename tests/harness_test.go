@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -267,6 +268,14 @@ func forceUnmount(dir string) {
 		if exec.Command("fusermount", "-u", dir).Run() == nil { //nolint:errcheck,gosec // best-effort cleanup
 			return
 		}
+		// Lazy detach: a busy or wedged mount otherwise leaves the path
+		// hanging every later toucher (stat blocks in the kernel).
+		if exec.Command("fusermount3", "-uz", dir).Run() == nil { //nolint:errcheck,gosec // best-effort cleanup
+			return
+		}
+		if exec.Command("fusermount", "-uz", dir).Run() == nil { //nolint:errcheck,gosec // best-effort cleanup
+			return
+		}
 		exec.Command("/sbin/umount", "-f", dir).Run() //nolint:errcheck,gosec // best-effort cleanup
 	default: // darwin and others
 		exec.Command("/sbin/umount", "-f", dir).Run() //nolint:errcheck,gosec // best-effort cleanup
@@ -280,6 +289,23 @@ func forceUnmount(dir string) {
 // (`mount`) blocks on ANY wedged mount in the system, so one zombie mount
 // poisoned every later test run; this cannot.
 func isFUSEMounted(dir string) bool {
+	// Linux: never stat the mountpoint — stat on a wedged FUSE mount blocks
+	// in the kernel (soak captures show cleanup stuck in fstatat for 20 m).
+	// /proc/self/mounts touches only procfs.
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile("/proc/self/mounts")
+		if err != nil {
+			return false
+		}
+		clean := filepath.Clean(dir)
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[1] == clean {
+				return true
+			}
+		}
+		return false
+	}
 	fi, err := os.Stat(dir)
 	if err != nil {
 		return false

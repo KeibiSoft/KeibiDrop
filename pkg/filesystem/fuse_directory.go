@@ -349,6 +349,11 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 	// because the "create" semantics are implicit in the call itself.
 	// Ensure O_CREAT is set so platOpen actually creates the file.
 	flags |= syscall.O_CREAT
+	// The fd is the backing cache handle, not the client's handle: open it
+	// RDWR regardless of client access mode (the OpenEx localize path does
+	// the same). A read-only fd fails Write on Windows with EACCES, which
+	// the EBADF fallback does not catch; on unix it costs a reopen per write.
+	flags = (flags &^ winfuse.O_ACCMODE) | syscall.O_RDWR
 	// accessMode := flags & winfuse.O_ACCMODE
 	// logger.Info("CreateEx called", "flags", flags, "accessMode", accessMode, "mode", mode)
 

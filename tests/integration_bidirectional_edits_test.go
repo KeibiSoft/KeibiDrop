@@ -528,3 +528,176 @@ func TestFUSEtoFUSE_EditorSaves(t *testing.T) {
 		})
 	}
 }
+
+// Large-asset tier (KD_BIG=1): the bidirectional flows at video-asset scale.
+// A 512 MiB seed, then region edits and an app-save swap in both directions;
+// dlbytes proves the reader refetches regions, not the file. Skipped by
+// default: the run writes ~2 GB and streams the full asset once.
+func TestFUSEtoFUSE_BigAssetBidirectional(t *testing.T) {
+	skipIfNoFUSE(t)
+	if os.Getenv("KD_BIG") == "" {
+		t.Skip("large-asset run; set KD_BIG=1")
+	}
+
+	binary := getTestPeerBinary(t)
+
+	relay := NewMockRelay()
+	defer relay.Close()
+
+	aliceMount := t.TempDir()
+	bobMount := t.TempDir()
+
+	logDir := os.Getenv("KD_BIDIR_LOGDIR")
+	if logDir == "" {
+		logDir = t.TempDir()
+	}
+	peerEnv := func(in, out int, mount string) map[string]string {
+		return map[string]string{
+			"RELAY_URL":             relay.URL(),
+			"INBOUND_PORT":          fmt.Sprintf("%d", in),
+			"OUTBOUND_PORT":         fmt.Sprintf("%d", out),
+			"MOUNT_DIR":             mount,
+			"SAVE_DIR":              t.TempDir(),
+			"USE_FUSE":              "1",
+			"LOG_FILE":              filepath.Join(logDir, filepath.Base(mount)+".log"),
+			"KEIBIDROP_LIVE_COLLAB": "1",
+		}
+	}
+	alice := spawnPeer(t, binary, peerEnv(
+		getFreePortInRange(t, 26700, 26749), getFreePortInRange(t, 26750, 26799), aliceMount))
+	bob := spawnPeer(t, binary, peerEnv(
+		getFreePortInRange(t, 26800, 26849), getFreePortInRange(t, 26850, 26899), bobMount))
+
+	t.Cleanup(func() {
+		for _, p := range []*testPeer{alice, bob} {
+			fmt.Fprintln(p.stdin, "quit")
+			done := make(chan error, 1)
+			go func() { done <- p.cmd.Wait() }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				_ = p.cmd.Process.Kill()
+				<-done
+			}
+		}
+		for _, dir := range []string{aliceMount, bobMount} {
+			forceUnmount(dir)
+			waitForUnmount(dir, 5*time.Second)
+		}
+	})
+
+	require := require.New(t)
+
+	aliceFP := strings.TrimPrefix(alice.send(t, "fingerprint", 5*time.Second), "FP:")
+	bobFP := strings.TrimPrefix(bob.send(t, "fingerprint", 5*time.Second), "FP:")
+	require.Equal("OK", alice.send(t, "register "+bobFP, 5*time.Second))
+	require.Equal("OK", bob.send(t, "register "+aliceFP, 5*time.Second))
+
+	aliceConn := alice.sendAsync(t, "create")
+	WaitForCondition(t, 10*time.Second, 100*time.Millisecond, func() bool {
+		return relay.EntryCount() > 0
+	}, "waiting for relay registration")
+	require.Equal("CONNECTED", bob.send(t, "join", 30*time.Second))
+	require.Equal("CONNECTED", <-aliceConn)
+
+	waitForFUSEMount(t, aliceMount, 15*time.Second)
+	waitForFUSEMount(t, bobMount, 15*time.Second)
+
+	ex := func(t *testing.T, p *testPeer, dir, cmdline string, timeout time.Duration) string {
+		t.Helper()
+		resp := p.send(t, "exec "+dir+" "+cmdline, timeout)
+		require.True(strings.HasPrefix(resp, "EXEC:0:"), "%q failed: %s", cmdline, resp)
+		return strings.TrimPrefix(resp, "EXEC:0:")
+	}
+
+	md5cmd := "md5 -q"
+	if runtime.GOOS == "linux" {
+		md5cmd = "md5sum"
+	}
+	// A full md5 re-reads 512 MiB through the mount each poll; the budget is
+	// sized for a local-cache read plus a region refetch, not a full stream.
+	fileMd5 := func(t *testing.T, p *testPeer, rel string) string {
+		t.Helper()
+		out := ex(t, p, ".", md5cmd+" "+rel, 180*time.Second)
+		return strings.Fields(out)[0]
+	}
+	waitConverged := func(t *testing.T, reader, owner *testPeer, rel string, timeout time.Duration) time.Duration {
+		t.Helper()
+		const emptyMd5 = "d41d8cd98f00b204e9800998ecf8427e"
+		start := time.Now()
+		deadline := start.Add(timeout)
+		var got, want string
+		for time.Now().Before(deadline) {
+			want = fileMd5(t, owner, rel)
+			got = fileMd5(t, reader, rel)
+			if got == want && want != emptyMd5 {
+				elapsed := time.Since(start)
+				t.Logf("converged in %v", elapsed.Round(10*time.Millisecond))
+				return elapsed
+			}
+			time.Sleep(1 * time.Second)
+		}
+		t.Fatalf("no convergence after %v: owner=%s reader=%s", timeout, want, got)
+		return 0
+	}
+	dlbytes := func(p *testPeer, rel string) uint64 {
+		resp := p.send(t, "dlbytes "+rel, 5*time.Second)
+		require.True(strings.HasPrefix(resp, "DLBYTES:"), "dlbytes failed: %s", resp)
+		n, err := strconv.ParseUint(strings.TrimPrefix(resp, "DLBYTES:"), 10, 64)
+		require.NoError(err)
+		return n
+	}
+	// The counter resets on a fresh download cycle; a delta is only meaningful
+	// against the same cycle.
+	deltaOf := func(c1, c2 uint64) uint64 {
+		if c2 < c1 {
+			return c2
+		}
+		return c2 - c1
+	}
+
+	const big = "asset.bin"
+	const totalMiB = 512
+	const totalBytes = uint64(totalMiB) * 1048576
+
+	t.Run("SeedAndFullFetch", func(t *testing.T) {
+		ex(t, bob, ".", fmt.Sprintf("dd if=/dev/urandom of=%s bs=1048576 count=%d", big, totalMiB), 600*time.Second)
+		WaitForFileOnMount(t, filepath.Join(aliceMount, big), 120*time.Second)
+		start := time.Now()
+		ex(t, alice, ".", "dd if="+big+" of=/dev/null bs=1048576", 900*time.Second)
+		cold := time.Since(start)
+		waitConverged(t, alice, bob, big, 600*time.Second)
+		c := dlbytes(alice, big)
+		t.Logf("cold full read: %d MiB in %v (%.1f MiB/s), fetched %d bytes", totalMiB, cold.Round(10*time.Millisecond), float64(totalMiB)/cold.Seconds(), c)
+	})
+
+	// The owner rewrites a 2 MiB region in place; the reader must refetch
+	// regions, not the asset.
+	t.Run("InPlaceRegionEdit", func(t *testing.T) {
+		c1 := dlbytes(alice, big)
+		ex(t, bob, ".", "dd if=/dev/urandom of="+big+" bs=1048576 count=2 seek=200 conv=notrunc", 120*time.Second)
+		waitConverged(t, alice, bob, big, 600*time.Second)
+		delta := deltaOf(c1, dlbytes(alice, big))
+		t.Logf("in-place region edit: reader refetched %d bytes for a 2 MiB change", delta)
+		require.Less(delta, totalBytes/8, "region reconcile did not fire: near-full refetch")
+	})
+
+	// The app-save swap at scale: copy, patch a region, rename over the target.
+	t.Run("SwapSaveRegion", func(t *testing.T) {
+		c1 := dlbytes(alice, big)
+		ex(t, bob, ".", "cp "+big+" "+big+".new", 600*time.Second)
+		ex(t, bob, ".", "dd if=/dev/urandom of="+big+".new bs=1048576 count=2 seek=300 conv=notrunc", 120*time.Second)
+		ex(t, bob, ".", "mv -f "+big+".new "+big, 30*time.Second)
+		waitConverged(t, alice, bob, big, 600*time.Second)
+		delta := deltaOf(c1, dlbytes(alice, big))
+		t.Logf("swap save: reader refetched %d bytes for a 2 MiB change in %d MiB", delta, totalMiB)
+		require.Less(delta, totalBytes/8, "swap lineage did not hold: near-full refetch")
+	})
+
+	// Reverse direction: the reader rewrites a region of the owner's asset
+	// through its own mount; the owner converges.
+	t.Run("ReverseRegionEdit", func(t *testing.T) {
+		ex(t, alice, ".", "dd if=/dev/urandom of="+big+" bs=1048576 count=1 seek=100 conv=notrunc", 120*time.Second)
+		waitConverged(t, bob, alice, big, 600*time.Second)
+	})
+}
