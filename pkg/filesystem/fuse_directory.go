@@ -331,6 +331,14 @@ func shouldUseDirectIo(path string, flags int) bool {
 		return true
 	}
 
+	// Windows: WinFsp's cache manager otherwise serves stale bytes after an
+	// accepted remote update — reads never reach this layer again (the third
+	// cache of law 2). Remote visibility beats read caching; the mmap
+	// carve-outs above still apply.
+	if runtime.GOOS == "windows" {
+		return true
+	}
+
 	// Read-only: allow page cache
 	return false
 }
@@ -730,15 +738,19 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 			logger.Error("Failed to open stream pool", "error", err)
 			return -winfuse.EACCES
 		}
-		// Open persistent cache FD for on-demand writes (avoids open/close per chunk).
-		cacheFD, err = os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY, 0600)
-		if err != nil {
+		// Open persistent cache FD for on-demand writes (avoids open/close per
+		// chunk). Via platOpen for FILE_SHARE_DELETE: this handle lives for
+		// the whole download, and a rename-over-target on Windows is denied
+		// while any handle without delete sharing is open.
+		cfd, cfdErr := platOpen(localPath, syscall.O_CREAT|syscall.O_WRONLY, 0600)
+		if cfdErr != nil {
 			cancel()
 			pool.Close()
 			_ = platClose(fd)
-			logger.Error("Failed to open cache FD", "error", err)
+			logger.Error("Failed to open cache FD", "error", cfdErr)
 			return -winfuse.EIO
 		}
+		cacheFD = os.NewFile(uintptr(cfd), localPath)
 	}
 
 	d.AfmLock.Lock()
@@ -1287,6 +1299,20 @@ func (d *Dir) Readlink(path string) (errCode int, target string) {
 	return -winfuse.EINVAL, ""
 }
 
+// resolveHandleByPath returns an open handle entry for path. WinFsp
+// multiplexes user opens onto a cached file context, so the per-open fh does
+// not round-trip reliably: ops arrive with a stale fh while a live entry for
+// the path exists (each user open still runs OpenEx). Caller holds
+// OpenMapLock.
+func (d *Dir) resolveHandleByPath(path string) (uint64, *HandleEntry, bool) {
+	for id, e := range d.OpenFileHandlers {
+		if e.File != nil && e.File.RelativePath == path {
+			return id, e, true
+		}
+	}
+	return 0, nil, false
+}
+
 func (d *Dir) Release(path string, fh uint64) (errCode int) {
 	defer d.recoverPanic("Release", &errCode)
 	// d.logger.Info("FUSE release", "path", path, "fh", fh)
@@ -1301,6 +1327,11 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 	}()
 
 	entry, ok := d.OpenFileHandlers[fh]
+	if !ok && runtime.GOOS == "windows" {
+		// A missed release must still run the close bookkeeping and the
+		// close-announce, or the peer never announces and handles leak.
+		fh, entry, ok = d.resolveHandleByPath(path)
+	}
 	if !ok {
 		// handle not in map - either already released, or was a late fcopyfile handle
 		// Don't try to close - just return success
@@ -1573,7 +1604,39 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		d.OpenMapLock.Unlock()
 	}
 
-	err := os.Rename(cleanOldPath, cleanNewPath)
+	// The ousted target's long-lived handles point at the inode this rename
+	// displaces: later writes through them would land in the wrong file, and
+	// Windows refuses to replace a file they hold open.
+	d.AfmLock.RLock()
+	tgt := d.AllFileMap[newpath]
+	d.AfmLock.RUnlock()
+	if tgt == nil {
+		d.RemoteFilesLock.RLock()
+		tgt = d.RemoteFiles[newpath]
+		d.RemoteFilesLock.RUnlock()
+	}
+	if tgt != nil {
+		if tgt.PrefetchCancel != nil {
+			tgt.PrefetchCancel()
+			tgt.PrefetchCancel = nil
+		}
+		d.OpenMapLock.Lock()
+		if tgt.StreamCancel != nil {
+			tgt.StreamCancel()
+			tgt.StreamCancel = nil
+		}
+		if tgt.StreamPool != nil {
+			tgt.StreamPool.Close()
+			tgt.StreamPool = nil
+		}
+		if tgt.CacheFD != nil {
+			_ = tgt.CacheFD.Close()
+			tgt.CacheFD = nil
+		}
+		d.OpenMapLock.Unlock()
+	}
+
+	err := platRename(cleanOldPath, cleanNewPath)
 	if err != nil {
 		logger.Error("Failed to rename", "error", err)
 		return int(convertOsErrToSyscallErrno("rename", err))
@@ -1991,6 +2054,11 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	lockTime := time.Since(startLock)
 
 	entry, ok := d.OpenFileHandlers[fh]
+	if !ok && runtime.GOOS == "windows" {
+		// A missed write must still set the dirty flags and raise stat, or
+		// the edit session never opens and the save never announces.
+		_, entry, ok = d.resolveHandleByPath(path)
+	}
 	if !ok {
 		d.OpenMapLock.RUnlock()
 		if fuseOpLog {
@@ -2480,6 +2548,18 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	// Get file info briefly, release lock before I/O (RWMutex is write-preferring)
 	d.OpenMapLock.RLock()
 	entry, ok := d.OpenFileHandlers[fh]
+	if !ok && runtime.GOOS == "windows" {
+		// A stale-fh read falling to the raw cache pread serves bytes an
+		// accepted update already invalidated. Resolve by path so the
+		// staleness/bitmap/stream logic still runs.
+		_, entry, ok = d.resolveHandleByPath(path)
+		if !ok && fuseOpLog {
+			d.logger.Debug("oplog Read resolve-miss", "path", path, "handles", len(d.OpenFileHandlers))
+		}
+	}
+	if fuseOpLog {
+		d.logger.Debug("oplog Read", "path", path, "fh", fh, "offset", offset, "len", len(buff), "ok", ok)
+	}
 	var f *File
 	var fd int
 	var pool *StreamPool
@@ -2504,6 +2584,38 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		f.metaMu.RUnlock()
 	}
 	d.OpenMapLock.RUnlock()
+
+	if !ok && runtime.GOOS == "windows" {
+		// WinFsp serves reads on its cached file context long after our
+		// handle lifecycle drained (probe: thousands of reads with an empty
+		// handle map). Resolve the OBJECT by path and run the full hybrid
+		// logic with an ad hoc cache fd — the raw-cache fallback below would
+		// serve bytes an accepted update already invalidated. AfmLock is
+		// taken after OpenMapLock released (lock order: Afm before OpenMap).
+		d.AfmLock.RLock()
+		pf := d.AllFileMap[path]
+		d.AfmLock.RUnlock()
+		if pf != nil {
+			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+			if adhocFD, oerr := platOpen(cleanPath, syscall.O_RDONLY, 0); oerr == nil {
+				defer func() { _ = platClose(adhocFD) }()
+				f = pf
+				fd = adhocFD
+				d.OpenMapLock.RLock()
+				pool = f.StreamPool
+				cacheFD = f.CacheFD
+				d.OpenMapLock.RUnlock()
+				f.metaMu.RLock()
+				notLocalSynced = f.NotLocalSynced
+				bitmap = f.Bitmap
+				if f.stat != nil {
+					remoteFileSize = f.stat.Size
+				}
+				f.metaMu.RUnlock()
+				ok = true
+			}
+		}
+	}
 
 	// If the file is remote and has no stream pool but has incomplete chunks,
 	// try to create a pool on-demand so we can fetch the missing data.

@@ -8,8 +8,12 @@
 package filesystem
 
 import (
+	"encoding/binary"
+	"errors"
+	"fmt"
 	"os"
 	"syscall"
+	"time"
 
 	winfuse "github.com/winfsp/cgofuse/fuse"
 	"golang.org/x/sys/windows"
@@ -24,6 +28,64 @@ func platTruncate(path string, size int64) error {
 
 func platUnlink(path string) error {
 	return os.Remove(path)
+}
+
+// platRename replaces the target with POSIX semantics. MoveFileEx (os.Rename)
+// cannot replace a file that ANY handle has open, even with delete sharing —
+// and the long-lived CacheFD keeps the target open during downloads.
+// FileRenameInfoEx + POSIX_SEMANTICS can (Win10+, NTFS); older systems fall
+// back to os.Rename.
+func platRename(oldpath, newpath string) error {
+	const (
+		fileRenameFlagReplaceIfExists = 0x1
+		fileRenameFlagPosixSemantics  = 0x2
+	)
+	op, err := syscall.UTF16PtrFromString(oldpath)
+	if err != nil {
+		return os.Rename(oldpath, newpath)
+	}
+	h, err := syscall.CreateFile(op, windows.DELETE,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+		nil, syscall.OPEN_EXISTING, syscall.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return os.Rename(oldpath, newpath)
+	}
+	defer syscall.CloseHandle(h) //nolint:errcheck // read-only handle close
+
+	// NT namespace form: with RootDirectory NULL the name must be a full
+	// path, and the \??\ prefix is the form the kernel accepts unambiguously.
+	name, err := windows.UTF16FromString(`\??\` + newpath)
+	if err != nil {
+		return os.Rename(oldpath, newpath)
+	}
+	nameBytes := (len(name) - 1) * 2 // exclude the terminating NUL
+	// FILE_RENAME_INFO layout (64-bit): Flags(4) pad(4) RootDirectory(8)
+	// FileNameLength(4) FileName[]. Build the variable-size buffer by hand.
+	buf := make([]byte, 20+nameBytes+2)
+	binary.LittleEndian.PutUint32(buf[0:], fileRenameFlagReplaceIfExists|fileRenameFlagPosixSemantics)
+	binary.LittleEndian.PutUint64(buf[8:], 0) // RootDirectory
+	binary.LittleEndian.PutUint32(buf[16:], uint32(nameBytes))
+	for i, u := range name[:len(name)-1] {
+		binary.LittleEndian.PutUint16(buf[20+i*2:], u)
+	}
+	// Transient handles without delete sharing (Go's own opens lack
+	// FILE_SHARE_DELETE) surface as sharing violations for a few ms; retry
+	// briefly before giving up. Rename is not on a latency-critical path.
+	var werr error
+	for i := 0; i < 40; i++ {
+		werr = windows.SetFileInformationByHandle(windows.Handle(h), windows.FileRenameInfoEx, &buf[0], uint32(len(buf)))
+		if werr == nil {
+			return nil
+		}
+		if !errors.Is(werr, windows.ERROR_SHARING_VIOLATION) && !errors.Is(werr, windows.ERROR_ACCESS_DENIED) {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if rerr := os.Rename(oldpath, newpath); rerr != nil {
+		return fmt.Errorf("%w (posix-semantics rename: %v)", rerr, werr)
+	}
+	return nil
 }
 
 func platOpen(path string, flags int, mode uint32) (int, error) {
