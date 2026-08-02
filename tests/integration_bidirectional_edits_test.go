@@ -30,8 +30,8 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 	relay := NewMockRelay()
 	defer relay.Close()
 
-	aliceMount := t.TempDir()
-	bobMount := t.TempDir()
+	aliceMount := newMountPoint(t)
+	bobMount := newMountPoint(t)
 
 	logDir := os.Getenv("KD_BIDIR_LOGDIR")
 	if logDir == "" {
@@ -45,7 +45,7 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 			"MOUNT_DIR":     mount,
 			"SAVE_DIR":      t.TempDir(),
 			"USE_FUSE":      "1",
-			"LOG_FILE":      filepath.Join(logDir, filepath.Base(mount)+".log"),
+			"LOG_FILE":      filepath.Join(logDir, filepath.Base(filepath.Dir(mount))+".log"),
 			// The collab profile is the one under test: in-place edits need auto_cache on macOS.
 			"KEIBIDROP_LIVE_COLLAB": "1",
 		}
@@ -97,12 +97,79 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		return strings.TrimPrefix(resp, "EXEC:0:")
 	}
 
+	// Windows has no dd/mv/cp/ls/cat/md5sum: verb forms drive the same FUSE
+	// surface through the peer's own mount. Unix keeps the shell forms — the
+	// tools ARE the measured pattern.
+	useVerbs := runtime.GOOS == "windows"
+	writeRand := func(t *testing.T, p *testPeer, rel string, n int) {
+		t.Helper()
+		if useVerbs {
+			require.Equal("OK", p.send(t, fmt.Sprintf("write_rand %s %d", rel, n), 60*time.Second))
+			return
+		}
+		ex(t, p, ".", fmt.Sprintf("dd if=/dev/urandom of=%s bs=%d count=1", rel, n), 60*time.Second)
+	}
+	// off must be a multiple of n in the dd form (block-addressed seek).
+	writeRandAt := func(t *testing.T, p *testPeer, rel string, off int64, n int) {
+		t.Helper()
+		if useVerbs {
+			require.Equal("OK", p.send(t, fmt.Sprintf("write_rand_at %s %d %d", rel, off, n), 60*time.Second))
+			return
+		}
+		ex(t, p, ".", fmt.Sprintf("dd if=/dev/urandom of=%s bs=%d count=1 seek=%d conv=notrunc", rel, n, off/int64(n)), 60*time.Second)
+	}
+	renameOver := func(t *testing.T, p *testPeer, oldRel, newRel string) {
+		t.Helper()
+		if useVerbs {
+			require.Equal("OK", p.send(t, "rename "+oldRel+" "+newRel, 15*time.Second))
+			return
+		}
+		ex(t, p, ".", "mv -f "+oldRel+" "+newRel, 15*time.Second)
+	}
+	copyFile := func(t *testing.T, p *testPeer, src, dst string) {
+		t.Helper()
+		if useVerbs {
+			require.Equal("OK", p.send(t, "copy "+src+" "+dst, 60*time.Second))
+			return
+		}
+		ex(t, p, ".", "cp "+src+" "+dst, 60*time.Second)
+	}
+	listNames := func(t *testing.T, p *testPeer) []string {
+		t.Helper()
+		if useVerbs {
+			lines := p.sendMultiLine(t, "list_dir .", "END", 15*time.Second)
+			var out []string
+			for _, l := range lines {
+				if strings.HasPrefix(l, "ENTRY:") {
+					out = append(out, strings.TrimPrefix(l, "ENTRY:"))
+				}
+			}
+			return out
+		}
+		return strings.Split(ex(t, p, ".", "ls", 15*time.Second), "\\n")
+	}
+	readFile := func(t *testing.T, p *testPeer, rel string) string {
+		t.Helper()
+		if useVerbs {
+			resp := p.send(t, "read_file "+rel, 15*time.Second)
+			require.True(strings.HasPrefix(resp, "DATA:"), "read_file failed: %s", resp)
+			parts := strings.SplitN(resp, ":", 3)
+			require.Len(parts, 3)
+			return strings.TrimSpace(parts[2])
+		}
+		return strings.TrimSpace(ex(t, p, ".", "cat "+rel, 15*time.Second))
+	}
 	md5cmd := "md5 -q"
 	if runtime.GOOS == "linux" {
 		md5cmd = "md5sum"
 	}
 	fileMd5 := func(t *testing.T, p *testPeer, rel string) string {
 		t.Helper()
+		if useVerbs {
+			resp := p.send(t, "md5 "+rel, 60*time.Second)
+			require.True(strings.HasPrefix(resp, "MD5:"), "md5 failed: %s", resp)
+			return strings.TrimPrefix(resp, "MD5:")
+		}
 		out := ex(t, p, ".", md5cmd+" "+rel, 30*time.Second)
 		return strings.Fields(out)[0]
 	}
@@ -135,40 +202,40 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 	const f = "doc.bin"
 
 	t.Run("Seed", func(t *testing.T) {
-		ex(t, bob, ".", "dd if=/dev/urandom of="+f+" bs=65536 count=8", 30*time.Second)
+		writeRand(t, bob, f, 512*1024)
 		WaitForFileOnMount(t, filepath.Join(aliceMount, f), 60*time.Second)
 		waitConverged(t, alice, bob, f, 60*time.Second)
 	})
 
 	// The app-save pattern: write a working copy, swap it over the target.
 	t.Run("AtomicRenameOverwrite", func(t *testing.T) {
-		ex(t, bob, ".", "dd if=/dev/urandom of="+f+".tmp bs=65536 count=8", 30*time.Second)
-		ex(t, bob, ".", "mv -f "+f+".tmp "+f, 15*time.Second)
+		writeRand(t, bob, f+".tmp", 512*1024)
+		renameOver(t, bob, f+".tmp", f)
 		waitConverged(t, alice, bob, f, 60*time.Second)
 	})
 
 	// Same byte length, content changed: the in-place profile (databases, mmap writers).
 	t.Run("InPlaceSameSize", func(t *testing.T) {
-		ex(t, bob, ".", "dd if=/dev/urandom of="+f+" bs=4096 count=1 conv=notrunc", 15*time.Second)
+		writeRandAt(t, bob, f, 0, 4096)
 		waitConverged(t, alice, bob, f, 60*time.Second)
 	})
 
 	t.Run("TruncateRewrite", func(t *testing.T) {
-		ex(t, bob, ".", "dd if=/dev/urandom of="+f+" bs=65536 count=3", 15*time.Second)
+		writeRand(t, bob, f, 192*1024)
 		waitConverged(t, alice, bob, f, 60*time.Second)
 	})
 
 	// The reverse direction: the reader edits the owner's file through its mount.
 	t.Run("ReverseInPlace", func(t *testing.T) {
-		ex(t, alice, ".", "dd if=/dev/urandom of="+f+" bs=4096 count=1 conv=notrunc", 15*time.Second)
+		writeRandAt(t, alice, f, 0, 4096)
 		waitConverged(t, bob, alice, f, 60*time.Second)
 	})
 
 	// Rapid save cycles: three rename-overwrites back to back (editors autosaving).
 	t.Run("RenameCycleBurst", func(t *testing.T) {
 		for i := 0; i < 3; i++ {
-			ex(t, bob, ".", "dd if=/dev/urandom of="+f+".tmp bs=65536 count=8", 30*time.Second)
-			ex(t, bob, ".", "mv -f "+f+".tmp "+f, 15*time.Second)
+			writeRand(t, bob, f+".tmp", 512*1024)
+			renameOver(t, bob, f+".tmp", f)
 		}
 		waitConverged(t, alice, bob, f, 90*time.Second)
 	})
@@ -176,20 +243,20 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 	// The app-save swap in REVERSE: the reader writes a working copy and swaps
 	// it over the owner's file through its own mount.
 	t.Run("ReverseRenameOverwrite", func(t *testing.T) {
-		ex(t, alice, ".", "dd if=/dev/urandom of="+f+".new bs=65536 count=8", 30*time.Second)
-		ex(t, alice, ".", "mv -f "+f+".new "+f, 15*time.Second)
+		writeRand(t, alice, f+".new", 512*1024)
+		renameOver(t, alice, f+".new", f)
 		waitConverged(t, bob, alice, f, 60*time.Second)
 	})
 
 	// A plain reader-side rename of the owner's file: no rewrite follows, so
 	// nothing can heal a swallowed announcement. The owner must see the move.
 	t.Run("ReversePlainRename", func(t *testing.T) {
-		ex(t, alice, ".", "mv "+f+" "+f+".moved", 15*time.Second)
+		renameOver(t, alice, f, f+".moved")
 		WaitForFileOnMount(t, filepath.Join(bobMount, f+".moved"), 60*time.Second)
 		waitConverged(t, bob, alice, f+".moved", 60*time.Second)
 		// The old name must be gone on both sides.
 		WaitForFileAbsent(t, filepath.Join(bobMount, f), 30*time.Second)
-		ex(t, alice, ".", "mv "+f+".moved "+f, 15*time.Second) // restore for later subtests
+		renameOver(t, alice, f+".moved", f) // restore for later subtests
 		WaitForFileOnMount(t, filepath.Join(bobMount, f), 60*time.Second)
 	})
 
@@ -197,9 +264,9 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 	// remote map. The rename must still be announced (adoption must not mute
 	// the owner).
 	t.Run("OwnerRenameAfterAdoption", func(t *testing.T) {
-		ex(t, alice, ".", "dd if=/dev/urandom of="+f+" bs=4096 count=1 conv=notrunc", 15*time.Second)
+		writeRandAt(t, alice, f, 0, 4096)
 		waitConverged(t, bob, alice, f, 60*time.Second)
-		ex(t, bob, ".", "mv "+f+" "+f+".owner", 15*time.Second)
+		renameOver(t, bob, f, f+".owner")
 		WaitForFileOnMount(t, filepath.Join(aliceMount, f+".owner"), 60*time.Second)
 		waitConverged(t, alice, bob, f+".owner", 60*time.Second)
 	})
@@ -211,10 +278,8 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 	// negative: none of them may produce a conflict file.
 	t.Run("ConcurrentEditConflictCopy", func(t *testing.T) {
 		listConflicts := func(p *testPeer) []string {
-			// exec output is one line with literal \n separators (protocol-safe).
-			resp := ex(t, p, ".", "ls", 15*time.Second)
 			var out []string
-			for _, name := range strings.Split(resp, "\\n") {
+			for _, name := range listNames(t, p) {
 				if strings.Contains(name, "clash.conflict-") {
 					out = append(out, strings.TrimSpace(name))
 				}
@@ -235,10 +300,10 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		}, "waiting for the conflict copy on both peers")
 
 		// The two versions both survive: canonical + conflict = both writes.
-		canonical := strings.TrimSpace(ex(t, bob, ".", "cat clash.txt", 15*time.Second))
+		canonical := readFile(t, bob, "clash.txt")
 		conflicts := listConflicts(bob)
 		require.Len(conflicts, 1, "exactly one conflict copy expected")
-		preserved := strings.TrimSpace(ex(t, bob, ".", "cat "+conflicts[0], 15*time.Second))
+		preserved := readFile(t, bob, conflicts[0])
 		got := []string{canonical, preserved}
 		require.ElementsMatch([]string{"bob-concurrent-version", "alice-concurrent-version"}, got,
 			"both concurrent versions must survive (canonical + conflict)")
@@ -251,9 +316,8 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 	// preserved as a conflict sibling instead of silently clobbered.
 	t.Run("SwapSaveStaleBase", func(t *testing.T) {
 		listConflicts := func(p *testPeer) []string {
-			resp := ex(t, p, ".", "ls", 15*time.Second)
 			var out []string
-			for _, name := range strings.Split(resp, "\\n") {
+			for _, name := range listNames(t, p) {
 				if strings.Contains(name, "swapc.conflict-") {
 					out = append(out, strings.TrimSpace(name))
 				}
@@ -265,23 +329,23 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		waitConverged(t, alice, bob, "swapc.txt", 60*time.Second)
 
 		// Alice takes her working copy of v1.
-		ex(t, alice, ".", "cp swapc.txt swapc.txt.work", 15*time.Second)
+		copyFile(t, alice, "swapc.txt", "swapc.txt.work")
 		require.Equal("OK", alice.send(t, "write_file swapc.txt.work reader-swap-version", 10*time.Second))
 
 		// Concurrent finish: owner's in-place edit debounces 200 ms; the
 		// reader's swap RENAME announces immediately and crosses it.
 		require.Equal("OK", bob.send(t, "write_file swapc.txt owner-v2-concurrent", 10*time.Second))
-		ex(t, alice, ".", "mv -f swapc.txt.work swapc.txt", 15*time.Second)
+		renameOver(t, alice, "swapc.txt.work", "swapc.txt")
 
 		waitConverged(t, alice, bob, "swapc.txt", 60*time.Second)
 		WaitForCondition(t, 60*time.Second, 500*time.Millisecond, func() bool {
 			return len(listConflicts(alice)) >= 1 && len(listConflicts(bob)) >= 1
 		}, "waiting for the swap conflict copy on both peers")
 
-		canonical := strings.TrimSpace(ex(t, bob, ".", "cat swapc.txt", 15*time.Second))
+		canonical := readFile(t, bob, "swapc.txt")
 		conflicts := listConflicts(bob)
 		require.Len(conflicts, 1, "exactly one conflict copy expected")
-		preserved := strings.TrimSpace(ex(t, bob, ".", "cat "+conflicts[0], 15*time.Second))
+		preserved := readFile(t, bob, conflicts[0])
 		require.ElementsMatch([]string{"owner-v2-concurrent", "reader-swap-version"},
 			[]string{canonical, preserved}, "both concurrent versions must survive")
 		waitConverged(t, alice, bob, conflicts[0], 60*time.Second)
@@ -339,14 +403,14 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 			return n
 		}
 		const big = "doc.big"
-		ex(t, bob, ".", "dd if=/dev/urandom of="+big+" bs=1048576 count=24", 60*time.Second)
+		writeRand(t, bob, big, 24*1048576)
 		WaitForFileOnMount(t, filepath.Join(aliceMount, big), 60*time.Second)
 		waitConverged(t, alice, bob, big, 120*time.Second)
 		c1 := dlbytes(alice, big)
 
-		ex(t, bob, ".", "cp "+big+" "+big+".new", 60*time.Second)
-		ex(t, bob, ".", "dd if=/dev/urandom of="+big+".new bs=1048576 count=1 seek=7 conv=notrunc", 30*time.Second)
-		ex(t, bob, ".", "mv -f "+big+".new "+big, 15*time.Second)
+		copyFile(t, bob, big, big+".new")
+		writeRandAt(t, bob, big+".new", 7*1048576, 1048576)
+		renameOver(t, bob, big+".new", big)
 		waitConverged(t, alice, bob, big, 120*time.Second)
 
 		c2 := dlbytes(alice, big)
@@ -371,8 +435,8 @@ func TestFUSEtoFUSE_EditorSaves(t *testing.T) {
 	relay := NewMockRelay()
 	defer relay.Close()
 
-	aliceMount := t.TempDir()
-	bobMount := t.TempDir()
+	aliceMount := newMountPoint(t)
+	bobMount := newMountPoint(t)
 
 	logDir := os.Getenv("KD_BIDIR_LOGDIR")
 	if logDir == "" {
@@ -386,7 +450,7 @@ func TestFUSEtoFUSE_EditorSaves(t *testing.T) {
 			"MOUNT_DIR":     mount,
 			"SAVE_DIR":      t.TempDir(),
 			"USE_FUSE":      "1",
-			"LOG_FILE":      filepath.Join(logDir, "ed-"+filepath.Base(mount)+".log"),
+			"LOG_FILE":      filepath.Join(logDir, "ed-"+filepath.Base(filepath.Dir(mount))+".log"),
 			"KEIBIDROP_LIVE_COLLAB": "1",
 		}
 	}
@@ -624,8 +688,8 @@ func TestFUSEtoFUSE_BigAssetBidirectional(t *testing.T) {
 	relay := NewMockRelay()
 	defer relay.Close()
 
-	aliceMount := t.TempDir()
-	bobMount := t.TempDir()
+	aliceMount := newMountPoint(t)
+	bobMount := newMountPoint(t)
 
 	logDir := os.Getenv("KD_BIDIR_LOGDIR")
 	if logDir == "" {
@@ -639,7 +703,7 @@ func TestFUSEtoFUSE_BigAssetBidirectional(t *testing.T) {
 			"MOUNT_DIR":             mount,
 			"SAVE_DIR":              t.TempDir(),
 			"USE_FUSE":              "1",
-			"LOG_FILE":              filepath.Join(logDir, filepath.Base(mount)+".log"),
+			"LOG_FILE":              filepath.Join(logDir, filepath.Base(filepath.Dir(mount))+".log"),
 			"KEIBIDROP_LIVE_COLLAB": "1",
 		}
 	}

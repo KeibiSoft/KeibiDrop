@@ -100,6 +100,12 @@ func swapSuccessors(s swapState, policy bool) []swapState {
 			n := cloneSwap(s)
 			m := n.q[i][0]
 			n.q[i] = append([]swapMsg(nil), n.q[i][1:]...)
+			// Strictly-greater: an EXACT version tie rejects on both sides.
+			// Real versions are ns mtimes, so a tie means both peers keep
+			// their own bytes — no loss, but no convergence. The model's
+			// versions are unique by construction and cannot express it;
+			// known residual. Fix if ever observed: deterministic tiebreak
+			// by peer fingerprint.
 			if m.ver > n.p[i].watermark && m.ver > n.p[i].own {
 				old := n.p[i].content
 				if old != 0 && old != m.base {

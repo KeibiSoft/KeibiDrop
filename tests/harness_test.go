@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -288,6 +287,18 @@ func forceUnmount(dir string) {
 // differs from its parent's. Touches only the two paths. A mount-table walk
 // (`mount`) blocks on ANY wedged mount in the system, so one zombie mount
 // poisoned every later test run; this cannot.
+// newMountPoint returns a mountpoint path for a spawned peer. Unix FUSE
+// needs the directory to exist; WinFsp requires it to NOT exist (the dir
+// materializes at mount time and vanishes at unmount).
+func newMountPoint(t *testing.T) string {
+	t.Helper()
+	mp := filepath.Join(t.TempDir(), "mnt")
+	if runtime.GOOS != "windows" {
+		require.NoError(t, os.MkdirAll(mp, 0o755))
+	}
+	return mp
+}
+
 func isFUSEMounted(dir string) bool {
 	// Linux: never stat the mountpoint — stat on a wedged FUSE mount blocks
 	// in the kernel (soak captures show cleanup stuck in fstatat for 20 m).
@@ -306,20 +317,7 @@ func isFUSEMounted(dir string) bool {
 		}
 		return false
 	}
-	fi, err := os.Stat(dir)
-	if err != nil {
-		return false
-	}
-	pi, err := os.Stat(filepath.Dir(dir))
-	if err != nil {
-		return false
-	}
-	fs, ok1 := fi.Sys().(*syscall.Stat_t)
-	ps, ok2 := pi.Sys().(*syscall.Stat_t)
-	if !ok1 || !ok2 {
-		return false
-	}
-	return fs.Dev != ps.Dev
+	return isMountedDevStat(dir)
 }
 
 func waitForUnmount(dir string, timeout time.Duration) {

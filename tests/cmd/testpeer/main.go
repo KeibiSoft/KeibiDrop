@@ -12,6 +12,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/md5" // #nosec G501 -- convergence checks, not security
+	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -306,6 +308,115 @@ func main() {
 				kd.FS.Root.RemoteFilesLock.RUnlock()
 			}
 			fmt.Printf("DLBYTES:%d\n", n)
+
+		case "md5":
+			// md5 <rel> — hash the file through our own mount (Windows has
+			// no md5sum; verbs drive the same FUSE surface as the shell).
+			if len(args) < 2 {
+				fmt.Println("ERR:usage: md5 <rel>")
+				continue
+			}
+			mf, merr := os.Open(filepath.Join(mountDir, args[1])) // #nosec G304
+			if merr != nil {
+				fmt.Println("ERR:" + merr.Error())
+				continue
+			}
+			mh := md5.New() // #nosec G401 -- convergence check, not security
+			_, merr = io.Copy(mh, mf)
+			mf.Close()
+			if merr != nil {
+				fmt.Println("ERR:" + merr.Error())
+				continue
+			}
+			fmt.Printf("MD5:%x\n", mh.Sum(nil))
+
+		case "write_rand":
+			// write_rand <rel> <bytes> — random content through the mount
+			// (dd if=/dev/urandom replacement).
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: write_rand <rel> <bytes>")
+				continue
+			}
+			wn, werr := strconv.Atoi(args[2])
+			if werr != nil || wn < 0 {
+				fmt.Println("ERR:bad byte count")
+				continue
+			}
+			wbuf := make([]byte, wn)
+			_, _ = crand.Read(wbuf)
+			if err := os.WriteFile(filepath.Join(mountDir, args[1]), wbuf, 0644); err != nil { //nolint:gosec // G306: shared file needs read access
+				fmt.Println("ERR:" + err.Error())
+			} else {
+				fmt.Println("OK")
+			}
+
+		case "write_rand_at":
+			// write_rand_at <rel> <offset> <bytes> — random overwrite at an
+			// offset, size preserved (dd conv=notrunc replacement).
+			if len(args) < 4 {
+				fmt.Println("ERR:usage: write_rand_at <rel> <offset> <bytes>")
+				continue
+			}
+			woff, _ := strconv.ParseInt(args[2], 10, 64)
+			wan, waerr := strconv.Atoi(args[3])
+			if waerr != nil || wan < 0 {
+				fmt.Println("ERR:bad byte count")
+				continue
+			}
+			wf, wferr := os.OpenFile(filepath.Join(mountDir, args[1]), os.O_WRONLY, 0644) // #nosec G304
+			if wferr != nil {
+				fmt.Println("ERR:" + wferr.Error())
+				continue
+			}
+			wabuf := make([]byte, wan)
+			_, _ = crand.Read(wabuf)
+			_, wferr = wf.WriteAt(wabuf, woff)
+			wf.Close()
+			if wferr != nil {
+				fmt.Println("ERR:" + wferr.Error())
+			} else {
+				fmt.Println("OK")
+			}
+
+		case "rename":
+			// rename <old> <new> — rename inside the mount (mv -f replacement).
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: rename <old> <new>")
+				continue
+			}
+			if err := os.Rename(filepath.Join(mountDir, args[1]), filepath.Join(mountDir, args[2])); err != nil {
+				fmt.Println("ERR:" + err.Error())
+			} else {
+				fmt.Println("OK")
+			}
+
+		case "copy":
+			// copy <src> <dst> — byte copy through the mount (cp replacement).
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: copy <src> <dst>")
+				continue
+			}
+			cs, cerr := os.Open(filepath.Join(mountDir, args[1])) // #nosec G304
+			if cerr != nil {
+				fmt.Println("ERR:" + cerr.Error())
+				continue
+			}
+			cd, cderr := os.Create(filepath.Join(mountDir, args[2])) // #nosec G304
+			if cderr != nil {
+				cs.Close()
+				fmt.Println("ERR:" + cderr.Error())
+				continue
+			}
+			_, cerr = io.Copy(cd, cs)
+			cs.Close()
+			if cclose := cd.Close(); cerr == nil {
+				cerr = cclose
+			}
+			if cerr != nil {
+				fmt.Println("ERR:" + cerr.Error())
+			} else {
+				fmt.Println("OK")
+			}
 
 		case "exec_sh":
 			// exec_sh <dir-relative-to-mount> <shell-command-line>
