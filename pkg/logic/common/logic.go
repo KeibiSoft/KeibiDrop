@@ -255,7 +255,7 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		// Partial file exists at expected size. Try loading bitmap.
 		if bm, loadErr := filesystem.LoadChunkBitmap(bitmapPath, int64(fileSize)); loadErr == nil {
 			bitmap = bm
-			f, err = os.OpenFile(localPath, os.O_WRONLY, 0644)
+			f, err = filesystem.OpenShared(localPath, os.O_WRONLY, 0644)
 			if err != nil {
 				logger.Error("Failed to open partial file for resume", "error", err)
 				return err
@@ -265,8 +265,10 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	}
 
 	if bitmap == nil {
-		// Fresh download.
-		f, err = os.Create(localPath)
+		// Fresh download. OpenShared: this handle lives for the whole
+		// transfer, and without delete sharing it blocks rename/unlink of
+		// the file on Windows.
+		f, err = filesystem.OpenShared(localPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
 			logger.Error("Failed to create local file", "error", err)
 			return err
@@ -369,7 +371,9 @@ func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize,
 	}
 
 	bitmapPath := filesystem.BitmapPath(localPath)
-	f, err := os.Create(localPath)
+	// OpenShared: the transfer-long handle must not block rename/unlink on
+	// Windows (no delete sharing in plain os.Create).
+	f, err := filesystem.OpenShared(localPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}

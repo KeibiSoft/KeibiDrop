@@ -318,7 +318,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				if err := os.MkdirAll(filepath.Dir(newDiskPath), 0o755); err != nil {
 					logger.Warn("Failed to create dirs for rename", "error", err)
 				}
-				if err := os.Rename(oldDiskPath, newDiskPath); err != nil {
+				if err := filesystem.RenameShared(oldDiskPath, newDiskPath); err != nil {
 					// Not fatal — file may not exist yet (prefetch still in progress),
 					// or prefetch deferred cleanup already moved it.
 					if !os.IsNotExist(err) {

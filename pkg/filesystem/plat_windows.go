@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -36,27 +37,78 @@ func platUnlink(path string) error {
 // FileRenameInfoEx + POSIX_SEMANTICS can (Win10+, NTFS); older systems fall
 // back to os.Rename.
 func platRename(oldpath, newpath string) error {
+	werr := tryPosixRename(oldpath, newpath)
+	if werr == nil {
+		return nil
+	}
+	if rerr := os.Rename(oldpath, newpath); rerr == nil {
+		return nil
+	}
+	// Last resort for the CACHE layer: some handle without delete sharing
+	// pins the involved file (Go's own opens pass none). Copy the bytes to
+	// the new name and retire the old name; identity above the cache lives
+	// in the maps, so a briefly-lingering old cache file is invisible and
+	// harmless, while failing the rename breaks the app's save.
+	srcInfo, statErr := os.Stat(oldpath)
+	in, ierr := platOpen(oldpath, syscall.O_RDONLY, 0)
+	if ierr != nil {
+		return fmt.Errorf("%w (posix-semantics rename)", werr)
+	}
+	out, oerr := platOpen(newpath, syscall.O_CREAT|syscall.O_TRUNC|syscall.O_WRONLY, 0644)
+	if oerr != nil {
+		_ = platClose(in)
+		return fmt.Errorf("%w (posix-semantics rename; copy-open: %v)", werr, oerr)
+	}
+	bufc := make([]byte, 1<<20)
+	var off int64
+	for {
+		n, rerr2 := platPread(in, bufc, off)
+		if n > 0 {
+			if _, werr2 := platPwrite(out, bufc[:n], off); werr2 != nil {
+				_ = platClose(in)
+				_ = platClose(out)
+				return fmt.Errorf("%w (copy-fallback write: %v)", werr, werr2)
+			}
+			off += int64(n)
+		}
+		if rerr2 != nil || n == 0 {
+			break
+		}
+	}
+	_ = platClose(in)
+	_ = platClose(out)
+	// A rename PRESERVES the mtime; the copy above stamped a fresh one. A
+	// fresh stamp raises the swapped file's identity above a concurrent
+	// writer's and turns the conflict crossing into a mutual reject.
+	if statErr == nil {
+		_ = os.Chtimes(newpath, srcInfo.ModTime(), srcInfo.ModTime())
+	}
+	go func() {
+		for i := 0; i < 40; i++ {
+			if os.Remove(oldpath) == nil {
+				return
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	}()
+	return nil
+}
+
+// tryPosixRename renames via FileRenameInfoEx + POSIX_SEMANTICS (Win10+,
+// NTFS), which replaces open-with-delete-sharing targets that MoveFileEx
+// refuses. Transient non-sharing holders (Go's own opens) get a bounded retry.
+func tryPosixRename(oldpath, newpath string) error {
 	const (
 		fileRenameFlagReplaceIfExists = 0x1
 		fileRenameFlagPosixSemantics  = 0x2
 	)
 	op, err := syscall.UTF16PtrFromString(oldpath)
 	if err != nil {
-		return os.Rename(oldpath, newpath)
+		return err
 	}
-	h, err := syscall.CreateFile(op, windows.DELETE,
-		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
-		nil, syscall.OPEN_EXISTING, syscall.FILE_FLAG_BACKUP_SEMANTICS, 0)
-	if err != nil {
-		return os.Rename(oldpath, newpath)
-	}
-	defer syscall.CloseHandle(h) //nolint:errcheck // read-only handle close
-
-	// NT namespace form: with RootDirectory NULL the name must be a full
-	// path, and the \??\ prefix is the form the kernel accepts unambiguously.
 	name, err := windows.UTF16FromString(`\??\` + newpath)
 	if err != nil {
-		return os.Rename(oldpath, newpath)
+		return err
 	}
 	nameBytes := (len(name) - 1) * 2 // exclude the terminating NUL
 	// FILE_RENAME_INFO layout (64-bit): Flags(4) pad(4) RootDirectory(8)
@@ -68,24 +120,33 @@ func platRename(oldpath, newpath string) error {
 	for i, u := range name[:len(name)-1] {
 		binary.LittleEndian.PutUint16(buf[20+i*2:], u)
 	}
-	// Transient handles without delete sharing (Go's own opens lack
-	// FILE_SHARE_DELETE) surface as sharing violations for a few ms; retry
-	// briefly before giving up. Rename is not on a latency-critical path.
 	var werr error
 	for i := 0; i < 40; i++ {
-		werr = windows.SetFileInformationByHandle(windows.Handle(h), windows.FileRenameInfoEx, &buf[0], uint32(len(buf)))
-		if werr == nil {
-			return nil
+		h, herr := syscall.CreateFile(op, windows.DELETE,
+			syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+			nil, syscall.OPEN_EXISTING, syscall.FILE_FLAG_BACKUP_SEMANTICS, 0)
+		if herr != nil {
+			// The SOURCE itself can be pinned without delete sharing; that
+			// also resolves when the transient holder closes.
+			werr = herr
+		} else {
+			werr = windows.SetFileInformationByHandle(windows.Handle(h), windows.FileRenameInfoEx, &buf[0], uint32(len(buf)))
+			_ = syscall.CloseHandle(h)
+			if werr == nil {
+				return nil
+			}
 		}
 		if !errors.Is(werr, windows.ERROR_SHARING_VIOLATION) && !errors.Is(werr, windows.ERROR_ACCESS_DENIED) {
-			break
+			return werr
+		}
+		if i == 0 && fuseOpLog {
+			// Async: names this process's handles on the contended file.
+			dumpHandlesFor(filepath.Base(oldpath))
+			dumpHandlesFor(filepath.Base(newpath))
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	if rerr := os.Rename(oldpath, newpath); rerr != nil {
-		return fmt.Errorf("%w (posix-semantics rename: %v)", rerr, werr)
-	}
-	return nil
+	return werr
 }
 
 func platOpen(path string, flags int, mode uint32) (int, error) {

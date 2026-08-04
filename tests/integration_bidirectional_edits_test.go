@@ -163,15 +163,25 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 	if runtime.GOOS == "linux" {
 		md5cmd = "md5sum"
 	}
+	// A missing or unreadable file is NOT fatal here: rename/announce
+	// re-keying can leave a sub-second visibility gap, and convergence is an
+	// eventually property — waitConverged keeps polling. The sentinel embeds
+	// the peer, so two absent reads never compare equal.
 	fileMd5 := func(t *testing.T, p *testPeer, rel string) string {
 		t.Helper()
 		if useVerbs {
 			resp := p.send(t, "md5 "+rel, 60*time.Second)
-			require.True(strings.HasPrefix(resp, "MD5:"), "md5 failed: %s", resp)
+			if !strings.HasPrefix(resp, "MD5:") {
+				return fmt.Sprintf("absent:%p", p)
+			}
 			return strings.TrimPrefix(resp, "MD5:")
 		}
-		out := ex(t, p, ".", md5cmd+" "+rel, 30*time.Second)
-		return strings.Fields(out)[0]
+		resp := p.send(t, "exec . "+md5cmd+" "+rel, 30*time.Second)
+		fields := strings.Fields(strings.TrimPrefix(resp, "EXEC:0:"))
+		if !strings.HasPrefix(resp, "EXEC:0:") || len(fields) == 0 {
+			return fmt.Sprintf("absent:%p", p)
+		}
+		return fields[0]
 	}
 
 	// waitConverged polls BOTH mounts until the reader's md5 equals the owner's.
