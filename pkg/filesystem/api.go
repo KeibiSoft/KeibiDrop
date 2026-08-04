@@ -353,3 +353,39 @@ func (fs *FS) drainInFlightOperations() {
 
 	fs.logger.Warn("FUSE drainInFlightOperations completed")
 }
+
+// OpenShared opens path with FILE_SHARE_DELETE on Windows so a long-lived
+// writer handle does not block rename or unlink of the file (plain os.OpenFile
+// passes no delete sharing). Unix behaves like os.OpenFile.
+func OpenShared(path string, flags int, mode uint32) (*os.File, error) {
+	fd, err := platOpen(path, flags, mode)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), path), nil
+}
+
+// PendingAnnounceSuperseded reports that path's queued ADD announce describes
+// bytes whose authority was lost to an acceptance: no open edit session and
+// LocalNewer cleared. The CancelPendingNotify fast path usually wins the race;
+// this state check closes it when the flush fires first (CI-speed runners
+// bounced the peer's own bytes back as a newer edit and diverged).
+func (d *Dir) PendingAnnounceSuperseded(path string) bool {
+	d.AfmLock.RLock()
+	f := d.AllFileMap[path]
+	d.AfmLock.RUnlock()
+	if f == nil {
+		return false
+	}
+	f.metaMu.RLock()
+	defer f.metaMu.RUnlock()
+	return !f.LocalNewer && !f.NotRemoteSynced
+}
+
+// RenameShared renames with the platform strategy platRename implements:
+// POSIX-semantics replace plus copy fallback on Windows, plain rename on
+// unix. Receive-path disk moves need it for the same reason the FUSE Rename
+// does — pinned cache handles.
+func RenameShared(oldpath, newpath string) error {
+	return platRename(oldpath, newpath)
+}

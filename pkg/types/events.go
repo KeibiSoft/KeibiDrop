@@ -30,6 +30,12 @@ const (
 	EditFile
 	RenameFile
 	RenameDir
+	// CancelPendingNotify never reaches the wire: it tells the notify worker
+	// to drop a queued ADD/EDIT for the path. Emitted when an acceptance
+	// replaces local content — the queued announce describes bytes that no
+	// longer exist, and its flush-time attr refresh would stamp the PEER'S
+	// content with a fresh local mtime and bounce it back as "newer".
+	CancelPendingNotify
 )
 
 // FileEvent represents a filesystem change
@@ -38,6 +44,9 @@ type FileEvent struct {
 	OldPath string // Source path for renames.
 	Action  FileAction
 	Attr    *keibidrop.Attr // File attributes from Stat_t.
+	// BaseMtimeNs is the newest peer version the sender accepted when the edit
+	// session started. 0 means unknown; the receiver then keeps no conflict copy.
+	BaseMtimeNs int64
 }
 
 // FileStreamProvider is a factory for RemoteFileStream and StreamFile.

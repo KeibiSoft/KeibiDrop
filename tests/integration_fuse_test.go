@@ -80,20 +80,8 @@ func waitForFUSEMount(t *testing.T, dir string, timeout time.Duration) {
 		}, "waiting for FUSE mount at: "+dir)
 		return
 	}
-	WaitForCondition(t, timeout, 500*time.Millisecond, func() bool {
-		out, err := exec.Command("mount").Output()
-		if err != nil {
-			return false
-		}
-		mounts := string(out)
-		// On macOS, /var resolves to /private/var in mount output
-		if strings.Contains(mounts, dir) {
-			return true
-		}
-		if runtime.GOOS == "darwin" && strings.HasPrefix(dir, "/var/") {
-			return strings.Contains(mounts, "/private"+dir)
-		}
-		return false
+	WaitForCondition(t, timeout, 200*time.Millisecond, func() bool {
+		return isFUSEMounted(dir)
 	}, "waiting for FUSE mount at: "+dir)
 }
 

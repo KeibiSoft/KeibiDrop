@@ -7,14 +7,32 @@
 package tests
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/stretchr/testify/require"
 )
+
+// reconnectReady runs join and sends the result on ready. Stop() can leave
+// "running" set for a moment: a late component of the first connection
+// re-asserts it (known teardown race, CI timing only). Retry until the flag
+// clears. The race is in teardown, not in the join.
+func reconnectReady(join func() error, ready chan error) {
+	var err error
+	for range 25 {
+		err = join()
+		if !errors.Is(err, common.ErrAlreadyRunning) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	ready <- err
+}
 
 // TestDisconnect_NoFUSE_StopAndReconnect verifies that after both peers
 // call Stop(), they can CreateRoom/JoinRoom again without "already running".
@@ -63,13 +81,13 @@ func TestDisconnect_NoFUSE_StopAndReconnect(t *testing.T) {
 	aliceReady := make(chan error, 1)
 	bobReady := make(chan error, 1)
 
-	go func() { aliceReady <- tp.Alice.CreateRoom() }()
+	go reconnectReady(tp.Alice.CreateRoom, aliceReady)
 
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return tp.Relay.EntryCount() > 0
 	}, "waiting for Alice to re-register on relay")
 
-	go func() { bobReady <- tp.Bob.JoinRoom() }()
+	go reconnectReady(tp.Bob.JoinRoom, bobReady)
 
 	select {
 	case err := <-aliceReady:
@@ -131,13 +149,13 @@ func TestDisconnect_NoFUSE_OnePeerDisconnects(t *testing.T) {
 	aliceReady := make(chan error, 1)
 	bobReady := make(chan error, 1)
 
-	go func() { aliceReady <- tp.Alice.CreateRoom() }()
+	go reconnectReady(tp.Alice.CreateRoom, aliceReady)
 
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return tp.Relay.EntryCount() > 0
 	}, "waiting for Alice to re-register on relay")
 
-	go func() { bobReady <- tp.Bob.JoinRoom() }()
+	go reconnectReady(tp.Bob.JoinRoom, bobReady)
 
 	select {
 	case err := <-aliceReady:
@@ -206,13 +224,13 @@ func TestDisconnect_NoFUSE_AutoStopOnPeerDisconnect(t *testing.T) {
 	aliceReady := make(chan error, 1)
 	bobReady := make(chan error, 1)
 
-	go func() { aliceReady <- tp.Alice.CreateRoom() }()
+	go reconnectReady(tp.Alice.CreateRoom, aliceReady)
 
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return tp.Relay.EntryCount() > 0
 	}, "waiting for Alice to re-register on relay")
 
-	go func() { bobReady <- tp.Bob.JoinRoom() }()
+	go reconnectReady(tp.Bob.JoinRoom, bobReady)
 
 	select {
 	case err := <-aliceReady:

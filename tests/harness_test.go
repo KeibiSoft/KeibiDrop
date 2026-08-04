@@ -267,6 +267,14 @@ func forceUnmount(dir string) {
 		if exec.Command("fusermount", "-u", dir).Run() == nil { //nolint:errcheck,gosec // best-effort cleanup
 			return
 		}
+		// Lazy detach: a busy or wedged mount otherwise leaves the path
+		// hanging every later toucher (stat blocks in the kernel).
+		if exec.Command("fusermount3", "-uz", dir).Run() == nil { //nolint:errcheck,gosec // best-effort cleanup
+			return
+		}
+		if exec.Command("fusermount", "-uz", dir).Run() == nil { //nolint:errcheck,gosec // best-effort cleanup
+			return
+		}
 		exec.Command("/sbin/umount", "-f", dir).Run() //nolint:errcheck,gosec // best-effort cleanup
 	default: // darwin and others
 		exec.Command("/sbin/umount", "-f", dir).Run() //nolint:errcheck,gosec // best-effort cleanup
@@ -275,37 +283,51 @@ func forceUnmount(dir string) {
 
 // waitForUnmount polls until the given directory no longer appears as a mount point.
 // Handles macOS symlink resolution (/var -> /private/var).
+// isFUSEMounted reports whether dir is a live mount point: its device id
+// differs from its parent's. Touches only the two paths. A mount-table walk
+// (`mount`) blocks on ANY wedged mount in the system, so one zombie mount
+// poisoned every later test run; this cannot.
+// newMountPoint returns a mountpoint path for a spawned peer. Unix FUSE
+// needs the directory to exist; WinFsp requires it to NOT exist (the dir
+// materializes at mount time and vanishes at unmount).
+func newMountPoint(t *testing.T) string {
+	t.Helper()
+	mp := filepath.Join(t.TempDir(), "mnt")
+	if runtime.GOOS != "windows" {
+		require.NoError(t, os.MkdirAll(mp, 0o755))
+	}
+	return mp
+}
+
+func isFUSEMounted(dir string) bool {
+	// Linux: never stat the mountpoint — stat on a wedged FUSE mount blocks
+	// in the kernel (soak captures show cleanup stuck in fstatat for 20 m).
+	// /proc/self/mounts touches only procfs.
+	if runtime.GOOS == "linux" {
+		data, err := os.ReadFile("/proc/self/mounts")
+		if err != nil {
+			return false
+		}
+		clean := filepath.Clean(dir)
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[1] == clean {
+				return true
+			}
+		}
+		return false
+	}
+	return isMountedDevStat(dir)
+}
+
 func waitForUnmount(dir string, timeout time.Duration) {
 	// Windows: WinFSP unmounts synchronously via host.Unmount(); no polling needed.
 	if runtime.GOOS == "windows" {
 		return
 	}
-
-	// Build list of path variants to check in mount output.
-	// On macOS, /var is a symlink to /private/var, but `mount` uses /private/var.
-	checks := []string{dir}
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != dir {
-		checks = append(checks, resolved)
-	}
-	if runtime.GOOS == "darwin" && strings.HasPrefix(dir, "/var/") {
-		checks = append(checks, "/private"+dir)
-	}
-
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		out, err := exec.Command("mount").Output()
-		if err != nil {
-			return
-		}
-		mounts := string(out)
-		found := false
-		for _, check := range checks {
-			if strings.Contains(mounts, check) {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !isFUSEMounted(dir) {
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -354,15 +376,24 @@ func WaitForFileAbsent(t *testing.T, path string, timeout time.Duration) {
 	}, "waiting for file removal at: "+path)
 }
 
-// getFreePortInRange finds an available TCP6 port within [low, high].
+// getFreePortInRange finds an available TCP port within [low, high].
+// A tcp6-only probe sets V6ONLY and misses IPv4 holders (a daemon on
+// 127.0.0.1 kept passing the probe, then the peer under test collided).
+// The dual-stack wildcard bind conflicts with any listener on the port;
+// the explicit v4-loopback bind covers v6only-configured hosts.
 func getFreePortInRange(t *testing.T, low, high int) int {
 	t.Helper()
 	for port := low; port <= high; port++ {
-		ln, err := net.Listen("tcp6", fmt.Sprintf("[::]:%d", port))
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		if err != nil {
 			continue // port in use
 		}
 		ln.Close()
+		ln4, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			continue // port in use
+		}
+		ln4.Close()
 		return port
 	}
 	t.Fatalf("no free port found in range [%d, %d]", low, high)

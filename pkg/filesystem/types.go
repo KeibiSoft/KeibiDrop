@@ -230,6 +230,31 @@ type File struct {
 
 	HadEdits bool
 
+	// RemoteMtimeNs is the newest peer-announced mtime (UnixNano). Only
+	// notifications set it, under RemoteFilesLock. Local ops overwrite
+	// stat.Mtim and must not join the staleness comparison.
+	RemoteMtimeNs int64
+
+	// EditBaseMtimeNs is max(HeldMtimeNs, LastAnnouncedMtimeNs), snapshotted
+	// at the first dirtying op of an edit session under metaMu. The announce
+	// carries it so the receiver can prove a concurrent edit: a base below the
+	// version the receiver holds means the edit never saw that version.
+	EditBaseMtimeNs int64
+
+	// HeldMtimeNs is the newest version stamp whose BYTES are materialized
+	// locally: own announces, landed fetches, and the startup scan raise it;
+	// a metadata-only accept does not. The session base uses it, so an
+	// announce can never claim a version this peer never held. Model v3
+	// proves the rule: a blind overwrite then loses the base comparison and
+	// the receiver preserves the only copy of the victim bytes.
+	HeldMtimeNs int64
+
+	// LastAnnouncedMtimeNs is the mtime of our newest announce for this file,
+	// guarded by metaMu. RemoteMtimeNs records only the peer's announcements,
+	// so without this an owner-side base degrades to unknown and a conflict on
+	// its own file cannot be proved.
+	LastAnnouncedMtimeNs int64
+
 	// WasTruncatedToZero records an explicit Truncate(size=0) call. With
 	// HadEdits, it separates legitimate empty files from transient states.
 	WasTruncatedToZero bool

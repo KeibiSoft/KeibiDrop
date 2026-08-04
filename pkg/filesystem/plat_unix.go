@@ -8,6 +8,7 @@
 package filesystem
 
 import (
+	"os"
 	"syscall"
 
 	winfuse "github.com/winfsp/cgofuse/fuse"
@@ -22,6 +23,10 @@ func platTruncate(path string, size int64) error {
 
 func platUnlink(path string) error {
 	return syscall.Unlink(path)
+}
+
+func platRename(oldpath, newpath string) error {
+	return os.Rename(oldpath, newpath)
 }
 
 func platOpen(path string, flags int, mode uint32) (int, error) {

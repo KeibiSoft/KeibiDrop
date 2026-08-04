@@ -20,6 +20,34 @@ import (
 	"time"
 )
 
+// pickFreePortPair returns a base port with base and base+1 free.
+// Test hosts run production listeners in the 267xx range; probe
+// wildcard and v4 loopback so busy ports are skipped.
+func pickFreePortPair(t *testing.T) int {
+	t.Helper()
+	for base := 26700; base < 26900; base += 2 {
+		if portFree(base) && portFree(base+1) {
+			return base
+		}
+	}
+	t.Fatal("no free port pair in 26700-26900")
+	return 0
+}
+
+func portFree(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	ln4, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+	ln4.Close()
+	return true
+}
+
 // TestListenerAcceptsIPv4 verifies the listener is dual-stack and accepts IPv4.
 // Regression test: a previous change switched to tcp6 which broke bridge relay
 // on devices without IPv6 (gRPC loopback uses 127.0.0.1 on some platforms).
@@ -29,20 +57,21 @@ func TestListenerAcceptsIPv4(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, 26700, 26701, "", t.TempDir(), false, false, "::1")
+	port := pickFreePortPair(t)
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
 	if err != nil {
 		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
 	}
 
 	// Try connecting via IPv4 loopback
-	conn, err := net.Dial("tcp4", fmt.Sprintf("127.0.0.1:%d", 26700))
+	conn, err := net.Dial("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		t.Fatalf("IPv4 connection to listener failed: %v (listener must be dual-stack 'tcp', not 'tcp6')", err)
 	}
 	conn.Close()
 
 	// Try connecting via IPv6 loopback
-	conn6, err := net.Dial("tcp6", fmt.Sprintf("[::1]:%d", 26700))
+	conn6, err := net.Dial("tcp6", fmt.Sprintf("[::1]:%d", port))
 	if err != nil {
 		t.Fatalf("IPv6 connection to listener failed: %v", err)
 	}
@@ -67,7 +96,8 @@ func TestLANAddressesSkippedInInternetMode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, 26702, 26703, "", t.TempDir(), false, false, "::1")
+	port := pickFreePortPair(t)
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
 	if err != nil {
 		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
 	}
@@ -99,8 +129,8 @@ func TestListenerClosedOnBridgeFallback(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	const port = 26704
-	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, 26705, "", t.TempDir(), false, false, "::1")
+	port := pickFreePortPair(t)
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
 	if err != nil {
 		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
 	}
@@ -150,7 +180,8 @@ func TestAcceptDeadlineExitsOnTimeout(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, 26706, 26707, "", t.TempDir(), false, false, "::1")
+	port := pickFreePortPair(t)
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
 	if err != nil {
 		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
 	}

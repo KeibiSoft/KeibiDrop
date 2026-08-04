@@ -164,7 +164,7 @@ The 12-byte AEAD nonce is structured: a 4-byte direction prefix, a 2-byte key ep
 
 ## Relay Privacy
 
-The relay server is designed to be a **blind intermediary** that cannot read peer metadata. Registration data (fingerprints, public keys, connection hints) is encrypted before being sent to the relay.
+The relay server is designed to be a **blind intermediary** that cannot read the registration data peers store in it. Registration data (fingerprints, public keys, connection hints) is encrypted before being sent to the relay. Connection-level metadata is a separate matter and is covered in [Relay Storage Model](#relay-storage-model) below.
 
 ### Key Derivation for Relay Privacy
 
@@ -182,9 +182,17 @@ The relay stores: `lookup_key -> encrypted_blob`
 The relay **cannot**:
 - Decode the lookup key back to the fingerprint
 - Read the contents of the encrypted blob
-- Learn peer fingerprints, public keys, or IP addresses
+- Learn peer fingerprints, public keys, or the IP and port a peer advertises
 
 Only peers with the shared fingerprint (exchanged out-of-band) can derive the correct keys to fetch and decrypt the registration.
+
+The relay **does** observe, because it is an HTTP endpoint and no amount of blob encryption hides the connection that carries it:
+- That some party registered or fetched a given lookup key, and when
+- The source IP of that request, plus its size and timing
+
+The lookup key is opaque, so the relay cannot name the peers behind a room. It can see that two source addresses used the same lookup key inside a short window, which is enough to infer that those two addresses are talking to each other. Peers who need that inference blocked must put Tor or a VPN in front of the relay; the protocol does not remove it.
+
+Note the distinction the bullets above draw: the IP and port a peer *advertises* for direct connection travel inside the encrypted blob and stay hidden, while the IP a peer *connects from* is visible to the relay by construction. These are different values and only the first is protected.
 
 ---
 

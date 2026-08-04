@@ -12,6 +12,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/md5" // #nosec G501 -- convergence checks, not security
+	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -20,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -61,11 +64,23 @@ func main() {
 	// prefetchOnOpen honors KEIBIDROP_PREFETCH_ON_OPEN (default off = on-demand) so
 	// benchmarks can compare the on-demand vs push/prefetch read paths.
 	prefetchOnOpen := os.Getenv("KEIBIDROP_PREFETCH_ON_OPEN") == "1"
+	// LOCAL_IPV6 sets the address this peer advertises, as the product's
+	// network probe does. The default keeps the loopback behavior of the
+	// integration suite. The peer's address always comes from the relay.
+	localIP := os.Getenv("LOCAL_IPV6")
+	if localIP == "" {
+		localIP = "::1"
+	}
 	kd, err := common.NewKeibiDropWithIP(ctx, logger, useFUSE, parsed,
-		inbound, outbound, mountDir, saveDir, prefetchOnOpen, false, "::1")
+		inbound, outbound, mountDir, saveDir, prefetchOnOpen, false, localIP)
 	if err != nil {
 		fmt.Println("ERR:init failed: " + err.Error())
 		os.Exit(1)
+	}
+	// BRIDGE_ADDR enables the relay-bridge fallback when a direct accept
+	// cannot succeed (NAT on one side).
+	if b := os.Getenv("BRIDGE_ADDR"); b != "" {
+		kd.BridgeAddr = b
 	}
 	// live_collab toggle: when set, enable macFUSE auto_cache so a peer's
 	// same-size in-place edit is seen live (at the cost of mmap-write integrity).
@@ -262,8 +277,19 @@ func main() {
 				continue
 			}
 			dir := filepath.Join(mountDir, args[1])
-			cmd := exec.Command(args[2], args[3:]...) // #nosec G204 -- test harness, args from stdin
-			cmd.Dir = dir
+			// cd AFTER execve, never via cmd.Dir: Go chdirs in the vfork
+			// child BEFORE exec, inside OUR OWN mount. The vfork parent
+			// keeps its P with preemption off; when a GC stop-the-world
+			// is in flight the chdir's FUSE request is never served and
+			// the whole peer freezes (core.4785 thread 16).
+			var cmd *exec.Cmd
+			if runtime.GOOS == "windows" {
+				cmd = exec.Command(args[2], args[3:]...) // #nosec G204 -- test harness, args from stdin
+				cmd.Dir = dir
+			} else {
+				shArgs := append([]string{"-c", `cd "$0" && exec "$@"`, dir}, args[2:]...)
+				cmd = exec.Command("sh", shArgs...) // #nosec G204 G702 -- test harness, args from stdin
+			}
 			out, err := cmd.CombinedOutput()
 			exitCode := 0
 			if err != nil {
@@ -274,6 +300,157 @@ func main() {
 				}
 			}
 			// Replace newlines with \n literal for single-line protocol
+			escaped := strings.ReplaceAll(strings.TrimRight(string(out), "\n"), "\n", "\\n")
+			fmt.Printf("EXEC:%d:%s\n", exitCode, escaped)
+
+		case "dlbytes":
+			// dlbytes <rel> — bytes fetched from the peer for a tracked file.
+			// Reads Download.BytesDownloaded; 0 when untracked.
+			if len(args) < 2 {
+				fmt.Println("ERR:usage: dlbytes <rel>")
+				continue
+			}
+			rel := "/" + strings.TrimPrefix(args[1], "/")
+			var n uint64
+			if kd.FS != nil && kd.FS.Root != nil {
+				kd.FS.Root.RemoteFilesLock.RLock()
+				if f, ok := kd.FS.Root.RemoteFiles[rel]; ok {
+					n = f.Download.BytesDownloaded.Load()
+				}
+				kd.FS.Root.RemoteFilesLock.RUnlock()
+			}
+			fmt.Printf("DLBYTES:%d\n", n)
+
+		case "md5":
+			// md5 <rel> — hash the file through our own mount (Windows has
+			// no md5sum; verbs drive the same FUSE surface as the shell).
+			if len(args) < 2 {
+				fmt.Println("ERR:usage: md5 <rel>")
+				continue
+			}
+			mf, merr := os.Open(filepath.Join(mountDir, args[1])) // #nosec G304
+			if merr != nil {
+				fmt.Println("ERR:" + merr.Error())
+				continue
+			}
+			mh := md5.New() // #nosec G401 -- convergence check, not security
+			_, merr = io.Copy(mh, mf)
+			mf.Close()
+			if merr != nil {
+				fmt.Println("ERR:" + merr.Error())
+				continue
+			}
+			fmt.Printf("MD5:%x\n", mh.Sum(nil))
+
+		case "write_rand":
+			// write_rand <rel> <bytes> — random content through the mount
+			// (dd if=/dev/urandom replacement).
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: write_rand <rel> <bytes>")
+				continue
+			}
+			wn, werr := strconv.Atoi(args[2])
+			if werr != nil || wn < 0 {
+				fmt.Println("ERR:bad byte count")
+				continue
+			}
+			wbuf := make([]byte, wn)
+			_, _ = crand.Read(wbuf)
+			if err := os.WriteFile(filepath.Join(mountDir, args[1]), wbuf, 0644); err != nil { //nolint:gosec // G306: shared file needs read access
+				fmt.Println("ERR:" + err.Error())
+			} else {
+				fmt.Println("OK")
+			}
+
+		case "write_rand_at":
+			// write_rand_at <rel> <offset> <bytes> — random overwrite at an
+			// offset, size preserved (dd conv=notrunc replacement).
+			if len(args) < 4 {
+				fmt.Println("ERR:usage: write_rand_at <rel> <offset> <bytes>")
+				continue
+			}
+			woff, _ := strconv.ParseInt(args[2], 10, 64)
+			wan, waerr := strconv.Atoi(args[3])
+			if waerr != nil || wan < 0 {
+				fmt.Println("ERR:bad byte count")
+				continue
+			}
+			wf, wferr := os.OpenFile(filepath.Join(mountDir, args[1]), os.O_WRONLY, 0644) // #nosec G304
+			if wferr != nil {
+				fmt.Println("ERR:" + wferr.Error())
+				continue
+			}
+			wabuf := make([]byte, wan)
+			_, _ = crand.Read(wabuf)
+			_, wferr = wf.WriteAt(wabuf, woff)
+			wf.Close()
+			if wferr != nil {
+				fmt.Println("ERR:" + wferr.Error())
+			} else {
+				fmt.Println("OK")
+			}
+
+		case "rename":
+			// rename <old> <new> — rename inside the mount (mv -f replacement).
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: rename <old> <new>")
+				continue
+			}
+			if err := os.Rename(filepath.Join(mountDir, args[1]), filepath.Join(mountDir, args[2])); err != nil {
+				fmt.Println("ERR:" + err.Error())
+			} else {
+				fmt.Println("OK")
+			}
+
+		case "copy":
+			// copy <src> <dst> — byte copy through the mount (cp replacement).
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: copy <src> <dst>")
+				continue
+			}
+			cs, cerr := os.Open(filepath.Join(mountDir, args[1])) // #nosec G304
+			if cerr != nil {
+				fmt.Println("ERR:" + cerr.Error())
+				continue
+			}
+			cd, cderr := os.Create(filepath.Join(mountDir, args[2])) // #nosec G304
+			if cderr != nil {
+				cs.Close()
+				fmt.Println("ERR:" + cderr.Error())
+				continue
+			}
+			_, cerr = io.Copy(cd, cs)
+			cs.Close()
+			if cclose := cd.Close(); cerr == nil {
+				cerr = cclose
+			}
+			if cerr != nil {
+				fmt.Println("ERR:" + cerr.Error())
+			} else {
+				fmt.Println("OK")
+			}
+
+		case "exec_sh":
+			// exec_sh <dir-relative-to-mount> <shell-command-line>
+			// The line runs through sh -c, so quotes and parens survive
+			// (gimp script-fu batch lines break under space-splitting exec).
+			if len(args) < 3 {
+				fmt.Println("ERR:usage: exec_sh <dir> <command-line>")
+				continue
+			}
+			dir := filepath.Join(mountDir, args[1])
+			cmdline := strings.Join(args[2:], " ")
+			// Same vfork hazard as "exec": cd inside the shell, not cmd.Dir.
+			cmd := exec.Command("sh", "-c", fmt.Sprintf("cd %q && { %s; }", dir, cmdline)) // #nosec G204 G702 -- test harness, args from stdin
+			out, err := cmd.CombinedOutput()
+			exitCode := 0
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					exitCode = exitErr.ExitCode()
+				} else {
+					exitCode = -1
+				}
+			}
 			escaped := strings.ReplaceAll(strings.TrimRight(string(out), "\n"), "\n", "\\n")
 			fmt.Printf("EXEC:%d:%s\n", exitCode, escaped)
 

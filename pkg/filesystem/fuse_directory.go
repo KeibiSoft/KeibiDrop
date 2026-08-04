@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -286,6 +287,10 @@ func shouldPrefetchOnOpen(prefetchOnOpen bool, autoMB int, size uint64) bool {
 // (git's "index", pijul's "pristine/db").
 var vcsMetaDirs = []string{".git/", ".pijul/"}
 
+// fuseOpLog enables per-op experiment logging (KD_FUSE_OPLOG=1). High volume,
+// off by default.
+var fuseOpLog = os.Getenv("KD_FUSE_OPLOG") == "1"
+
 // shouldUseDirectIo reports whether a file must bypass the kernel page cache.
 // True for files that need real-time sync (write access, not VCS metadata).
 // False for VCS metadata (mmap must work) and for mmap-dependent files
@@ -316,6 +321,13 @@ func shouldUseDirectIo(path string, flags int) bool {
 		return true
 	}
 
+	// Windows: WinFsp's cache manager otherwise serves stale bytes after an
+	// accepted remote update, because reads never reach this layer again.
+	// Remote visibility beats read caching. The mmap carve-outs above apply.
+	if runtime.GOOS == "windows" {
+		return true
+	}
+
 	// Read-only: allow the page cache.
 	return false
 }
@@ -334,6 +346,11 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 	// because the "create" semantics are implicit in the call itself.
 	// Ensure O_CREAT is set so platOpen actually creates the file.
 	flags |= syscall.O_CREAT
+	// The fd is the backing cache handle, not the client's handle: open it
+	// RDWR regardless of client access mode (the OpenEx localize path does
+	// the same). A read-only fd fails Write on Windows with EACCES, which
+	// the EBADF fallback does not catch; on unix it costs a reopen per write.
+	flags = (flags &^ winfuse.O_ACCMODE) | syscall.O_RDWR
 	// accessMode := flags & winfuse.O_ACCMODE
 	// logger.Info("CreateEx called", "flags", flags, "accessMode", accessMode, "mode", mode)
 
@@ -376,6 +393,9 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 		NotRemoteSynced: true,
 		IsLocalPresent:  true,
 		LocalNewer:      true,
+		// A fresh create has no prior peer version. -1 is a REAL base (unlike
+		// 0 = unknown): a concurrent same-name create on the peer is provable.
+		EditBaseMtimeNs: -1,
 	}
 
 	if stgo, statErr := platLstat(localPath); statErr == nil {
@@ -400,6 +420,9 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 
 // OpenEx implements FileSystemOpenEx interface for per-file direct_io control.
 func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
+	if fuseOpLog {
+		d.logger.Debug("oplog OpenEx", "path", path, "flags", fi.Flags)
+	}
 	defer d.recoverPanic("OpenEx", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
@@ -624,6 +647,20 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fh.openFileCounter.Open()
 		fh.metaMu.Lock()
 		fh.IsLocalPresent = true
+		if !fh.NotRemoteSynced {
+			// The base declares the newest version whose bytes this session
+			// could have seen. HeldMtimeNs, not the metadata watermark: an
+			// accepted announce with no fetch must not raise the base
+			// (model v3, blind-overwrite preservation).
+			fh.EditBaseMtimeNs = max(fh.HeldMtimeNs, fh.LastAnnouncedMtimeNs)
+			if fh.EditBaseMtimeNs == 0 && fh.RemoteMtimeNs > 0 {
+				// A peer version exists and this peer never held any bytes:
+				// the session starts from no prior content, the same class
+				// as a fresh create. Base 0 would read as unknown and skip
+				// preservation.
+				fh.EditBaseMtimeNs = -1
+			}
+		}
 		fh.NotRemoteSynced = true
 		fh.metaMu.Unlock()
 		handleID := allocHandleID()
@@ -695,15 +732,19 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 			logger.Error("Failed to open stream pool", "error", err)
 			return -winfuse.EACCES
 		}
-		// Open persistent cache FD for on-demand writes (avoids open/close per chunk).
-		cacheFD, err = os.OpenFile(localPath, os.O_CREATE|os.O_WRONLY, 0600)
-		if err != nil {
+		// Open persistent cache FD for on-demand writes (avoids open/close per
+		// chunk). Via platOpen for FILE_SHARE_DELETE: this handle lives for
+		// the whole download, and a rename-over-target on Windows is denied
+		// while any handle without delete sharing is open.
+		cfd, cfdErr := platOpen(localPath, syscall.O_CREAT|syscall.O_WRONLY, 0600)
+		if cfdErr != nil {
 			cancel()
 			pool.Close()
 			_ = platClose(fd)
-			logger.Error("Failed to open cache FD", "error", err)
+			logger.Error("Failed to open cache FD", "error", cfdErr)
 			return -winfuse.EIO
 		}
+		cacheFD = os.NewFile(uintptr(cfd), localPath)
 	}
 
 	d.AfmLock.Lock()
@@ -772,12 +813,17 @@ func (d *Dir) Destroy() {
 
 func (d *Dir) Flush(path string, fh uint64) (errCode int) {
 	defer d.recoverPanic("Flush", &errCode)
-	// d.logger.Debug("FUSE Flush (stub)", "path", path, "fh", fh)
+	if fuseOpLog {
+		d.logger.Debug("oplog Flush", "path", path, "fh", fh)
+	}
 	return 0 // Success. The real sync happens in Fsync/Release.
 }
 
 func (d *Dir) Fsync(path string, datasync bool, fh uint64) (errCode int) {
 	defer d.recoverPanic("Fsync", &errCode)
+	if fuseOpLog {
+		d.logger.Debug("oplog Fsync", "path", path, "fh", fh, "datasync", datasync)
+	}
 	// d.logger.Info("FUSE fsync", "path", path, "fh", fh)
 	localPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	logger := d.logger.With("method", "fsync", "path", localPath)
@@ -1023,6 +1069,8 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 				OnLocalChange:   d.OnLocalChange,
 			}
 			copyFusestatFromFusestat(f.stat, stat)
+			// A file found on disk is bytes this peer holds.
+			f.HeldMtimeNs = stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
 
 			d.AllFileMap[path] = f
 			// d.OnLocalChange(types.FileEvent{
@@ -1247,6 +1295,20 @@ func (d *Dir) Readlink(path string) (errCode int, target string) {
 	return -winfuse.EINVAL, ""
 }
 
+// resolveHandleByPath returns an open handle entry for path. WinFsp
+// multiplexes user opens onto a cached file context, so the per-open fh does
+// not round-trip reliably: ops arrive with a stale fh while a live entry for
+// the path exists (each user open still runs OpenEx). Caller holds
+// OpenMapLock.
+func (d *Dir) resolveHandleByPath(path string) (uint64, *HandleEntry, bool) {
+	for id, e := range d.OpenFileHandlers {
+		if e.File != nil && e.File.RelativePath == path {
+			return id, e, true
+		}
+	}
+	return 0, nil, false
+}
+
 func (d *Dir) Release(path string, fh uint64) (errCode int) {
 	defer d.recoverPanic("Release", &errCode)
 	// d.logger.Info("FUSE release", "path", path, "fh", fh)
@@ -1261,6 +1323,11 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 	}()
 
 	entry, ok := d.OpenFileHandlers[fh]
+	if !ok && runtime.GOOS == "windows" {
+		// A missed release must still run the close bookkeeping and the
+		// close-announce, or the peer never announces and handles leak.
+		fh, entry, ok = d.resolveHandleByPath(path)
+	}
 	if !ok {
 		// The handle is not in the map: already released, or a late fcopyfile handle.
 		// Do not close. Return success.
@@ -1270,6 +1337,13 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 	f := entry.File
 
 	v := f.openFileCounter.Release()
+
+	if fuseOpLog {
+		f.metaMu.RLock()
+		d.logger.Debug("oplog Release", "path", path, "fh", fh, "openCount", v,
+			"hadEdits", f.HadEdits, "notRemoteSynced", f.NotRemoteSynced)
+		f.metaMu.RUnlock()
+	}
 
 	// Debug: log all relevant state at Release entry.
 	// logger.Info("=== RELEASE ===",
@@ -1293,8 +1367,11 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		f.metaMu.RLock()
 		notRemoteSynced := f.NotRemoteSynced
 		hadEdits := f.HadEdits
+		localNewer := f.LocalNewer
 		f.metaMu.RUnlock()
-		needsNotify := (notRemoteSynced || hadEdits) && d.OnLocalChange != nil
+		// Do not announce an open that wrote nothing (pijul locks source repos
+		// RDWR). Such an announce makes the owner drop its authority.
+		needsNotify := (hadEdits || (notRemoteSynced && localNewer)) && d.OnLocalChange != nil
 
 		if needsNotify {
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -1333,15 +1410,21 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 						if recheckStat.Size == prevSize {
 							stableCount++
 							if stableCount >= 2 {
-								d.OnLocalChange(types.FileEvent{
-									Path:   path,
-									Action: types.AddFile,
-									Attr:   types.StatToAttr(&recheckStat),
-								})
 								f.metaMu.Lock()
+								base := f.EditBaseMtimeNs
 								f.NotRemoteSynced = false
 								f.HadEdits = false
+								f.LastAnnouncedMtimeNs = recheckStat.Mtim.Sec*1e9 + recheckStat.Mtim.Nsec
+								if f.LastAnnouncedMtimeNs > f.HeldMtimeNs {
+									f.HeldMtimeNs = f.LastAnnouncedMtimeNs
+								}
 								f.metaMu.Unlock()
+								d.OnLocalChange(types.FileEvent{
+									Path:        path,
+									Action:      types.AddFile,
+									Attr:        types.StatToAttr(&recheckStat),
+									BaseMtimeNs: base,
+								})
 								return
 							}
 						} else {
@@ -1354,27 +1437,49 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 					if finalErr != nil {
 						return
 					}
-					d.OnLocalChange(types.FileEvent{
-						Path:   path,
-						Action: types.AddFile,
-						Attr:   types.StatToAttr(&finalStat),
-					})
 					f.metaMu.Lock()
+					base := f.EditBaseMtimeNs
 					f.NotRemoteSynced = false
 					f.HadEdits = false
+					f.LastAnnouncedMtimeNs = finalStat.Mtim.Sec*1e9 + finalStat.Mtim.Nsec
+					if f.LastAnnouncedMtimeNs > f.HeldMtimeNs {
+						f.HeldMtimeNs = f.LastAnnouncedMtimeNs
+					}
 					f.metaMu.Unlock()
+					d.OnLocalChange(types.FileEvent{
+						Path:        path,
+						Action:      types.AddFile,
+						Attr:        types.StatToAttr(&finalStat),
+						BaseMtimeNs: base,
+					})
 				}()
 			} else {
-				d.OnLocalChange(types.FileEvent{
-					Path:   path,
-					Action: types.AddFile,
-					Attr:   types.StatToAttr(&stgo),
-				})
-
 				f.metaMu.Lock()
+				base := f.EditBaseMtimeNs
 				f.NotRemoteSynced = false
 				f.HadEdits = false
+				// Do not announce a time below the in-memory identity. Write
+				// sets f.stat.Mtim from the Go clock. The disk mtime comes
+				// from the coarse kernel tick and can be some ms older. The
+				// peer's acceptance compares against f.stat.Mtim. An announce
+				// below it makes two concurrent writers reject each other and
+				// never converge.
+				if f.stat != nil {
+					if memNs := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; memNs > stgo.Mtim.Sec*1e9+stgo.Mtim.Nsec {
+						stgo.Mtim = f.stat.Mtim
+					}
+				}
+				f.LastAnnouncedMtimeNs = stgo.Mtim.Sec*1e9 + stgo.Mtim.Nsec
+				if f.LastAnnouncedMtimeNs > f.HeldMtimeNs {
+					f.HeldMtimeNs = f.LastAnnouncedMtimeNs
+				}
 				f.metaMu.Unlock()
+				d.OnLocalChange(types.FileEvent{
+					Path:        path,
+					Action:      types.AddFile,
+					Attr:        types.StatToAttr(&stgo),
+					BaseMtimeNs: base,
+				})
 			}
 		}
 
@@ -1495,10 +1600,11 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	cleanNewPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
 	logger := d.logger.With("method", "rename", "old-path", cleanOldPath, "new-path", cleanNewPath)
 
-	// Check for a remote-only file: do not notify the peer about its own files.
-	d.RemoteFilesLock.RLock()
-	_, isRemote := d.RemoteFiles[oldpath]
-	d.RemoteFilesLock.RUnlock()
+	// A rename onto a tracked file is an app swap-save. Declare the target's
+	// identity at swap time as the announce base: the receiver then preserves
+	// its bytes when they are provably newer. Identity at swap time can only
+	// overstate the true session base, so this never fires a false copy.
+	swapBase := d.targetIdentity(newpath)
 
 	// On Windows, rename fails when source or target has an open handle.
 	// Close all held handles on either path before the rename.
@@ -1514,7 +1620,39 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		d.OpenMapLock.Unlock()
 	}
 
-	err := os.Rename(cleanOldPath, cleanNewPath)
+	// The ousted target's long-lived handles point at the inode this rename
+	// displaces: later writes through them would land in the wrong file, and
+	// Windows refuses to replace a file they hold open.
+	d.AfmLock.RLock()
+	tgt := d.AllFileMap[newpath]
+	d.AfmLock.RUnlock()
+	if tgt == nil {
+		d.RemoteFilesLock.RLock()
+		tgt = d.RemoteFiles[newpath]
+		d.RemoteFilesLock.RUnlock()
+	}
+	if tgt != nil {
+		if tgt.PrefetchCancel != nil {
+			tgt.PrefetchCancel()
+			tgt.PrefetchCancel = nil
+		}
+		d.OpenMapLock.Lock()
+		if tgt.StreamCancel != nil {
+			tgt.StreamCancel()
+			tgt.StreamCancel = nil
+		}
+		if tgt.StreamPool != nil {
+			tgt.StreamPool.Close()
+			tgt.StreamPool = nil
+		}
+		if tgt.CacheFD != nil {
+			_ = tgt.CacheFD.Close()
+			tgt.CacheFD = nil
+		}
+		d.OpenMapLock.Unlock()
+	}
+
+	err := platRename(cleanOldPath, cleanNewPath)
 	if err != nil {
 		logger.Error("Failed to rename", "error", err)
 		return int(convertOsErrToSyscallErrno("rename", err))
@@ -1527,6 +1665,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	d.AfmLock.Unlock()
 
 	// Update internal maps to reflect the rename.
+	var movedLocal *File
 	d.AfmLock.Lock()
 	if f, ok := d.AllFileMap[oldpath]; ok {
 		delete(d.AllFileMap, oldpath)
@@ -1534,6 +1673,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		f.Name = getNameFromPath(newpath)
 		f.RealPathOfFile = cleanNewPath
 		d.AllFileMap[newpath] = f
+		movedLocal = f
 	}
 	d.AfmLock.Unlock()
 
@@ -1565,25 +1705,48 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		f.Name = getNameFromPath(newpath)
 		f.RealPathOfFile = cleanNewPath
 		d.RemoteFiles[newpath] = f
-		// logger.Info("Updated RemoteFiles for rename", "oldpath", oldpath, "newpath", newpath)
+	} else if movedLocal != nil {
+		// A LOCAL file swapped over a tracked target: the moved object is the
+		// content now, so it must also be the tracked object. Leaving the old
+		// target entry made later acceptances run on a stale parallel object
+		// (split-brain) while this object silently lost the swap.
+		if old, ok := d.RemoteFiles[newpath]; ok && old != movedLocal {
+			old.metaMu.Lock()
+			watermark := old.RemoteMtimeNs
+			old.metaMu.Unlock()
+			movedLocal.metaMu.Lock()
+			if watermark > movedLocal.RemoteMtimeNs {
+				movedLocal.RemoteMtimeNs = watermark
+			}
+			movedLocal.metaMu.Unlock()
+			d.RemoteFiles[newpath] = movedLocal
+		}
 	}
 	d.RemoteFilesLock.Unlock()
 
-	// Notify peer about the rename (only for local files, not remote-only).
-	if d.OnLocalChange != nil && !isRemote {
+	// Announce every kernel-originated rename: it is always a local user action,
+	// also when the source is a peer file (reader moves the owner's file) or an
+	// adopted own file. Peer-driven renames do not pass through this op, so
+	// there is no echo.
+	if d.OnLocalChange != nil {
 		// Get stat of the renamed file.
 		var attr *keibidrop.Attr
 		if stgo, statErr := platLstat(cleanNewPath); statErr == nil {
 			attr = types.StatToAttr(&stgo)
+			if movedLocal != nil {
+				movedLocal.metaMu.Lock()
+				movedLocal.LastAnnouncedMtimeNs = stgo.Mtim.Sec*1e9 + stgo.Mtim.Nsec
+				movedLocal.metaMu.Unlock()
+			}
 		}
 
 		d.OnLocalChange(types.FileEvent{
-			Path:    newpath,
-			OldPath: oldpath,
-			Action:  types.RenameFile,
-			Attr:    attr,
+			Path:        newpath,
+			OldPath:     oldpath,
+			Action:      types.RenameFile,
+			Attr:        attr,
+			BaseMtimeNs: swapBase,
 		})
-		// logger.Info("Notified peer about rename", "oldpath", oldpath, "newpath", newpath)
 	}
 
 	// d.logger.Warn("FUSE Rename SUCCESS", "oldpath", oldpath, "newpath", newpath)
@@ -1692,6 +1855,9 @@ func (d *Dir) Symlink(target string, newpath string) (errCode int) {
 // Truncate sets the file size. On Windows, open has no truncate flag, so
 // Open is followed at once by Truncate.
 func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
+	if fuseOpLog {
+		d.logger.Debug("oplog Truncate", "path", path, "size", size, "fh", fh)
+	}
 	defer d.recoverPanic("Truncate", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
@@ -1716,6 +1882,7 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 	// the locks (same discipline as Chmod).
 	st, statErr := platLstat(cleanPath)
 	var statSnap winfuse.Stat_t
+	var baseSnap int64
 	haveSnap, sizeChanged := false, false
 	d.AfmLock.Lock()
 	if f, ok := d.AllFileMap[path]; ok && f.stat != nil && statErr == nil {
@@ -1726,6 +1893,29 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		f.stat.Mtim = st.Mtim
 		statSnap = *f.stat
 		haveSnap = true
+		if sizeChanged {
+			// A bare truncate is a content edit: claim authority so a
+			// crossing peer edit is judged against it and can be preserved.
+			f.LocalNewer = true
+		}
+		// HeldMtimeNs is NOT stamped here: it carries announce-clock values
+		// only (fetch watermark, own announces). The disk mtime after a
+		// truncate is local wall time and would overstate the next
+		// session's base.
+		if f.NotRemoteSynced {
+			baseSnap = f.EditBaseMtimeNs
+		} else {
+			baseSnap = max(f.HeldMtimeNs, f.LastAnnouncedMtimeNs)
+			if baseSnap == 0 && f.RemoteMtimeNs > 0 {
+				// Never held any bytes of an existing peer version: the
+				// fresh-create class.
+				baseSnap = -1
+			}
+		}
+		// Do NOT stamp LastAnnouncedMtimeNs here: a truncate is usually the
+		// first act of an O_TRUNC save whose open skipped the session flip
+		// (remote-open path). Stamping made the follow-up Write adopt the
+		// truncate's own time as its base, hiding real conflicts.
 		f.metaMu.Unlock()
 	}
 	d.AfmLock.Unlock()
@@ -1733,7 +1923,7 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 	// even when the size is unchanged; a no-op truncate must not churn the peer with a redundant
 	// EDIT_FILE. A genuine grow/shrink/overwrite always changes the size.
 	if haveSnap && sizeChanged && d.OnLocalChange != nil {
-		d.OnLocalChange(types.FileEvent{Path: path, Action: types.EditFile, Attr: types.StatToAttr(&statSnap)})
+		d.OnLocalChange(types.FileEvent{Path: path, Action: types.EditFile, Attr: types.StatToAttr(&statSnap), BaseMtimeNs: baseSnap})
 	}
 	return 0
 }
@@ -1825,6 +2015,9 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 // Utimens sets file access and modification times.
 // We return success but don't persist the changes (timestamps come from underlying storage).
 func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) (errCode int) {
+	if fuseOpLog {
+		d.logger.Debug("oplog Utimens", "path", path)
+	}
 	defer d.recoverPanic("Utimens", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
@@ -1886,8 +2079,16 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	lockTime := time.Since(startLock)
 
 	entry, ok := d.OpenFileHandlers[fh]
+	if !ok && runtime.GOOS == "windows" {
+		// A missed write must still set the dirty flags and raise stat, or
+		// the edit session never opens and the save never announces.
+		_, entry, ok = d.resolveHandleByPath(path)
+	}
 	if !ok {
 		d.OpenMapLock.RUnlock()
+		if fuseOpLog {
+			d.logger.Debug("oplog Write MISS", "path", path, "fh", fh, "offset", offset, "len", len(buff))
+		}
 		// macOS fcopyfile() can call Write after Release - try to reopen and write
 		// slog.Warn("FCOPYFILE WORKAROUND", "path", path, "fh", fh, "offset", offset, "len", len(buff))
 		cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -1911,8 +2112,23 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		return n
 	}
 	f := entry.File
+	if fuseOpLog {
+		d.logger.Debug("oplog Write hit", "path", path, "fh", fh, "offset", offset, "len", len(buff))
+	}
 	f.metaMu.Lock()
 	f.HadEdits = true
+	if !f.NotRemoteSynced {
+		// First dirtying op of this edit session: record which version the
+		// edit starts from — the newest whose bytes this peer held. The
+		// announce carries it (conflict proof). A metadata-only accept must
+		// not raise it (model v3, blind-overwrite preservation).
+		f.EditBaseMtimeNs = max(f.HeldMtimeNs, f.LastAnnouncedMtimeNs)
+		if f.EditBaseMtimeNs == 0 && f.RemoteMtimeNs > 0 {
+			// Never held any bytes of an existing peer version: no prior
+			// content, the fresh-create class.
+			f.EditBaseMtimeNs = -1
+		}
+	}
 	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
 	f.NotRemoteSynced = true // File content changed - notify peer on Release with new size
 	f.LocalNewer = true
@@ -1921,6 +2137,20 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	startPwrite := time.Now()
 	n, err := platPwrite(entry.FD, buff, offset)
 	pwriteTime := time.Since(startPwrite)
+
+	// The write is the newest truth for size and time. Coarse disk-mtime ticks
+	// make a same-tick truncate+write look not-newer to Getattr, which then
+	// serves the stale size (vim in-place save: reads see an empty file).
+	if err == nil && n > 0 {
+		f.metaMu.Lock()
+		if f.stat != nil {
+			if end := offset + int64(n); end > f.stat.Size {
+				f.stat.Size = end
+			}
+			f.stat.Mtim = winfuse.NewTimespec(time.Now())
+		}
+		f.metaMu.Unlock()
+	}
 
 	d.OpenMapLock.RUnlock() // Release AFTER Pwrite to prevent race with Release
 
@@ -2035,6 +2265,17 @@ func (f *File) beginBlockFetch(start int64) (bf *blockFetch, leader bool) {
 // conditional so a late or backstop call cannot evict a newer leader's entry, and
 // settle is idempotent, so calling this more than once for the same block is safe.
 func (f *File) finishBlockFetch(start int64, bf *blockFetch, err error) {
+	if err == nil {
+		// Landed remote bytes: this peer now holds (part of) the announced
+		// version. The session base reads HeldMtimeNs, so an announce can
+		// never claim a version this peer never held. Off the cache-hit
+		// path: this runs only after a network fetch.
+		f.metaMu.Lock()
+		if f.RemoteMtimeNs > f.HeldMtimeNs {
+			f.HeldMtimeNs = f.RemoteMtimeNs
+		}
+		f.metaMu.Unlock()
+	}
 	f.fetchMu.Lock()
 	if f.inflight[start] == bf {
 		delete(f.inflight, start)
@@ -2349,6 +2590,18 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	// Get file info briefly, release lock before I/O (RWMutex is write-preferring)
 	d.OpenMapLock.RLock()
 	entry, ok := d.OpenFileHandlers[fh]
+	if !ok && runtime.GOOS == "windows" {
+		// A stale-fh read falling to the raw cache pread serves bytes an
+		// accepted update already invalidated. Resolve by path so the
+		// staleness/bitmap/stream logic still runs.
+		_, entry, ok = d.resolveHandleByPath(path)
+		if !ok && fuseOpLog {
+			d.logger.Debug("oplog Read resolve-miss", "path", path, "handles", len(d.OpenFileHandlers))
+		}
+	}
+	if fuseOpLog {
+		d.logger.Debug("oplog Read", "path", path, "fh", fh, "offset", offset, "len", len(buff), "ok", ok)
+	}
 	var f *File
 	var fd int
 	var pool *StreamPool
@@ -2373,6 +2626,38 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		f.metaMu.RUnlock()
 	}
 	d.OpenMapLock.RUnlock()
+
+	if !ok && runtime.GOOS == "windows" {
+		// WinFsp serves reads on its cached file context long after our
+		// handle lifecycle drained (probe: thousands of reads with an empty
+		// handle map). Resolve the OBJECT by path and run the full hybrid
+		// logic with an ad hoc cache fd — the raw-cache fallback below would
+		// serve bytes an accepted update already invalidated. AfmLock is
+		// taken after OpenMapLock released (lock order: Afm before OpenMap).
+		d.AfmLock.RLock()
+		pf := d.AllFileMap[path]
+		d.AfmLock.RUnlock()
+		if pf != nil {
+			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+			if adhocFD, oerr := platOpen(cleanPath, syscall.O_RDONLY, 0); oerr == nil {
+				defer func() { _ = platClose(adhocFD) }()
+				f = pf
+				fd = adhocFD
+				d.OpenMapLock.RLock()
+				pool = f.StreamPool
+				cacheFD = f.CacheFD
+				d.OpenMapLock.RUnlock()
+				f.metaMu.RLock()
+				notLocalSynced = f.NotLocalSynced
+				bitmap = f.Bitmap
+				if f.stat != nil {
+					remoteFileSize = f.stat.Size
+				}
+				f.metaMu.RUnlock()
+				ok = true
+			}
+		}
+	}
 
 	// If the file is remote and has no stream pool but has incomplete chunks,
 	// try to create a pool on-demand so we can fetch the missing data.
@@ -2792,26 +3077,152 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) (errCo
 
 // Notes: I am confident that it is not a good idea to use syscall errors for GRPC called methods.
 
+// targetIdentity returns the announce-visible version of the file at path:
+// the newest accepted announcement, raised by a local write when we hold
+// authority. 0 = untracked (no identity to conflict with).
+func (d *Dir) targetIdentity(path string) int64 {
+	d.RemoteFilesLock.RLock()
+	f := d.RemoteFiles[path]
+	d.RemoteFilesLock.RUnlock()
+	if f == nil {
+		d.AfmLock.Lock()
+		f = d.AllFileMap[path]
+		d.AfmLock.Unlock()
+	}
+	if f == nil {
+		return 0
+	}
+	f.metaMu.Lock()
+	id := f.RemoteMtimeNs
+	if f.LocalNewer && f.stat != nil {
+		if m := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; m > id {
+			id = m
+		}
+	}
+	f.metaMu.Unlock()
+	return id
+}
+
+// SwapWouldConflict reports whether a swap arriving for path with the given
+// declared base would hit LOCAL authority it provably never saw. The rename
+// handler must then not clobber the disk before the acceptance verdict runs.
+func (d *Dir) SwapWouldConflict(path string, baseMtimeNs int64) bool {
+	if baseMtimeNs == 0 {
+		return false
+	}
+	d.RemoteFilesLock.RLock()
+	f := d.RemoteFiles[path]
+	d.RemoteFilesLock.RUnlock()
+	if f == nil {
+		d.AfmLock.Lock()
+		f = d.AllFileMap[path]
+		d.AfmLock.Unlock()
+	}
+	if f == nil {
+		return false
+	}
+	f.metaMu.Lock()
+	localNewer := f.LocalNewer
+	id := f.RemoteMtimeNs
+	if localNewer && f.stat != nil {
+		if m := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; m > id {
+			id = m
+		}
+	}
+	f.metaMu.Unlock()
+	return localNewer && baseMtimeNs < id
+}
+
+// conflictNames builds the sibling names for a preserved conflict version:
+// report.docx -> report.conflict-20260801-104512-123456789.docx (UTC). The
+// nanosecond part keeps the two peers' simultaneous preserves from colliding
+// on one name and LWW-fighting each other. Bumps a numeric suffix until the
+// real path is free.
+func conflictNames(relPath, realPath string) (string, string) {
+	now := time.Now()
+	stamp := now.UTC().Format("20060102-150405") + "-" + strconv.Itoa(now.Nanosecond())
+	ext := filepath.Ext(relPath)
+	stem := strings.TrimSuffix(relPath, ext)
+	rel := stem + ".conflict-" + stamp + ext
+	for i := 2; ; i++ {
+		real := filepath.Join(filepath.Dir(realPath), filepath.Base(rel))
+		if _, err := os.Lstat(real); os.IsNotExist(err) {
+			return rel, real
+		}
+		rel = stem + ".conflict-" + stamp + "-" + strconv.Itoa(i) + ext
+	}
+}
+
+// registerConflictCopy makes a preserved version a normal local file: visible
+// in the tree and announced, so both peers end with both versions.
+func (d *Dir) registerConflictCopy(logger *slog.Logger, relPath, realPath string) {
+	stgo, err := platLstat(realPath)
+	if err != nil {
+		logger.Warn("Conflict copy vanished before registration", "path", relPath, "error", err)
+		return
+	}
+	st := new(winfuse.Stat_t)
+	*st = stgo
+	f := &File{
+		logger:          logger,
+		openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
+		Name:            getNameFromPath(relPath),
+		RelativePath:    relPath,
+		RealPathOfFile:  realPath,
+		OnLocalChange:   d.OnLocalChange,
+		StreamProvider:  d.OpenStreamProvider(),
+		IsLocalPresent:  true,
+		LocalNewer:      true,
+		stat:            st,
+	}
+	d.AfmLock.Lock()
+	d.AllFileMap[relPath] = f
+	d.AfmLock.Unlock()
+	d.refreshDirStat(filepath.Dir(relPath))
+	if d.OnLocalChange != nil {
+		d.OnLocalChange(types.FileEvent{Path: relPath, Action: types.AddFile, Attr: types.StatToAttr(&stgo)})
+	}
+}
+
 func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t) error {
+	return d.AddRemoteFileWithBase(logger, path, name, stat, 0)
+}
+
+// AddRemoteFileWithBase is AddRemoteFile plus the announcement's declared base
+// (see NotifyRequest.base_mtime_ns). Base 0 means unknown: plain LWW, never a
+// conflict copy.
+func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t, baseMtimeNs int64) error {
 	// Normalize to FUSE convention: paths must have leading "/".
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
 	// d.logger.Info("FUSE remote-add", "path", path, "size", stat.Size)
 
+	// A peer edit of a local file must update the object local reads use.
+	// A parallel entry makes reads serve the stale local copy forever.
+	d.AfmLock.RLock()
+	local, hasLocal := d.AllFileMap[path]
+	d.AfmLock.RUnlock()
+
 	d.RemoteFilesLock.Lock()
+	if _, ok := d.RemoteFiles[path]; !ok && hasLocal {
+		d.RemoteFiles[path] = local
+	}
 
 	if existing, ok := d.RemoteFiles[path]; ok {
+		// Snapshot stat fields under metaMu: Getattr mutates existing.stat in
+		// place under the same lock (map lock first, metaMu innermost).
+		existing.metaMu.Lock()
 		oldSize := existing.stat.Size
+		existingStatMtime := existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
+		wasLocalNewer := existing.LocalNewer
+		existing.metaMu.Unlock()
 		sizeChanged := oldSize != stat.Size
 		// Snapshot the incoming size now, BEFORE `existing.stat = stat` aliases this
 		// struct into existing.stat: the size-changed branch reads it for os.Truncate
 		// AFTER releasing RemoteFilesLock, where Getattr can mutate existing.stat
 		// (the same struct) in place. The local copy keeps that read race-free.
 		newSize := stat.Size
-		existing.metaMu.Lock()
-		existing.LocalNewer = false // Remote has newer content.
-		existing.metaMu.Unlock()
 
 		// Reject stale ADD_FILE only when the incoming mtime is older than
 		// what we already have. A debounced notification for a temp file can
@@ -2820,10 +3231,77 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		// size alone: git's HEAD goes from 25 bytes (.invalid placeholder)
 		// to 21 bytes (ref: refs/heads/main), so smaller size can be correct.
 		incomingMtime := stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
-		existingMtime := existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
-		if sizeChanged && stat.Size < oldSize && existing.Bitmap != nil && existing.Bitmap.Have() > 0 && incomingMtime < existingMtime {
+		// Compare with the announced watermark, not stat.Mtim. Local Truncate
+		// and Getattr write local time into stat.Mtim and make remote updates
+		// look stale (pijul opens the source pristine RDWR+ftruncate).
+		existingMtime := existing.RemoteMtimeNs
+		if existingMtime == 0 {
+			existingMtime = existingStatMtime
+		}
+		// A local write outranks an older announcement in flight. A stale ADD
+		// must not overwrite newer local content (model checker finding).
+		// Only real writes set LocalNewer; reader-side stat changes do not.
+		if wasLocalNewer && existingStatMtime > existingMtime {
+			existingMtime = existingStatMtime
+		}
+		accepted := incomingMtime > existingMtime
+		// The edit is concurrent when its declared base is older than the
+		// version we hold: it provably never saw our bytes (model v2, T3b).
+		// Turn-taking edits carry base == our version and never trip this.
+		conflict := accepted && wasLocalNewer && baseMtimeNs != 0 && baseMtimeNs < existingMtime
+		if fuseOpLog {
+			d.logger.Debug("oplog conflict predicate", "path", path, "accepted", accepted,
+				"wasLocalNewer", wasLocalNewer, "base", baseMtimeNs, "identity", existingMtime, "conflict", conflict)
+		}
+		if accepted && d.OnLocalChange != nil {
+			// A queued announce for this path describes the replaced content.
+			// Its flush-time attr refresh would stamp the PEER'S bytes with a
+			// fresh local mtime and bounce them back as a newer edit.
+			d.OnLocalChange(types.FileEvent{Path: path, Action: types.CancelPendingNotify})
+		}
+		if accepted {
+			existing.metaMu.Lock()
+			existing.LocalNewer = false // Remote has newer content.
+			existing.metaMu.Unlock()
+		}
+		if incomingMtime > existing.RemoteMtimeNs {
+			existing.metaMu.Lock()
+			existing.RemoteMtimeNs = incomingMtime
+			existing.metaMu.Unlock()
+		}
+		if fuseOpLog {
+			d.logger.Debug("oplog AddRemoteFile existing", "path", path, "sizeChanged", sizeChanged,
+				"incomingMtime", incomingMtime, "existingMtime", existingMtime)
+		}
+		existing.metaMu.Lock()
+		bmSnap := existing.Bitmap
+		existing.metaMu.Unlock()
+		if sizeChanged && stat.Size < oldSize && bmSnap != nil && bmSnap.Have() > 0 && incomingMtime < existingMtime {
 			d.RemoteFilesLock.Unlock()
 			return nil
+		}
+		// The announcement is older than a local write: keep local authority.
+		if !accepted && wasLocalNewer {
+			d.RemoteFilesLock.Unlock()
+			return nil
+		}
+
+		// Preserve the losing local version before the acceptance clobbers it.
+		// A rename is O(1); the canonical name re-fetches the winner in full.
+		var conflictRel, conflictReal string
+		if conflict && existing.RealPathOfFile != "" {
+			conflictRel, conflictReal = conflictNames(path, existing.RealPathOfFile)
+			if renErr := os.Rename(existing.RealPathOfFile, conflictReal); renErr != nil {
+				logger.Warn("Conflict preserve failed, last-writer-wins", "path", path, "error", renErr)
+				conflictRel, conflictReal = "", ""
+			} else {
+				_ = os.Remove(BitmapPath(existing.RealPathOfFile))
+				if cf, cErr := os.OpenFile(existing.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
+					_ = cf.Truncate(newSize)
+					_ = cf.Close()
+				}
+				logger.Info("Concurrent edit: local version preserved", "path", path, "conflict", conflictRel)
+			}
 		}
 
 		existing.metaMu.Lock()
@@ -2842,9 +3320,17 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			}
 			// Capture the pre-reset bitmap (hashes to compare) before swapping it,
 			// and the fresh live bitmap reads will now use, for async reconcile.
+			// Swap under metaMu: Release reads the pointer under the same lock.
+			existing.metaMu.Lock()
 			oldBitmap := existing.Bitmap
 			existing.Bitmap = NewChunkBitmap(stat.Size)
 			newBitmap := existing.Bitmap
+			existing.metaMu.Unlock()
+			if conflictRel != "" {
+				// The local bytes moved to the conflict name: nothing cached
+				// remains, so reconcile must not claim proven chunks.
+				oldBitmap = nil
+			}
 			d.RemoteFilesLock.Unlock()
 
 			// Only truncate if size actually changed — truncating to the same size
@@ -2876,6 +3362,9 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			// on-demand, mirroring EditRemoteFile. Without this, a peer that
 			// already fully cached the file keeps serving stale content.
 			var oldBitmap, newBitmap *ChunkBitmap
+			if fuseOpLog {
+				d.logger.Debug("oplog same-size verdict", "path", path, "reset", incomingMtime > existingMtime)
+			}
 			if incomingMtime > existingMtime {
 				existing.metaMu.Lock()
 				existing.NotLocalSynced = true
@@ -2887,9 +3376,14 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 				}
 				// In-place edit: same byte length, cache left intact, so prefix bytes
 				// still match their stored hashes. Capture for async reconcile.
+				existing.metaMu.Lock()
 				oldBitmap = existing.Bitmap
 				existing.Bitmap = NewChunkBitmap(stat.Size)
 				newBitmap = existing.Bitmap
+				existing.metaMu.Unlock()
+				if conflictRel != "" {
+					oldBitmap = nil
+				}
 			} else if existing.Bitmap != nil && !existing.Bitmap.IsComplete() {
 				// Same mtime, still incomplete — keep fetching the rest on-demand.
 				existing.metaMu.Lock()
@@ -2905,6 +3399,9 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
 			d.AfmLock.Unlock()
+		}
+		if conflictRel != "" {
+			d.registerConflictCopy(logger, conflictRel, conflictReal)
 		}
 		return nil
 	}
@@ -2935,6 +3432,7 @@ func (d *Dir) AddRemoteFile(logger *slog.Logger, path string, name string, stat 
 		OnLocalChange:   d.OnLocalChange,
 		RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
 		Bitmap:          NewChunkBitmap(stat.Size),
+		RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
 	}
 	d.RemoteFiles[path] = f
 	d.RemoteFilesLock.Unlock()
@@ -3088,6 +3586,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		}
 	}()
 
+	heldStamped := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -3116,6 +3615,16 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		if writeErr != nil {
 			logger.Warn("Prefetch: write failed", "chunk", chunkIdx, "error", writeErr)
 			continue
+		}
+		if !heldStamped {
+			heldStamped = true
+			// First landed prefetch bytes: this peer now holds (part of)
+			// the announced version (session-base rule, model v3).
+			f.metaMu.Lock()
+			if f.RemoteMtimeNs > f.HeldMtimeNs {
+				f.HeldMtimeNs = f.RemoteMtimeNs
+			}
+			f.metaMu.Unlock()
 		}
 
 		// StreamFile sends in config.BlockSize (4 MiB) units while the bitmap
@@ -3154,13 +3663,29 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 }
 
 func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t) error {
+	return d.EditRemoteFileWithBase(logger, path, name, stat, 0)
+}
+
+// EditRemoteFileWithBase is EditRemoteFile plus the announcement's declared
+// base (see NotifyRequest.base_mtime_ns). Base 0 means unknown: plain LWW,
+// never a conflict copy.
+func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name string, stat *winfuse.Stat_t, baseMtimeNs int64) error {
 	// Normalize to FUSE convention: paths must have leading "/".
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
 	// d.logger.Info("FUSE remote-edit", "path", path, "size", stat.Size)
 
+	// A peer edit of a local file must update the object local reads use
+	// (same adoption as AddRemoteFileWithBase).
+	d.AfmLock.RLock()
+	local, hasLocal := d.AllFileMap[path]
+	d.AfmLock.RUnlock()
+
 	d.RemoteFilesLock.Lock()
+	if _, ok := d.RemoteFiles[path]; !ok && hasLocal {
+		d.RemoteFiles[path] = local
+	}
 
 	f, ok := d.RemoteFiles[path]
 	if !ok {
@@ -3178,6 +3703,7 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 			OnLocalChange:   d.OnLocalChange,
 			RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
 			Bitmap:          NewChunkBitmap(stat.Size),
+			RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
 		}
 		d.RemoteFiles[path] = newFile
 		d.RemoteFilesLock.Unlock()
@@ -3190,20 +3716,70 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 		return nil
 	}
 
-	if stat.Mtim.Time().Before(f.stat.Mtim.Time()) {
+	// Same watermark discipline as AddRemoteFile: stat.Mtim is local-clock-tainted.
+	// Snapshot under metaMu: Getattr mutates f.stat in place under the same lock.
+	f.metaMu.Lock()
+	editStatMtime := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec
+	editLocalNewer := f.LocalNewer
+	editRef := f.RemoteMtimeNs
+	oldSize := f.stat.Size
+	f.metaMu.Unlock()
+	if editRef == 0 {
+		editRef = editStatMtime
+	}
+	if editLocalNewer && editStatMtime > editRef {
+		editRef = editStatMtime
+	}
+	incomingEditMtime := stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
+	if incomingEditMtime < editRef {
 		d.RemoteFilesLock.Unlock()
-		// logger.Warn("Remote edit rejected - local is newer", "path", path, "remoteMtime", stat.Mtim.Time(), "localMtime", f.stat.Mtim.Time())
 		return syscall.ECANCELED
+	}
+	// The edit is concurrent when its declared base is older than the version
+	// we hold: it provably never saw our bytes (same predicate as ADD).
+	conflict := editLocalNewer && baseMtimeNs != 0 && baseMtimeNs < editRef
+	if fuseOpLog {
+		d.logger.Debug("oplog conflict predicate (edit)", "path", path,
+			"wasLocalNewer", editLocalNewer, "base", baseMtimeNs, "identity", editRef, "conflict", conflict)
+	}
+	if d.OnLocalChange != nil {
+		// A queued announce for this path describes the replaced content. Its
+		// flush-time attr refresh would stamp the PEER'S bytes with a fresh
+		// local mtime and bounce them back as a newer edit.
+		d.OnLocalChange(types.FileEvent{Path: path, Action: types.CancelPendingNotify})
+	}
+	f.metaMu.Lock()
+	if incomingEditMtime > f.RemoteMtimeNs {
+		f.RemoteMtimeNs = incomingEditMtime
+	}
+	f.metaMu.Unlock()
+
+	// Snapshot sizes as unaliased locals before f.stat = stat: afterwards f.stat is
+	// the same struct Getattr may mutate, so reading it post-unlock would race.
+	newSize := stat.Size
+
+	// Preserve the losing local version before the acceptance clobbers it.
+	// A rename is O(1); the canonical name re-fetches the winner in full.
+	var conflictRel, conflictReal string
+	if conflict && f.RealPathOfFile != "" {
+		conflictRel, conflictReal = conflictNames(path, f.RealPathOfFile)
+		if renErr := os.Rename(f.RealPathOfFile, conflictReal); renErr != nil {
+			logger.Warn("Conflict preserve failed, last-writer-wins", "path", path, "error", renErr)
+			conflictRel, conflictReal = "", ""
+		} else {
+			_ = os.Remove(BitmapPath(f.RealPathOfFile))
+			if cf, cErr := os.OpenFile(f.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
+				_ = cf.Truncate(newSize)
+				_ = cf.Close()
+			}
+			logger.Info("Concurrent edit: local version preserved", "path", path, "conflict", conflictRel)
+		}
 	}
 
 	// logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
 	// Content changed: mark unsynced and reset bitmap + cancel prefetch so reads
 	// re-fetch on-demand. The field stores go under metaMu (innermost); the
 	// PrefetchCancel/Download/Bitmap resets stay outside it.
-	// Snapshot sizes as unaliased locals before f.stat = stat: afterwards f.stat is
-	// the same struct Getattr may mutate, so reading it post-unlock would race.
-	oldSize := f.stat.Size
-	newSize := stat.Size
 	f.metaMu.Lock()
 	f.stat = stat
 	f.LocalNewer = false    // Remote has newer content.
@@ -3217,9 +3793,16 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	}
 	// Capture the pre-reset bitmap (hashes to compare) and the fresh live bitmap;
 	// the cache is left intact here, so common-prefix bytes still match their hashes.
+	f.metaMu.Lock()
 	oldBitmap := f.Bitmap
 	f.Bitmap = NewChunkBitmap(stat.Size)
 	newBitmap := f.Bitmap
+	f.metaMu.Unlock()
+	if conflictRel != "" {
+		// The local bytes moved to the conflict name: nothing cached
+		// remains, so reconcile must not claim proven chunks.
+		oldBitmap = nil
+	}
 	d.RemoteFilesLock.Unlock()
 	// Re-mark the proven-unchanged chunks present in the background (full reset stands
 	// on any failure or ineligibility).
@@ -3227,5 +3810,8 @@ func (d *Dir) EditRemoteFile(logger *slog.Logger, path string, name string, stat
 	d.AfmLock.Lock()
 	d.AllFileMap[path] = f
 	d.AfmLock.Unlock()
+	if conflictRel != "" {
+		d.registerConflictCopy(logger, conflictRel, conflictReal)
+	}
 	return nil
 }

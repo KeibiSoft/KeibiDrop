@@ -8,14 +8,17 @@ package tests
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,6 +31,34 @@ type testPeer struct {
 	stdin  io.WriteCloser
 	stdout *bufio.Scanner
 	mu     sync.Mutex // serializes command/response pairs
+}
+
+// quitDump captures a wedged peer's stacks before the test dies. gdb first
+// when present: the observed wedge is a hot spinner that blocks the runtime's
+// own stop-the-world, so a SIGQUIT dump hangs with it — ptrace stops threads
+// at the kernel level and does not need the runtime's cooperation. Then
+// SIGQUIT for the Go-level dump (lands in the .stderr file when it can).
+func quitDump(p *testPeer) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if p.cmd == nil || p.cmd.Process == nil {
+		return
+	}
+	pid := p.cmd.Process.Pid
+	if gdb, err := exec.LookPath("gdb"); err == nil {
+		if out, ferr := os.Create(fmt.Sprintf("/tmp/kd-gdb-%d.txt", pid)); ferr == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			cmd := exec.CommandContext(ctx, gdb, "-p", strconv.Itoa(pid), "-batch",
+				"-ex", "set pagination off", "-ex", "thread apply all bt")
+			cmd.Stdout, cmd.Stderr = out, out
+			_ = cmd.Run()
+			cancel()
+			_ = out.Close()
+		}
+	}
+	_ = p.cmd.Process.Signal(syscall.SIGQUIT)
+	time.Sleep(1500 * time.Millisecond)
 }
 
 // sendMultiLine sends a command and reads response lines until termLine (or a line
@@ -55,6 +86,7 @@ func (p *testPeer) sendMultiLine(t *testing.T, command string, termLine string, 
 		}()
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
+			quitDump(p)
 			t.Fatalf("sendMultiLine: timeout waiting for %q after command %q (got so far: %v)", termLine, command, lines)
 		}
 		select {
@@ -64,6 +96,7 @@ func (p *testPeer) sendMultiLine(t *testing.T, command string, termLine string, 
 				return lines
 			}
 		case <-time.After(remaining):
+			quitDump(p)
 			t.Fatalf("sendMultiLine: timeout waiting for %q after command %q (got so far: %v)", termLine, command, lines)
 		}
 	}
@@ -93,6 +126,7 @@ func (p *testPeer) send(t *testing.T, command string, timeout time.Duration) str
 	case line := <-done:
 		return line
 	case <-time.After(timeout):
+		quitDump(p)
 		t.Fatalf("timeout waiting for response to %q", command)
 		return ""
 	}
@@ -146,7 +180,9 @@ func getTestPeerBinary(t *testing.T) string {
 			return
 		}
 		binPath := filepath.Join(tmpDir, binName)
-		cmd := exec.Command("go", "build", "-o", binPath, "./tests/cmd/testpeer/") //#nosec G204
+		// -buildvcs=false: fleet boxes run from rsynced trees whose git state
+		// (ownership, staleness) fails VCS stamping and killed every suite.
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-o", binPath, "./tests/cmd/testpeer/") //#nosec G204
 		// Use the project root as working directory
 		// Find project root by looking for go.mod
 		cwd, _ := os.Getwd()
@@ -185,8 +221,18 @@ func spawnPeer(t *testing.T, binary string, env map[string]string) *testPeer {
 	for k, v := range env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
-	// Capture stderr for debugging
-	cmd.Stderr = os.Stderr
+	// Peer stderr goes to a FILE, never to our own stderr. A leaked peer
+	// holding the inherited go-test output pipe blocks the `go test` tool
+	// forever after a timeout panic, and SIGQUIT goroutine dumps of a wedged
+	// peer need a destination that survives the test binary's death.
+	stderrPath := env["LOG_FILE"]
+	if stderrPath == "" {
+		stderrPath = filepath.Join(t.TempDir(), "peer.log")
+	}
+	if f, ferr := os.Create(stderrPath + ".stderr"); ferr == nil {
+		cmd.Stderr = f
+		t.Cleanup(func() { _ = f.Close() })
+	}
 
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)
