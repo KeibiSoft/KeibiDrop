@@ -187,6 +187,55 @@ func TestRelease_AnnounceCarriesInMemoryIdentity(t *testing.T) {
 		"watermark must equal the announced stamp")
 }
 
+// A blind overwrite must announce the version it HELD, not the version it
+// merely accepted. Accept a newer announce with no fetch, then overwrite:
+// the base must stay at the held version, so the peer's predicate preserves
+// the bytes this writer never saw (model v3). After a fetch lands, the same
+// overwrite is turn-taking: base equals the accepted version.
+func TestBlindOverwrite_BaseIsHeldVersion(t *testing.T) {
+	d, snapshot := newConflictTestDir(t)
+	f := seedLocalFile(t, d, "/doc.txt", "held-content")
+	held := localIdentity(f)
+
+	// Metadata-only accept of a newer peer version: no bytes fetched. Set
+	// the fields acceptance sets (watermark up, authority handed over); the
+	// full disk flow needs a stream provider this unit dir does not have.
+	remote := time.Now().Add(2 * time.Second)
+	f.metaMu.Lock()
+	f.RemoteMtimeNs = remote.UnixNano()
+	f.LocalNewer = false
+	f.metaMu.Unlock()
+
+	lastBase := func() int64 {
+		base := int64(-99)
+		for _, ev := range snapshot() {
+			if ev.Action == types.AddFile && ev.Path == "/doc.txt" {
+				base = ev.BaseMtimeNs
+			}
+		}
+		return base
+	}
+
+	fi := &winfuse.FileInfo_t{}
+	fi.Flags = os.O_WRONLY | os.O_TRUNC
+	require.Equal(t, 0, d.OpenEx("/doc.txt", fi))
+	require.Equal(t, 5, d.Write("/doc.txt", []byte("blind"), 0, fi.Fh))
+	require.Equal(t, 0, d.Release("/doc.txt", fi.Fh))
+	require.Equal(t, held, lastBase(),
+		"blind overwrite must announce the held version as its base")
+
+	// A landed fetch raises the held stamp: the next overwrite is honest
+	// turn-taking with the accepted version as base.
+	f.finishBlockFetch(0, &blockFetch{done: make(chan struct{})}, nil)
+	fi2 := &winfuse.FileInfo_t{}
+	fi2.Flags = os.O_WRONLY | os.O_TRUNC
+	require.Equal(t, 0, d.OpenEx("/doc.txt", fi2))
+	require.Equal(t, 7, d.Write("/doc.txt", []byte("fetched"), 0, fi2.Fh))
+	require.Equal(t, 0, d.Release("/doc.txt", fi2.Fh))
+	require.Equal(t, remote.UnixNano(), lastBase(),
+		"post-fetch overwrite must announce the accepted version as its base")
+}
+
 // A stale EDIT (older than the local write) keeps local authority: rejected
 // with no preserve, no announce cancellation side effects on the bytes.
 func TestEditRemoteFileWithBase_StaleEditRejected(t *testing.T) {

@@ -361,6 +361,40 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		waitConverged(t, alice, bob, conflicts[0], 60*time.Second)
 	})
 
+	// Model v3: an overwrite of a version whose bytes this peer never
+	// fetched must not destroy the only copy. The reader never reads the
+	// owner's file, then overwrites it blind. The session base is the held
+	// version, not the accepted watermark, so the owner preserves its bytes
+	// as a conflict sibling and both survive on both peers.
+	t.Run("BlindOverwritePreservesUnfetched", func(t *testing.T) {
+		listConflicts := func(p *testPeer) []string {
+			var out []string
+			for _, name := range listNames(t, p) {
+				if strings.Contains(name, "blind.conflict-") {
+					out = append(out, strings.TrimSpace(name))
+				}
+			}
+			return out
+		}
+		require.Equal("OK", bob.send(t, "write_file blind.txt owner-unfetched-version", 10*time.Second))
+		WaitForFileOnMount(t, filepath.Join(aliceMount, "blind.txt"), 60*time.Second)
+		// No read happens on the reader: the bytes never moved.
+		require.Equal("OK", alice.send(t, "write_file blind.txt reader-blind-overwrite", 10*time.Second))
+
+		waitConverged(t, alice, bob, "blind.txt", 60*time.Second)
+		WaitForCondition(t, 60*time.Second, 500*time.Millisecond, func() bool {
+			return len(listConflicts(alice)) >= 1 && len(listConflicts(bob)) >= 1
+		}, "waiting for the blind-overwrite conflict copy on both peers")
+
+		canonical := readFile(t, bob, "blind.txt")
+		conflicts := listConflicts(bob)
+		require.Len(conflicts, 1, "exactly one conflict copy expected")
+		preserved := readFile(t, bob, conflicts[0])
+		require.ElementsMatch([]string{"owner-unfetched-version", "reader-blind-overwrite"},
+			[]string{canonical, preserved}, "the never-fetched version must survive")
+		waitConverged(t, alice, bob, conflicts[0], 60*time.Second)
+	})
+
 	// EDIT arrivals carry a base too: a bare truncate crosses a concurrent
 	// write. The truncate announces EDIT_FILE with its session base; whichever
 	// side loses LWW preserves its version as a conflict sibling. Before the

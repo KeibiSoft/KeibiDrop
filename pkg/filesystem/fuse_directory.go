@@ -648,7 +648,18 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fh.metaMu.Lock()
 		fh.IsLocalPresent = true
 		if !fh.NotRemoteSynced {
-			fh.EditBaseMtimeNs = max(fh.RemoteMtimeNs, fh.LastAnnouncedMtimeNs)
+			// The base declares the newest version whose bytes this session
+			// could have seen. HeldMtimeNs, not the metadata watermark: an
+			// accepted announce with no fetch must not raise the base
+			// (model v3, blind-overwrite preservation).
+			fh.EditBaseMtimeNs = max(fh.HeldMtimeNs, fh.LastAnnouncedMtimeNs)
+			if fh.EditBaseMtimeNs == 0 && fh.RemoteMtimeNs > 0 {
+				// A peer version exists and this peer never held any bytes:
+				// the session starts from no prior content, the same class
+				// as a fresh create. Base 0 would read as unknown and skip
+				// preservation.
+				fh.EditBaseMtimeNs = -1
+			}
 		}
 		fh.NotRemoteSynced = true
 		fh.metaMu.Unlock()
@@ -1058,6 +1069,8 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 				OnLocalChange:   d.OnLocalChange,
 			}
 			copyFusestatFromFusestat(f.stat, stat)
+			// A file found on disk is bytes this peer holds.
+			f.HeldMtimeNs = stat.Mtim.Sec*1e9 + stat.Mtim.Nsec
 
 			d.AllFileMap[path] = f
 			// d.OnLocalChange(types.FileEvent{
@@ -1402,6 +1415,9 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 								f.NotRemoteSynced = false
 								f.HadEdits = false
 								f.LastAnnouncedMtimeNs = recheckStat.Mtim.Sec*1e9 + recheckStat.Mtim.Nsec
+								if f.LastAnnouncedMtimeNs > f.HeldMtimeNs {
+									f.HeldMtimeNs = f.LastAnnouncedMtimeNs
+								}
 								f.metaMu.Unlock()
 								d.OnLocalChange(types.FileEvent{
 									Path:        path,
@@ -1426,6 +1442,9 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 					f.NotRemoteSynced = false
 					f.HadEdits = false
 					f.LastAnnouncedMtimeNs = finalStat.Mtim.Sec*1e9 + finalStat.Mtim.Nsec
+					if f.LastAnnouncedMtimeNs > f.HeldMtimeNs {
+						f.HeldMtimeNs = f.LastAnnouncedMtimeNs
+					}
 					f.metaMu.Unlock()
 					d.OnLocalChange(types.FileEvent{
 						Path:        path,
@@ -1451,6 +1470,9 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 					}
 				}
 				f.LastAnnouncedMtimeNs = stgo.Mtim.Sec*1e9 + stgo.Mtim.Nsec
+				if f.LastAnnouncedMtimeNs > f.HeldMtimeNs {
+					f.HeldMtimeNs = f.LastAnnouncedMtimeNs
+				}
 				f.metaMu.Unlock()
 				d.OnLocalChange(types.FileEvent{
 					Path:        path,
@@ -1876,10 +1898,19 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 			// crossing peer edit is judged against it and can be preserved.
 			f.LocalNewer = true
 		}
+		// HeldMtimeNs is NOT stamped here: it carries announce-clock values
+		// only (fetch watermark, own announces). The disk mtime after a
+		// truncate is local wall time and would overstate the next
+		// session's base.
 		if f.NotRemoteSynced {
 			baseSnap = f.EditBaseMtimeNs
 		} else {
-			baseSnap = max(f.RemoteMtimeNs, f.LastAnnouncedMtimeNs)
+			baseSnap = max(f.HeldMtimeNs, f.LastAnnouncedMtimeNs)
+			if baseSnap == 0 && f.RemoteMtimeNs > 0 {
+				// Never held any bytes of an existing peer version: the
+				// fresh-create class.
+				baseSnap = -1
+			}
 		}
 		// Do NOT stamp LastAnnouncedMtimeNs here: a truncate is usually the
 		// first act of an O_TRUNC save whose open skipped the session flip
@@ -2088,9 +2119,15 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	f.HadEdits = true
 	if !f.NotRemoteSynced {
 		// First dirtying op of this edit session: record which version the
-		// edit starts from — the newest this file has shown the world.
-		// The announce carries it (conflict proof).
-		f.EditBaseMtimeNs = max(f.RemoteMtimeNs, f.LastAnnouncedMtimeNs)
+		// edit starts from — the newest whose bytes this peer held. The
+		// announce carries it (conflict proof). A metadata-only accept must
+		// not raise it (model v3, blind-overwrite preservation).
+		f.EditBaseMtimeNs = max(f.HeldMtimeNs, f.LastAnnouncedMtimeNs)
+		if f.EditBaseMtimeNs == 0 && f.RemoteMtimeNs > 0 {
+			// Never held any bytes of an existing peer version: no prior
+			// content, the fresh-create class.
+			f.EditBaseMtimeNs = -1
+		}
 	}
 	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
 	f.NotRemoteSynced = true // File content changed - notify peer on Release with new size
@@ -2228,6 +2265,17 @@ func (f *File) beginBlockFetch(start int64) (bf *blockFetch, leader bool) {
 // conditional so a late or backstop call cannot evict a newer leader's entry, and
 // settle is idempotent, so calling this more than once for the same block is safe.
 func (f *File) finishBlockFetch(start int64, bf *blockFetch, err error) {
+	if err == nil {
+		// Landed remote bytes: this peer now holds (part of) the announced
+		// version. The session base reads HeldMtimeNs, so an announce can
+		// never claim a version this peer never held. Off the cache-hit
+		// path: this runs only after a network fetch.
+		f.metaMu.Lock()
+		if f.RemoteMtimeNs > f.HeldMtimeNs {
+			f.HeldMtimeNs = f.RemoteMtimeNs
+		}
+		f.metaMu.Unlock()
+	}
 	f.fetchMu.Lock()
 	if f.inflight[start] == bf {
 		delete(f.inflight, start)
@@ -3538,6 +3586,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		}
 	}()
 
+	heldStamped := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -3566,6 +3615,16 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		if writeErr != nil {
 			logger.Warn("Prefetch: write failed", "chunk", chunkIdx, "error", writeErr)
 			continue
+		}
+		if !heldStamped {
+			heldStamped = true
+			// First landed prefetch bytes: this peer now holds (part of)
+			// the announced version (session-base rule, model v3).
+			f.metaMu.Lock()
+			if f.RemoteMtimeNs > f.HeldMtimeNs {
+				f.HeldMtimeNs = f.RemoteMtimeNs
+			}
+			f.metaMu.Unlock()
 		}
 
 		// StreamFile sends in config.BlockSize (4 MiB) units while the bitmap
