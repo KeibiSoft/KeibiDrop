@@ -148,6 +148,45 @@ func TestEditRemoteFileWithBase_UnknownBaseNoConflict(t *testing.T) {
 	require.Empty(t, conflictSiblings(t, d.LocalDownloadFolder))
 }
 
+// Release must not announce a time below the in-memory identity. Write
+// sets f.stat.Mtim from the Go clock. The disk mtime comes from the
+// coarse kernel tick and can be older. An announce below the identity
+// makes two concurrent writers reject each other and never converge.
+func TestRelease_AnnounceCarriesInMemoryIdentity(t *testing.T) {
+	d, snapshot := newConflictTestDir(t)
+	fi := &winfuse.FileInfo_t{}
+	require.Equal(t, 0, d.CreateEx("/doc.txt", 0o644, fi))
+	require.Equal(t, 7, d.Write("/doc.txt", []byte("payload"), 0, fi.Fh))
+
+	d.AfmLock.RLock()
+	f := d.AllFileMap["/doc.txt"]
+	d.AfmLock.RUnlock()
+	require.NotNil(t, f)
+
+	// Force the disk-coarse vs Go-clock split deterministically.
+	f.metaMu.Lock()
+	f.stat.Mtim = winfuse.NewTimespec(time.Now().Add(50 * time.Millisecond))
+	memNs := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec
+	f.metaMu.Unlock()
+
+	require.Equal(t, 0, d.Release("/doc.txt", fi.Fh))
+
+	var addMtime uint64
+	for _, ev := range snapshot() {
+		if ev.Action == types.AddFile && ev.Path == "/doc.txt" {
+			addMtime = ev.Attr.ModificationTime
+		}
+	}
+	require.NotZero(t, addMtime, "Release must announce the edited file")
+	require.GreaterOrEqual(t, addMtime, uint64(memNs),
+		"announce must not understate the in-memory identity")
+	f.metaMu.Lock()
+	lastAnnounced := f.LastAnnouncedMtimeNs
+	f.metaMu.Unlock()
+	require.EqualValues(t, addMtime, lastAnnounced,
+		"watermark must equal the announced stamp")
+}
+
 // A stale EDIT (older than the local write) keeps local authority: rejected
 // with no preserve, no announce cancellation side effects on the bytes.
 func TestEditRemoteFileWithBase_StaleEditRejected(t *testing.T) {

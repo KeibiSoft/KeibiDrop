@@ -1439,6 +1439,17 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				base := f.EditBaseMtimeNs
 				f.NotRemoteSynced = false
 				f.HadEdits = false
+				// Do not announce a time below the in-memory identity. Write
+				// sets f.stat.Mtim from the Go clock. The disk mtime comes
+				// from the coarse kernel tick and can be some ms older. The
+				// peer's acceptance compares against f.stat.Mtim. An announce
+				// below it makes two concurrent writers reject each other and
+				// never converge.
+				if f.stat != nil {
+					if memNs := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; memNs > stgo.Mtim.Sec*1e9+stgo.Mtim.Nsec {
+						stgo.Mtim = f.stat.Mtim
+					}
+				}
 				f.LastAnnouncedMtimeNs = stgo.Mtim.Sec*1e9 + stgo.Mtim.Nsec
 				f.metaMu.Unlock()
 				d.OnLocalChange(types.FileEvent{
