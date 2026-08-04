@@ -454,13 +454,13 @@ func TestFUSEtoFUSE_EditorSaves(t *testing.T) {
 	}
 	peerEnv := func(in, out int, mount string) map[string]string {
 		return map[string]string{
-			"RELAY_URL":     relay.URL(),
-			"INBOUND_PORT":  fmt.Sprintf("%d", in),
-			"OUTBOUND_PORT": fmt.Sprintf("%d", out),
-			"MOUNT_DIR":     mount,
-			"SAVE_DIR":      t.TempDir(),
-			"USE_FUSE":      "1",
-			"LOG_FILE":      filepath.Join(logDir, "ed-"+filepath.Base(filepath.Dir(mount))+".log"),
+			"RELAY_URL":             relay.URL(),
+			"INBOUND_PORT":          fmt.Sprintf("%d", in),
+			"OUTBOUND_PORT":         fmt.Sprintf("%d", out),
+			"MOUNT_DIR":             mount,
+			"SAVE_DIR":              t.TempDir(),
+			"USE_FUSE":              "1",
+			"LOG_FILE":              filepath.Join(logDir, "ed-"+filepath.Base(filepath.Dir(mount))+".log"),
 			"KEIBIDROP_LIVE_COLLAB": "1",
 		}
 	}

@@ -278,7 +278,7 @@ func main() {
 				shArgs := append([]string{"-c", `cd "$0" && exec "$@"`, dir}, args[2:]...)
 				cmd = exec.Command("sh", shArgs...) // #nosec G204 -- test harness, args from stdin
 			}
-			out, err := cmd.CombinedOutput()
+			out, err := cmd.CombinedOutput() // #nosec G702 -- test harness, args from test stdin
 			exitCode := 0
 			if err != nil {
 				if exitErr, ok := err.(*exec.ExitError); ok {
@@ -430,7 +430,7 @@ func main() {
 			cmdline := strings.Join(args[2:], " ")
 			// Same vfork hazard as "exec": cd inside the shell, not cmd.Dir.
 			cmd := exec.Command("sh", "-c", fmt.Sprintf("cd %q && { %s; }", dir, cmdline)) // #nosec G204 -- test harness, args from stdin
-			out, err := cmd.CombinedOutput()
+			out, err := cmd.CombinedOutput() // #nosec G702 -- test harness, args from test stdin
 			exitCode := 0
 			if err != nil {
 				if exitErr, ok := err.(*exec.ExitError); ok {
