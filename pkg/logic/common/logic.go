@@ -831,7 +831,27 @@ func (kd *KeibiDrop) JoinRoom() error {
 				logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
 
 				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
-				inConn, acceptErr := kd.listener.Accept()
+				// Same junk-connection tolerance as the create side: a relay
+				// probe or a scanner must not kill the return leg.
+				var inConn net.Conn
+				var acceptErr error
+				for {
+					inConn, acceptErr = kd.listener.Accept()
+					if acceptErr != nil {
+						break
+					}
+					// A connect-and-hold must not pin the accept slot past
+					// the window: bound the handshake read, then clear the
+					// deadline because this conn becomes the session transport.
+					_ = inConn.SetDeadline(time.Now().Add(15 * time.Second))
+					if hsErr := session.PerformInboundHandshake(kd.session, inConn); hsErr != nil {
+						logger.Warn("Inbound handshake failed, accepting again", "error", hsErr)
+						inConn.Close()
+						continue
+					}
+					_ = inConn.SetDeadline(time.Time{})
+					break
+				}
 				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
 
 				if acceptErr != nil {
@@ -842,10 +862,6 @@ func (kd *KeibiDrop) JoinRoom() error {
 						return fmt.Errorf("inbound accept timed out and no bridge configured")
 					}
 				} else {
-					if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
-						logger.Error("Failed inbound handshake", "error", err)
-						return err
-					}
 					kd.markInboundReachable()
 					kd.ConnectionMode = "direct"
 					if kd.OnEvent != nil {
@@ -1027,7 +1043,29 @@ func (kd *KeibiDrop) CreateRoom() error {
 		var conn net.Conn
 		var acceptErr error
 		if !useBridge {
-			conn, acceptErr = kd.listener.Accept()
+			// The public internet delivers junk connections: the relay's
+			// reachability probe and port scanners connect and close. A
+			// failed handshake must not kill the room. Close that
+			// connection and accept again until the deadline. This is
+			// safe: the handshake writes to the session only after the
+			// fingerprint check passes.
+			for {
+				conn, acceptErr = kd.listener.Accept()
+				if acceptErr != nil {
+					break
+				}
+				// A connect-and-hold must not pin the accept slot past the
+				// window: bound the handshake read, then clear the deadline
+				// because this conn becomes the session transport.
+				_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+				if hsErr := session.PerformInboundHandshake(kd.session, conn); hsErr != nil {
+					logger.Warn("Inbound handshake failed, accepting again", "error", hsErr)
+					conn.Close()
+					continue
+				}
+				_ = conn.SetDeadline(time.Time{})
+				break
+			}
 			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
 		}
 
@@ -1047,10 +1085,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 		}
 
 		if !useBridge {
-			// Direct inbound succeeded.
-			if err := session.PerformInboundHandshake(kd.session, conn); err != nil {
-				return err
-			}
+			// Direct inbound succeeded; the accept loop verified the handshake.
 			kd.markInboundReachable()
 
 			addr, ok := conn.RemoteAddr().(*net.TCPAddr)

@@ -64,11 +64,23 @@ func main() {
 	// prefetchOnOpen honors KEIBIDROP_PREFETCH_ON_OPEN (default off = on-demand) so
 	// benchmarks can compare the on-demand vs push/prefetch read paths.
 	prefetchOnOpen := os.Getenv("KEIBIDROP_PREFETCH_ON_OPEN") == "1"
+	// LOCAL_IPV6 sets the address this peer advertises, as the product's
+	// network probe does. The default keeps the loopback behavior of the
+	// integration suite. The peer's address always comes from the relay.
+	localIP := os.Getenv("LOCAL_IPV6")
+	if localIP == "" {
+		localIP = "::1"
+	}
 	kd, err := common.NewKeibiDropWithIP(ctx, logger, useFUSE, parsed,
-		inbound, outbound, mountDir, saveDir, prefetchOnOpen, false, "::1")
+		inbound, outbound, mountDir, saveDir, prefetchOnOpen, false, localIP)
 	if err != nil {
 		fmt.Println("ERR:init failed: " + err.Error())
 		os.Exit(1)
+	}
+	// BRIDGE_ADDR enables the relay-bridge fallback when a direct accept
+	// cannot succeed (NAT on one side).
+	if b := os.Getenv("BRIDGE_ADDR"); b != "" {
+		kd.BridgeAddr = b
 	}
 	// live_collab toggle: when set, enable macFUSE auto_cache so a peer's
 	// same-size in-place edit is seen live (at the cost of mmap-write integrity).
