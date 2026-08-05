@@ -174,4 +174,4 @@ Override with `TO_SAVE_PATH` environment variable or `save_path` in config.toml.
 
 ### Windows
 
-Works in no-FUSE mode (not yet tested). FUSE mode requires [WinFsp](https://winfsp.dev/) and has not been tested yet.
+Works in both modes. FUSE mode requires [WinFsp](https://winfsp.dev/) (2.1 or later recommended); the mount appears as a drive letter, and the mount point must not already exist.

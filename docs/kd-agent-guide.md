@@ -137,7 +137,8 @@ Every command returns a single JSON line:
 
 - `ok: true` — command succeeded, result in `data`
 - `ok: false` — command failed, reason in `error`
-- Exit code 0 on success, 1 on failure
+- Exit code is 0 even when a command fails; it is 1 only when the daemon
+  socket is unreachable. Always check the `ok` field, not the exit code.
 
 ## Command Reference
 
@@ -181,8 +182,8 @@ Every command returns a single JSON line:
 | **Diagnostics** | | |
 | `kd export-logs [dest]` | Export sanitized logs | `{"ok":true,"data":{"path":"keibidrop-sanitized.log"}}` |
 | `kd sanitize-logs [dest]` | Alias for export-logs | `{"ok":true,"data":{"path":"keibidrop-sanitized.log"}}` |
-| `kd config-path` | Show config file path | `{"ok":true,"data":{"path":"~/.config/keibidrop/config.json"}}` |
-| `kd log-path` | Show log file path | `{"ok":true,"data":{"path":"~/.config/keibidrop/keibidrop.log"}}` |
+| `kd config-path` | Show config file path | `{"ok":true,"data":{"path":"~/.config/keibidrop/config.toml"}}` |
+| `kd log-path` | Show log file path | `{"ok":true,"data":{"path":"~/Library/Logs/KeibiDrop/keibidrop.log"}}` |
 | `kd help` | Show help text | (plain text) |
 
 ## LAN / Local Mode

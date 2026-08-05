@@ -104,7 +104,7 @@ It works through firewalls automatically. If direct connection fails, KeibiDrop 
 
 | | Direct Transfer | Virtual Folder (FUSE) |
 |--|--|--|
-| Speed | Up to 550 MB/s | Up to 250 MB/s |
+| Speed | Up to ~660 MB/s | Up to ~276 MB/s |
 | How it works | Add files, peer pulls them | Peer's files appear as a local folder |
 | Setup | Nothing extra | Install [macFUSE](https://macfuse.github.io/), [fuse3](https://github.com/libfuse/libfuse), or [WinFsp](https://winfsp.dev/) |
 | Best for | Sending large files | Working on shared files, git repos |
@@ -171,7 +171,7 @@ KeibiDrop reads `~/.config/keibidrop/config.toml`. Environment variables overrid
 
 Post-quantum hybrid key exchange prevents future quantum computers from decrypting recorded traffic. Forward secrecy via periodic re-keying limits exposure if a session key is ever compromised.
 
-By default, identity is ephemeral: a fresh keypair each session, anonymous, unlinkable. For ease of use, you can save persistent identities encrypted with a per-install master key stored in the OS keychain (macOS Keychain Services, Linux Secret Service, Windows Credential Manager). Headless setups fall back to `~/.config/keibidrop/.master.key` (mode 0600). Optional passphrase protection via Argon2id for users who back up config to the cloud.
+By default, identity persists across sessions (so saved contacts keep working), encrypted with a per-install master key stored in the OS keychain (macOS Keychain Services, Linux Secret Service, Windows Credential Manager). Headless setups fall back to `~/.config/keibidrop/.master.key` (mode 0600). Optional passphrase protection via Argon2id for users who back up config to the cloud. Incognito mode switches to ephemeral keys: a fresh keypair each session, anonymous, unlinkable, nothing written to disk.
 
 Full protocol description: [Security.md](./Security.md)
 
