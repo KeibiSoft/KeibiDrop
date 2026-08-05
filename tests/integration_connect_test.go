@@ -93,6 +93,13 @@ func SetupPeerPairViaConnect(t *testing.T, isFuse bool) *TestPair {
 		t.Fatal("timeout waiting for Bob Connect")
 	}
 
+	// The Run() goroutine sets the running flag after it receives the Start
+	// signal. Wait for both flags: a Stop() before the flag is set is a no-op,
+	// and the queued Start then resurrects the session the test believes dead.
+	WaitForCondition(t, 5*time.Second, 10*time.Millisecond, func() bool {
+		return kdAlice.IsRunning() && kdBob.IsRunning()
+	}, "waiting for both peers to be running after connect")
+
 	tp := &TestPair{
 		Alice:         kdAlice,
 		Bob:           kdBob,

@@ -160,16 +160,23 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	return nil
 }
 
-// StopConnectionResilience stops all resilience components.
+// StopConnectionResilience stops all resilience components. It snapshots the
+// handles under kd.mu, because teardown nils the fields under the same lock and
+// external callers run concurrently with it. Stop calls run outside the lock.
 func (kd *KeibiDrop) StopConnectionResilience() {
-	if kd.HealthMonitor != nil {
-		kd.HealthMonitor.Stop()
+	kd.mu.Lock()
+	hm := kd.HealthMonitor
+	rm := kd.ReconnectManager
+	rk := kd.RelayKeepalive
+	kd.mu.Unlock()
+	if hm != nil {
+		hm.Stop()
 	}
-	if kd.ReconnectManager != nil {
-		kd.ReconnectManager.Stop()
+	if rm != nil {
+		rm.Stop()
 	}
-	if kd.RelayKeepalive != nil {
-		kd.RelayKeepalive.Stop()
+	if rk != nil {
+		rk.Stop()
 	}
 }
 
@@ -517,31 +524,42 @@ func (kd *KeibiDrop) wireReconnectEvents() {
 	kd.ReconnectManager.OnGaveUp = wrapCb(kd.ReconnectManager.OnGaveUp, "gave_up:")
 }
 
-// ConnectionStatus returns the current connection health status.
+// ConnectionStatus returns the current connection health status. It snapshots the
+// monitor under kd.mu, because teardown nils the field under the same lock.
 func (kd *KeibiDrop) ConnectionStatus() string {
-	if kd.HealthMonitor == nil {
+	kd.mu.Lock()
+	hm := kd.HealthMonitor
+	kd.mu.Unlock()
+	if hm == nil {
 		return "unknown"
 	}
-	return kd.HealthMonitor.Health().String()
+	return hm.Health().String()
 }
 
 // WriterEpoch reports the in-band ratchet generation: the max writer epoch across
-// both live directions, or 0 before a monitor exists. It reads the monitor's
-// captured conns, so it is pull-based and race-free.
+// both live directions, or 0 before a monitor exists. It snapshots the monitor
+// under kd.mu, because teardown nils the field under the same lock; the snapshot's
+// captured conns are immutable, so the epoch read itself is race-free.
 func (kd *KeibiDrop) WriterEpoch() uint16 {
+	kd.mu.Lock()
 	hm := kd.HealthMonitor
+	kd.mu.Unlock()
 	if hm == nil {
 		return 0
 	}
 	return hm.MaxWriterEpoch()
 }
 
-// ReconnectionState returns the current reconnection state.
+// ReconnectionState returns the current reconnection state. It snapshots the
+// manager under kd.mu, because teardown nils the field under the same lock.
 func (kd *KeibiDrop) ReconnectionState() string {
-	if kd.ReconnectManager == nil {
+	kd.mu.Lock()
+	rm := kd.ReconnectManager
+	kd.mu.Unlock()
+	if rm == nil {
 		return "unknown"
 	}
-	return kd.ReconnectManager.State().String()
+	return rm.State().String()
 }
 
 // ReconnectionAttempts returns the number of reconnection attempts.

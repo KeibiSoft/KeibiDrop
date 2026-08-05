@@ -18,10 +18,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// reconnectReady runs join and sends the result on ready. Stop() can leave
-// "running" set for a moment: a late component of the first connection
-// re-asserts it (known teardown race, CI timing only). Retry until the flag
-// clears. The race is in teardown, not in the join.
+// reconnectReady runs join and sends the result on ready, retrying while the
+// running flag is still set. The tests wait for the flag before they Stop(),
+// so this retry is insurance against residual teardown lag on slow CI.
 func reconnectReady(join func() error, ready chan error) {
 	var err error
 	for range 25 {
