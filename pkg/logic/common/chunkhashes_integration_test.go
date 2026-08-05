@@ -71,15 +71,15 @@ func startServer(t *testing.T, svc bindings.KeibiServiceServer) (*grpc.ClientCon
 func newTestSvcIntegration(t *testing.T, localPath, trackerKey string) *service.KeibidropServiceImpl {
 	t.Helper()
 	svc := &service.KeibidropServiceImpl{
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS: &filesystem.FS{
-			Root: &filesystem.Dir{
-				AfmLock:    sync.RWMutex{},
-				AllFileMap: make(map[string]*filesystem.File),
-			},
-		},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
+	svc.SetFS(&filesystem.FS{
+		Root: &filesystem.Dir{
+			AfmLock:    sync.RWMutex{},
+			AllFileMap: make(map[string]*filesystem.File),
+		},
+	})
 	if trackerKey != "" && localPath != "" {
 		svc.SyncTracker.LocalFiles[trackerKey] = &synctracker.File{
 			Name:           trackerKey,

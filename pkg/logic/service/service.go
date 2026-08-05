@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -43,10 +44,14 @@ type KeibidropServiceImpl struct {
 	bindings.UnimplementedKeibiServiceServer
 	Session      *session.Session
 	Logger       *slog.Logger
-	FS           *filesystem.FS
 	SyncTracker  *synctracker.SyncTracker
 	OnEvent      func(string)
 	OnDisconnect func() // Called (in goroutine) when peer sends DISCONNECT; cancels context to trigger cleanup.
+
+	// fs is published while the server is already serving: Run() backfills it
+	// after the first mount, and mount/unmount swap it mid-session. Handlers
+	// load it atomically through FS() instead of reading a bare field.
+	fs atomic.Pointer[filesystem.FS]
 
 	// pendingRemoves buffers REMOVE_FILE events for 1000ms. If an ADD_FILE or
 	// RENAME_FILE arrives for the same path within that window, the REMOVE is
@@ -54,6 +59,13 @@ type KeibidropServiceImpl struct {
 	pendingRemovesMu sync.Mutex
 	pendingRemoves   map[string]*time.Timer
 }
+
+// FS returns the current FUSE tree, or nil before the first publish or after
+// unmount. Handlers nil-check per call.
+func (kd *KeibidropServiceImpl) FS() *filesystem.FS { return kd.fs.Load() }
+
+// SetFS publishes the FUSE tree to running handlers.
+func (kd *KeibidropServiceImpl) SetFS(f *filesystem.FS) { kd.fs.Store(f) }
 
 // statFromAttr builds a fuse.Stat_t from a peer-sent Attr. Remote files are
 // presented as owned by the current user; Nlink is always 1.
@@ -104,7 +116,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		return &bindings.NotifyResponse{}, nil
 	}
 
-	if kd.FS == nil && kd.SyncTracker == nil {
+	if kd.FS() == nil && kd.SyncTracker == nil {
 		logger.Warn("Filesystem not mounted")
 		return nil, ErrGRPCNotMounted
 	}
@@ -116,17 +128,17 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	case bindings.NotifyType_ADD_DIR:
 		logger.Info("Mkdir called")
 
-		if kd.FS == nil {
+		if kd.FS() == nil {
 			logger.Warn("Nil FS")
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		if kd.FS.Root == nil {
+		if kd.FS().Root == nil {
 			logger.Warn("Nil Root FS")
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		err := kd.FS.Root.MkdirFromPeer(req.Path, 0755) // Use FromPeer to avoid notification loop.
+		err := kd.FS().Root.MkdirFromPeer(req.Path, 0755) // Use FromPeer to avoid notification loop.
 		if err != 0 {
 			return nil, ErrGRPCFailedPrecondition
 		}
@@ -137,10 +149,10 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		// Peer stopped sharing this directory. Remove from our view but keep any local data.
 		logger.Info("Remove dir reference", "path", req.Path)
 
-		if kd.FS != nil && kd.FS.Root != nil {
-			kd.FS.Root.Adm.Lock()
-			delete(kd.FS.Root.AllDirMap, req.Path)
-			kd.FS.Root.Adm.Unlock()
+		if kd.FS() != nil && kd.FS().Root != nil {
+			kd.FS().Root.Adm.Lock()
+			delete(kd.FS().Root.AllDirMap, req.Path)
+			kd.FS().Root.Adm.Unlock()
 			logger.Info("Removed directory reference from view", "path", req.Path)
 		}
 	case bindings.NotifyType_ADD_FILE:
@@ -153,7 +165,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCInvalidArgument
 		}
 
-		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+		if (kd.FS() == nil || kd.FS().Root == nil) && kd.SyncTracker != nil {
 			kd.SyncTracker.RemoteFilesMu.Lock()
 			defer kd.SyncTracker.RemoteFilesMu.Unlock()
 			existing, ok := kd.SyncTracker.RemoteFiles[req.Path]
@@ -190,17 +202,17 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return &bindings.NotifyResponse{}, nil
 		}
 
-		if kd.FS == nil {
+		if kd.FS() == nil {
 			logger.Warn("Nil FS")
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		if kd.FS.Root == nil {
+		if kd.FS().Root == nil {
 			logger.Warn("Nil Root FS")
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		err := kd.FS.Root.AddRemoteFileWithBase(logger, req.Path, req.Name, statFromAttr(req.Attr), req.BaseMtimeNs)
+		err := kd.FS().Root.AddRemoteFileWithBase(logger, req.Path, req.Name, statFromAttr(req.Attr), req.BaseMtimeNs)
 		if err != nil {
 			return nil, ErrGRPCInvalidArgument
 		}
@@ -224,7 +236,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+		if (kd.FS() == nil || kd.FS().Root == nil) && kd.SyncTracker != nil {
 			kd.SyncTracker.RemoteFilesMu.Lock()
 			defer kd.SyncTracker.RemoteFilesMu.Unlock()
 			f, ok := kd.SyncTracker.RemoteFiles[req.Path]
@@ -259,17 +271,17 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			return &bindings.NotifyResponse{}, nil
 		}
 
-		if kd.FS == nil {
+		if kd.FS() == nil {
 			logger.Warn("Nil FS")
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		if kd.FS.Root == nil {
+		if kd.FS().Root == nil {
 			logger.Warn("Nil Root FS")
 			return nil, ErrGRPCFailedPrecondition
 		}
 
-		err := kd.FS.Root.EditRemoteFileWithBase(logger, req.Path, req.Name, statFromAttr(req.Attr), req.BaseMtimeNs)
+		err := kd.FS().Root.EditRemoteFileWithBase(logger, req.Path, req.Name, statFromAttr(req.Attr), req.BaseMtimeNs)
 
 		if err != nil {
 			return nil, ErrGRPCFailedPrecondition
@@ -294,15 +306,15 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		// Peer renamed/moved a file. OldPath -> Path.
 		logger.Info("Rename file", "oldPath", req.OldPath, "newPath", req.Path)
 
-		if kd.FS != nil && kd.FS.Root != nil {
-			oldDiskPath := filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.OldPath))
-			newDiskPath := filepath.Clean(filepath.Join(kd.FS.Root.RealPathOfFile, req.Path))
+		if kd.FS() != nil && kd.FS().Root != nil {
+			oldDiskPath := filepath.Clean(filepath.Join(kd.FS().Root.RealPathOfFile, req.OldPath))
+			newDiskPath := filepath.Clean(filepath.Join(kd.FS().Root.RealPathOfFile, req.Path))
 
 			// A swap whose declared base is older than LOCAL authority must not
 			// clobber the disk before the acceptance verdict (which preserves
 			// the local bytes as a conflict copy). Git-style flows never trip
 			// this: their targets hold no local authority.
-			conflictSkip := kd.FS.Root.SwapWouldConflict(req.Path, req.BaseMtimeNs)
+			conflictSkip := kd.FS().Root.SwapWouldConflict(req.Path, req.BaseMtimeNs)
 
 			if conflictSkip {
 				// The temp's prefetched bytes (if any) refetch under the
@@ -331,16 +343,16 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 			// Peek for a local object at the target BEFORE the map re-key:
 			// map locks stay sequential, never nested.
-			kd.FS.Root.AfmLock.Lock()
-			localTarget, hasLocalTarget := kd.FS.Root.AllFileMap[req.Path]
-			kd.FS.Root.AfmLock.Unlock()
+			kd.FS().Root.AfmLock.Lock()
+			localTarget, hasLocalTarget := kd.FS().Root.AllFileMap[req.Path]
+			kd.FS().Root.AfmLock.Unlock()
 
 			// Cancel any in-flight prefetch for the old path before
 			// updating maps — prevents it from racing with disk rename
 			// or subsequent Open on the new path.
-			kd.FS.Root.RemoteFilesLock.Lock()
-			file, exists := kd.FS.Root.RemoteFiles[req.OldPath]
-			target, targetTracked := kd.FS.Root.RemoteFiles[req.Path]
+			kd.FS().Root.RemoteFilesLock.Lock()
+			file, exists := kd.FS().Root.RemoteFiles[req.OldPath]
+			target, targetTracked := kd.FS().Root.RemoteFiles[req.Path]
 			// A DISTINCT object already at the target (tracked OR local-only):
 			// never blind-replace it — retire the temp's entry and let the
 			// acceptance path update the canonical object (split-brain guard,
@@ -352,37 +364,37 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 					file.PrefetchCancel()
 					file.PrefetchCancel = nil
 				}
-				delete(kd.FS.Root.RemoteFiles, req.OldPath)
+				delete(kd.FS().Root.RemoteFiles, req.OldPath)
 				if !collision {
 					file.RelativePath = req.Path
 					file.Name = filepath.Base(req.Path)
 					file.RealPathOfFile = newDiskPath
-					kd.FS.Root.RemoteFiles[req.Path] = file
+					kd.FS().Root.RemoteFiles[req.Path] = file
 					logger.Info("Renamed remote file reference", "oldPath", req.OldPath, "newPath", req.Path)
 				}
 			}
-			kd.FS.Root.RemoteFilesLock.Unlock()
+			kd.FS().Root.RemoteFilesLock.Unlock()
 
 			// Also update AllFileMap. If the target keeps a distinct object
 			// (collision), only retire the old-path entry.
-			kd.FS.Root.AfmLock.Lock()
-			if f, ok := kd.FS.Root.AllFileMap[req.OldPath]; ok {
-				delete(kd.FS.Root.AllFileMap, req.OldPath)
-				tgtLocal, hasTgtLocal := kd.FS.Root.AllFileMap[req.Path]
+			kd.FS().Root.AfmLock.Lock()
+			if f, ok := kd.FS().Root.AllFileMap[req.OldPath]; ok {
+				delete(kd.FS().Root.AllFileMap, req.OldPath)
+				tgtLocal, hasTgtLocal := kd.FS().Root.AllFileMap[req.Path]
 				if !collision && (!hasTgtLocal || tgtLocal == f) {
 					f.RelativePath = req.Path
 					f.Name = filepath.Base(req.Path)
 					f.RealPathOfFile = newDiskPath
-					kd.FS.Root.AllFileMap[req.Path] = f
+					kd.FS().Root.AllFileMap[req.Path] = f
 				}
 			}
-			kd.FS.Root.AfmLock.Unlock()
+			kd.FS().Root.AfmLock.Unlock()
 
 			// Collision or conflict: the target object is canonical; run the
 			// announced state through the acceptance path (watermark, conflict
 			// preserve, bitmap reset/reconcile, prefetch).
 			if (collision || conflictSkip) && req.Attr != nil {
-				_ = kd.FS.Root.AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
+				_ = kd.FS().Root.AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
 			}
 
 			// Check if the renamed file needs re-downloading.
@@ -404,7 +416,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				}
 
 				if needsRedownload {
-					_ = kd.FS.Root.AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
+					_ = kd.FS().Root.AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
 				}
 			}
 
@@ -425,7 +437,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				// propagated → peer ".git/objects" empty → "bad object HEAD".
 				logger.Info("Rename of untracked source: materializing destination",
 					"path", req.Path, "size", req.Attr.Size)
-				_ = kd.FS.Root.AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
+				_ = kd.FS().Root.AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
 			}
 		}
 
@@ -458,16 +470,16 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		// Peer renamed/moved a directory. OldPath -> Path.
 		logger.Info("Rename directory", "oldPath", req.OldPath, "newPath", req.Path)
 
-		if kd.FS != nil && kd.FS.Root != nil {
-			kd.FS.Root.Adm.Lock()
-			if dir, ok := kd.FS.Root.AllDirMap[req.OldPath]; ok {
-				delete(kd.FS.Root.AllDirMap, req.OldPath)
+		if kd.FS() != nil && kd.FS().Root != nil {
+			kd.FS().Root.Adm.Lock()
+			if dir, ok := kd.FS().Root.AllDirMap[req.OldPath]; ok {
+				delete(kd.FS().Root.AllDirMap, req.OldPath)
 				dir.RelativePath = req.Path
 				dir.Name = filepath.Base(req.Path)
-				kd.FS.Root.AllDirMap[req.Path] = dir
+				kd.FS().Root.AllDirMap[req.Path] = dir
 				logger.Info("Renamed directory reference", "oldPath", req.OldPath, "newPath", req.Path)
 			}
-			kd.FS.Root.Adm.Unlock()
+			kd.FS().Root.Adm.Unlock()
 		}
 	}
 
@@ -552,10 +564,10 @@ func (kd *KeibidropServiceImpl) cancelAllPendingRemoves() {
 
 // executeRemove performs the actual REMOVE_FILE logic (previously inline in Notify).
 func (kd *KeibidropServiceImpl) executeRemove(path string, logger *slog.Logger) {
-	if kd.FS != nil && kd.FS.Root != nil {
+	if kd.FS() != nil && kd.FS().Root != nil {
 		hasOpenHandles := false
-		kd.FS.Root.AfmLock.Lock()
-		file, exists := kd.FS.Root.AllFileMap[path]
+		kd.FS().Root.AfmLock.Lock()
+		file, exists := kd.FS().Root.AllFileMap[path]
 		if exists && file != nil {
 			openCount := file.CountOpenDescriptors()
 			if openCount > 0 {
@@ -563,23 +575,23 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, logger *slog.Logger) 
 				hasOpenHandles = true
 				logger.Info("File has open handles, marking for removal after download", "path", path, "openHandles", openCount)
 			} else {
-				delete(kd.FS.Root.AllFileMap, path)
+				delete(kd.FS().Root.AllFileMap, path)
 			}
 		}
-		kd.FS.Root.AfmLock.Unlock()
+		kd.FS().Root.AfmLock.Unlock()
 
-		kd.FS.Root.RemoteFilesLock.Lock()
-		if rf, rfOk := kd.FS.Root.RemoteFiles[path]; rfOk {
+		kd.FS().Root.RemoteFilesLock.Lock()
+		if rf, rfOk := kd.FS().Root.RemoteFiles[path]; rfOk {
 			if rf.PrefetchCancel != nil {
 				rf.PrefetchCancel()
 				rf.PrefetchCancel = nil
 			}
-			delete(kd.FS.Root.RemoteFiles, path)
+			delete(kd.FS().Root.RemoteFiles, path)
 		}
-		kd.FS.Root.RemoteFilesLock.Unlock()
+		kd.FS().Root.RemoteFilesLock.Unlock()
 
 		if !hasOpenHandles {
-			cachePath := filepath.Clean(filepath.Join(kd.FS.Root.LocalDownloadFolder, path))
+			cachePath := filepath.Clean(filepath.Join(kd.FS().Root.LocalDownloadFolder, path))
 			if rmErr := os.Remove(cachePath); rmErr != nil && !os.IsNotExist(rmErr) {
 				logger.Warn("Failed to remove cache file", "path", cachePath, "error", rmErr)
 			}
@@ -629,15 +641,15 @@ func (kd *KeibidropServiceImpl) upsertRemoteInTracker(req *bindings.NotifyReques
 // mode: AllFileMap first (keys carry a leading "/"), then SyncTracker.LocalFiles
 // (drag-and-drop AddFile entries). Returns "" if not found. Each map lock is
 // held only briefly and never across the returned path's use. Caller must have
-// verified kd.FS and kd.FS.Root are non-nil.
+// verified kd.FS() and kd.FS().Root are non-nil.
 func (kd *KeibidropServiceImpl) resolveFUSEPath(path string) string {
 	fuseKey := path
 	if !strings.HasPrefix(fuseKey, "/") {
 		fuseKey = "/" + fuseKey
 	}
-	kd.FS.Root.AfmLock.RLock()
-	f, ok := kd.FS.Root.AllFileMap[fuseKey]
-	kd.FS.Root.AfmLock.RUnlock()
+	kd.FS().Root.AfmLock.RLock()
+	f, ok := kd.FS().Root.AllFileMap[fuseKey]
+	kd.FS().Root.AfmLock.RUnlock()
 	if ok {
 		return f.RealPathOfFile
 	}
@@ -658,7 +670,7 @@ func (kd *KeibidropServiceImpl) resolveFUSEPath(path string) string {
 func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) error {
 	logger := kd.Logger.With("method", "server-read")
 
-	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+	if (kd.FS() == nil || kd.FS().Root == nil) && kd.SyncTracker != nil {
 		isOpen := false
 
 		var fh *os.File
@@ -752,7 +764,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 		}
 	}
 
-	if kd.FS == nil || kd.FS.Root == nil {
+	if kd.FS() == nil || kd.FS().Root == nil {
 		logger.Error("FS or Root is nil")
 		return ErrGRPCFailedPrecondition
 	}
@@ -845,7 +857,7 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 	// Look up the file — same logic as the Read handler for both modes.
 	var realPath string
 
-	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+	if (kd.FS() == nil || kd.FS().Root == nil) && kd.SyncTracker != nil {
 		lookupPath := strings.TrimPrefix(req.Path, "/")
 		kd.SyncTracker.LocalFilesMu.RLock()
 		f, ok := kd.SyncTracker.LocalFiles[lookupPath]
@@ -856,7 +868,7 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 		if ok {
 			realPath = f.RealPathOfFile
 		}
-	} else if kd.FS != nil && kd.FS.Root != nil {
+	} else if kd.FS() != nil && kd.FS().Root != nil {
 		realPath = kd.resolveFUSEPath(req.Path)
 	}
 
@@ -935,7 +947,7 @@ func (kd *KeibidropServiceImpl) GetChunkHashes(req *bindings.GetChunkHashesReque
 	// Resolve path using the same logic as StreamFile.
 	var realPath string
 
-	if (kd.FS == nil || kd.FS.Root == nil) && kd.SyncTracker != nil {
+	if (kd.FS() == nil || kd.FS().Root == nil) && kd.SyncTracker != nil {
 		lookupPath := strings.TrimPrefix(req.Path, "/")
 		kd.SyncTracker.LocalFilesMu.RLock()
 		f, ok := kd.SyncTracker.LocalFiles[lookupPath]
@@ -946,7 +958,7 @@ func (kd *KeibidropServiceImpl) GetChunkHashes(req *bindings.GetChunkHashesReque
 		if ok {
 			realPath = f.RealPathOfFile
 		}
-	} else if kd.FS != nil && kd.FS.Root != nil {
+	} else if kd.FS() != nil && kd.FS().Root != nil {
 		realPath = kd.resolveFUSEPath(req.Path)
 	}
 

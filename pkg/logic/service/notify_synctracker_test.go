@@ -48,12 +48,12 @@ func TestAddFile_FuseMode_WritesSyncTracker(t *testing.T) {
 	root.Root = root
 
 	svc := &KeibidropServiceImpl{
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS: &filesystem.FS{
-			Root: root,
-		},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
+	svc.SetFS(&filesystem.FS{
+		Root: root,
+	})
 
 	const (
 		filePath = "/test-file.txt"
@@ -100,7 +100,6 @@ func TestAddFile_NoFUSE_RejectsStaleSmallerOlder_AcceptsNewerShrink(t *testing.T
 
 	svc := &KeibidropServiceImpl{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS:          nil, // non-FUSE path
 		SyncTracker: st,
 	}
 	sizeOf := func() uint64 {
@@ -183,12 +182,12 @@ func TestEditFile_FuseMode_UpdatesSyncTracker(t *testing.T) {
 	}
 
 	svc := &KeibidropServiceImpl{
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS: &filesystem.FS{
-			Root: root,
-		},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: tracker,
 	}
+	svc.SetFS(&filesystem.FS{
+		Root: root,
+	})
 
 	req := &bindings.NotifyRequest{
 		Type: bindings.NotifyType_EDIT_FILE,
@@ -238,12 +237,12 @@ func TestEditFile_FuseMode_CreatesNewSyncTrackerEntry(t *testing.T) {
 	root.Root = root
 
 	svc := &KeibidropServiceImpl{
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS: &filesystem.FS{
-			Root: root,
-		},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
+	svc.SetFS(&filesystem.FS{
+		Root: root,
+	})
 
 	const (
 		filePath    = "/new-file.txt"
@@ -292,7 +291,6 @@ func TestRemoveFile_NoFUSE_BufferedThenCancelledByAdd(t *testing.T) {
 
 	svc := &KeibidropServiceImpl{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS:          nil, // non-FUSE path
 		SyncTracker: st,
 	}
 	tracked := func() bool {
@@ -330,7 +328,6 @@ func TestRemoveFile_NoFUSE_ExecutesAfterWindow(t *testing.T) {
 
 	svc := &KeibidropServiceImpl{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS:          nil, // non-FUSE path
 		SyncTracker: st,
 	}
 
@@ -360,7 +357,6 @@ func TestRemoveFile_NoFUSE_DisconnectCancelsPendingRemoves(t *testing.T) {
 
 	svc := &KeibidropServiceImpl{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS:          nil, // non-FUSE path
 		SyncTracker: st,
 	}
 

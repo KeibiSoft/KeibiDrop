@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -44,16 +45,25 @@ type KeibidropServiceImpl struct {
 	bindings.UnimplementedKeibiServiceServer
 	Session      *session.Session
 	Logger       *slog.Logger
-	FS           *filesystem.FS
 	SyncTracker  *synctracker.SyncTracker
 	OnEvent      func(string)
 	OnDisconnect func()
+
+	// fs mirrors the desktop struct so the common package compiles unchanged.
+	// Android has no FUSE, so it stays nil.
+	fs atomic.Pointer[filesystem.FS]
 
 	// pendingRemoves buffers REMOVE_FILE for 1000ms; an ADD/EDIT/RENAME for the
 	// same path within that window cancels it (git's atomic .lock->rename dance).
 	pendingRemovesMu sync.Mutex
 	pendingRemoves   map[string]*time.Timer
 }
+
+// FS returns the current FUSE tree. Always nil on Android.
+func (kd *KeibidropServiceImpl) FS() *filesystem.FS { return kd.fs.Load() }
+
+// SetFS publishes the FUSE tree. A no-op target on Android; kept for parity.
+func (kd *KeibidropServiceImpl) SetFS(f *filesystem.FS) { kd.fs.Store(f) }
 
 func (kd *KeibidropServiceImpl) Debug(context.Context, *bindings.DebugRequest) (*bindings.DebugResponse, error) {
 	kd.Logger.Info("Debug called. Success!")
