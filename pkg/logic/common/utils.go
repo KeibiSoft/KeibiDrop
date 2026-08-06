@@ -398,7 +398,15 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	// download (e.g. LFS writing a 420MB file) triggers ADD_FILE repeatedly and the peer
 	// restarts prefetch each time. ADD_FILE/EDIT_FILE are debounced per path on a 200ms timer;
 	// RENAME/REMOVE/ADD_DIR are sent immediately.
-	kd.notifyCh = make(chan *bindings.NotifyRequest, 16384) // 8x headroom for git-clone bursts (~1-1.5 events/file)
+	// 8x headroom for git-clone bursts (~1-1.5 events/file). The worker and the
+	// OnLocalChange closure capture the channel and the session context as
+	// locals: a reconnect runs setupFilesystem again, and a worker that reads
+	// the kd fields would race the next session's setup and outlive its own.
+	notifyCh := make(chan *bindings.NotifyRequest, 16384)
+	kd.mu.Lock()
+	kd.notifyCh = notifyCh
+	ctx := kd.ctx
+	kd.mu.Unlock()
 	var batchSeq atomic.Uint64
 	go func() {
 		// Per-path debounce state.
@@ -418,6 +426,11 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			// This batch is leaving the worker's hands: clear its immediate REMOVE/RENAME
 			// events from pendingNotifies on every return path so the counter can't leak.
 			defer kd.pendingNotifies.Add(-countImmediateNotifies(batch))
+			// Send nothing during teardown: the conns are dying and the next session's
+			// setup rewrites the fields a send would read. The deferred balance still runs.
+			if ctx.Err() != nil {
+				return
+			}
 			// Snapshot the session under kd.mu: teardown rewrites kd.session concurrently and
 			// this worker never took kd.mu, so a bare read would race. The RPCs below route
 			// over the QUIC metadata channel when up and fall back to TCP.
@@ -445,8 +458,22 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		}
 
 		for {
+			// Exit promptly on teardown even when requests keep arriving: the
+			// inner select picks a ready case at random, so this check alone
+			// bounds the post-cancel work to one iteration.
 			select {
-			case req, ok := <-kd.notifyCh:
+			case <-ctx.Done():
+				kd.pendingNotifies.Add(-countImmediateNotifies(immediate))
+				return
+			default:
+			}
+			select {
+			case <-ctx.Done():
+				// Session teardown: send nothing, balance the immediate-event
+				// counter, and die. A reconnect re-announces shared files.
+				kd.pendingNotifies.Add(-countImmediateNotifies(immediate))
+				return
+			case req, ok := <-notifyCh:
 				if !ok {
 					// Channel closed: flush everything buffered. Immediate REMOVE/RENAME/ADD_DIR
 					// first (so buffered deletes aren't dropped and their counts are balanced),
@@ -456,12 +483,12 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					for _, p := range pending {
 						// Same superseded-by-acceptance guard as the ticker flush.
 						if p.req.Type == bindings.NotifyType_ADD_FILE &&
-							kd.FS != nil && kd.FS.Root != nil &&
-							kd.FS.Root.PendingAnnounceSuperseded(p.req.Path) {
+							kd.FS != nil && kd.FS.Root() != nil &&
+							kd.FS.Root().PendingAnnounceSuperseded(p.req.Path) {
 							continue
 						}
-						if kd.FS != nil && kd.FS.Root != nil {
-							refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder)
+						if kd.FS != nil && kd.FS.Root() != nil {
+							refreshAttrFromDisk(p.req, kd.FS.Root().LocalDownloadFolder)
 						}
 						remaining = append(remaining, p.req)
 					}
@@ -533,13 +560,13 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 						// newer edit. CancelPendingNotify usually wins this
 						// race; the state check closes it when it does not.
 						if p.req.Type == bindings.NotifyType_ADD_FILE &&
-							kd.FS != nil && kd.FS.Root != nil &&
-							kd.FS.Root.PendingAnnounceSuperseded(p.req.Path) {
+							kd.FS != nil && kd.FS.Root() != nil &&
+							kd.FS.Root().PendingAnnounceSuperseded(p.req.Path) {
 							delete(pending, path)
 							continue
 						}
-						if kd.FS != nil && kd.FS.Root != nil {
-							refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder)
+						if kd.FS != nil && kd.FS.Root() != nil {
+							refreshAttrFromDisk(p.req, kd.FS.Root().LocalDownloadFolder)
 						}
 						ready = append(ready, p.req)
 						delete(pending, path)
@@ -597,7 +624,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		// If the channel is full (16384 pending), drop the notification
 		// rather than blocking the FUSE handler.
 		select {
-		case kd.notifyCh <- req:
+		case notifyCh <- req:
 			logger.Debug("Local change queued", "action", event.Action, "path", event.Path)
 		default:
 			logger.Warn("Notification queue full, dropping", "path", event.Path)
@@ -764,16 +791,16 @@ func (kd *KeibiDrop) startGRPCServer() error {
 	ln := NewSingleConnListener(inboundConn)
 
 	svc := &service.KeibidropServiceImpl{
-		Session:     s,
-		Logger:      kd.logger.With("component", "keibidrop-server"),
-		SyncTracker: kd.SyncTracker,
-		// Re-wire the FUSE tree here: a reconnect rebuilds KDSvc but the post-mount wiring in
-		// Run() is not re-run, so without this a reconnected FUSE peer would never show
-		// notify-received files. kd.FS is nil for non-FUSE and the first connect (Run backfills).
-		FS:           kd.FS,
+		Session:      s,
+		Logger:       kd.logger.With("component", "keibidrop-server"),
+		SyncTracker:  kd.SyncTracker,
 		OnEvent:      kd.OnEvent,
 		OnDisconnect: kd.handleNotifyDisconnect,
 	}
+	// Re-wire the FUSE tree here: a reconnect rebuilds KDSvc but the post-mount wiring in
+	// Run() is not re-run, so without this a reconnected FUSE peer would never show
+	// notify-received files. kd.FS is nil for non-FUSE and the first connect (Run backfills).
+	svc.SetFS(kd.FS)
 
 	bindings.RegisterKeibiServiceServer(grpcServer, svc)
 

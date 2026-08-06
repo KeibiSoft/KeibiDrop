@@ -36,7 +36,7 @@ import (
 func TestReleaseAsyncNotifyRace(t *testing.T) {
 	saveDir := t.TempDir()
 	d := newTestDir(saveDir)
-	d.OpenStreamProvider = func() types.FileStreamProvider { return nil }
+	d.SetStreamProvider(func() types.FileStreamProvider { return nil })
 
 	const numFiles = 16
 	const reopenCycles = 4 // func2 goroutines per file = reopenCycles + 1
@@ -45,11 +45,11 @@ func TestReleaseAsyncNotifyRace(t *testing.T) {
 	// reaching the bool write) before returning, and verifies they all notify.
 	var mu sync.Mutex
 	fired := make(map[string]int)
-	d.OnLocalChange = func(ev types.FileEvent) {
+	d.SetOnLocalChange(func(ev types.FileEvent) {
 		mu.Lock()
 		fired[ev.Path]++
 		mu.Unlock()
-	}
+	})
 
 	var wg sync.WaitGroup
 	for i := 0; i < numFiles; i++ {

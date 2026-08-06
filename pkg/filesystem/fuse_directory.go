@@ -150,7 +150,7 @@ func (d *Dir) Chmod(path string, mode uint32) (errCode int) {
 		statSnap := *f.stat
 		f.metaMu.Unlock()
 		d.AfmLock.Unlock()
-		if d.OnLocalChange != nil {
+		if d.hasOnLocalChange() {
 			d.OnLocalChange(types.FileEvent{
 				Path:   path,
 				Action: types.EditFile,
@@ -166,7 +166,7 @@ func (d *Dir) Chmod(path string, mode uint32) (errCode int) {
 		applyMode(dir.stat)
 		stat := dir.stat
 		d.Adm.Unlock()
-		if d.OnLocalChange != nil {
+		if d.hasOnLocalChange() {
 			d.OnLocalChange(types.FileEvent{
 				Path:   path,
 				Action: types.EditDir,
@@ -388,7 +388,6 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 		Name:            name[len(name)-1],
 		RelativePath:    relativePath,
 		RealPathOfFile:  localPath,
-		OnLocalChange:   d.OnLocalChange,
 		StreamProvider:  d.OpenStreamProvider(),
 		NotRemoteSynced: true,
 		IsLocalPresent:  true,
@@ -474,7 +473,6 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 				RealPathOfFile:  localPath,
 				IsLocalPresent:  fileExists,
 				LocalNewer:      !isRemoteFile, // A remote file must not be marked local newer.
-				OnLocalChange:   d.OnLocalChange,
 				StreamProvider:  d.OpenStreamProvider(),
 				stat:            &winfuse.Stat_t{},
 			}
@@ -723,7 +721,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	var cacheFD *os.File
 	if remoteHasUpdate {
 		fsp := d.OpenStreamProvider()
-		streamCtx, cancel := context.WithCancel(d.FsCtx)
+		streamCtx, cancel := context.WithCancel(d.Ctx())
 		streamCancel = cancel
 		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // On-demand jumps. Prefetch uses StreamFile separately.
 		if err != nil {
@@ -1039,9 +1037,6 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 				AllDirMap:           make(map[string]*Dir),
 				AllFileMap:          make(map[string]*File),
 				stat:                &winfuse.Stat_t{},
-				OnLocalChange:       d.OnLocalChange,
-				OpenStreamProvider:  d.OpenStreamProvider,
-				FsCtx:               d.FsCtx,
 
 				RemoteFilesLock: sync.RWMutex{},
 				RemoteFiles:     make(map[string]*File),
@@ -1066,7 +1061,6 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 				Name:            getNameFromPath(path),
 				stat:            &winfuse.Stat_t{},
 				StreamProvider:  d.OpenStreamProvider(),
-				OnLocalChange:   d.OnLocalChange,
 			}
 			copyFusestatFromFusestat(f.stat, stat)
 			// A file found on disk is bytes this peer holds.
@@ -1166,16 +1160,13 @@ func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode 
 			AllDirMap:           make(map[string]*Dir),
 			AllFileMap:          make(map[string]*File),
 			stat:                st,
-			OnLocalChange:       d.OnLocalChange,
-			OpenStreamProvider:  d.OpenStreamProvider,
-			FsCtx:               d.FsCtx,
 			RemoteFilesLock:     sync.RWMutex{},
 			RemoteFiles:         make(map[string]*File),
 		}
 		d.AllDirMap[path] = dir
 		d.Adm.Unlock()
 
-		if notifyPeer && d.OnLocalChange != nil {
+		if notifyPeer && d.hasOnLocalChange() {
 			d.OnLocalChange(types.FileEvent{
 				Path:   path,
 				Action: types.AddDir,
@@ -1371,7 +1362,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		f.metaMu.RUnlock()
 		// Do not announce an open that wrote nothing (pijul locks source repos
 		// RDWR). Such an announce makes the owner drop its authority.
-		needsNotify := (hadEdits || (notRemoteSynced && localNewer)) && d.OnLocalChange != nil
+		needsNotify := (hadEdits || (notRemoteSynced && localNewer)) && d.hasOnLocalChange()
 
 		if needsNotify {
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
@@ -1728,7 +1719,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	// also when the source is a peer file (reader moves the owner's file) or an
 	// adopted own file. Peer-driven renames do not pass through this op, so
 	// there is no echo.
-	if d.OnLocalChange != nil {
+	if d.hasOnLocalChange() {
 		// Get stat of the renamed file.
 		var attr *keibidrop.Attr
 		if stgo, statErr := platLstat(cleanNewPath); statErr == nil {
@@ -1798,7 +1789,7 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 	delete(d.AllDirMap, path)
 	d.Adm.Unlock()
 
-	if notifyPeer && d.OnLocalChange != nil && !isRemoteDir {
+	if notifyPeer && d.hasOnLocalChange() && !isRemoteDir {
 		d.OnLocalChange(types.FileEvent{
 			Path:   path,
 			Action: types.RemoveDir,
@@ -1922,7 +1913,7 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 	// Only emit on an actual size change. Windows re-opens an O_TRUNC file by calling Truncate
 	// even when the size is unchanged; a no-op truncate must not churn the peer with a redundant
 	// EDIT_FILE. A genuine grow/shrink/overwrite always changes the size.
-	if haveSnap && sizeChanged && d.OnLocalChange != nil {
+	if haveSnap && sizeChanged && d.hasOnLocalChange() {
 		d.OnLocalChange(types.FileEvent{Path: path, Action: types.EditFile, Attr: types.StatToAttr(&statSnap), BaseMtimeNs: baseSnap})
 	}
 	return 0
@@ -2001,7 +1992,7 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	d.refreshDirStat(filepath.Dir(path))
 
 	// Notify peer about the removed file.
-	if notifyPeer && d.OnLocalChange != nil && (!isRemote || err == nil) {
+	if notifyPeer && d.hasOnLocalChange() && (!isRemote || err == nil) {
 		d.OnLocalChange(types.FileEvent{
 			Path:   path,
 			Action: types.RemoveFile,
@@ -2414,7 +2405,7 @@ func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *Chu
 		return
 	}
 	// Bound concurrency with the same semaphore prefetch uses; abort on unmount/disconnect.
-	ctx := d.FsCtx
+	ctx := d.Ctx()
 	sem := d.Root.PrefetchSem
 	if sem != nil {
 		select {
@@ -2575,7 +2566,7 @@ func (d *Dir) maybeReadAhead(f *File, pool *StreamPool, cacheFD *os.File, bitmap
 	if f.raCancel != nil {
 		f.raCancel() // release the previous (finished) refill's context
 	}
-	pctx, pcancel := context.WithCancel(d.FsCtx)
+	pctx, pcancel := context.WithCancel(d.Ctx())
 	f.raCancel = pcancel
 	f.raMu.Unlock()
 
@@ -2663,7 +2654,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	// try to create a pool on-demand so we can fetch the missing data.
 	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && f.StreamProvider != nil {
 		// logger.Info("Creating on-demand stream pool for incomplete remote file")
-		streamCtx, streamCancel := context.WithCancel(d.FsCtx)
+		streamCtx, streamCancel := context.WithCancel(d.Ctx())
 		newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, StreamPoolSize)
 		if openErr != nil {
 			streamCancel()
@@ -2751,7 +2742,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			var leader bool
 			bf, leader = f.beginBlockFetch(blockStart)
 			if !leader {
-				settled, err := bf.wait(d.FsCtx)
+				settled, err := bf.wait(d.Ctx())
 				// Serve from cache only if the leader actually cached our exact
 				// span. A short block (remote truncation / EOF race) leaves the
 				// tail unmarked, so HasRange catches it and we fetch it ourselves
@@ -2797,11 +2788,11 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		var readErr error
 		waitBegin := time.Now() // The reader is blocked here until the fetch lands.
 		for attempt := 0; attempt < 3; attempt++ {
-			if d.FsCtx.Err() != nil {
+			if d.Ctx().Err() != nil {
 				return 0 // The deferred backstop releases any waiters.
 			}
 			// Read the aligned block from the stream pool with a timeout.
-			ctx, cancel := context.WithTimeout(d.FsCtx, 10*time.Second)
+			ctx, cancel := context.WithTimeout(d.Ctx(), 10*time.Second)
 			data, readErr = pool.ReadAt(ctx, fetchStart, fetchLen)
 			cancel()
 
@@ -2820,7 +2811,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			// Try to re-establish the stream pool.
 			if f.StreamProvider != nil {
 				// logger.Info("Attempting to re-establish stream pool", "path", path, "attempt", attempt+1)
-				streamCtx, streamCancel := context.WithCancel(d.FsCtx)
+				streamCtx, streamCancel := context.WithCancel(d.Ctx())
 				newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, StreamPoolSize)
 				if openErr != nil {
 					streamCancel()
@@ -2853,7 +2844,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		if readErr != nil {
 			// Shutting down (unmount/disconnect cancelled FsCtx): stop quietly,
 			// this is not a read error. The deferred backstop releases any waiters.
-			if d.FsCtx.Err() != nil {
+			if d.Ctx().Err() != nil {
 				return 0
 			}
 			// The peer genuinely no longer has the file (e.g. git's transient
@@ -3169,7 +3160,6 @@ func (d *Dir) registerConflictCopy(logger *slog.Logger, relPath, realPath string
 		Name:            getNameFromPath(relPath),
 		RelativePath:    relPath,
 		RealPathOfFile:  realPath,
-		OnLocalChange:   d.OnLocalChange,
 		StreamProvider:  d.OpenStreamProvider(),
 		IsLocalPresent:  true,
 		LocalNewer:      true,
@@ -3179,7 +3169,7 @@ func (d *Dir) registerConflictCopy(logger *slog.Logger, relPath, realPath string
 	d.AllFileMap[relPath] = f
 	d.AfmLock.Unlock()
 	d.refreshDirStat(filepath.Dir(relPath))
-	if d.OnLocalChange != nil {
+	if d.hasOnLocalChange() {
 		d.OnLocalChange(types.FileEvent{Path: relPath, Action: types.AddFile, Attr: types.StatToAttr(&stgo)})
 	}
 }
@@ -3253,7 +3243,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			d.logger.Debug("oplog conflict predicate", "path", path, "accepted", accepted,
 				"wasLocalNewer", wasLocalNewer, "base", baseMtimeNs, "identity", existingMtime, "conflict", conflict)
 		}
-		if accepted && d.OnLocalChange != nil {
+		if accepted && d.hasOnLocalChange() {
 			// A queued announce for this path describes the replaced content.
 			// Its flush-time attr refresh would stamp the PEER'S bytes with a
 			// fresh local mtime and bounce them back as a newer edit.
@@ -3429,7 +3419,6 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		Name:            name,
 		NotLocalSynced:  true,
 		StreamProvider:  d.OpenStreamProvider(),
-		OnLocalChange:   d.OnLocalChange,
 		RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
 		Bitmap:          NewChunkBitmap(stat.Size),
 		RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
@@ -3495,7 +3484,7 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		lf.Close()
 	}
 
-	ctx, cancel := context.WithCancel(d.FsCtx)
+	ctx, cancel := context.WithCancel(d.Ctx())
 	f.PrefetchCancel = cancel
 
 	go d.prefetchFile(ctx, logger, f, path, realPath)
@@ -3700,7 +3689,6 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 			Name:            name,
 			NotLocalSynced:  true,
 			StreamProvider:  d.OpenStreamProvider(),
-			OnLocalChange:   d.OnLocalChange,
 			RealPathOfFile:  filepath.Clean(filepath.Join(d.RealPathOfFile, path)),
 			Bitmap:          NewChunkBitmap(stat.Size),
 			RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
@@ -3742,7 +3730,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 		d.logger.Debug("oplog conflict predicate (edit)", "path", path,
 			"wasLocalNewer", editLocalNewer, "base", baseMtimeNs, "identity", editRef, "conflict", conflict)
 	}
-	if d.OnLocalChange != nil {
+	if d.hasOnLocalChange() {
 		// A queued announce for this path describes the replaced content. Its
 		// flush-time attr refresh would stamp the PEER'S bytes with a fresh
 		// local mtime and bounce them back as a newer edit.

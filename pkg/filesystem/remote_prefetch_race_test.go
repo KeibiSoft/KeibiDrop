@@ -43,9 +43,9 @@ func TestRemotePrefetchStateRace(t *testing.T) {
 	saveDir := t.TempDir()
 	d := newTestDir(saveDir)
 	provider := &slowStreamProvider{content: make([]byte, 4096)}
-	d.OpenStreamProvider = func() types.FileStreamProvider { return provider }
+	d.SetStreamProvider(func() types.FileStreamProvider { return provider })
 	d.PrefetchOnOpen = true
-	d.FsCtx = context.Background()
+	d.SetCtx(context.Background())
 	d.PrefetchSem = make(chan struct{}, 8)
 	lg := nopLogger()
 

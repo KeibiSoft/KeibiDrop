@@ -7,10 +7,14 @@
 package tests
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -519,4 +523,96 @@ func TestDisconnect_FUSE_StopAndReconnect(t *testing.T) {
 
 	fusePath2 := filepath.Join(tp.AliceMountDir, "fuse_post.txt")
 	WaitForFileOnMount(t, fusePath2, 10*time.Second)
+}
+
+// TestDisconnect_NoFUSE_StopRightAfterConnect verifies that a Stop() issued
+// the instant Connect() returns performs a real stop. The running flag must be
+// committed before Connect() returns; an early Stop() must not no-op and let
+// the queued Start signal revive the session as a zombie.
+func TestDisconnect_NoFUSE_StopRightAfterConnect(t *testing.T) {
+	require := require.New(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	relay := NewMockRelay()
+	relayURL, err := url.Parse(relay.URL())
+	require.NoError(err)
+
+	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})
+	logger := slog.New(handler)
+
+	aliceInPort := getFreePortInRange(t, 26100, 26249)
+	aliceOutPort := getFreePortInRange(t, 26250, 26399)
+	bobInPort := getFreePortInRange(t, 26400, 26549)
+	bobOutPort := getFreePortInRange(t, 26550, 26699)
+
+	kdAlice, err := common.NewKeibiDropWithIP(ctx, logger.With("peer", "alice"),
+		false, relayURL, aliceInPort, aliceOutPort,
+		"", t.TempDir(), true, true, "::1")
+	require.NoError(err)
+
+	kdBob, err := common.NewKeibiDropWithIP(ctx, logger.With("peer", "bob"),
+		false, relayURL, bobInPort, bobOutPort,
+		"", t.TempDir(), true, true, "::1")
+	require.NoError(err)
+
+	aliceFp, err := kdAlice.ExportFingerprint()
+	require.NoError(err)
+	bobFp, err := kdBob.ExportFingerprint()
+	require.NoError(err)
+
+	require.NoError(kdAlice.AddPeerFingerprint(bobFp))
+	require.NoError(kdBob.AddPeerFingerprint(aliceFp))
+
+	var runWg sync.WaitGroup
+	runWg.Add(2)
+	go func() { defer runWg.Done(); kdAlice.Run() }()
+	go func() { defer runWg.Done(); kdBob.Run() }()
+
+	t.Cleanup(func() {
+		kdAlice.Stop()
+		kdBob.Stop()
+		kdAlice.Shutdown()
+		kdBob.Shutdown()
+		done := make(chan struct{})
+		go func() { runWg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+		relay.Close()
+	})
+
+	aliceReady := make(chan error, 1)
+	bobReady := make(chan error, 1)
+	go func() { aliceReady <- kdAlice.Connect() }()
+	go func() { bobReady <- kdBob.Connect() }()
+
+	select {
+	case err := <-aliceReady:
+		require.NoError(err, "Alice Connect failed")
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for Alice Connect")
+	}
+	select {
+	case err := <-bobReady:
+		require.NoError(err, "Bob Connect failed")
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for Bob Connect")
+	}
+
+	// Stop the instant Connect() returns: no IsRunning wait before this call.
+	kdBob.Stop()
+
+	// The flag commit happens inside finishConnect, so this holds with no wait.
+	require.True(kdAlice.IsRunning(), "running flag not set when Connect() returned")
+	require.False(kdBob.IsRunning(), "bob still running right after Stop()")
+
+	// Watch for a revival: the queued Start must starve on the torn-down
+	// session, not bring it back.
+	for range 20 {
+		time.Sleep(100 * time.Millisecond)
+		require.False(kdBob.IsRunning(), "bob revived after Stop()")
+	}
 }

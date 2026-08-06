@@ -641,8 +641,13 @@ func (kd *KeibiDrop) Run() {
 				// running to not-running transition on disconnect.
 				kd.running.Store(true)
 
-				if kd.FS != nil && kd.KDSvc != nil {
-					kd.KDSvc.FS = kd.FS
+				// Snapshot KDSvc under kd.mu: startGRPCServer publishes it under
+				// the same lock on another goroutine.
+				kd.mu.Lock()
+				svc := kd.KDSvc
+				kd.mu.Unlock()
+				if kd.FS != nil && svc != nil {
+					svc.SetFS(kd.FS)
 					if kd.FS.IsMounted() {
 						logger.Info("FUSE already mounted, waiting for disconnect")
 						<-kd.ctx.Done()

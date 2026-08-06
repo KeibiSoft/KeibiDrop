@@ -669,6 +669,10 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 	kd.maybeStartEagerFold()
 
 	if !kd.IsFUSE {
+		// Commit the running flag before Run() does. Run() stores it only after
+		// it receives the Start signal; a Stop() in that gap is a no-op, and the
+		// queued Start then revives the session after the caller stopped it.
+		kd.running.Store(true)
 		// Unblock Run()'s <-filesystemReady so it can process signals.
 		kd.filesystemReadyOnce.Do(func() { close(kd.filesystemReady) })
 		logger.Info("Success, starting without FUSE")
@@ -679,6 +683,8 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 		return err
 	}
 
+	// Same running-flag commit as the no-FUSE branch.
+	kd.running.Store(true)
 	logger.Info("Success")
 	return nil
 }
@@ -1249,7 +1255,7 @@ func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond boo
 	}
 
 	fs := filesystem.NewFS(logger)
-	kd.KDSvc.FS = fs
+	kd.KDSvc.SetFS(fs)
 
 	if err := fs.Mount(filepath.Clean(toMount), isSecond, filepath.Clean(toSave)); err != nil {
 		logger.Error("Filesystem mount failed", "error", err)
@@ -1273,7 +1279,7 @@ func (kd *KeibiDrop) UnmountFilesystem() error {
 	}
 
 	if kd.KDSvc != nil {
-		kd.KDSvc.FS = nil
+		kd.KDSvc.SetFS(nil)
 	}
 
 	fs.ClearFiles()

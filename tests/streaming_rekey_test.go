@@ -112,8 +112,9 @@ func TestStream_RekeyDuringPlaybackAddsNoStall(t *testing.T) {
 	var capInode uint64
 	var capPath string
 	var capOK bool
-	origFactory := tp.Alice.FS.Root.OpenStreamProvider
-	tp.Alice.FS.Root.OpenStreamProvider = func() types.FileStreamProvider {
+	aliceRoot := tp.Alice.FS.Root()
+	origFactory := aliceRoot.StreamProviderFn()
+	aliceRoot.SetStreamProvider(func() types.FileStreamProvider {
 		return &capturingProvider{inner: origFactory(), onOpen: func(inode uint64, path string) {
 			capMu.Lock()
 			if !capOK {
@@ -121,7 +122,7 @@ func TestStream_RekeyDuringPlaybackAddsNoStall(t *testing.T) {
 			}
 			capMu.Unlock()
 		}}
-	}
+	})
 
 	const movieSize = 64 << 20
 	movie := make([]byte, movieSize)

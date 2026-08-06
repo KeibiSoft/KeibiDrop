@@ -447,10 +447,10 @@ func newThumbnailDir(tb testing.TB, sizes []int64, delay time.Duration) (*Dir, [
 		RelativePath:        "/",
 		LocalDownloadFolder: saveDir,
 		OpenFileHandlers:    make(map[uint64]*HandleEntry),
-		FsCtx:               context.Background(),
 	}
 	root.Root = root
 	root.logger = nopLogger()
+	root.SetCtx(context.Background())
 	root.ReadAheadWindowBlocks = readAheadWindowBlocks(64) // default read-ahead on
 
 	var fhs []uint64

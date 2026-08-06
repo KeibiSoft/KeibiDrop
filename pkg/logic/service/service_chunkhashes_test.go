@@ -53,15 +53,15 @@ func (m *mockGetChunkHashesStream) RecvMsg(interface{}) error    { return nil }
 func newTestSvc(t *testing.T, localPath string, trackerKey string) *KeibidropServiceImpl {
 	t.Helper()
 	svc := &KeibidropServiceImpl{
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS: &filesystem.FS{
-			Root: &filesystem.Dir{
-				AfmLock:    sync.RWMutex{},
-				AllFileMap: make(map[string]*filesystem.File),
-			},
-		},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock:    sync.RWMutex{},
+		AllFileMap: make(map[string]*filesystem.File),
+	})
+	svc.SetFS(fsForSvc)
 	if trackerKey != "" && localPath != "" {
 		svc.SyncTracker.LocalFiles[trackerKey] = &synctracker.File{
 			Name:           trackerKey,
@@ -178,15 +178,15 @@ func TestGetChunkHashes_OversizeChunkSize(t *testing.T) {
 // traversal surface: both RPCs share the same resolution logic.
 func TestGetChunkHashes_PathNotFound_ParityWithStreamFile(t *testing.T) {
 	svc := &KeibidropServiceImpl{
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS: &filesystem.FS{
-			Root: &filesystem.Dir{
-				AfmLock:    sync.RWMutex{},
-				AllFileMap: make(map[string]*filesystem.File),
-			},
-		},
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock:    sync.RWMutex{},
+		AllFileMap: make(map[string]*filesystem.File),
+	})
+	svc.SetFS(fsForSvc)
 
 	// GetChunkHashes on unknown path.
 	chStream := &mockGetChunkHashesStream{}
@@ -222,7 +222,6 @@ func TestGetChunkHashes_NoFUSE_HashCorrectness(t *testing.T) {
 
 	svc := &KeibidropServiceImpl{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		FS:          nil,
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	svc.SyncTracker.LocalFiles["nofuse.bin"] = &synctracker.File{

@@ -228,7 +228,11 @@ func (kd *KeibiDrop) onRekeyNeeded() bool {
 	// Never rekey while a REMOVE/RENAME notify is queued or in flight. The worker has no
 	// retry queue, and only ADD_FILE replays, so a drop would lose the delete or rename.
 	// pendingNotifies counts from dequeue, so also check the channel for a fresh entry.
-	if len(kd.notifyCh) > 0 || kd.pendingNotifies.Load() > 0 {
+	// Snapshot the channel under kd.mu: setupFilesystem replaces it on reconnect.
+	kd.mu.Lock()
+	notifyCh := kd.notifyCh
+	kd.mu.Unlock()
+	if len(notifyCh) > 0 || kd.pendingNotifies.Load() > 0 {
 		return false
 	}
 

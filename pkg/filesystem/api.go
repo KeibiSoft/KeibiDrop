@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
@@ -36,12 +37,18 @@ type FS struct {
 	PushOnWrite       bool // If true, Write() pushes deltas to the peer asynchronously.
 	AutoCache         bool // If true (live_collab), add macFUSE auto_cache so a peer's same-size in-place edit shows live. Costs mmap-write integrity (git) on macOS; no-op on Linux/Windows.
 
-	host *winfuse.FileSystemHost
-	Root *Dir
+	// host and root are published by Mount and cleared by Unmount while other
+	// goroutines (Run, teardown, gRPC handlers) read them, so access is atomic.
+	host atomic.Pointer[winfuse.FileSystemHost]
+	root atomic.Pointer[Dir]
 
-	// Unmount cancels ctx to unblock FUSE handlers waiting on gRPC.
-	ctx        context.Context
-	cancel     context.CancelFunc
+	// ctxMu guards ctx/cancel. CancelInFlight and ClearFiles rebuild the pair
+	// from RPC and teardown goroutines while Mount and Unmount read it. Never
+	// hold ctxMu across a blocking call.
+	ctxMu  sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	mountPoint string
 
 	// cacheOwnerFP is the actual fingerprint of the peer whose files are
@@ -59,6 +66,17 @@ func NewFS(logger *slog.Logger) *FS {
 		ctx:    ctx,
 		cancel: cancel,
 	}
+}
+
+// Root returns the mounted root dir, or nil while unmounted.
+func (fs *FS) Root() *Dir {
+	return fs.root.Load()
+}
+
+// SetRoot publishes the root dir. Mount sets it in production; tests use it
+// to wire a hand-built tree.
+func (fs *FS) SetRoot(root *Dir) {
+	fs.root.Store(root)
 }
 
 // Mount blocks for the lifetime of the FUSE session. It returns an error at
@@ -136,15 +154,10 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		AfmLock:    sync.RWMutex{},
 		AllFileMap: make(map[string]*File),
 
-		OnLocalChange:      fs.OnLocalChange,
-		OpenStreamProvider: fs.OpenStreamProvider,
-
 		PrefetchOnOpen:        fs.PrefetchOnOpen,
 		PrefetchAutoMB:        fs.PrefetchAutoMB,
 		ReadAheadWindowBlocks: readAheadWindowBlocks(fs.ReadAheadWindowMB),
 		PushOnWrite:           fs.PushOnWrite,
-
-		FsCtx: fs.ctx,
 
 		RemoteFilesLock: sync.RWMutex{},
 		RemoteFiles:     make(map[string]*File),
@@ -153,24 +166,29 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	}
 
 	root.Root = root
-	fs.Root = root
+	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
+	fs.ctxMu.Lock()
+	ctx := fs.ctx
+	fs.ctxMu.Unlock()
+	root.SetCtx(ctx)
+	fs.root.Store(root)
 
 	host := winfuse.NewFileSystemHost(root)
 	host.SetCapReaddirPlus(true)
 	host.SetUseIno(true)
-	fs.host = host
+	fs.host.Store(host)
 	fs.mountPoint = cleanMountPoint
 
 	opts := getMountOptions(fs.AutoCache)
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
-	ok := fs.host.Mount(cleanMountPoint, opts)
+	ok := host.Mount(cleanMountPoint, opts)
 	if !ok {
 		// Reset host/Root so IsMounted() reports false. Otherwise a failed mount
 		// leaves them set. The next reconnect then takes the "already mounted,
 		// waiting" branch, never retries, and hangs the mount permanently.
-		fs.host = nil
-		fs.Root = nil
+		fs.host.Store(nil)
+		fs.root.Store(nil)
 		fs.logger.Error("FUSE Mount failed", "mountPoint", cleanMountPoint)
 		hint := "ensure user_allow_other is set in /etc/fuse.conf, or run with KD_NO_FUSE=1"
 		if runtime.GOOS == "windows" {
@@ -188,21 +206,25 @@ func isWindowsDirMountPoint(goos, p string) bool {
 }
 
 func (fs *FS) Unmount() {
-	fs.logger.Warn("FUSE Unmount starting", "hostNil", fs.host == nil)
-	if fs.host == nil {
+	host := fs.host.Load()
+	fs.logger.Warn("FUSE Unmount starting", "hostNil", host == nil)
+	if host == nil {
 		fs.logger.Warn("FUSE Unmount skipped - host is nil")
 		return
 	}
 
-	fs.cancel()
+	fs.ctxMu.Lock()
+	cancel := fs.cancel
+	fs.ctxMu.Unlock()
+	cancel()
 
-	if fs.Root != nil {
+	if fs.root.Load() != nil {
 		fs.drainInFlightOperations()
 	}
 
 	done := make(chan struct{})
 	go func() {
-		fs.host.Unmount()
+		host.Unmount()
 		close(done)
 	}()
 
@@ -213,7 +235,7 @@ func (fs *FS) Unmount() {
 		fs.forceUnmount()
 		<-done
 	}
-	fs.Root = nil
+	fs.root.Store(nil)
 	fs.logger.Warn("FUSE Unmount completed")
 }
 
@@ -221,42 +243,53 @@ func (fs *FS) Unmount() {
 // Call it after setupFilesystem re-wires OnLocalChange/OpenStreamProvider,
 // so the persistent Root uses the new session's gRPC client.
 func (fs *FS) RefreshCallbacks() {
-	if fs.Root != nil {
-		fs.Root.OnLocalChange = fs.OnLocalChange
-		fs.Root.OpenStreamProvider = fs.OpenStreamProvider
-		fs.Root.FsCtx = fs.ctx
+	root := fs.root.Load()
+	if root == nil {
+		return
 	}
+	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
+	fs.ctxMu.Lock()
+	ctx := fs.ctx
+	fs.ctxMu.Unlock()
+	root.SetCtx(ctx)
 }
 
 // IsMounted reports whether the FUSE host is active.
 func (fs *FS) IsMounted() bool {
-	return fs.host != nil && fs.Root != nil
+	return fs.host.Load() != nil && fs.root.Load() != nil
 }
 
 // ClearFiles cancels in-flight operations and clears all file/dir maps.
 // The mount stays alive as an empty folder, so a reconnect after disconnect
 // reuses it (cgofuse allows only one mount per process).
 func (fs *FS) ClearFiles() {
-	fs.cancel()
-	if fs.Root != nil {
+	fs.ctxMu.Lock()
+	cancel := fs.cancel
+	fs.ctxMu.Unlock()
+	cancel()
+	root := fs.root.Load()
+	if root != nil {
 		fs.drainInFlightOperations()
-		fs.Root.AfmLock.Lock()
-		fs.Root.AllFileMap = make(map[string]*File)
-		fs.Root.AfmLock.Unlock()
-		fs.Root.Adm.Lock()
-		fs.Root.AllDirMap = make(map[string]*Dir)
-		fs.Root.Adm.Unlock()
-		fs.Root.RemoteFilesLock.Lock()
-		fs.Root.RemoteFiles = make(map[string]*File)
-		fs.Root.RemoteFilesLock.Unlock()
-		fs.Root.OpenMapLock.Lock()
-		fs.Root.OpenFileHandlers = make(map[uint64]*HandleEntry)
-		fs.Root.OpenMapLock.Unlock()
+		root.AfmLock.Lock()
+		root.AllFileMap = make(map[string]*File)
+		root.AfmLock.Unlock()
+		root.Adm.Lock()
+		root.AllDirMap = make(map[string]*Dir)
+		root.Adm.Unlock()
+		root.RemoteFilesLock.Lock()
+		root.RemoteFiles = make(map[string]*File)
+		root.RemoteFilesLock.Unlock()
+		root.OpenMapLock.Lock()
+		root.OpenFileHandlers = make(map[uint64]*HandleEntry)
+		root.OpenMapLock.Unlock()
 	}
 	// Fresh context for the next session.
+	fs.ctxMu.Lock()
 	fs.ctx, fs.cancel = context.WithCancel(context.Background())
-	if fs.Root != nil {
-		fs.Root.FsCtx = fs.ctx
+	ctx := fs.ctx
+	fs.ctxMu.Unlock()
+	if root != nil {
+		root.SetCtx(ctx)
 	}
 }
 
@@ -266,14 +299,21 @@ func (fs *FS) ClearFiles() {
 // its files still there and resumes on-demand with no re-fetch. The full
 // ClearFiles wipe is only for a switch to a different peer (see EnsurePeerScope).
 func (fs *FS) CancelInFlight() {
-	fs.cancel()
-	if fs.Root != nil {
+	fs.ctxMu.Lock()
+	cancel := fs.cancel
+	fs.ctxMu.Unlock()
+	cancel()
+	root := fs.root.Load()
+	if root != nil {
 		fs.drainInFlightOperations()
 	}
 	// Fresh context so the next session's reads do not start cancelled.
+	fs.ctxMu.Lock()
 	fs.ctx, fs.cancel = context.WithCancel(context.Background())
-	if fs.Root != nil {
-		fs.Root.FsCtx = fs.ctx
+	ctx := fs.ctx
+	fs.ctxMu.Unlock()
+	if root != nil {
+		root.SetCtx(ctx)
 	}
 }
 
@@ -317,7 +357,7 @@ func (fs *FS) forceUnmount() {
 // stream pools on open file handles. Pending FUSE Read/Open handlers then
 // unblock at once instead of waiting for gRPC timeouts.
 func (fs *FS) drainInFlightOperations() {
-	root := fs.Root
+	root := fs.root.Load()
 	if root == nil {
 		return
 	}

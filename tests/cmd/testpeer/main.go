@@ -312,12 +312,12 @@ func main() {
 			}
 			rel := "/" + strings.TrimPrefix(args[1], "/")
 			var n uint64
-			if kd.FS != nil && kd.FS.Root != nil {
-				kd.FS.Root.RemoteFilesLock.RLock()
-				if f, ok := kd.FS.Root.RemoteFiles[rel]; ok {
+			if kd.FS != nil && kd.FS.Root() != nil {
+				kd.FS.Root().RemoteFilesLock.RLock()
+				if f, ok := kd.FS.Root().RemoteFiles[rel]; ok {
 					n = f.Download.BytesDownloaded.Load()
 				}
-				kd.FS.Root.RemoteFilesLock.RUnlock()
+				kd.FS.Root().RemoteFilesLock.RUnlock()
 			}
 			fmt.Printf("DLBYTES:%d\n", n)
 

@@ -94,10 +94,10 @@ func newReadAheadFileWith(t *testing.T, declaredSize int64, prov types.FileStrea
 		RelativePath:        "/",
 		LocalDownloadFolder: saveDir,
 		OpenFileHandlers:    make(map[uint64]*HandleEntry),
-		FsCtx:               context.Background(),
 	}
 	root.Root = root
 	root.logger = nopLogger()
+	root.SetCtx(context.Background())
 
 	f := &File{
 		logger:         nopLogger(),

@@ -18,18 +18,18 @@ func newScopeFS() *FS {
 		AllDirMap:        map[string]*Dir{},
 		RemoteFiles:      map[string]*File{"/x": {}},
 		OpenFileHandlers: map[uint64]*HandleEntry{},
-		FsCtx:            fs.ctx,
 	}
 	root.Root = root
 	root.logger = nopLogger()
-	fs.Root = root
+	root.SetCtx(fs.ctx)
+	fs.SetRoot(root)
 	return fs
 }
 
 func remoteCount(fs *FS) int {
-	fs.Root.RemoteFilesLock.RLock()
-	defer fs.Root.RemoteFilesLock.RUnlock()
-	return len(fs.Root.RemoteFiles)
+	fs.Root().RemoteFilesLock.RLock()
+	defer fs.Root().RemoteFilesLock.RUnlock()
+	return len(fs.Root().RemoteFiles)
 }
 
 // The first peer adopts the cache without clearing; the SAME peer keeps it across

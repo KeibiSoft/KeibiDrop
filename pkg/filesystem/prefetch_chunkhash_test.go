@@ -81,8 +81,6 @@ func TestPrefetchFile_FillsChunkHashes(t *testing.T) {
 		AllDirMap:           make(map[string]*Dir),
 		AllFileMap:          make(map[string]*File),
 		RemoteFiles:         make(map[string]*File),
-		OpenStreamProvider:  func() types.FileStreamProvider { return &blockStreamProvider{content: content} },
-		FsCtx:               context.Background(),
 		PrefetchSem:         make(chan struct{}, 8),
 		OpenMapLock:         sync.RWMutex{},
 		Adm:                 sync.RWMutex{},
@@ -91,6 +89,8 @@ func TestPrefetchFile_FillsChunkHashes(t *testing.T) {
 	}
 	root.Root = root
 	root.logger = nopLogger()
+	root.SetCtx(context.Background())
+	root.SetStreamProvider(func() types.FileStreamProvider { return &blockStreamProvider{content: content} })
 
 	path := "/big.bin"
 	realPath := filepath.Clean(filepath.Join(saveDir, path))

@@ -170,8 +170,12 @@ type Dir struct {
 
 	stat *winfuse.Stat_t
 
-	OnLocalChange      func(event types.FileEvent)
-	OpenStreamProvider func() types.FileStreamProvider
+	// onLocalChange and openStreamProvider live on the ROOT dir. Reconnect
+	// re-publishes them via SetCallbacks while FUSE threads read them, so
+	// access is atomic. Child dirs route through Root; the OnLocalChange and
+	// OpenStreamProvider methods wrap the loads.
+	onLocalChange      atomic.Pointer[func(event types.FileEvent)]
+	openStreamProvider atomic.Pointer[func() types.FileStreamProvider]
 
 	// Collab sync options (propagated from FS).
 	PrefetchOnOpen bool // If true, Open() fetches the whole file and writes it to local disk.
@@ -199,8 +203,95 @@ type Dir struct {
 	// overwhelms the connection.
 	PrefetchSem chan struct{}
 
-	// FS.Unmount() cancels FsCtx to unblock FUSE handlers stuck on gRPC.
-	FsCtx context.Context
+	// fsCtx is the live FUSE context, on the ROOT dir. Disconnect swaps it via
+	// SetCtx while FUSE threads read it, so access is atomic. FS.Unmount()
+	// cancels it to unblock FUSE handlers stuck on gRPC.
+	fsCtx atomic.Pointer[context.Context]
+}
+
+// Ctx returns the live FUSE context from the root. Disconnect swaps it, so do
+// not cache the returned context across sessions.
+func (d *Dir) Ctx() context.Context {
+	r := d.Root
+	if r == nil {
+		r = d
+	}
+	if p := r.fsCtx.Load(); p != nil {
+		return *p
+	}
+	return context.Background()
+}
+
+// SetCtx publishes a fresh FUSE context. Call it on the root.
+func (d *Dir) SetCtx(ctx context.Context) {
+	d.fsCtx.Store(&ctx)
+}
+
+// OnLocalChange reports a local file event to the session. It routes through
+// the root's atomically published callback and does nothing while no session
+// callback is wired.
+func (d *Dir) OnLocalChange(event types.FileEvent) {
+	r := d.Root
+	if r == nil {
+		r = d
+	}
+	if p := r.onLocalChange.Load(); p != nil && *p != nil {
+		(*p)(event)
+	}
+}
+
+// SetOnLocalChange publishes the local-change callback. Call it on the root.
+func (d *Dir) SetOnLocalChange(fn func(event types.FileEvent)) {
+	d.onLocalChange.Store(&fn)
+}
+
+// hasOnLocalChange reports whether a local-change callback is currently
+// published on the root.
+func (d *Dir) hasOnLocalChange() bool {
+	r := d.Root
+	if r == nil {
+		r = d
+	}
+	p := r.onLocalChange.Load()
+	return p != nil && *p != nil
+}
+
+// OpenStreamProvider returns the current session's stream provider, or nil
+// while no session factory is wired. It routes through the root's atomically
+// published factory.
+func (d *Dir) OpenStreamProvider() types.FileStreamProvider {
+	r := d.Root
+	if r == nil {
+		r = d
+	}
+	if p := r.openStreamProvider.Load(); p != nil && *p != nil {
+		return (*p)()
+	}
+	return nil
+}
+
+// StreamProviderFn returns the published factory itself, for callers that
+// wrap and restore it (tests).
+func (d *Dir) StreamProviderFn() func() types.FileStreamProvider {
+	r := d.Root
+	if r == nil {
+		r = d
+	}
+	if p := r.openStreamProvider.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// SetStreamProvider publishes the stream-provider factory. Call it on the root.
+func (d *Dir) SetStreamProvider(fn func() types.FileStreamProvider) {
+	d.openStreamProvider.Store(&fn)
+}
+
+// SetCallbacks publishes both session callbacks. Call it on the root.
+func (d *Dir) SetCallbacks(onLocalChange func(event types.FileEvent), provider func() types.FileStreamProvider) {
+	d.SetOnLocalChange(onLocalChange)
+	d.SetStreamProvider(provider)
 }
 
 type File struct {
@@ -320,8 +411,6 @@ type File struct {
 
 	// PrefetchCancel cancels the background prefetch goroutine for this file.
 	PrefetchCancel context.CancelFunc
-
-	OnLocalChange func(event types.FileEvent)
 
 	stat *winfuse.Stat_t
 
