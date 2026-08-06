@@ -31,8 +31,8 @@ import (
 // report. Mount-free, so it cannot trip the unrelated cgofuse teardown race.
 func TestChmodStatModeRace(t *testing.T) {
 	d := newTestDir(t.TempDir())
-	d.OpenStreamProvider = func() types.FileStreamProvider { return nil }
-	d.OnLocalChange = nil
+	d.SetStreamProvider(func() types.FileStreamProvider { return nil })
+	d.SetOnLocalChange(nil)
 	lg := nopLogger()
 
 	const numFiles = 8

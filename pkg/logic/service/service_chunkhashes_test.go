@@ -56,12 +56,12 @@ func newTestSvc(t *testing.T, localPath string, trackerKey string) *KeibidropSer
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
-	svc.SetFS(&filesystem.FS{
-		Root: &filesystem.Dir{
-			AfmLock:    sync.RWMutex{},
-			AllFileMap: make(map[string]*filesystem.File),
-		},
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock:    sync.RWMutex{},
+		AllFileMap: make(map[string]*filesystem.File),
 	})
+	svc.SetFS(fsForSvc)
 	if trackerKey != "" && localPath != "" {
 		svc.SyncTracker.LocalFiles[trackerKey] = &synctracker.File{
 			Name:           trackerKey,
@@ -181,12 +181,12 @@ func TestGetChunkHashes_PathNotFound_ParityWithStreamFile(t *testing.T) {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
-	svc.SetFS(&filesystem.FS{
-		Root: &filesystem.Dir{
-			AfmLock:    sync.RWMutex{},
-			AllFileMap: make(map[string]*filesystem.File),
-		},
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock:    sync.RWMutex{},
+		AllFileMap: make(map[string]*filesystem.File),
 	})
+	svc.SetFS(fsForSvc)
 
 	// GetChunkHashes on unknown path.
 	chStream := &mockGetChunkHashesStream{}

@@ -115,13 +115,13 @@ func TestPrefetchRenameRace(t *testing.T) {
 		AllFileMap:          make(map[string]*File),
 		RemoteFilesLock:     sync.RWMutex{},
 		RemoteFiles:         make(map[string]*File),
-		OpenStreamProvider:  openStreamProvider,
 		PrefetchOnOpen:      true,
-		FsCtx:               context.Background(),
 		PrefetchSem:         make(chan struct{}, 8),
 	}
 	root.Root = root
 	root.logger = nopLogger()
+	root.SetCtx(context.Background())
+	root.SetStreamProvider(openStreamProvider)
 
 	lockPath := "/.git/HEAD.lock"
 	finalPath := "/.git/HEAD"

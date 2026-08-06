@@ -93,17 +93,17 @@ func makeOldBitmap(fileSize int64, chunkHashes map[int]uint64) *ChunkBitmap {
 // newReconcileDir builds a minimal Dir wired with prov for reconcileEditAsync.
 func newReconcileDir(prov types.FileStreamProvider) *Dir {
 	d := &Dir{
-		RelativePath:       "/",
-		OpenFileHandlers:   make(map[uint64]*HandleEntry),
-		AllDirMap:          make(map[string]*Dir),
-		AllFileMap:         make(map[string]*File),
-		RemoteFiles:        make(map[string]*File),
-		FsCtx:              context.Background(),
-		PrefetchSem:        make(chan struct{}, 8),
-		OpenStreamProvider: func() types.FileStreamProvider { return prov },
+		RelativePath:     "/",
+		OpenFileHandlers: make(map[uint64]*HandleEntry),
+		AllDirMap:        make(map[string]*Dir),
+		AllFileMap:       make(map[string]*File),
+		RemoteFiles:      make(map[string]*File),
+		PrefetchSem:      make(chan struct{}, 8),
 	}
 	d.Root = d
 	d.logger = nopLogger()
+	d.SetCtx(context.Background())
+	d.SetStreamProvider(func() types.FileStreamProvider { return prov })
 	return d
 }
 

@@ -28,7 +28,7 @@ import (
 func TestRemoteSyncStateRace(t *testing.T) {
 	saveDir := t.TempDir()
 	d := newTestDir(saveDir)
-	d.OpenStreamProvider = func() types.FileStreamProvider { return nil }
+	d.SetStreamProvider(func() types.FileStreamProvider { return nil })
 	lg := nopLogger()
 
 	const numFiles = 16

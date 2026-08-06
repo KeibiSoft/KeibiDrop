@@ -20,14 +20,41 @@ import (
 // immutable content-addressed objects. Two peers take turns recording in one shared repository,
 // so every handoff carries an in-place edit of that mmap'd store across the wire. Needs a pijul
 // identity, so the peers inherit HOME and SSH_AUTH_SOCK from the environment.
-func TestFUSEtoFUSE_Pijul(t *testing.T) {
-	skipIfNoFUSE(t)
+// skipIfPijulCannotRecord skips when pijul is absent or cannot sign a record
+// in this environment. Pijul signs through the SSH agent, and a present but
+// broken agent (a reboot can clear its identities) fails record on plain
+// local disk too, so a red suite would blame the mount for an agent problem.
+func skipIfPijulCannotRecord(t *testing.T) {
+	t.Helper()
 	if _, err := exec.LookPath("pijul"); err != nil {
 		t.Skip("pijul not installed")
 	}
 	if os.Getenv("SSH_AUTH_SOCK") == "" {
 		t.Skip("pijul needs an ssh agent to sign changes")
 	}
+	dir := t.TempDir()
+	run := func(args ...string) ([]byte, error) {
+		cmd := exec.Command("pijul", args...)
+		cmd.Dir = dir
+		return cmd.CombinedOutput()
+	}
+	if out, err := run("init"); err != nil {
+		t.Skipf("pijul init failed in local probe repo: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "probe.txt"), []byte("probe"), 0o644); err != nil {
+		t.Fatalf("write probe file: %v", err)
+	}
+	if out, err := run("add", "probe.txt"); err != nil {
+		t.Skipf("pijul add failed in local probe repo: %v: %s", err, out)
+	}
+	if out, err := run("record", "-a", "-m", "probe", "--author", "probe"); err != nil {
+		t.Skipf("pijul cannot record on local disk (broken ssh agent?): %v: %s", err, out)
+	}
+}
+
+func TestFUSEtoFUSE_Pijul(t *testing.T) {
+	skipIfNoFUSE(t)
+	skipIfPijulCannotRecord(t)
 
 	binary := getTestPeerBinary(t)
 
@@ -198,12 +225,7 @@ func TestFUSEtoFUSE_Pijul(t *testing.T) {
 // on-demand read of the peer's repo. This is the supported profile, mirroring git clone/pull.
 func TestFUSEtoFUSE_PijulPull(t *testing.T) {
 	skipIfNoFUSE(t)
-	if _, err := exec.LookPath("pijul"); err != nil {
-		t.Skip("pijul not installed")
-	}
-	if os.Getenv("SSH_AUTH_SOCK") == "" {
-		t.Skip("pijul needs an ssh agent to sign changes")
-	}
+	skipIfPijulCannotRecord(t)
 
 	binary := getTestPeerBinary(t)
 

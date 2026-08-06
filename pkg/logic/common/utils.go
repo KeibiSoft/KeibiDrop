@@ -483,12 +483,12 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					for _, p := range pending {
 						// Same superseded-by-acceptance guard as the ticker flush.
 						if p.req.Type == bindings.NotifyType_ADD_FILE &&
-							kd.FS != nil && kd.FS.Root != nil &&
-							kd.FS.Root.PendingAnnounceSuperseded(p.req.Path) {
+							kd.FS != nil && kd.FS.Root() != nil &&
+							kd.FS.Root().PendingAnnounceSuperseded(p.req.Path) {
 							continue
 						}
-						if kd.FS != nil && kd.FS.Root != nil {
-							refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder)
+						if kd.FS != nil && kd.FS.Root() != nil {
+							refreshAttrFromDisk(p.req, kd.FS.Root().LocalDownloadFolder)
 						}
 						remaining = append(remaining, p.req)
 					}
@@ -560,13 +560,13 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 						// newer edit. CancelPendingNotify usually wins this
 						// race; the state check closes it when it does not.
 						if p.req.Type == bindings.NotifyType_ADD_FILE &&
-							kd.FS != nil && kd.FS.Root != nil &&
-							kd.FS.Root.PendingAnnounceSuperseded(p.req.Path) {
+							kd.FS != nil && kd.FS.Root() != nil &&
+							kd.FS.Root().PendingAnnounceSuperseded(p.req.Path) {
 							delete(pending, path)
 							continue
 						}
-						if kd.FS != nil && kd.FS.Root != nil {
-							refreshAttrFromDisk(p.req, kd.FS.Root.LocalDownloadFolder)
+						if kd.FS != nil && kd.FS.Root() != nil {
+							refreshAttrFromDisk(p.req, kd.FS.Root().LocalDownloadFolder)
 						}
 						ready = append(ready, p.req)
 						delete(pending, path)

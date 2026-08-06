@@ -300,10 +300,11 @@ func TestChunkLatency(t *testing.T) {
 	// Safe to mutate after mount: no remote files exist yet, so no streams
 	// are open. The factory is called lazily when a remote file is opened.
 	recorder := &chunkRecorder{}
-	originalFactory := tp.Alice.FS.Root.OpenStreamProvider
-	tp.Alice.FS.Root.OpenStreamProvider = func() types.FileStreamProvider {
+	aliceRoot := tp.Alice.FS.Root()
+	originalFactory := aliceRoot.StreamProviderFn()
+	aliceRoot.SetStreamProvider(func() types.FileStreamProvider {
 		return &timedStreamProvider{inner: originalFactory(), recorder: recorder}
-	}
+	})
 
 	// Bob shares a 10 MB file
 	require := require.New(t)

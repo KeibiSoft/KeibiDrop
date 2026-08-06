@@ -25,8 +25,8 @@ import (
 func TestHandleReuseRace(t *testing.T) {
 	saveDir := t.TempDir()
 	d := newTestDir(saveDir)
-	d.OnLocalChange = func(event types.FileEvent) {}
-	d.OpenStreamProvider = func() types.FileStreamProvider { return nil }
+	d.SetOnLocalChange(func(event types.FileEvent) {})
+	d.SetStreamProvider(func() types.FileStreamProvider { return nil })
 
 	const numFiles = 250
 	errs := make([]error, numFiles)
@@ -81,8 +81,8 @@ func TestHandleReuseRace(t *testing.T) {
 func TestHandleIDsAreUnique(t *testing.T) {
 	saveDir := t.TempDir()
 	d := newTestDir(saveDir)
-	d.OnLocalChange = func(event types.FileEvent) {}
-	d.OpenStreamProvider = func() types.FileStreamProvider { return nil }
+	d.SetOnLocalChange(func(event types.FileEvent) {})
+	d.SetStreamProvider(func() types.FileStreamProvider { return nil })
 
 	seen := make(map[uint64]string)
 	var mu sync.Mutex

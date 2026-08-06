@@ -19,7 +19,6 @@ type Dir struct {
 }
 
 type FS struct {
-	Root               *Dir
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
 	PrefetchOnOpen     bool
@@ -30,6 +29,10 @@ type FS struct {
 }
 
 func NewFS(_ *slog.Logger) *FS { return &FS{} }
+
+// Root always returns nil on Android: no FUSE tree exists. Present so shared
+// callers compile.
+func (fs *FS) Root() *Dir { return nil }
 
 func (fs *FS) Mount(_ string, _ bool, _ string) error { return nil }
 

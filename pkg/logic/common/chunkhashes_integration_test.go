@@ -74,12 +74,12 @@ func newTestSvcIntegration(t *testing.T, localPath, trackerKey string) *service.
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
-	svc.SetFS(&filesystem.FS{
-		Root: &filesystem.Dir{
-			AfmLock:    sync.RWMutex{},
-			AllFileMap: make(map[string]*filesystem.File),
-		},
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock:    sync.RWMutex{},
+		AllFileMap: make(map[string]*filesystem.File),
 	})
+	svc.SetFS(fsForSvc)
 	if trackerKey != "" && localPath != "" {
 		svc.SyncTracker.LocalFiles[trackerKey] = &synctracker.File{
 			Name:           trackerKey,

@@ -73,12 +73,12 @@ func TestRead_FUSEMode_FallbackToLocalFiles(t *testing.T) {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
-	svc.SetFS(&filesystem.FS{
-		Root: &filesystem.Dir{
-			AfmLock:    sync.RWMutex{},
-			AllFileMap: make(map[string]*filesystem.File),
-		},
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock:    sync.RWMutex{},
+		AllFileMap: make(map[string]*filesystem.File),
 	})
+	svc.SetFS(fsForSvc)
 
 	// Simulate AddFile: file goes into SyncTracker.LocalFiles only.
 	svc.SyncTracker.LocalFiles["test.txt"] = &synctracker.File{
@@ -114,16 +114,16 @@ func TestRead_FUSEMode_AllFileMapStillWorks(t *testing.T) {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
-	svc.SetFS(&filesystem.FS{
-		Root: &filesystem.Dir{
-			AfmLock: sync.RWMutex{},
-			AllFileMap: map[string]*filesystem.File{
-				"/test.txt": {
-					RealPathOfFile: tmpFile.Name(),
-				},
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock: sync.RWMutex{},
+		AllFileMap: map[string]*filesystem.File{
+			"/test.txt": {
+				RealPathOfFile: tmpFile.Name(),
 			},
 		},
 	})
+	svc.SetFS(fsForSvc)
 
 	stream := &mockReadStream{
 		requests: []*bindings.ReadRequest{
@@ -144,12 +144,12 @@ func TestRead_FUSEMode_FileNotFoundAnywhere(t *testing.T) {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
-	svc.SetFS(&filesystem.FS{
-		Root: &filesystem.Dir{
-			AfmLock:    sync.RWMutex{},
-			AllFileMap: make(map[string]*filesystem.File),
-		},
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock:    sync.RWMutex{},
+		AllFileMap: make(map[string]*filesystem.File),
 	})
+	svc.SetFS(fsForSvc)
 
 	stream := &mockReadStream{
 		requests: []*bindings.ReadRequest{

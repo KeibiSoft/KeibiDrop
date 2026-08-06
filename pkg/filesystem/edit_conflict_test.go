@@ -47,12 +47,12 @@ func newConflictTestDir(t *testing.T) (*Dir, func() []types.FileEvent) {
 	d := newTestDir(t.TempDir())
 	var mu sync.Mutex
 	var events []types.FileEvent
-	d.OnLocalChange = func(ev types.FileEvent) {
+	d.SetOnLocalChange(func(ev types.FileEvent) {
 		mu.Lock()
 		events = append(events, ev)
 		mu.Unlock()
-	}
-	d.OpenStreamProvider = func() types.FileStreamProvider { return nil }
+	})
+	d.SetStreamProvider(func() types.FileStreamProvider { return nil })
 	snapshot := func() []types.FileEvent {
 		mu.Lock()
 		defer mu.Unlock()
