@@ -749,6 +749,10 @@ func main() {
 	}
 	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
+	// The daemon sets these from config; the CLI used to skip them, leaving it
+	// with no relay fallback at all.
+	kd.BridgeAddr = cfg.BridgeAddr
+	kd.StrictMode = cfg.StrictMode
 	for _, warn := range cfg.Warnings() {
 		logger.Warn("config flag note", "note", warn)
 	}

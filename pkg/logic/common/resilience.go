@@ -92,8 +92,16 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		}
 		return kd.listener.Accept()
 	}
+	// Order reconnect transports from the session mode and the reachability hints.
+	// A direct retry against a blocked inbound only burns its timeout.
+	kd.ReconnectManager.PreferDirect = func() bool {
+		if kd.ConnectionMode == "bridge" {
+			return false
+		}
+		return !kd.InboundBlocked() && !kd.PeerInboundBlocked()
+	}
 	if kd.BridgeAddr != "" {
-		kd.ReconnectManager.BridgeAddr = kd.BridgeAddr
+		kd.ReconnectManager.BridgeAddr = kd.effectiveBridgeAddr()
 		kd.ReconnectManager.DialBridge = func(direction string) (net.Conn, error) {
 			return kd.dialBridgeDir(direction, kd.logger)
 		}

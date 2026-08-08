@@ -20,22 +20,22 @@ import (
 // Config holds all user-configurable settings.
 // Values resolve in this order: built-in defaults, config file, environment variables.
 type Config struct {
-	Relay             string `toml:"relay"`
-	SavePath          string `toml:"save_path"`
-	MountPath         string `toml:"mount_path"`
-	LogFile           string `toml:"log_file"`
-	InboundPort       int    `toml:"inbound_port"`
-	OutboundPort      int    `toml:"outbound_port"`
-	BridgeAddr        string `toml:"bridge_addr"` // TCP bridge relay address
-	StrictMode        bool   `toml:"strict_mode"` // Disable data relay fallback
-	NoFUSE            bool   `toml:"no_fuse"`
-	Incognito         bool   `toml:"incognito"`
-	PrefetchOnOpen    bool   `toml:"prefetch_on_open"`
-	PrefetchAutoMB    int    `toml:"prefetch_auto_mb"`     // Prefetch files at or above this many MB. Default 0 is off because prefetch saturates slow links and starves seeks.
-	ReadAheadWindowMB int    `toml:"read_ahead_window_mb"` // Cap in MB for sequential read-ahead; prevents stalls at block boundaries on high-RTT links. Self-tunes below the cap. Default 64; 0 disables.
-	PushOnWrite       bool   `toml:"push_on_write"`
-	LiveCollab        bool   `toml:"live_collab"`        // Show peers' same-size in-place edits live (macFUSE auto_cache); risks local mmap-write integrity (git).
-	PassphraseProtect bool   `toml:"passphrase_protect"` // Enable Tier 2 identity at-rest encryption with an Argon2id passphrase.
+	Relay              string `toml:"relay"`
+	SavePath           string `toml:"save_path"`
+	MountPath          string `toml:"mount_path"`
+	LogFile            string `toml:"log_file"`
+	InboundPort        int    `toml:"inbound_port"`
+	OutboundPort       int    `toml:"outbound_port"`
+	BridgeAddr         string `toml:"bridge_addr"` // TCP bridge relay address
+	StrictMode         bool   `toml:"strict_mode"` // Disable data relay fallback
+	NoFUSE             bool   `toml:"no_fuse"`
+	Incognito          bool   `toml:"incognito"`
+	PrefetchOnOpen     bool   `toml:"prefetch_on_open"`
+	PrefetchAutoMB     int    `toml:"prefetch_auto_mb"`     // Prefetch files at or above this many MB. Default 0 is off because prefetch saturates slow links and starves seeks.
+	ReadAheadWindowMB  int    `toml:"read_ahead_window_mb"` // Cap in MB for sequential read-ahead; prevents stalls at block boundaries on high-RTT links. Self-tunes below the cap. Default 64; 0 disables.
+	PushOnWrite        bool   `toml:"push_on_write"`
+	LiveCollab         bool   `toml:"live_collab"`        // Show peers' same-size in-place edits live (macFUSE auto_cache); risks local mmap-write integrity (git).
+	PassphraseProtect  bool   `toml:"passphrase_protect"` // Enable Tier 2 identity at-rest encryption with an Argon2id passphrase.
 }
 
 const DefaultRelay = "https://keibidroprelay.keibisoft.com/"

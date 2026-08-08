@@ -37,9 +37,10 @@ const (
 // dialUDPRelayDir binds a UDP socket and returns it once the direction's room pairs.
 // The relay forwards every datagram, so the peer appears at the relay address.
 func (kd *KeibiDrop) dialUDPRelayDir(ctx context.Context, s *session.Session, direction string, logger *slog.Logger) (*net.UDPConn, *net.UDPAddr, error) {
-	relayAddr, err := net.ResolveUDPAddr("udp", kd.BridgeAddr)
+	bridgeAddr := kd.effectiveBridgeAddr()
+	relayAddr, err := net.ResolveUDPAddr("udp", bridgeAddr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve relay %s: %w", kd.BridgeAddr, err)
+		return nil, nil, fmt.Errorf("resolve relay %s: %w", bridgeAddr, err)
 	}
 	udp, err := net.ListenUDP("udp", nil)
 	if err != nil {

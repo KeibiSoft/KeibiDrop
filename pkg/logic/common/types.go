@@ -48,6 +48,9 @@ type KeibiDrop struct {
 	ConnectionMode string // "lan", "direct", or "bridge". Set after a successful connection.
 	OpInProgress   atomic.Int32
 
+	bridgeBase     string      // Bridge address as configured at room entry, the dial failover target.
+	bridgeFellBack atomic.Bool // A bridge dial failed over to bridgeBase; sticky so every lane and reconnect agrees.
+
 	session *session.Session
 
 	PeerIPv6IP     string

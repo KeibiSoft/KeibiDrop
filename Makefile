@@ -364,7 +364,7 @@ run-kd-bob:
 
 # ── Bridge mode (for peers behind firewalls / NAT) ───────
 # Both peers connect outbound to the bridge relay. No inbound ports needed.
-# Default bridge: 185.104.181.40:26600 (Timisoara)
+# Default bridge: bridge.keibisoft.com:26600 (Timisoara)
 # Override: make run-bridge-alice BRIDGE=your-server:26600
 
 run-bridge-alice: build-kd
