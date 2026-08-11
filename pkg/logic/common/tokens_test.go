@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -304,5 +305,58 @@ func TestNoteBusySignalThrottleAndFundedMute(t *testing.T) {
 	st := kd2.BridgeInfo()
 	if st.WalletGB == 0 {
 		t.Fatal("BridgeInfo lost the wallet balance")
+	}
+}
+
+func TestCreditLevelEvents(t *testing.T) {
+	kd := newTokenTestKD(t, "")
+	var mu sync.Mutex
+	var events []string
+	kd.OnEvent = func(e string) { mu.Lock(); events = append(events, e); mu.Unlock() }
+	take := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := append([]string(nil), events...)
+		events = nil
+		return out
+	}
+
+	c, err := kd.Wallet().Add(encodeTokenCode(testSeed(t), 6000)) // ~58 GB
+	if err != nil {
+		t.Fatal(err)
+	}
+	kd.noteCreditLevel()
+	if got := take(); len(got) != 0 {
+		t.Fatalf("above thresholds emitted %v", got)
+	}
+
+	kd.Wallet().markRevealed(c, 1500, false) // 4500 units left, under the 50 GB mark
+	kd.noteCreditLevel()
+	kd.noteCreditLevel()
+	if got := take(); len(got) != 1 || !strings.HasPrefix(got[0], "tokens_low:") {
+		t.Fatalf("want one tokens_low, got %v", got)
+	}
+
+	kd.Wallet().markRevealed(c, 5900, false) // 100 units left, under the 2 GB mark
+	kd.noteCreditLevel()
+	kd.noteCreditLevel()
+	if got := take(); len(got) != 1 || !strings.HasPrefix(got[0], "tokens_critical:") {
+		t.Fatalf("want one tokens_critical, got %v", got)
+	}
+
+	big, err := kd.Wallet().Add(encodeTokenCode(testSeed(t), 25600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kd.noteCreditLevel() // top-up above the low mark re-arms silently
+	if got := take(); len(got) != 0 {
+		t.Fatalf("top-up emitted %v", got)
+	}
+
+	kd.Wallet().markRevealed(c, 6000, true)
+	kd.Wallet().markRevealed(big, 21000, false) // 4600 units left again
+	kd.noteCreditLevel()
+	if got := take(); len(got) != 1 || !strings.HasPrefix(got[0], "tokens_low:") {
+		t.Fatalf("re-armed low warning missing, got %v", got)
 	}
 }

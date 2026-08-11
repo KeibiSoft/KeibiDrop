@@ -244,14 +244,34 @@ func (w *TokenWallet) Summaries() []TokenChainSummary {
 		}
 		out = append(out, TokenChainSummary{
 			Code:      encodeTokenCode(c.seed, c.Units),
-			GBTotal:   float64(c.Units) * float64(TokenUnitBytes) / 1e9,
-			GBLeft:    float64(left) * float64(TokenUnitBytes) / 1e9,
+			GBTotal:   float64(c.Units) * float64(TokenUnitBytes) / float64(1<<30),
+			GBLeft:    float64(left) * float64(TokenUnitBytes) / float64(1<<30),
 			UnitsLeft: left,
 			Dead:      c.Dead,
 			AddedAt:   c.AddedAt,
 		})
 	}
 	return out
+}
+
+// Low-credit warning thresholds, in chain units (10 MiB each). One event per
+// downward crossing; a top-up above the low mark re-arms both.
+const (
+	lowCreditUnits      = 5120 // 50 GiB
+	criticalCreditUnits = 205  // ~2 GiB
+)
+
+// unitsLeft sums the spendable units across live chains.
+func (w *TokenWallet) unitsLeft() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := 0
+	for _, c := range w.chains {
+		if !c.Dead && c.Revealed < c.Units {
+			n += c.Units - c.Revealed
+		}
+	}
+	return n
 }
 
 // ---- kd accessors ----
@@ -279,7 +299,31 @@ func (kd *KeibiDrop) TokensAdd(code string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return float64(c.Units) * float64(TokenUnitBytes) / 1e9, nil
+	kd.noteCreditLevel()
+	return float64(c.Units) * float64(TokenUnitBytes) / float64(1<<30), nil
+}
+
+// noteCreditLevel surfaces the wallet's remaining credit: one event per
+// downward crossing of each threshold, re-armed by any top-up that clears
+// the low mark. The critical copy is honest: dry credit means the free
+// tier, which is only slower under contention, never a cutoff.
+func (kd *KeibiDrop) noteCreditLevel() {
+	left := kd.Wallet().unitsLeft()
+	gb := float64(left) * float64(TokenUnitBytes) / float64(1<<30)
+	switch {
+	case left >= lowCreditUnits:
+		kd.creditLowNoted.Store(false)
+		kd.creditCritNoted.Store(false)
+	case left < criticalCreditUnits:
+		kd.creditLowNoted.Store(true)
+		if kd.creditCritNoted.CompareAndSwap(false, true) {
+			kd.emitEvent(fmt.Sprintf("tokens_critical:%.1f", gb))
+		}
+	default:
+		if kd.creditLowNoted.CompareAndSwap(false, true) {
+			kd.emitEvent(fmt.Sprintf("tokens_low:%.0f", gb))
+		}
+	}
 }
 
 // TokensSummaries lists wallet chains for display.
@@ -307,6 +351,7 @@ func (kd *KeibiDrop) TokensRefreshBalances() []TokenChainSummary {
 		}
 		w.markRevealed(c, c.Units-resp.UnitsRemaining, resp.State == "spent" && resp.UnitsRemaining == 0)
 	}
+	kd.noteCreditLevel()
 	return w.Summaries()
 }
 
@@ -351,7 +396,7 @@ func (kd *KeibiDrop) tokenSessionFor(addr string, logger *slog.Logger) *tokenSes
 	ts := &tokenSession{kd: kd, chain: c, logger: logger, stop: make(chan struct{})}
 	kd.tokenSess = ts
 	logger.Info("Session funded by prepaid chain",
-		"gb_left", float64(c.Units-c.Revealed)*float64(TokenUnitBytes)/1e9)
+		"gb_left", float64(c.Units-c.Revealed)*float64(TokenUnitBytes)/float64(1<<30))
 	return ts
 }
 
@@ -387,7 +432,11 @@ func (ts *tokenSession) applyAck(b byte) {
 	ts.contention.Store(b&ackContentionBit != 0)
 	if b&ackPaidBit != 0 {
 		ts.paid.Store(true)
-		ts.startOnce.Do(func() { go ts.revealLoop() })
+		ts.startOnce.Do(func() {
+			gb := float64(ts.kd.Wallet().unitsLeft()) * float64(TokenUnitBytes) / float64(1<<30)
+			ts.kd.emitEvent(fmt.Sprintf("tokens_in_use:%.0f", gb))
+			go ts.revealLoop()
+		})
 	}
 }
 
@@ -404,6 +453,7 @@ func (ts *tokenSession) revealLoop() {
 			return
 		case <-t.C:
 			exhausted := ts.postReveals()
+			ts.kd.noteCreditLevel()
 			if exhausted {
 				ts.kd.emitEvent("tokens_exhausted:chain")
 				ts.logger.Info("Prepaid chain exhausted; session continues on the free tier")
@@ -648,7 +698,8 @@ type BridgeStatus struct {
 	Contention bool    `json:"contention"`     // bridge signaled contention in its ack
 	Busy       bool    `json:"busy"`           // relay flagged the assigned bridge busy
 	Notice     string  `json:"notice,omitempty"`
-	WalletGB   float64 `json:"wallet_gb"` // prepaid value left across chains
+	WalletGB   float64 `json:"wallet_gb"`  // prepaid value left across chains
+	SessionGB  float64 `json:"session_gb"` // bytes this session moved via the bridge, both directions
 }
 
 func (kd *KeibiDrop) BridgeInfo() BridgeStatus {
@@ -669,6 +720,7 @@ func (kd *KeibiDrop) BridgeInfo() BridgeStatus {
 	if ts != nil {
 		st.Paid = ts.paid.Load()
 		st.Contention = ts.contention.Load()
+		st.SessionGB = float64(ts.sent.Load()+ts.recv.Load()) / float64(1<<30)
 	}
 	for _, s := range kd.Wallet().Summaries() {
 		if !s.Dead {

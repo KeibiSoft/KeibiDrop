@@ -358,6 +358,11 @@ func (c *cliContext) executor(in string) {
 				cls += ", relay busy"
 			}
 			fmt.Printf("Via bridge:       %s (%s)\n", bi.Via, cls)
+			if bi.Paid {
+				fmt.Printf("Relay credit:     %.1f GB left, %.2f GB used this session\n", bi.WalletGB, bi.SessionGB)
+			} else if bi.WalletGB > 0 {
+				fmt.Printf("Relay credit:     %.1f GB left\n", bi.WalletGB)
+			}
 		}
 		fmt.Printf("Relay:            %s\n", c.kd.RelayEndoint)
 		fmt.Printf("FUSE:             %v\n", c.kd.IsFUSE)

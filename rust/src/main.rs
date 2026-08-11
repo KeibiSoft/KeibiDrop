@@ -2003,7 +2003,31 @@ fn main() {
                         } else if evt.starts_with("tokens_exhausted:") {
                             show_toast(
                                 &weak_evt,
-                                "Relay credit ran out — this transfer continues on the free tier.",
+                                "Relay credit ran out. This transfer continues on the free tier.",
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if let Some(gb) = evt.strip_prefix("tokens_in_use:") {
+                            show_toast(
+                                &weak_evt,
+                                &format!("Paid priority active. This transfer uses your relay credit ({gb} GB left)."),
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if let Some(gb) = evt.strip_prefix("tokens_low:") {
+                            show_toast(
+                                &weak_evt,
+                                &format!("Relay credit is low: {gb} GB left. Top up at tokens.keibidrop.com/buy."),
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if let Some(gb) = evt.strip_prefix("tokens_critical:") {
+                            show_toast(
+                                &weak_evt,
+                                &format!("Almost out of relay credit ({gb} GB left). Transfers will fall back to the free tier and can be slower when the relay is busy."),
                             );
                             if let Some(app) = weak_evt.upgrade() {
                                 refresh_tokens_status(&app);

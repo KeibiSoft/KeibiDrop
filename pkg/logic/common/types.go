@@ -59,6 +59,9 @@ type KeibiDrop struct {
 	busyNotice  string        // server-supplied user-facing text; under mu
 	busyEventAt atomic.Int64  // unix time of the last relay_busy event (throttle)
 
+	creditLowNoted  atomic.Bool // latched after the 50 GB warning fires
+	creditCritNoted atomic.Bool // latched after the 2 GB warning fires
+
 	session *session.Session
 
 	PeerIPv6IP     string
