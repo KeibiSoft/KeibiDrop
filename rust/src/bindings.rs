@@ -8415,6 +8415,9 @@ extern "C" {
     pub fn KD_TokensStatus() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {
+    pub fn KD_TokensBuyStart() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
     pub fn KD_SaveConfig(
         relay: *mut ::std::os::raw::c_char,
         savePath: *mut ::std::os::raw::c_char,

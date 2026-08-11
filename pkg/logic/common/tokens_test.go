@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -358,5 +359,70 @@ func TestCreditLevelEvents(t *testing.T) {
 	kd.noteCreditLevel()
 	if got := take(); len(got) != 1 || !strings.HasPrefix(got[0], "tokens_low:") {
 		t.Fatalf("re-armed low warning missing, got %v", got)
+	}
+}
+
+func TestClaimBuyFlowAddsCode(t *testing.T) {
+	kd := newTokenTestKD(t, "")
+	var mu sync.Mutex
+	var events []string
+	kd.OnEvent = func(e string) { mu.Lock(); events = append(events, e); mu.Unlock() }
+
+	code := encodeTokenCode(testSeed(t), 1024)
+	var hmu sync.Mutex
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/collect" || r.URL.Query().Get("claim") == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		hmu.Lock()
+		hits++
+		n := hits
+		hmu.Unlock()
+		if n < 3 {
+			w.WriteHeader(http.StatusNotFound) // webhook not landed yet
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"code":%q,"units":1024}`, code)
+	}))
+	defer srv.Close()
+
+	oldBase, oldTick, oldWindow := tokensServiceBase, claimPollTick, claimPollWindow
+	tokensServiceBase, claimPollTick, claimPollWindow = srv.URL, 10*time.Millisecond, time.Second
+	t.Cleanup(func() { tokensServiceBase, claimPollTick, claimPollWindow = oldBase, oldTick, oldWindow })
+
+	url := kd.TokensBuyStart()
+	if !strings.Contains(url, "/buy?claim=") {
+		t.Fatalf("buy url missing claim: %s", url)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && kd.Wallet().unitsLeft() != 1024 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if kd.Wallet().unitsLeft() != 1024 {
+		t.Fatal("code never added by the claim poll")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, e := range events {
+		if strings.HasPrefix(e, "tokens_added:") {
+			return
+		}
+	}
+	t.Fatalf("no tokens_added event, got %v", events)
+}
+
+func TestExhaustEventHonesty(t *testing.T) {
+	kd := newTokenTestKD(t, "")
+	if e := kd.exhaustEvent(); e != "tokens_exhausted:chain" {
+		t.Fatalf("empty wallet: %s", e)
+	}
+	if _, err := kd.Wallet().Add(encodeTokenCode(testSeed(t), 100)); err != nil {
+		t.Fatal(err)
+	}
+	if e := kd.exhaustEvent(); e != "tokens_chain_done:next" {
+		t.Fatalf("funded wallet must promise the next pack: %s", e)
 	}
 }

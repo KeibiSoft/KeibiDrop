@@ -467,7 +467,7 @@ fn refresh_tokens_status(app: &MainWindow) {
         let mut text = if gb.is_empty() || gb == "0.0" {
             "No credit yet. Direct and local transfers are always free.".to_string()
         } else {
-            format!("{} GB left", gb)
+            format!("{} GiB left", gb)
         };
         if !via.is_empty() {
             text.push_str(&format!(
@@ -1688,7 +1688,7 @@ fn main() {
             if let Some(app) = weak_tokens.upgrade() {
                 if ok {
                     app.set_tokens_add_result(slint::SharedString::from(format!(
-                        "Added {} GB. Keep the code somewhere safe — it works like cash.",
+                        "Added {} GiB. Keep the code somewhere safe, it works like cash.",
                         gb
                     )));
                 } else {
@@ -1701,13 +1701,22 @@ fn main() {
             }
         });
         app.on_tokens_buy(|| {
-            let url = "https://tokens.keibidrop.com/buy";
+            // Claim-carrying URL: the core polls /collect and adds the code
+            // itself after payment; a tokens_added event confirms it.
+            let mut url = String::from("https://tokens.keibidrop.com/buy");
+            let ptr = bindings::KD_TokensBuyStart();
+            if !ptr.is_null() {
+                let s = CStr::from_ptr(ptr).to_string_lossy().to_string();
+                if let Some(u) = s.strip_prefix("url=") {
+                    url = u.trim().to_string();
+                }
+            }
             #[cfg(target_os = "macos")]
-            let _ = Command::new("open").arg(url).spawn();
+            let _ = Command::new("open").arg(&url).spawn();
             #[cfg(target_os = "linux")]
-            let _ = Command::new("xdg-open").arg(url).spawn();
+            let _ = Command::new("xdg-open").arg(&url).spawn();
             #[cfg(target_os = "windows")]
-            let _ = Command::new("explorer").arg(url).spawn();
+            let _ = Command::new("explorer").arg(&url).spawn();
         });
 
         // ── Saved Files Browser (Screen 3) ───────────────────────
@@ -2008,10 +2017,26 @@ fn main() {
                             if let Some(app) = weak_evt.upgrade() {
                                 refresh_tokens_status(&app);
                             }
+                        } else if evt.starts_with("tokens_chain_done:") {
+                            show_toast(
+                                &weak_evt,
+                                "Pack used up. Your next pack takes over on the next connection.",
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if let Some(gb) = evt.strip_prefix("tokens_added:") {
+                            show_toast(
+                                &weak_evt,
+                                &format!("Relay credit added: {gb} GiB. You are set."),
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
                         } else if let Some(gb) = evt.strip_prefix("tokens_in_use:") {
                             show_toast(
                                 &weak_evt,
-                                &format!("Paid priority active. This transfer uses your relay credit ({gb} GB left)."),
+                                &format!("Paid priority active. This transfer uses your relay credit ({gb} GiB left)."),
                             );
                             if let Some(app) = weak_evt.upgrade() {
                                 refresh_tokens_status(&app);
@@ -2019,7 +2044,7 @@ fn main() {
                         } else if let Some(gb) = evt.strip_prefix("tokens_low:") {
                             show_toast(
                                 &weak_evt,
-                                &format!("Relay credit is low: {gb} GB left. Top up at tokens.keibidrop.com/buy."),
+                                &format!("Relay credit is low: {gb} GiB left. Top up in Settings, Relay credit, or at tokens.keibidrop.com/buy."),
                             );
                             if let Some(app) = weak_evt.upgrade() {
                                 refresh_tokens_status(&app);
@@ -2027,7 +2052,7 @@ fn main() {
                         } else if let Some(gb) = evt.strip_prefix("tokens_critical:") {
                             show_toast(
                                 &weak_evt,
-                                &format!("Almost out of relay credit ({gb} GB left). Transfers will fall back to the free tier and can be slower when the relay is busy."),
+                                &format!("Almost out of relay credit ({gb} GiB left). Transfers will fall back to the free tier and can be slower when the relay is busy."),
                             );
                             if let Some(app) = weak_evt.upgrade() {
                                 refresh_tokens_status(&app);

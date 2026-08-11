@@ -577,8 +577,13 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 			return okResponse(map[string]any{"chains": kd.TokensRefreshBalances(), "buy_url": common.TokensBuyURL})
 		case "list":
 			return okResponse(map[string]any{"chains": kd.TokensSummaries(), "buy_url": common.TokensBuyURL})
+		case "buy":
+			return okResponse(map[string]any{
+				"url":  kd.TokensBuyStart(),
+				"note": "open the url and pay; the code adds itself while this daemon runs, then a tokens_added event fires",
+			})
 		default:
-			return errResponse("usage: tokens [list|add <code>|balance]")
+			return errResponse("usage: tokens [list|add <code>|balance|buy]")
 		}
 
 	case "incognito":

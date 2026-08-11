@@ -834,6 +834,18 @@ func KD_TokensStatus() *C.char {
 		strings.ReplaceAll(bi.Notice, "\n", " "), common.TokensBuyURL))
 }
 
+// KD_TokensBuyStart returns the buy URL carrying a fresh claim ref and
+// starts the background poll that adds the purchased code to the wallet
+// (a tokens_added event fires when it lands).
+//
+//export KD_TokensBuyStart
+func KD_TokensBuyStart() *C.char {
+	if kd == nil {
+		return C.CString("url=" + common.TokensBuyURL)
+	}
+	return C.CString("url=" + kd.TokensBuyStart())
+}
+
 //export KD_SaveConfig
 func KD_SaveConfig(relay, savePath, mountPath *C.char) C.int {
 	cfg, _ := config.Load()

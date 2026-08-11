@@ -17,6 +17,7 @@ package common
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -303,6 +304,17 @@ func (kd *KeibiDrop) TokensAdd(code string) (float64, error) {
 	return float64(c.Units) * float64(TokenUnitBytes) / float64(1<<30), nil
 }
 
+// exhaustEvent picks the honest message for a dry chain: with another funded
+// chain in the wallet the next connection pays again, so "ran out" would be
+// wrong. Codes never overwrite each other; each is its own chain, oldest
+// spends first.
+func (kd *KeibiDrop) exhaustEvent() string {
+	if kd.Wallet().pickFunded() != nil {
+		return "tokens_chain_done:next"
+	}
+	return "tokens_exhausted:chain"
+}
+
 // noteCreditLevel surfaces the wallet's remaining credit: one event per
 // downward crossing of each threshold, re-armed by any top-up that clears
 // the low mark. The critical copy is honest: dry credit means the free
@@ -353,6 +365,84 @@ func (kd *KeibiDrop) TokensRefreshBalances() []TokenChainSummary {
 	}
 	kd.noteCreditLevel()
 	return w.Summaries()
+}
+
+// ---- self-registering buy flow ----
+
+// tokensServiceBase is the token service origin. A var so tests can point it
+// at a local server; claimPollTick/Window shrink in tests too.
+var (
+	tokensServiceBase = "https://tokens.keibidrop.com"
+	claimPollTick     = 3 * time.Second
+	claimPollWindow   = 30 * time.Minute
+)
+
+// TokensBuyStart returns the buy page URL to open in a browser, carrying a
+// fresh claim ref, and starts a background poll that adds the purchased code
+// to the wallet the moment the payment lands. No copy-paste, no account:
+// the claim is a random one-shot ID, generated here, tied to nothing.
+// Starting a new purchase replaces the previous poll.
+func (kd *KeibiDrop) TokensBuyStart() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return TokensBuyURL // plain page; the paste path still works
+	}
+	claim := base64.RawURLEncoding.EncodeToString(b[:])
+	stop := make(chan struct{})
+	kd.mu.Lock()
+	if kd.buyClaimStop != nil {
+		close(kd.buyClaimStop)
+	}
+	kd.buyClaimStop = stop
+	kd.mu.Unlock()
+	go kd.claimPollLoop(claim, stop)
+	return tokensServiceBase + "/buy?claim=" + claim
+}
+
+func (kd *KeibiDrop) claimPollLoop(claim string, stop chan struct{}) {
+	client := kd.relayClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	deadline := time.Now().Add(claimPollWindow)
+	t := time.NewTicker(claimPollTick)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			if time.Now().After(deadline) {
+				return
+			}
+			req, err := http.NewRequest(http.MethodGet, tokensServiceBase+"/collect?claim="+claim, nil)
+			if err != nil {
+				return
+			}
+			req.Header.Set("Accept", "application/json")
+			resp, err := client.Do(req)
+			if err != nil {
+				continue // offline is fine, the purchase waits server-side
+			}
+			if resp.StatusCode != http.StatusOK {
+				resp.Body.Close()
+				continue // 404 until the webhook lands
+			}
+			var out struct {
+				Code string `json:"code"`
+			}
+			err = json.NewDecoder(io.LimitReader(resp.Body, 1<<14)).Decode(&out)
+			resp.Body.Close()
+			if err != nil || out.Code == "" {
+				continue
+			}
+			gb, err := kd.TokensAdd(out.Code)
+			if err == nil {
+				kd.emitEvent(fmt.Sprintf("tokens_added:%.0f", gb))
+			}
+			return // duplicate add means the user pasted it already; done either way
+		}
+	}
 }
 
 // ---- per-session payment state ----
@@ -455,7 +545,7 @@ func (ts *tokenSession) revealLoop() {
 			exhausted := ts.postReveals()
 			ts.kd.noteCreditLevel()
 			if exhausted {
-				ts.kd.emitEvent("tokens_exhausted:chain")
+				ts.kd.emitEvent(ts.kd.exhaustEvent())
 				ts.logger.Info("Prepaid chain exhausted; session continues on the free tier")
 				return
 			}

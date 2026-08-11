@@ -314,7 +314,7 @@ func (c *cliContext) executor(in string) {
 				fmt.Println("Error:", err)
 				return
 			}
-			fmt.Printf("Added %.0f GB of relay credit.\n", gb)
+			fmt.Printf("Added %.0f GiB of relay credit.\n", gb)
 			fmt.Println("Keep the code safe: it is like cash - anyone holding it can spend it, and it cannot be recovered if lost.")
 		case "list":
 			printTokenSummaries(c.kd.TokensSummaries())
@@ -323,8 +323,9 @@ func (c *cliContext) executor(in string) {
 			printTokenSummaries(c.kd.TokensRefreshBalances())
 		case "buy":
 			fmt.Println("Buy relay credit (prepaid, anonymous, no account, no expiry):")
-			fmt.Println("  " + common.TokensBuyURL)
-			fmt.Println("After paying you get a code. Paste it here with: tokens add <code>")
+			fmt.Println("  " + c.kd.TokensBuyStart())
+			fmt.Println("Open that link and pay. The code adds itself here after payment,")
+			fmt.Println("as long as this CLI stays running. Manual fallback: tokens add <code>")
 		default:
 			fmt.Println("Usage: tokens [list|add <code>|balance|buy]")
 		}
@@ -359,9 +360,9 @@ func (c *cliContext) executor(in string) {
 			}
 			fmt.Printf("Via bridge:       %s (%s)\n", bi.Via, cls)
 			if bi.Paid {
-				fmt.Printf("Relay credit:     %.1f GB left, %.2f GB used this session\n", bi.WalletGB, bi.SessionGB)
+				fmt.Printf("Relay credit:     %.1f GiB left, %.2f GiB used this session\n", bi.WalletGB, bi.SessionGB)
 			} else if bi.WalletGB > 0 {
-				fmt.Printf("Relay credit:     %.1f GB left\n", bi.WalletGB)
+				fmt.Printf("Relay credit:     %.1f GiB left\n", bi.WalletGB)
 			}
 		}
 		fmt.Printf("Relay:            %s\n", c.kd.RelayEndoint)
@@ -482,12 +483,12 @@ func printTokenSummaries(sums []common.TokenChainSummary) {
 		if s.Dead || s.UnitsLeft == 0 {
 			state = "  (spent)"
 		}
-		fmt.Printf("  %s  %.1f/%.0f GB left%s\n", s.Code, s.GBLeft, s.GBTotal, state)
+		fmt.Printf("  %s  %.1f/%.0f GiB left%s\n", s.Code, s.GBLeft, s.GBTotal, state)
 		if !s.Dead {
 			total += s.GBLeft
 		}
 	}
-	fmt.Printf("Total relay credit: %.1f GB\n", total)
+	fmt.Printf("Total relay credit: %.1f GiB\n", total)
 	fmt.Println("Top up: tokens buy")
 }
 
