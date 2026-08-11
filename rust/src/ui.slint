@@ -799,6 +799,9 @@ export component MainWindow inherits Window {
     callback tokens_buy();       // open the buy page in the browser
     in-out property<string> tokens_status_text: "";
     in-out property<string> tokens_add_result: "";
+    // Main-screen chip: buy hint on unfunded relay sessions, quiet balance when funded.
+    in-out property<bool> tokens_funded: false;
+    in-out property<string> tokens_credit_short: "";
 
     // Contacts / Identity
     in-out property<[ContactInfo]> contacts: [];
@@ -1363,6 +1366,34 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
+            // Relay credit: offer the buy page while unfunded, show balance when funded.
+            if root.connection_mode == "bridge" && !root.tokens_funded: Rectangle {
+                width: buy-chip-text.preferred-width + 14px;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: rgba(59,130,246,0.5);
+                background: rgba(59,130,246,0.12);
+                buy-chip-text := Text {
+                    text: "Get relay credit";
+                    color: #3b82f6;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.tokens_buy(); }
+                }
+            }
+            if root.connection_mode == "bridge" && root.tokens_funded && root.tokens_credit_short != "": Text {
+                text: root.tokens_credit_short;
+                color: #777;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
         }
 
         // Save Peer button (no-FUSE, aligned under gear/?/X)
@@ -1517,6 +1548,34 @@ export component MainWindow inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
+            }
+            // Relay credit: offer the buy page while unfunded, show balance when funded.
+            if root.connection_mode == "bridge" && !root.tokens_funded: Rectangle {
+                width: fuse-buy-chip-text.preferred-width + 14px;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: rgba(59,130,246,0.5);
+                background: rgba(59,130,246,0.12);
+                fuse-buy-chip-text := Text {
+                    text: "Get relay credit";
+                    color: #3b82f6;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.tokens_buy(); }
+                }
+            }
+            if root.connection_mode == "bridge" && root.tokens_funded && root.tokens_credit_short != "": Text {
+                text: root.tokens_credit_short;
+                color: #777;
+                font-size: 11px;
+                vertical-alignment: center;
             }
         }
 

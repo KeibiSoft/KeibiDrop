@@ -266,7 +266,7 @@ fn start_file_watcher(
                         }
                     } else {
                         // Not tracked in-session. A leftover ".kdbitmap" sidecar means
-                        // an incomplete download (e.g. from a previous run) — not saved.
+                        // an incomplete download (e.g. from a previous run), not saved.
                         let local = format!("{}/{}", save_path, name);
                         if Path::new(&format!("{}.kdbitmap", local)).exists() {
                             let c_name = CString::new(name.clone()).unwrap();
@@ -292,7 +292,7 @@ fn start_file_watcher(
                     });
                 }
 
-                // Also include local files (files I shared) — show as already saved
+                // Also include local files (files I shared), shown as already saved
                 let local_count = bindings::KD_GetLocalFileCount();
                 let mut local_names: Vec<String> = Vec::new();
                 for i in 0..local_count {
@@ -395,7 +395,7 @@ fn is_fuse_present() -> bool {
     }
     #[cfg(target_os = "windows")]
     {
-        // WinFSP may not register in System32 — check the install dir too.
+        // WinFSP may not register in System32; check the install dir too.
         Path::new(r"C:\Windows\System32\winfsp-x64.dll").exists()
             || Path::new(r"C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll").exists()
             || Path::new(r"C:\Program Files\WinFsp\bin\winfsp-x64.dll").exists()
@@ -480,6 +480,13 @@ fn refresh_tokens_status(app: &MainWindow) {
             text.push_str("  ·  relay busy");
         }
         app.set_tokens_status_text(slint::SharedString::from(text));
+        let funded = !(gb.is_empty() || gb == "0.0");
+        app.set_tokens_funded(funded);
+        app.set_tokens_credit_short(slint::SharedString::from(if funded {
+            format!("Relay credit: {} GiB", gb)
+        } else {
+            String::new()
+        }));
     }
 }
 
@@ -754,7 +761,7 @@ fn main() {
     println!("Local mode: {}", local_mode_env);
 
     // Collab-sync flags (prefetch_on_open, push_on_write) are owned by the engine
-    // config — the single source of truth — so the UI does NOT compute a default
+    // config, the single source of truth, so the UI does NOT compute a default
     // here. It passes -1 ("use config") to KD_Initialize; KEIBIDROP_PREFETCH_ON_OPEN
     // and KEIBIDROP_PUSH_ON_WRITE are honored engine-side (config.applyEnvOverrides).
     // This removes the old divergence where the UI forced prefetch_on_open=true
@@ -906,7 +913,7 @@ fn main() {
                     let name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
                     println!("Discovery name: {}", name);
                 }
-                // Don't auto-CreateRoom — wait until user taps a peer,
+                // Don't auto-CreateRoom; wait until user taps a peer,
                 // then tiebreaker decides who creates and who joins.
             } else {
                 bindings::KD_StopDiscovery();
@@ -978,10 +985,10 @@ fn main() {
                 if let Some(app) = weak_peer_sel.upgrade() {
                     app.set_peer_code(slint::SharedString::from(&addr));
                     if i_am_creator {
-                        println!("I'm creator (listener) — invoking CreateRoom for {}", peer_name);
+                        println!("I'm creator (listener), invoking CreateRoom for {}", peer_name);
                         app.invoke_create_room_pressed();
                     } else {
-                        println!("I'm joiner — invoking JoinRoom to {}", peer_name);
+                        println!("I'm joiner, invoking JoinRoom to {}", peer_name);
                         app.invoke_join_room_pressed();
                     }
                 }
@@ -1132,7 +1139,7 @@ fn main() {
             });
         });
 
-        // Handle Disconnect — warn if download in progress, then disconnect
+        // Handle Disconnect: warn if download in progress, then disconnect
         let weak_disconnect = app.as_weak();
         let disconnect_confirmed = Arc::new(AtomicBool::new(false));
         let disconnect_confirmed_inner = disconnect_confirmed.clone();
@@ -1175,10 +1182,10 @@ fn main() {
             }
             watcher_running_disconnect.store(false, Ordering::Relaxed);
 
-            // Update UI immediately (we're on the UI thread — no blocking)
+            // Update UI immediately (we're on the UI thread, no blocking)
             if let Some(app) = weak_disconnect.upgrade() {
                 app.set_peer_code(slint::SharedString::default());
-                app.set_room_action(3); // "disconnecting" — disables Create/Join buttons
+                app.set_room_action(3); // "disconnecting", disables Create/Join buttons
                 app.set_status_message(slint::SharedString::from("Disconnecting..."));
                 app.set_error_message(slint::SharedString::default());
                 app.set_peer_code_added(false);
@@ -1900,7 +1907,7 @@ fn main() {
             }
         });
 
-        // Contact presence polling timer — refreshes online dots every 10s.
+        // Contact presence polling timer: refreshes online dots every 10s.
         let _contact_timer = {
             let timer = slint::Timer::default();
             let weak_ct = app.as_weak();
@@ -1940,7 +1947,7 @@ fn main() {
             timer
         };
 
-        // Event polling timer — runs on UI thread, independent of file watcher.
+        // Event polling timer: runs on UI thread, independent of file watcher.
         // This ensures disconnect/health events are always processed even when
         // the file watcher thread has stopped or hasn't started yet.
         let arrived_files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
