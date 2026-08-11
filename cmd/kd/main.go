@@ -555,6 +555,32 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 			return okResponse(map[string]string{"event": ""})
 		}
 
+	case "tokens":
+		sub := "list"
+		if len(req.Args) > 0 {
+			sub = req.Args[0]
+		}
+		switch sub {
+		case "add":
+			if len(req.Args) != 2 {
+				return errResponse("usage: tokens add <code>")
+			}
+			gb, err := kd.TokensAdd(req.Args[1])
+			if err != nil {
+				return errResponse(err.Error())
+			}
+			return okResponse(map[string]any{
+				"added_gb": gb,
+				"warning":  "this code is like cash: anyone holding it can spend it, and it cannot be recovered if lost",
+			})
+		case "balance":
+			return okResponse(map[string]any{"chains": kd.TokensRefreshBalances(), "buy_url": common.TokensBuyURL})
+		case "list":
+			return okResponse(map[string]any{"chains": kd.TokensSummaries(), "buy_url": common.TokensBuyURL})
+		default:
+			return errResponse("usage: tokens [list|add <code>|balance]")
+		}
+
 	case "incognito":
 		if len(req.Args) < 1 {
 			if kd.Incognito {
@@ -891,6 +917,7 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"mount_path":        kd.ToMount,
 		"save_path":         kd.ToSave,
 		"writer_epoch":      kd.WriterEpoch(),
+		"bridge":            kd.BridgeInfo(),
 	}
 
 	kd.SyncTracker.LocalFilesMu.RLock()
@@ -980,6 +1007,9 @@ USAGE:
   kd quick-connect <fp>          Connect to a saved contact (1-click).
   kd save-contact <name>         Save current peer as contact.
   kd incognito [on|off]          Query or toggle incognito mode.
+  kd tokens [list]               Relay credit chains and balance (JSON).
+  kd tokens add <code>           Paste a prepaid relay token code.
+  kd tokens balance              Refresh balances from the relay.
   kd version                     Show version and commit hash.
   kd export-logs [dest]          Export sanitized logs.
   kd sanitize-logs [dest]        Alias for export-logs.

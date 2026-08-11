@@ -440,6 +440,49 @@ unsafe fn load_contacts_model() -> std::rc::Rc<slint::VecModel<ContactInfo>> {
     std::rc::Rc::new(slint::VecModel::from(contacts))
 }
 
+// refresh_tokens_status pulls wallet balance + bridge visibility from Go and
+// renders the one-line settings summary.
+fn refresh_tokens_status(app: &MainWindow) {
+    unsafe {
+        let ptr = bindings::KD_TokensStatus();
+        if ptr.is_null() {
+            return;
+        }
+        let s = CStr::from_ptr(ptr).to_string_lossy().to_string();
+        let mut gb = String::new();
+        let mut via = String::new();
+        let mut paid = false;
+        let mut busy = false;
+        for line in s.lines() {
+            if let Some((k, v)) = line.split_once('=') {
+                match k {
+                    "wallet_gb" => gb = v.to_string(),
+                    "via" => via = v.to_string(),
+                    "paid" => paid = v == "true",
+                    "busy" => busy = v == "true",
+                    _ => {}
+                }
+            }
+        }
+        let mut text = if gb.is_empty() || gb == "0.0" {
+            "No credit yet. Direct and local transfers are always free.".to_string()
+        } else {
+            format!("{} GB left", gb)
+        };
+        if !via.is_empty() {
+            text.push_str(&format!(
+                "  ·  via {} ({})",
+                via,
+                if paid { "priority" } else { "free tier" }
+            ));
+        }
+        if busy {
+            text.push_str("  ·  relay busy");
+        }
+        app.set_tokens_status_text(slint::SharedString::from(text));
+    }
+}
+
 fn show_toast(weak: &slint::Weak<MainWindow>, msg: &str) {
     let w = weak.clone();
     let m = msg.to_string();
@@ -781,6 +824,9 @@ fn main() {
             let version_str = CStr::from_ptr(version_ptr).to_string_lossy().to_string();
             app.set_version_text(slint::SharedString::from(version_str));
         }
+
+        // Settings: relay-credit summary
+        refresh_tokens_status(&app);
 
         // Settings: populate from Go config
         let config_ptr = bindings::KD_GetConfig();
@@ -1613,6 +1659,57 @@ fn main() {
             let _ = Command::new("explorer").arg("https://winfsp.dev/").spawn();
         });
 
+        // ── Relay tokens (settings pane) ─────────────────────────
+        let weak_tokens = app.as_weak();
+        app.on_tokens_add(move |code| {
+            let trimmed = code.trim().to_string();
+            if trimmed.is_empty() {
+                return;
+            }
+            let c_code = CString::new(trimmed).unwrap();
+            let res_ptr = bindings::KD_TokensAdd(c_code.as_ptr() as *mut i8);
+            if res_ptr.is_null() {
+                return;
+            }
+            let res = CStr::from_ptr(res_ptr).to_string_lossy().to_string();
+            let mut ok = false;
+            let mut gb = String::new();
+            let mut err = String::new();
+            for line in res.lines() {
+                if let Some((k, v)) = line.split_once('=') {
+                    match k {
+                        "ok" => ok = v == "1",
+                        "gb" => gb = v.to_string(),
+                        "err" => err = v.to_string(),
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(app) = weak_tokens.upgrade() {
+                if ok {
+                    app.set_tokens_add_result(slint::SharedString::from(format!(
+                        "Added {} GB. Keep the code somewhere safe — it works like cash.",
+                        gb
+                    )));
+                } else {
+                    app.set_tokens_add_result(slint::SharedString::from(format!(
+                        "Not added: {}",
+                        err
+                    )));
+                }
+                refresh_tokens_status(&app);
+            }
+        });
+        app.on_tokens_buy(|| {
+            let url = "https://tokens.keibidrop.com/buy";
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg(url).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(url).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("explorer").arg(url).spawn();
+        });
+
         // ── Saved Files Browser (Screen 3) ───────────────────────
         let saved_current_folder: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
@@ -1893,6 +1990,23 @@ fn main() {
                                 if !is_hidden_file(name) {
                                     arrived_files.lock().unwrap().push(name.to_string());
                                 }
+                            }
+                        }
+
+                        if let Some(notice) = evt.strip_prefix("relay_busy:") {
+                            // Server-supplied copy: the relay decides the
+                            // upsell wording, the client just shows it.
+                            show_toast(&weak_evt, notice);
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if evt.starts_with("tokens_exhausted:") {
+                            show_toast(
+                                &weak_evt,
+                                "Relay credit ran out — this transfer continues on the free tier.",
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
                             }
                         }
 

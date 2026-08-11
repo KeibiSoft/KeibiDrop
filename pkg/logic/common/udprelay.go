@@ -49,6 +49,12 @@ func (kd *KeibiDrop) dialUDPRelayDir(ctx context.Context, s *session.Session, di
 
 	token := bridgeRoomToken(s.OwnFingerprint, s.ExpectedPeerFingerprint, direction)
 	reg := append(append([]byte(nil), udpRelayMagic...), token[:]...)
+	if ts := kd.currentTokenSession(); ts != nil {
+		// Funded session: the anchor rides the registration so the UDP lane
+		// joins the same paid class and coverage as the TCP pairs.
+		anchor := ts.anchorBytes()
+		reg = append(reg, anchor[:]...)
+	}
 	if err := registerUDPRelay(ctx, udp, relayAddr, reg); err != nil {
 		_ = udp.Close()
 		return nil, nil, err

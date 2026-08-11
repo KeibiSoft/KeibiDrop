@@ -51,6 +51,14 @@ type KeibiDrop struct {
 	bridgeBase     string      // Bridge address as configured at room entry, the dial failover target.
 	bridgeFellBack atomic.Bool // A bridge dial failed over to bridgeBase; sticky so every lane and reconnect agrees.
 
+	// Prepaid relay tokens (tokens.go).
+	wallet      *TokenWallet
+	walletOnce  sync.Once
+	tokenSess   *tokenSession // one per room session, under mu; nil when unfunded
+	busyFlag    bool          // relay flagged the assigned bridge busy; under mu
+	busyNotice  string        // server-supplied user-facing text; under mu
+	busyEventAt atomic.Int64  // unix time of the last relay_busy event (throttle)
+
 	session *session.Session
 
 	PeerIPv6IP     string
@@ -409,6 +417,8 @@ type EncryptedRegistration struct {
 	Blob   string `json:"blob"`             // base64-encoded ChaCha20-Poly1305 ciphertext
 	Bridge string `json:"bridge,omitempty"` // relay-suggested bridge address (e.g., "fra1.bridge.keibisoft.com:26600")
 	Tier   string `json:"tier,omitempty"`   // bandwidth tier: "free", "priority" (relay metadata, not encrypted)
+	Busy   bool   `json:"busy,omitempty"`   // assigned bridge is in contention right now
+	Notice string `json:"notice,omitempty"` // server-controlled text shown to the user with busy
 }
 
 // ErrorMapperFunc maps server status errors to semantic errors.

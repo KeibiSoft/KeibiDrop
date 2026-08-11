@@ -147,10 +147,11 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		logger.Warn("We got a weird status code", "code", resp.StatusCode)
 	}
 
-	// The relay may return metadata (bridge hint, tier) in the register response.
+	// The relay may return metadata (bridge hint, tier, load) in the register response.
 	var regResp EncryptedRegistration
 	if err := json.NewDecoder(resp.Body).Decode(&regResp); err == nil {
 		kd.acceptBridgeHint(regResp.Bridge, logger)
+		kd.noteBusySignal(regResp.Busy, regResp.Notice)
 	}
 	_ = resp.Body.Close()
 
@@ -210,6 +211,7 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 
 	// The relay sends both peers the same bridge suggestion.
 	kd.acceptBridgeHint(encResp.Bridge, logger)
+	kd.noteBusySignal(encResp.Busy, encResp.Notice)
 
 	encryptedBlob, err := base64.RawURLEncoding.DecodeString(encResp.Blob)
 	if err != nil {

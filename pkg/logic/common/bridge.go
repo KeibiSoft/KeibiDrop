@@ -42,6 +42,7 @@ func (kd *KeibiDrop) prepareBridgePolicy(logger *slog.Logger) {
 	}
 	kd.bridgeBase = kd.BridgeAddr
 	kd.bridgeFellBack.Store(false)
+	kd.resetTokenSession()
 }
 
 // acceptBridgeHint applies a relay-suggested bridge address. The field rides
@@ -124,9 +125,12 @@ func (kd *KeibiDrop) dialBridgeDir(direction string, logger *slog.Logger) (net.C
 	return conn, nil
 }
 
-// dialBridgeAddr dials one bridge address and sends the room token.
-// Separate tokens for the two directions prevent the bridge from pairing
-// two connections from the same peer.
+// dialBridgeAddr dials one bridge address and sends the room token. Separate
+// tokens for the two directions prevent the bridge from pairing two
+// connections from the same peer. A funded session on a KeibiSoft bridge
+// sends the paid preamble instead - the same single write - and the returned
+// conn strips the bridge's one ack byte on first read, so payment adds no
+// round trip anywhere.
 func (kd *KeibiDrop) dialBridgeAddr(addr, direction string, logger *slog.Logger) (net.Conn, error) {
 	conn, err := session.DialWithStableAddr("tcp", addr, 15*time.Second, logger)
 	if err != nil {
@@ -137,13 +141,23 @@ func (kd *KeibiDrop) dialBridgeAddr(addr, direction string, logger *slog.Logger)
 	peerFP := kd.session.ExpectedPeerFingerprint
 	token := bridgeRoomToken(ownFP, peerFP, direction)
 
+	ts := kd.tokenSessionFor(addr, logger)
+	payload := token[:]
+	if ts != nil {
+		payload = buildPayPreamble(ts.anchorBytes(), token)
+	}
+
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if _, err := conn.Write(token[:]); err != nil {
+	if _, err := conn.Write(payload); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("send room token: %w", err)
 	}
 	_ = conn.SetWriteDeadline(time.Time{})
 
-	logger.Info("Bridge room token sent", "dir", direction, "token", fmt.Sprintf("%x..%x", token[:4], token[28:]))
+	logger.Info("Bridge room token sent", "dir", direction, "paid", ts != nil,
+		"token", fmt.Sprintf("%x..%x", token[:4], token[28:]))
+	if ts != nil {
+		return newPayConn(conn, ts), nil
+	}
 	return conn, nil
 }

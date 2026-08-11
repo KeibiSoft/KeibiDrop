@@ -298,11 +298,45 @@ func (c *cliContext) executor(in string) {
 		fmt.Println("Incognito:", args[1])
 		fmt.Println("Fingerprint:", newFP)
 
+	case "tokens":
+		sub := "list"
+		if len(args) > 1 {
+			sub = args[1]
+		}
+		switch sub {
+		case "add":
+			if len(args) != 3 {
+				fmt.Println("Usage: tokens add <code>")
+				return
+			}
+			gb, err := c.kd.TokensAdd(args[2])
+			if err != nil {
+				fmt.Println("Error:", err)
+				return
+			}
+			fmt.Printf("Added %.0f GB of relay credit.\n", gb)
+			fmt.Println("Keep the code safe: it is like cash - anyone holding it can spend it, and it cannot be recovered if lost.")
+		case "list":
+			printTokenSummaries(c.kd.TokensSummaries())
+		case "balance":
+			fmt.Println("Checking balances with the relay...")
+			printTokenSummaries(c.kd.TokensRefreshBalances())
+		case "buy":
+			fmt.Println("Buy relay credit (prepaid, anonymous, no account, no expiry):")
+			fmt.Println("  " + common.TokensBuyURL)
+			fmt.Println("After paying you get a code. Paste it here with: tokens add <code>")
+		default:
+			fmt.Println("Usage: tokens [list|add <code>|balance|buy]")
+		}
+
 	case "peer-info":
 		pfp, _ := c.kd.GetPeerFingerprint()
 		fmt.Printf("Peer fingerprint: %s\n", pfp)
 		fmt.Printf("Peer IP:          %s\n", c.kd.PeerIPv6IP)
 		fmt.Printf("Connection mode:  %s\n", c.kd.ConnectionMode)
+		if bi := c.kd.BridgeInfo(); bi.Via != "" {
+			fmt.Printf("Via bridge:       %s\n", bi.Via)
+		}
 		fmt.Printf("Peer persistent:  %v\n", c.kd.IsPeerPersistent())
 
 	case "status":
@@ -315,6 +349,16 @@ func (c *cliContext) executor(in string) {
 		fmt.Printf("IP:               %s\n", c.kd.LocalIPv6IP)
 		fmt.Printf("Peer IP:          %s\n", c.kd.PeerIPv6IP)
 		fmt.Printf("Mode:             %s\n", c.kd.ConnectionMode)
+		if bi := c.kd.BridgeInfo(); bi.Via != "" {
+			cls := "free tier"
+			if bi.Paid {
+				cls = "paid priority"
+			}
+			if bi.Contention || bi.Busy {
+				cls += ", relay busy"
+			}
+			fmt.Printf("Via bridge:       %s (%s)\n", bi.Via, cls)
+		}
 		fmt.Printf("Relay:            %s\n", c.kd.RelayEndoint)
 		fmt.Printf("FUSE:             %v\n", c.kd.IsFUSE)
 		c.kd.SyncTracker.LocalFilesMu.RLock()
@@ -407,6 +451,7 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 		{Text: "progress", Description: "Download progress: progress <name>"},
 		{Text: "peer-info", Description: "Peer details and connection mode"},
 		{Text: "incognito", Description: "Query or toggle incognito mode"},
+		{Text: "tokens", Description: "Relay credit: list, add <code>, balance, buy"},
 		{Text: "poll-event", Description: "Pop next event from event queue"},
 		{Text: "contacts", Description: "List saved contacts"},
 		{Text: "add-contact", Description: "Add contact: add-contact <name> <fp>"},
@@ -417,6 +462,28 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 		{Text: "exit", Description: "Exit the CLI"},
 	}
 	return prompt.FilterHasPrefix(s, d.GetWordBeforeCursor(), true)
+}
+
+func printTokenSummaries(sums []common.TokenChainSummary) {
+	if len(sums) == 0 {
+		fmt.Println("No relay credit yet. Direct and local-network transfers are always free;")
+		fmt.Println("prepaid credit buys priority relay bandwidth for when peers can't connect directly.")
+		fmt.Println("Get a code at " + common.TokensBuyURL + " then paste it: tokens add <code>")
+		return
+	}
+	var total float64
+	for _, s := range sums {
+		state := ""
+		if s.Dead || s.UnitsLeft == 0 {
+			state = "  (spent)"
+		}
+		fmt.Printf("  %s  %.1f/%.0f GB left%s\n", s.Code, s.GBLeft, s.GBTotal, state)
+		if !s.Dead {
+			total += s.GBLeft
+		}
+	}
+	fmt.Printf("Total relay credit: %.1f GB\n", total)
+	fmt.Println("Top up: tokens buy")
 }
 
 func printHelp() {
@@ -445,6 +512,10 @@ cancel-download <name>       Cancel an active download
 progress <name>              Download progress (0-100%)
 peer-info                    Peer details and connection mode
 incognito [on|off]           Query or toggle incognito mode
+tokens                       List relay credit (prepaid priority bandwidth)
+tokens add <code>            Paste a purchased or gifted token code
+tokens balance               Refresh balances from the relay
+tokens buy                   Where to buy relay credit
 poll-event                   Pop next event from event queue
 contacts                     List saved contacts
 add-contact <name> <fp>      Save a contact

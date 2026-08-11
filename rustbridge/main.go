@@ -804,6 +804,36 @@ func KD_GetConfig() *C.char {
 	))
 }
 
+//export KD_TokensAdd
+func KD_TokensAdd(code *C.char) *C.char {
+	if kd == nil {
+		return C.CString("ok=0\nerr=core not started")
+	}
+	gb, err := kd.TokensAdd(C.GoString(code))
+	if err != nil {
+		return C.CString("ok=0\nerr=" + strings.ReplaceAll(err.Error(), "\n", " "))
+	}
+	return C.CString(fmt.Sprintf("ok=1\ngb=%.0f", gb))
+}
+
+//export KD_TokensStatus
+func KD_TokensStatus() *C.char {
+	if kd == nil {
+		return C.CString("")
+	}
+	bi := kd.BridgeInfo()
+	chains := 0
+	for _, c := range kd.TokensSummaries() {
+		if !c.Dead && c.UnitsLeft > 0 {
+			chains++
+		}
+	}
+	return C.CString(fmt.Sprintf(
+		"wallet_gb=%.1f\nchains=%d\nvia=%s\npaid=%v\nbusy=%v\nnotice=%s\nbuy_url=%s",
+		bi.WalletGB, chains, bi.Via, bi.Paid, bi.Busy || bi.Contention,
+		strings.ReplaceAll(bi.Notice, "\n", " "), common.TokensBuyURL))
+}
+
 //export KD_SaveConfig
 func KD_SaveConfig(relay, savePath, mountPath *C.char) C.int {
 	cfg, _ := config.Load()
