@@ -44,7 +44,7 @@ const TokenUnitBytes int64 = 10 << 20
 
 // TokensBuyURL is where money changes hands. Prices live on that page and in
 // the token service's pack table, never in this binary.
-const TokensBuyURL = "https://tokens.keibidrop.com/buy"
+const TokensBuyURL = "https://tokens.keibidrop.com/buy" //nolint:gosec // G101: URL, not a credential
 
 const (
 	walletFile     = ".kd_tokens"
@@ -372,7 +372,7 @@ func (kd *KeibiDrop) TokensRefreshBalances() []TokenChainSummary {
 // tokensServiceBase is the token service origin. A var so tests can point it
 // at a local server; claimPollTick/Window shrink in tests too.
 var (
-	tokensServiceBase = "https://tokens.keibidrop.com"
+	tokensServiceBase = "https://tokens.keibidrop.com" //nolint:gosec // G101: URL, not a credential
 	claimPollTick     = 3 * time.Second
 	claimPollWindow   = 30 * time.Minute
 )
