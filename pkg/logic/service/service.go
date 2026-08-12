@@ -113,6 +113,15 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 
 	// Drop macOS/FUSE internal files — ephemeral, never meant to be synced.
 	if strings.Contains(req.Path, ".fuse_hidden") || strings.Contains(req.Path, ".fseventsd") || strings.Contains(req.Path, ".fseventuuid") || strings.Contains(req.Path, ".DS_Store") {
+		// FUSE turns unlink of a still-open file into a rename to
+		// .fuse_hiddenN. Drop the hidden name but keep the effect: the
+		// source left the folder. Apply it as a buffered remove.
+		if req.Type == bindings.NotifyType_RENAME_FILE &&
+			strings.Contains(req.Path, ".fuse_hidden") &&
+			req.OldPath != "" && !strings.Contains(req.OldPath, ".fuse_hidden") {
+			logger.Info("Rename to FUSE hidden name, buffering remove of source", "path", req.OldPath)
+			kd.bufferRemove(req.OldPath, logger)
+		}
 		return &bindings.NotifyResponse{}, nil
 	}
 
