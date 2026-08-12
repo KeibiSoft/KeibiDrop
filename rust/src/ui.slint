@@ -795,6 +795,13 @@ export component MainWindow inherits Window {
     callback exit_pressed();
     callback open_fuse_install();
     callback save_settings(string, string, string); // relay, save_path, mount_path
+    callback tokens_add(string); // paste a prepaid relay token code
+    callback tokens_buy();       // open the buy page in the browser
+    in-out property<string> tokens_status_text: "";
+    in-out property<string> tokens_add_result: "";
+    // Main-screen chip: buy hint on unfunded relay sessions, quiet balance when funded.
+    in-out property<bool> tokens_funded: false;
+    in-out property<string> tokens_credit_short: "";
 
     // Contacts / Identity
     in-out property<[ContactInfo]> contacts: [];
@@ -1359,6 +1366,34 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
             }
+            // Relay credit: offer the buy page while unfunded, show balance when funded.
+            if root.connection_mode == "bridge" && !root.tokens_funded: Rectangle {
+                width: buy-chip-text.preferred-width + 14px;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: rgba(59,130,246,0.5);
+                background: rgba(59,130,246,0.12);
+                buy-chip-text := Text {
+                    text: "Get relay credit";
+                    color: #3b82f6;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.tokens_buy(); }
+                }
+            }
+            if root.connection_mode == "bridge" && root.tokens_funded && root.tokens_credit_short != "": Text {
+                text: root.tokens_credit_short;
+                color: #777;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
         }
 
         // Save Peer button (no-FUSE, aligned under gear/?/X)
@@ -1513,6 +1548,34 @@ export component MainWindow inherits Window {
                     horizontal-alignment: center;
                     vertical-alignment: center;
                 }
+            }
+            // Relay credit: offer the buy page while unfunded, show balance when funded.
+            if root.connection_mode == "bridge" && !root.tokens_funded: Rectangle {
+                width: fuse-buy-chip-text.preferred-width + 14px;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: rgba(59,130,246,0.5);
+                background: rgba(59,130,246,0.12);
+                fuse-buy-chip-text := Text {
+                    text: "Get relay credit";
+                    color: #3b82f6;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.tokens_buy(); }
+                }
+            }
+            if root.connection_mode == "bridge" && root.tokens_funded && root.tokens_credit_short != "": Text {
+                text: root.tokens_credit_short;
+                color: #777;
+                font-size: 11px;
+                vertical-alignment: center;
             }
         }
 
@@ -1797,9 +1860,9 @@ export component MainWindow inherits Window {
     // Settings panel overlay
     if root.settings_visible: Rectangle {
         x: (parent.width - 500px) / 2;
-        y: (parent.height - 480px) / 2;
+        y: (parent.height - 610px) / 2;
         width: 500px;
-        height: 480px;
+        height: 610px;
         border-radius: 10px;
         background: #2a2a2a;
         border-width: 1px;
@@ -1869,6 +1932,51 @@ export component MainWindow inherits Window {
                 text: "Encrypt identity with a passphrase";
                 color: #ccc;
                 font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+
+        // Relay credit (prepaid priority tokens)
+        Text { x: 20px; y: 372px; text: "Relay credit"; color: #888; font-size: 12px; }
+        Text {
+            x: 20px; y: 388px;
+            text: root.tokens_status_text;
+            color: #ccc; font-size: 13px; overflow: elide; width: 460px;
+        }
+        tokens-input := InputArea {
+            x: 20px;
+            y: 412px;
+            inText: "";
+            buttonText: "Add";
+            process_code => {
+                root.tokens_add(tokens-input.inText);
+                tokens-input.inText = "";
+            }
+        }
+        Text {
+            x: 20px; y: 452px;
+            text: root.tokens_add_result;
+            color: #aca; font-size: 12px; overflow: elide; width: 460px;
+        }
+        Rectangle {
+            x: 20px;
+            y: 476px;
+            width: parent.width - 40px;
+            height: 26px;
+            SmallOutlineButton {
+                x: 0;
+                y: 0;
+                width: 150px;
+                text: "Buy relay credit";
+                clicked => { root.tokens_buy(); }
+            }
+            Text {
+                x: 160px;
+                y: 0;
+                height: 26px;
+                text: "Prepaid, anonymous, no account. Paste the code above.";
+                color: #777;
+                font-size: 11px;
                 vertical-alignment: center;
             }
         }

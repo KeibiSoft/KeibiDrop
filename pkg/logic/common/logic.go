@@ -700,6 +700,8 @@ func (kd *KeibiDrop) JoinRoom() error {
 		return ErrAlreadyRunning
 	}
 
+	kd.prepareBridgePolicy(logger)
+
 	// Wait for the expected peer fingerprint to be set.
 	if err := kd.waitForPeerFingerprint(); err != nil {
 		return err
@@ -865,6 +867,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 					kd.markInboundBlocked() // nothing reached us here; skip the wait next time
 					needBridge = kd.BridgeAddr != ""
 					if !needBridge {
+						if kd.StrictMode {
+							return fmt.Errorf("inbound accept timed out; strict mode keeps the relay fallback off")
+						}
 						return fmt.Errorf("inbound accept timed out and no bridge configured")
 					}
 				} else {
@@ -891,6 +896,9 @@ func (kd *KeibiDrop) JoinRoom() error {
 			kd.session.ResetOutboundCrypto()
 		default:
 			logger.Error("Direct P2P failed and no bridge configured", "error", directErr)
+			if kd.StrictMode {
+				return fmt.Errorf("direct P2P failed; strict mode keeps the relay fallback off: %w", directErr)
+			}
 			return directErr
 		}
 
@@ -986,6 +994,8 @@ func (kd *KeibiDrop) CreateRoom() error {
 		logger.Warn("Already running, aborting...")
 		return ErrAlreadyRunning
 	}
+
+	kd.prepareBridgePolicy(logger)
 
 	if !kd.IsLocalMode {
 		if err := kd.registerRoomToRelay(); err != nil {
@@ -1083,6 +1093,9 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 			if kd.BridgeAddr == "" {
 				logger.Error("Direct P2P accept timed out and no bridge configured", "error", acceptErr)
+				if kd.StrictMode {
+					return fmt.Errorf("direct P2P accept timed out; strict mode keeps the relay fallback off: %w", acceptErr)
+				}
 				return acceptErr
 			}
 			logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)

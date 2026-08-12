@@ -181,7 +181,7 @@ no_fuse = %v
 # file keeps the same byte length. Default false = git-safe: files written via
 # mmap (notably git's index) stay intact, and same-size live edits are NOT
 # reflected until the next size change (macOS/macFUSE limitation). Set true to
-# prioritize live collaboration — on macOS this enables the auto_cache mount
+# prioritize live collaboration: on macOS this enables the auto_cache mount
 # option, which can corrupt mmap-written files such as git's index, so only
 # enable it on machines used for document/code collaboration, not git work.
 # On Linux and Windows both work regardless of this setting.
@@ -230,7 +230,7 @@ strict_mode = %v
 incognito = %v
 
 # FUSE download strategy (persisted so the choice survives restarts).
-# prefetch_auto_mb: 0 (default) = pure on-demand — open instantly and fetch only
+# prefetch_auto_mb: 0 (default) = pure on-demand: open instantly and fetch only
 #   what's read; seeks stay responsive on any link. Set to N>0 to also background-
 #   prefetch files >= N MB on open (sequential fill). Only do this on a fat link:
 #   on a constrained or relayed connection the bulk prefetch saturates the pipe
@@ -356,7 +356,7 @@ func (c Config) Warnings() []string {
 		}
 	}
 	if c.LiveCollab && runtime.GOOS == "darwin" {
-		w = append(w, "live_collab enables macFUSE auto_cache: peers' same-size in-place edits become visible live, but files written via mmap on the mount (e.g. git's index) may be corrupted — do not run git operations on the mount in this mode")
+		w = append(w, "live_collab enables macFUSE auto_cache: peers' same-size in-place edits become visible live, but files written via mmap on the mount (e.g. git's index) may be corrupted; do not run git operations on the mount in this mode")
 	}
 	return w
 }

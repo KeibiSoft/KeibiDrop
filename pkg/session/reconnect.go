@@ -33,9 +33,10 @@ type ReconnectManager struct {
 	logger  *slog.Logger
 
 	// State
-	state    atomic.Int32 // ReconnectState
-	attempts atomic.Int32
-	mu       sync.Mutex
+	state            atomic.Int32 // ReconnectState
+	attempts         atomic.Int32
+	fallbackToBridge atomic.Bool // Direct failed this outage; later attempts go bridge-first.
+	mu               sync.Mutex
 
 	// Configuration
 	Backoff     []time.Duration // Exponential backoff delays
@@ -45,9 +46,13 @@ type ReconnectManager struct {
 	CachedPeerIP   string
 	CachedPeerPort int
 
-	// Bridge relay (for firewall traversal). If set, reconnect uses bridge instead of direct.
+	// Bridge relay (for firewall traversal). The fallback transport; PreferDirect orders the attempts.
 	BridgeAddr string
 	DialBridge func(direction string) (net.Conn, error) // Dial bridge with direction-tagged room token
+
+	// PreferDirect reports whether this session should retry the direct path before
+	// the bridge. Nil means bridge-first whenever a bridge is configured.
+	PreferDirect func() bool
 
 	// Callbacks
 	OnReconnecting func()                                                    // Called when reconnection starts
@@ -116,6 +121,7 @@ func (r *ReconnectManager) OnDisconnect() {
 
 	r.state.Store(int32(ReconnectStateReconnecting))
 	r.attempts.Store(0)
+	r.fallbackToBridge.Store(false)
 
 	if r.OnReconnecting != nil {
 		r.OnReconnecting()
@@ -251,10 +257,36 @@ func (r *ReconnectManager) attemptReconnect() error {
 func (r *ReconnectManager) reconnectAsInitiator() error {
 	logger := r.logger.With("role", "initiator")
 
-	// Bridge mode: both directions via bridge.
-	if r.BridgeAddr != "" && r.DialBridge != nil {
-		logger.Info("Reconnecting via bridge", "addr", r.BridgeAddr)
+	if r.useBridgeFirst() {
+		return r.reconnectBridge(logger, true)
+	}
+	err := r.reconnectDirectInitiator(logger)
+	if err != nil && r.BridgeAddr != "" && r.DialBridge != nil {
+		// Direct and bridge stay in separate attempts, so a half-done direct
+		// handshake never leaks into the bridge pairing.
+		r.fallbackToBridge.Store(true)
+		logger.Info("Direct reconnect failed, next attempt uses the bridge", "error", err)
+	}
+	return err
+}
 
+// useBridgeFirst orders the transports for this attempt.
+func (r *ReconnectManager) useBridgeFirst() bool {
+	if r.BridgeAddr == "" || r.DialBridge == nil {
+		return false
+	}
+	if r.fallbackToBridge.Load() {
+		return true
+	}
+	return r.PreferDirect == nil || !r.PreferDirect()
+}
+
+// reconnectBridge redoes both directions via the bridge. Pair order differs by
+// role so the two peers' rooms match.
+func (r *ReconnectManager) reconnectBridge(logger *slog.Logger, initiator bool) error {
+	logger.Info("Reconnecting via bridge", "addr", r.BridgeAddr)
+
+	if initiator {
 		outConn, err := r.DialBridge("pair1")
 		if err != nil {
 			return fmt.Errorf("bridge dial (outbound): %w", err)
@@ -277,7 +309,30 @@ func (r *ReconnectManager) reconnectAsInitiator() error {
 		return nil
 	}
 
-	// Direct mode: dial peer, then accept inbound.
+	inConn, err := r.DialBridge("pair1")
+	if err != nil {
+		return fmt.Errorf("bridge dial (inbound): %w", err)
+	}
+	if err := PerformInboundHandshake(r.session, inConn); err != nil {
+		_ = inConn.Close()
+		return fmt.Errorf("bridge inbound handshake: %w", err)
+	}
+
+	outConn, err := r.DialBridge("pair2")
+	if err != nil {
+		return fmt.Errorf("bridge dial (outbound): %w", err)
+	}
+	if err := PerformOutboundHandshakeOnConn(r.session, outConn); err != nil {
+		_ = outConn.Close()
+		return fmt.Errorf("bridge outbound handshake: %w", err)
+	}
+
+	logger.Info("Both directions reconnected via bridge (responder)")
+	return nil
+}
+
+// reconnectDirectInitiator dials the peer, then accepts the return leg.
+func (r *ReconnectManager) reconnectDirectInitiator(logger *slog.Logger) error {
 	addr := ""
 	if r.CachedPeerIP != "" && r.CachedPeerPort > 0 {
 		addr = net.JoinHostPort(r.CachedPeerIP, fmt.Sprintf("%d", r.CachedPeerPort))
@@ -319,33 +374,19 @@ func (r *ReconnectManager) reconnectAsInitiator() error {
 func (r *ReconnectManager) reconnectAsResponder() error {
 	logger := r.logger.With("role", "responder")
 
-	// Bridge mode: both directions via bridge.
-	if r.BridgeAddr != "" && r.DialBridge != nil {
-		logger.Info("Reconnecting via bridge", "addr", r.BridgeAddr)
-
-		inConn, err := r.DialBridge("pair1")
-		if err != nil {
-			return fmt.Errorf("bridge dial (inbound): %w", err)
-		}
-		if err := PerformInboundHandshake(r.session, inConn); err != nil {
-			_ = inConn.Close()
-			return fmt.Errorf("bridge inbound handshake: %w", err)
-		}
-
-		outConn, err := r.DialBridge("pair2")
-		if err != nil {
-			return fmt.Errorf("bridge dial (outbound): %w", err)
-		}
-		if err := PerformOutboundHandshakeOnConn(r.session, outConn); err != nil {
-			_ = outConn.Close()
-			return fmt.Errorf("bridge outbound handshake: %w", err)
-		}
-
-		logger.Info("Both directions reconnected via bridge (responder)")
-		return nil
+	if r.useBridgeFirst() {
+		return r.reconnectBridge(logger, false)
 	}
+	err := r.reconnectDirectResponder(logger)
+	if err != nil && r.BridgeAddr != "" && r.DialBridge != nil {
+		r.fallbackToBridge.Store(true)
+		logger.Info("Direct reconnect failed, next attempt uses the bridge", "error", err)
+	}
+	return err
+}
 
-	// Direct mode: accept inbound, then dial outbound.
+// reconnectDirectResponder accepts inbound, then dials outbound.
+func (r *ReconnectManager) reconnectDirectResponder(logger *slog.Logger) error {
 	if r.AcceptConn == nil {
 		return fmt.Errorf("no accept function configured")
 	}

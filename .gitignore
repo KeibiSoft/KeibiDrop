@@ -3,8 +3,8 @@ rust/target/
 rust/src/bindings.rs
 libkeibidrop.a
 libkeibidrop.h
-keibidrop-cli
-keibidrop
+/keibidrop-cli
+/keibidrop
 /kd
 /cli
 dist/

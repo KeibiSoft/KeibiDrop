@@ -266,7 +266,7 @@ fn start_file_watcher(
                         }
                     } else {
                         // Not tracked in-session. A leftover ".kdbitmap" sidecar means
-                        // an incomplete download (e.g. from a previous run) — not saved.
+                        // an incomplete download (e.g. from a previous run), not saved.
                         let local = format!("{}/{}", save_path, name);
                         if Path::new(&format!("{}.kdbitmap", local)).exists() {
                             let c_name = CString::new(name.clone()).unwrap();
@@ -292,7 +292,7 @@ fn start_file_watcher(
                     });
                 }
 
-                // Also include local files (files I shared) — show as already saved
+                // Also include local files (files I shared), shown as already saved
                 let local_count = bindings::KD_GetLocalFileCount();
                 let mut local_names: Vec<String> = Vec::new();
                 for i in 0..local_count {
@@ -395,7 +395,7 @@ fn is_fuse_present() -> bool {
     }
     #[cfg(target_os = "windows")]
     {
-        // WinFSP may not register in System32 — check the install dir too.
+        // WinFSP may not register in System32; check the install dir too.
         Path::new(r"C:\Windows\System32\winfsp-x64.dll").exists()
             || Path::new(r"C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll").exists()
             || Path::new(r"C:\Program Files\WinFsp\bin\winfsp-x64.dll").exists()
@@ -438,6 +438,56 @@ unsafe fn load_contacts_model() -> std::rc::Rc<slint::VecModel<ContactInfo>> {
         }
     }
     std::rc::Rc::new(slint::VecModel::from(contacts))
+}
+
+// refresh_tokens_status pulls wallet balance + bridge visibility from Go and
+// renders the one-line settings summary.
+fn refresh_tokens_status(app: &MainWindow) {
+    unsafe {
+        let ptr = bindings::KD_TokensStatus();
+        if ptr.is_null() {
+            return;
+        }
+        let s = CStr::from_ptr(ptr).to_string_lossy().to_string();
+        let mut gb = String::new();
+        let mut via = String::new();
+        let mut paid = false;
+        let mut busy = false;
+        for line in s.lines() {
+            if let Some((k, v)) = line.split_once('=') {
+                match k {
+                    "wallet_gb" => gb = v.to_string(),
+                    "via" => via = v.to_string(),
+                    "paid" => paid = v == "true",
+                    "busy" => busy = v == "true",
+                    _ => {}
+                }
+            }
+        }
+        let mut text = if gb.is_empty() || gb == "0.0" {
+            "No credit yet. Direct and local transfers are always free.".to_string()
+        } else {
+            format!("{} GiB left", gb)
+        };
+        if !via.is_empty() {
+            text.push_str(&format!(
+                "  ·  via {} ({})",
+                via,
+                if paid { "priority" } else { "free tier" }
+            ));
+        }
+        if busy {
+            text.push_str("  ·  relay busy");
+        }
+        app.set_tokens_status_text(slint::SharedString::from(text));
+        let funded = !(gb.is_empty() || gb == "0.0");
+        app.set_tokens_funded(funded);
+        app.set_tokens_credit_short(slint::SharedString::from(if funded {
+            format!("Relay credit: {} GiB", gb)
+        } else {
+            String::new()
+        }));
+    }
 }
 
 fn show_toast(weak: &slint::Weak<MainWindow>, msg: &str) {
@@ -711,7 +761,7 @@ fn main() {
     println!("Local mode: {}", local_mode_env);
 
     // Collab-sync flags (prefetch_on_open, push_on_write) are owned by the engine
-    // config — the single source of truth — so the UI does NOT compute a default
+    // config, the single source of truth, so the UI does NOT compute a default
     // here. It passes -1 ("use config") to KD_Initialize; KEIBIDROP_PREFETCH_ON_OPEN
     // and KEIBIDROP_PUSH_ON_WRITE are honored engine-side (config.applyEnvOverrides).
     // This removes the old divergence where the UI forced prefetch_on_open=true
@@ -781,6 +831,9 @@ fn main() {
             let version_str = CStr::from_ptr(version_ptr).to_string_lossy().to_string();
             app.set_version_text(slint::SharedString::from(version_str));
         }
+
+        // Settings: relay-credit summary
+        refresh_tokens_status(&app);
 
         // Settings: populate from Go config
         let config_ptr = bindings::KD_GetConfig();
@@ -860,7 +913,7 @@ fn main() {
                     let name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
                     println!("Discovery name: {}", name);
                 }
-                // Don't auto-CreateRoom — wait until user taps a peer,
+                // Don't auto-CreateRoom; wait until user taps a peer,
                 // then tiebreaker decides who creates and who joins.
             } else {
                 bindings::KD_StopDiscovery();
@@ -932,10 +985,10 @@ fn main() {
                 if let Some(app) = weak_peer_sel.upgrade() {
                     app.set_peer_code(slint::SharedString::from(&addr));
                     if i_am_creator {
-                        println!("I'm creator (listener) — invoking CreateRoom for {}", peer_name);
+                        println!("I'm creator (listener), invoking CreateRoom for {}", peer_name);
                         app.invoke_create_room_pressed();
                     } else {
-                        println!("I'm joiner — invoking JoinRoom to {}", peer_name);
+                        println!("I'm joiner, invoking JoinRoom to {}", peer_name);
                         app.invoke_join_room_pressed();
                     }
                 }
@@ -1086,7 +1139,7 @@ fn main() {
             });
         });
 
-        // Handle Disconnect — warn if download in progress, then disconnect
+        // Handle Disconnect: warn if download in progress, then disconnect
         let weak_disconnect = app.as_weak();
         let disconnect_confirmed = Arc::new(AtomicBool::new(false));
         let disconnect_confirmed_inner = disconnect_confirmed.clone();
@@ -1129,10 +1182,10 @@ fn main() {
             }
             watcher_running_disconnect.store(false, Ordering::Relaxed);
 
-            // Update UI immediately (we're on the UI thread — no blocking)
+            // Update UI immediately (we're on the UI thread, no blocking)
             if let Some(app) = weak_disconnect.upgrade() {
                 app.set_peer_code(slint::SharedString::default());
-                app.set_room_action(3); // "disconnecting" — disables Create/Join buttons
+                app.set_room_action(3); // "disconnecting", disables Create/Join buttons
                 app.set_status_message(slint::SharedString::from("Disconnecting..."));
                 app.set_error_message(slint::SharedString::default());
                 app.set_peer_code_added(false);
@@ -1613,6 +1666,66 @@ fn main() {
             let _ = Command::new("explorer").arg("https://winfsp.dev/").spawn();
         });
 
+        // ── Relay tokens (settings pane) ─────────────────────────
+        let weak_tokens = app.as_weak();
+        app.on_tokens_add(move |code| {
+            let trimmed = code.trim().to_string();
+            if trimmed.is_empty() {
+                return;
+            }
+            let c_code = CString::new(trimmed).unwrap();
+            let res_ptr = bindings::KD_TokensAdd(c_code.as_ptr() as *mut i8);
+            if res_ptr.is_null() {
+                return;
+            }
+            let res = CStr::from_ptr(res_ptr).to_string_lossy().to_string();
+            let mut ok = false;
+            let mut gb = String::new();
+            let mut err = String::new();
+            for line in res.lines() {
+                if let Some((k, v)) = line.split_once('=') {
+                    match k {
+                        "ok" => ok = v == "1",
+                        "gb" => gb = v.to_string(),
+                        "err" => err = v.to_string(),
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(app) = weak_tokens.upgrade() {
+                if ok {
+                    app.set_tokens_add_result(slint::SharedString::from(format!(
+                        "Added {} GiB. Keep the code somewhere safe, it works like cash.",
+                        gb
+                    )));
+                } else {
+                    app.set_tokens_add_result(slint::SharedString::from(format!(
+                        "Not added: {}",
+                        err
+                    )));
+                }
+                refresh_tokens_status(&app);
+            }
+        });
+        app.on_tokens_buy(|| {
+            // Claim-carrying URL: the core polls /collect and adds the code
+            // itself after payment; a tokens_added event confirms it.
+            let mut url = String::from("https://tokens.keibidrop.com/buy");
+            let ptr = bindings::KD_TokensBuyStart();
+            if !ptr.is_null() {
+                let s = CStr::from_ptr(ptr).to_string_lossy().to_string();
+                if let Some(u) = s.strip_prefix("url=") {
+                    url = u.trim().to_string();
+                }
+            }
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg(&url).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(&url).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("explorer").arg(&url).spawn();
+        });
+
         // ── Saved Files Browser (Screen 3) ───────────────────────
         let saved_current_folder: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
@@ -1794,7 +1907,7 @@ fn main() {
             }
         });
 
-        // Contact presence polling timer — refreshes online dots every 10s.
+        // Contact presence polling timer: refreshes online dots every 10s.
         let _contact_timer = {
             let timer = slint::Timer::default();
             let weak_ct = app.as_weak();
@@ -1834,7 +1947,7 @@ fn main() {
             timer
         };
 
-        // Event polling timer — runs on UI thread, independent of file watcher.
+        // Event polling timer: runs on UI thread, independent of file watcher.
         // This ensures disconnect/health events are always processed even when
         // the file watcher thread has stopped or hasn't started yet.
         let arrived_files: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1893,6 +2006,63 @@ fn main() {
                                 if !is_hidden_file(name) {
                                     arrived_files.lock().unwrap().push(name.to_string());
                                 }
+                            }
+                        }
+
+                        if let Some(notice) = evt.strip_prefix("relay_busy:") {
+                            // Server-supplied copy: the relay decides the
+                            // upsell wording, the client just shows it.
+                            show_toast(&weak_evt, notice);
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if evt.starts_with("tokens_exhausted:") {
+                            show_toast(
+                                &weak_evt,
+                                "Relay credit ran out. This transfer continues on the free tier.",
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if evt.starts_with("tokens_chain_done:") {
+                            show_toast(
+                                &weak_evt,
+                                "Pack used up. Your next pack takes over on the next connection.",
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if let Some(gb) = evt.strip_prefix("tokens_added:") {
+                            show_toast(
+                                &weak_evt,
+                                &format!("Relay credit added: {gb} GiB. You are set."),
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if let Some(gb) = evt.strip_prefix("tokens_in_use:") {
+                            show_toast(
+                                &weak_evt,
+                                &format!("Paid priority active. This transfer uses your relay credit ({gb} GiB left)."),
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if let Some(gb) = evt.strip_prefix("tokens_low:") {
+                            show_toast(
+                                &weak_evt,
+                                &format!("Relay credit is low: {gb} GiB left. Top up in Settings, Relay credit, or at tokens.keibidrop.com/buy."),
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
+                            }
+                        } else if let Some(gb) = evt.strip_prefix("tokens_critical:") {
+                            show_toast(
+                                &weak_evt,
+                                &format!("Almost out of relay credit ({gb} GiB left). Transfers will fall back to the free tier and can be slower when the relay is busy."),
+                            );
+                            if let Some(app) = weak_evt.upgrade() {
+                                refresh_tokens_status(&app);
                             }
                         }
 
