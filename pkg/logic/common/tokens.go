@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -224,6 +225,19 @@ func (w *TokenWallet) markRevealed(c *walletChain, revealed int, dead bool) {
 	_ = w.saveLocked() // best-effort; the ledger stays authoritative
 }
 
+// remove drops a chain the ledger refused at paste time.
+func (w *TokenWallet) remove(c *walletChain) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i, have := range w.chains {
+		if have == c {
+			w.chains = append(w.chains[:i], w.chains[i+1:]...)
+			_ = w.saveLocked()
+			return
+		}
+	}
+}
+
 // TokenChainSummary is what CLIs and UIs display.
 type TokenChainSummary struct {
 	Code      string  `json:"code"`
@@ -294,14 +308,40 @@ func (kd *KeibiDrop) Wallet() *TokenWallet {
 	return kd.wallet
 }
 
-// TokensAdd pastes a code into the wallet and returns its size in GB.
+// TokensAdd pastes a code into the wallet and returns its spendable size in
+// GB. The ledger is asked once so a spent or never-minted code is refused at
+// paste time instead of at first spend. No ledger answer keeps the add: the
+// wallet is a cache and pasting offline must keep working.
 func (kd *KeibiDrop) TokensAdd(code string) (float64, error) {
 	c, err := kd.Wallet().Add(code)
 	if err != nil {
 		return 0, err
 	}
+	gb := float64(c.Units) * float64(TokenUnitBytes) / float64(1<<30)
+	var resp struct {
+		UnitsRemaining int    `json:"units_remaining"`
+		State          string `json:"state"`
+	}
+	lerr := kd.postRelayJSON("anchor/balance", map[string]string{
+		"anchor": base64.RawURLEncoding.EncodeToString(c.anchor[:]),
+	}, &resp)
+	var he *relayHTTPError
+	switch {
+	case lerr == nil && resp.UnitsRemaining <= 0:
+		kd.Wallet().markRevealed(c, c.Units, resp.State == "spent")
+		return 0, fmt.Errorf("this code is already spent")
+	case lerr == nil:
+		kd.Wallet().markRevealed(c, c.Units-resp.UnitsRemaining, false)
+		gb = float64(resp.UnitsRemaining) * float64(TokenUnitBytes) / float64(1<<30)
+	case errors.As(lerr, &he) && he.status == http.StatusNotFound && strings.Contains(he.body, "unknown anchor"):
+		// The ledger answered: it has never seen this chain. A route miss
+		// on an old or foreign relay says "Not Found" instead and lands in
+		// the default case.
+		kd.Wallet().remove(c)
+		return 0, fmt.Errorf("this code is not on the relay ledger")
+	}
 	kd.noteCreditLevel()
-	return float64(c.Units) * float64(TokenUnitBytes) / float64(1<<30), nil
+	return gb, nil
 }
 
 // exhaustEvent picks the honest message for a dry chain: with another funded
@@ -714,6 +754,18 @@ func (p *payConn) Close() error {
 	return p.Conn.Close()
 }
 
+// relayHTTPError is a non-2xx relay answer. The body head rides along so a
+// caller can tell an authoritative refusal from a plain route miss.
+type relayHTTPError struct {
+	sub    string
+	status int
+	body   string
+}
+
+func (e *relayHTTPError) Error() string {
+	return fmt.Sprintf("relay %s: status %d", e.sub, e.status)
+}
+
 // postRelayJSON posts a JSON body to a public relay endpoint and decodes the
 // answer. Non-2xx answers surface as errors carrying the status code.
 func (kd *KeibiDrop) postRelayJSON(sub string, payload any, out any) error {
@@ -739,7 +791,8 @@ func (kd *KeibiDrop) postRelayJSON(sub string, payload any, out any) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("relay %s: status %d", sub, resp.StatusCode)
+		head, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return &relayHTTPError{sub: sub, status: resp.StatusCode, body: string(head)}
 	}
 	if out == nil {
 		return nil
