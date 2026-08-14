@@ -26,7 +26,7 @@ build-kd:
 	go build -ldflags="$(LDFLAGS)" -o kd$(EXE) ./cmd/kd
 
 build-static-rust-bridge:
-	go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+	go build -ldflags="$(LDFLAGS)" -buildmode=c-archive -o libkeibidrop.a ./rustbridge
 
 build-rust: protoc build-static-rust-bridge
 	cd rust && cargo build --release
@@ -44,7 +44,7 @@ CROSS_RUST_TARGET := $(CROSS_RUST_TARGET_$(CROSS_ARCH))
 cross-macos:
 	@echo "Cross-compiling for macOS $(CROSS_ARCH)..."
 	# Go static lib for Rust FFI
-	CGO_ENABLED=1 GOARCH=$(CROSS_ARCH) go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+	CGO_ENABLED=1 GOARCH=$(CROSS_ARCH) go build -ldflags="$(LDFLAGS)" -buildmode=c-archive -o libkeibidrop.a ./rustbridge
 	# Rust UI
 	rustup target add $(CROSS_RUST_TARGET) 2>/dev/null || true
 	cd rust && cargo build --release --target $(CROSS_RUST_TARGET)

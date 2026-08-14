@@ -428,3 +428,76 @@ func TestExhaustEventHonesty(t *testing.T) {
 		t.Fatalf("funded wallet must promise the next pack: %s", e)
 	}
 }
+
+func balanceServer(t *testing.T, status int, body map[string]any) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/anchor/balance" {
+			t.Errorf("unexpected relay call %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestTokensAddRefusesSpentCode(t *testing.T) {
+	srv := balanceServer(t, http.StatusOK, map[string]any{"units_remaining": 0, "state": "spent"})
+	kd := newTokenTestKD(t, srv.URL)
+	if _, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600)); err == nil || !strings.Contains(err.Error(), "already spent") {
+		t.Fatalf("want already-spent refusal, got %v", err)
+	}
+	// The chain stays as a dead record, same as a balance refresh would
+	// leave it: the code was real once and the wallet history says so.
+	s := kd.TokensSummaries()
+	if len(s) != 1 || !s[0].Dead || s[0].UnitsLeft != 0 {
+		t.Fatalf("want one dead drained chain, got %+v", s)
+	}
+}
+
+func TestTokensAddAdoptsLedgerRemaining(t *testing.T) {
+	srv := balanceServer(t, http.StatusOK, map[string]any{"units_remaining": 12800, "state": "active"})
+	kd := newTokenTestKD(t, srv.URL)
+	gb, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gb != 125 {
+		t.Fatalf("want the ledger's 125 GB, not the nominal size, got %v", gb)
+	}
+	s := kd.TokensSummaries()
+	if len(s) != 1 || s[0].UnitsLeft != 12800 || s[0].Dead {
+		t.Fatalf("want a live half-used chain, got %+v", s)
+	}
+}
+
+func TestTokensAddRefusesUnknownAnchor(t *testing.T) {
+	srv := balanceServer(t, http.StatusNotFound, map[string]any{"message": "unknown anchor"})
+	kd := newTokenTestKD(t, srv.URL)
+	if _, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600)); err == nil || !strings.Contains(err.Error(), "not on the relay ledger") {
+		t.Fatalf("want unknown-anchor refusal, got %v", err)
+	}
+	if s := kd.TokensSummaries(); len(s) != 0 {
+		t.Fatalf("a never-minted chain must not stay in the wallet: %+v", s)
+	}
+}
+
+func TestTokensAddOfflineStaysOptimistic(t *testing.T) {
+	// No relay configured at all.
+	kd := newTokenTestKD(t, "")
+	gb, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600))
+	if err != nil || gb != 250 {
+		t.Fatalf("offline add must keep working: gb=%v err=%v", gb, err)
+	}
+	// An old relay without the ledger route answers a plain 404.
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	kd2 := newTokenTestKD(t, srv.URL)
+	gb, err = kd2.TokensAdd(encodeTokenCode(testSeed(t), 25600))
+	if err != nil || gb != 250 {
+		t.Fatalf("route-miss add must keep working: gb=%v err=%v", gb, err)
+	}
+}
