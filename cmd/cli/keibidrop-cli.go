@@ -868,6 +868,7 @@ func main() {
 	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
 	kd.ShareReadOnly = cfg.ShareReadOnly
 	kd.MountReadOnly = cfg.MountReadOnly
+	kd.PreserveMetadata = cfg.PreserveMetadata
 	// The daemon sets these from config; the CLI used to skip them, leaving it
 	// with no relay fallback at all.
 	kd.BridgeAddr = cfg.BridgeAddr

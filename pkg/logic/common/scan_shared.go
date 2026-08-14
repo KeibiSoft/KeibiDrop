@@ -145,13 +145,15 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 				kd.SyncTracker.LocalFilesMu.Unlock()
 				continue
 			}
+			atime, btime := statTimes(finfo)
 			file := &synctracker.File{
 				Name:           finfo.Name(),
 				RelativePath:   rel,
 				RealPathOfFile: filepath.Clean(path),
 				Size:           uint64(finfo.Size()),
 				LastEditTime:   uint64(finfo.ModTime().UnixNano()),
-				CreatedTime:    uint64(finfo.ModTime().UnixNano()),
+				CreatedTime:    btime,
+				Atime:          atime,
 				Mode:           uint32(finfo.Mode().Perm()) | syscall.S_IFREG,
 			}
 			kd.SyncTracker.LocalFiles[rel] = file // upsert first: a failed announce retries next scan
@@ -164,10 +166,10 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 				Attr: &bindings.Attr{
 					Mode:             file.Mode,
 					Size:             finfo.Size(),
-					AccessTime:       file.LastEditTime,
+					AccessTime:       atime,
 					ModificationTime: file.LastEditTime,
 					ChangeTime:       file.LastEditTime,
-					BirthTime:        file.LastEditTime,
+					BirthTime:        btime,
 					Flags:            0o444,
 				},
 			})
@@ -256,13 +258,17 @@ func (kd *KeibiDrop) BackfillRemoteFilesIntoFS() {
 			mode = uint32(0o644) | syscall.S_IFREG
 		}
 		mtime := time.Unix(0, int64(f.LastEditTime))
+		atime := mtime
+		if f.Atime != 0 {
+			atime = time.Unix(0, int64(f.Atime))
+		}
 		stat := &fuse.Stat_t{
 			Mode:     mode,
 			Nlink:    1,
 			Uid:      uint32(os.Getuid()),
 			Gid:      uint32(os.Getgid()),
 			Size:     int64(f.Size),
-			Atim:     fuse.NewTimespec(mtime),
+			Atim:     fuse.NewTimespec(atime),
 			Mtim:     fuse.NewTimespec(mtime),
 			Ctim:     fuse.NewTimespec(mtime),
 			Birthtim: fuse.NewTimespec(time.Unix(0, int64(f.CreatedTime))),

@@ -1493,12 +1493,20 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		// Reset sync state for future opens. Guard under metaMu (OpenEx reads
 		// IsLocalPresent/NotLocalSynced via AfmLock, a different lock). Release
 		// metaMu before the AfmLock acquisition below to avoid a metaMu->AfmLock cycle.
+		var preserveMetaPath string
 		f.metaMu.Lock()
 		f.IsLocalPresent = true
 		// Mark as synced only when the download is complete.
 		// Use ChunkBitmap (preferred) or BytesDownloaded as fallback.
 		if f.Bitmap != nil {
 			if f.Bitmap.IsComplete() {
+				// Peer content just completed on disk (not a local edit).
+				// Apply the origin metadata below, AFTER cacheFD closes:
+				// Windows stamps its cached LastWriteTime at handle close,
+				// which would overwrite Chtimes.
+				if f.NotLocalSynced && !hadEdits && !localNewer && d.PreserveMeta() {
+					preserveMetaPath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+				}
 				f.NotLocalSynced = false
 				// logger.Info("Download complete (all chunks verified)", "progress", f.Bitmap.Progress())
 			}
@@ -1560,7 +1568,21 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 					logger.Error("Failed to close cache FD", "error", closeErr)
 				}
 			}
+			if preserveMetaPath != "" {
+				f.metaMu.Lock()
+				applyOriginMetaLocked(f, preserveMetaPath)
+				f.metaMu.Unlock()
+			}
 			return 0 // Already unlocked. Return.
+		}
+		if preserveMetaPath != "" {
+			// Same rule as above: no disk I/O under OpenMapLock.
+			d.OpenMapLock.Unlock()
+			unlocked = true
+			f.metaMu.Lock()
+			applyOriginMetaLocked(f, preserveMetaPath)
+			f.metaMu.Unlock()
+			return 0
 		}
 	}
 
@@ -3333,6 +3355,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 
 		existing.metaMu.Lock()
 		existing.stat = stat
+		captureOriginMeta(existing, stat)
 		existing.metaMu.Unlock()
 
 		if sizeChanged {
@@ -3460,6 +3483,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		Bitmap:          NewChunkBitmap(stat.Size),
 		RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
 	}
+	captureOriginMeta(f, stat)
 	d.RemoteFiles[path] = f
 	d.RemoteFilesLock.Unlock()
 	// Metadata-only on announce: registered with metadata + bitmap +
@@ -3601,6 +3625,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		d.RemoteFilesLock.RLock()
 		currentDiskPath := f.RealPathOfFile
 		d.RemoteFilesLock.RUnlock()
+		finalPath := realPath
 		if currentDiskPath != realPath {
 			if mkErr := os.MkdirAll(filepath.Dir(currentDiskPath), 0o755); mkErr != nil {
 				logger.Warn("Prefetch: failed to create dirs for renamed path",
@@ -3608,7 +3633,17 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 			} else if rnErr := os.Rename(realPath, currentDiskPath); rnErr != nil {
 				logger.Warn("Prefetch: atomic rename failed",
 					"from", realPath, "to", currentDiskPath, "error", rnErr)
+			} else {
+				finalPath = currentDiskPath
 			}
+		}
+		// Apply origin metadata after lf closed and the file reached its final
+		// path: Windows stamps its cached LastWriteTime at handle close, which
+		// would overwrite Chtimes.
+		if d.PreserveMeta() {
+			f.metaMu.Lock()
+			applyOriginMetaLocked(f, finalPath)
+			f.metaMu.Unlock()
 		}
 	}()
 
@@ -3730,6 +3765,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 			Bitmap:          NewChunkBitmap(stat.Size),
 			RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
 		}
+		captureOriginMeta(newFile, stat)
 		d.RemoteFiles[path] = newFile
 		d.RemoteFilesLock.Unlock()
 		// Ensure AllFileMap points to the same object so OpenEx sees correct state.
@@ -3807,6 +3843,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	// PrefetchCancel/Download/Bitmap resets stay outside it.
 	f.metaMu.Lock()
 	f.stat = stat
+	captureOriginMeta(f, stat)
 	f.LocalNewer = false    // Remote has newer content.
 	f.NotLocalSynced = true // Re-fetch the edited bytes on the next read.
 	f.metaMu.Unlock()

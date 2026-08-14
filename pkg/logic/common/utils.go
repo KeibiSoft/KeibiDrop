@@ -381,6 +381,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs.PrefetchAutoMB = kd.PrefetchAutoMB
 	fs.ReadAheadWindowMB = kd.ReadAheadWindowMB
 	fs.MountReadOnly = kd.MountReadOnly
+	fs.PreserveMetadata = kd.PreserveMetadata
 
 	// The handshake emits OnPeerVerified; the FUSE cache reacts by scoping to that peer. A
 	// different peer drops the prior cache (no cross-peer leak); the same peer reconnecting or

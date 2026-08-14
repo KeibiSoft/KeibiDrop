@@ -210,6 +210,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				// Update existing entry (peer overwrote the file).
 				existing.Size = uint64(req.Attr.Size)
 				existing.LastEditTime = req.Attr.ModificationTime
+				existing.Atime = req.Attr.AccessTime
+				existing.Mode = req.Attr.Mode
 				logger.Info("Updated existing remote file", "path", req.Path, "newSize", req.Attr.Size)
 				return &bindings.NotifyResponse{}, nil
 			}
@@ -220,6 +222,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				Size:         uint64(req.Attr.Size),
 				LastEditTime: req.Attr.ModificationTime,
 				CreatedTime:  req.Attr.BirthTime,
+				Atime:        req.Attr.AccessTime,
 				Mode:         req.Attr.Mode,
 			}
 
@@ -279,6 +282,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 					Size:         uint64(req.Attr.Size),
 					LastEditTime: req.Attr.ModificationTime,
 					CreatedTime:  req.Attr.BirthTime,
+					Atime:        req.Attr.AccessTime,
+					Mode:         req.Attr.Mode,
 				}
 			} else {
 				f.Name = req.Name
@@ -286,6 +291,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				f.Size = uint64(req.Attr.Size)
 				f.LastEditTime = req.Attr.ModificationTime
 				f.CreatedTime = req.Attr.BirthTime
+				f.Atime = req.Attr.AccessTime
+				f.Mode = req.Attr.Mode
 			}
 
 			if kd.OnEvent != nil {
@@ -661,6 +668,7 @@ func (kd *KeibidropServiceImpl) upsertRemoteInTracker(req *bindings.NotifyReques
 		f.Size = uint64(req.Attr.Size)
 		f.LastEditTime = req.Attr.ModificationTime
 		f.CreatedTime = req.Attr.BirthTime
+		f.Atime = req.Attr.AccessTime
 		f.Mode = req.Attr.Mode
 		return
 	}
@@ -670,6 +678,7 @@ func (kd *KeibidropServiceImpl) upsertRemoteInTracker(req *bindings.NotifyReques
 		Size:         uint64(req.Attr.Size),
 		LastEditTime: req.Attr.ModificationTime,
 		CreatedTime:  req.Attr.BirthTime,
+		Atime:        req.Attr.AccessTime,
 		Mode:         req.Attr.Mode,
 	}
 }

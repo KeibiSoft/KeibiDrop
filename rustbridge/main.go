@@ -182,6 +182,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
 	kd.ShareReadOnly = cfg.ShareReadOnly
 	kd.MountReadOnly = cfg.MountReadOnly
+	kd.PreserveMetadata = cfg.PreserveMetadata
 	for _, warn := range cfg.Warnings() {
 		logger.Warn("config flag note", "note", warn)
 	}
@@ -807,11 +808,11 @@ func KD_GetConfigPath() *C.char {
 func KD_GetConfig() *C.char {
 	cfg, _ := config.Load()
 	return C.CString(fmt.Sprintf(
-		"relay=%s\nsave_path=%s\nmount_path=%s\nlog_file=%s\ninbound_port=%d\noutbound_port=%d\nbridge_addr=%s\nno_fuse=%v\nstrict_mode=%v\nscan_shared_on_start=%v\nauto_connect_peer=%s\nshare_read_only=%v\nmount_read_only=%v",
+		"relay=%s\nsave_path=%s\nmount_path=%s\nlog_file=%s\ninbound_port=%d\noutbound_port=%d\nbridge_addr=%s\nno_fuse=%v\nstrict_mode=%v\nscan_shared_on_start=%v\nauto_connect_peer=%s\nshare_read_only=%v\nmount_read_only=%v\npreserve_metadata=%v",
 		cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
 		cfg.NoFUSE, cfg.StrictMode, cfg.ScanSharedOnStart, cfg.AutoConnectPeer,
-		cfg.ShareReadOnly, cfg.MountReadOnly,
+		cfg.ShareReadOnly, cfg.MountReadOnly, cfg.PreserveMetadata,
 	))
 }
 

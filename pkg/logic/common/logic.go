@@ -56,13 +56,15 @@ func (kd *KeibiDrop) AddFile(path string) error {
 		return syscall.EISDIR
 	}
 
+	atime, btime := statTimes(finfo)
 	file := &synctracker.File{
 		Name:           name,
 		RelativePath:   name,
 		RealPathOfFile: cleanPath,
 		Size:           uint64(finfo.Size()),
 		LastEditTime:   uint64(finfo.ModTime().UnixNano()),
-		CreatedTime:    uint64(finfo.ModTime().UnixNano()),
+		CreatedTime:    btime,
+		Atime:          atime,
 	}
 
 	kd.SyncTracker.LocalFilesMu.Lock()
@@ -77,10 +79,10 @@ func (kd *KeibiDrop) AddFile(path string) error {
 			Ino:              0,
 			Mode:             uint32(finfo.Mode().Perm()) | syscall.S_IFREG,
 			Size:             finfo.Size(),
-			AccessTime:       file.LastEditTime,
+			AccessTime:       atime,
 			ModificationTime: file.LastEditTime,
 			ChangeTime:       file.LastEditTime,
-			BirthTime:        file.LastEditTime,
+			BirthTime:        btime,
 			Flags:            0o444,
 		},
 	})
@@ -156,13 +158,15 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 		return syscall.EISDIR
 	}
 
+	atime, btime := statTimes(finfo)
 	file := &synctracker.File{
 		Name:           filepath.Base(remoteName),
 		RelativePath:   remoteName,
 		RealPathOfFile: cleanPath,
 		Size:           uint64(finfo.Size()),
 		LastEditTime:   uint64(finfo.ModTime().UnixNano()),
-		CreatedTime:    uint64(finfo.ModTime().UnixNano()),
+		CreatedTime:    btime,
+		Atime:          atime,
 	}
 
 	kd.SyncTracker.LocalFilesMu.Lock()
@@ -175,10 +179,10 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 		Attr: &bindings.Attr{
 			Mode:             uint32(finfo.Mode().Perm()) | syscall.S_IFREG,
 			Size:             finfo.Size(),
-			AccessTime:       file.LastEditTime,
+			AccessTime:       atime,
 			ModificationTime: file.LastEditTime,
 			ChangeTime:       file.LastEditTime,
-			BirthTime:        file.LastEditTime,
+			BirthTime:        btime,
 			Flags:            0o444,
 		},
 	})
@@ -321,6 +325,10 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	}
 
 updateTracker:
+	// Close the write handle before finalizeDownload's metadata apply: Windows
+	// stamps its cached LastWriteTime at handle close, which would overwrite
+	// Chtimes. The deferred Close then returns ErrClosed, ignored.
+	_ = f.Close()
 	kd.finalizeDownload(remoteName, localPath, fileCopy)
 
 	if fi, statErr := os.Stat(localPath); statErr == nil {
@@ -484,6 +492,12 @@ func (kd *KeibiDrop) finalizeDownload(remoteName, localPath string, fileCopy syn
 	kd.SyncTracker.LocalFilesMu.Lock()
 	kd.SyncTracker.LocalFiles[remoteName] = &fileCopy
 	kd.SyncTracker.LocalFilesMu.Unlock()
+	if kd.PreserveMetadata {
+		// #nosec G115 -- unix nanos fit in int64
+		if err := filesystem.ApplyOriginMetadata(localPath, fileCopy.Mode, int64(fileCopy.Atime), int64(fileCopy.LastEditTime)); err != nil {
+			kd.logger.Warn("preserve_metadata apply failed", "path", localPath, "error", err)
+		}
+	}
 }
 
 func (kd *KeibiDrop) registerDownload(name string, cancel context.CancelFunc) {

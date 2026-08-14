@@ -454,15 +454,17 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 		if err != nil {
 			continue
 		}
+		atime, btime := statTimes(info)
 		_, _ = client.Notify(kd.ctx, &bindings.NotifyRequest{
 			Type: bindings.NotifyType(types.AddFile),
 			Path: file.RelativePath,
 			Attr: &bindings.Attr{
 				Mode:             uint32(info.Mode().Perm()) | 0100000,
 				Size:             info.Size(),
+				AccessTime:       atime,
 				ModificationTime: uint64(info.ModTime().UnixNano()),
 				ChangeTime:       uint64(info.ModTime().UnixNano()),
-				BirthTime:        uint64(info.ModTime().UnixNano()),
+				BirthTime:        btime,
 			},
 		})
 		logger.Info("Re-notified peer about restored file", "path", file.RelativePath)

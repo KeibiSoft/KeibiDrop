@@ -155,6 +155,7 @@ func runDaemon() {
 	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
 	kd.ShareReadOnly = cfg.ShareReadOnly
 	kd.MountReadOnly = cfg.MountReadOnly
+	kd.PreserveMetadata = cfg.PreserveMetadata
 	for _, warn := range cfg.Warnings() {
 		logger.Warn("config flag note", "note", warn)
 	}
@@ -222,6 +223,7 @@ func runDaemon() {
 		"auto_connect_peer":    cfg.AutoConnectPeer,
 		"share_read_only":      cfg.ShareReadOnly,
 		"mount_read_only":      cfg.MountReadOnly,
+		"preserve_metadata":    cfg.PreserveMetadata,
 	}
 	if isLocal {
 		addr, _ := common.GetLinkLocalAddress(kd.InboundPort())

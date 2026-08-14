@@ -40,6 +40,7 @@ type Config struct {
 	AutoConnectPeer   string `toml:"auto_connect_peer"`    // Saved contact (name or fingerprint) to connect to on startup, with retry.
 	ShareReadOnly     bool   `toml:"share_read_only"`      // Refuse every peer mutation of this node's data (origin-enforced).
 	MountReadOnly     bool   `toml:"mount_read_only"`      // Local FUSE mount returns EROFS on write ops (receiver courtesy).
+	PreserveMetadata  bool   `toml:"preserve_metadata"`    // Apply the origin's mode and timestamps to files saved on disk.
 }
 
 const DefaultRelay = "https://keibidroprelay.keibisoft.com/"
@@ -208,6 +209,12 @@ no_fuse = %v
 # mount_read_only: local FUSE mount returns EROFS on write ops. Courtesy on
 # the reading side; share_read_only on the origin is the enforced guarantee.
 # mount_read_only = false
+#
+# preserve_metadata: when a received file completes on disk, apply the
+# origin's permission bits and timestamps (mtime, atime) to the saved bytes.
+# For forensics/evidence workflows where original timestamps must survive
+# the transfer. Birth time stays view-only (not settable on most systems).
+# preserve_metadata = false
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.NoFUSE)
 
@@ -297,10 +304,17 @@ share_read_only = %v
 # Courtesy only; the origin's share_read_only is the enforced guarantee.
 # No effect with no_fuse (there is no mount).
 mount_read_only = %v
+
+# Apply the origin's permission bits and timestamps (mtime, atime) to files
+# saved on disk, once their content completes. For forensics/evidence
+# workflows where original timestamps must survive the transfer. Birth time
+# stays view-only (not settable on most systems). On Windows only the
+# read-only permission bit applies.
+preserve_metadata = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
 		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.PrefetchAutoMB, cfg.PrefetchOnOpen, cfg.ReadAheadWindowMB, cfg.LiveCollab, cfg.ScanSharedOnStart, cfg.AutoConnectPeer,
-		cfg.ShareReadOnly, cfg.MountReadOnly)
+		cfg.ShareReadOnly, cfg.MountReadOnly, cfg.PreserveMetadata)
 
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }
@@ -373,6 +387,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if b, ok := envBool("KEIBIDROP_MOUNT_READ_ONLY", "KD_MOUNT_READ_ONLY"); ok {
 		cfg.MountReadOnly = b
+	}
+	if b, ok := envBool("KEIBIDROP_PRESERVE_METADATA", "KD_PRESERVE_METADATA"); ok {
+		cfg.PreserveMetadata = b
 	}
 }
 

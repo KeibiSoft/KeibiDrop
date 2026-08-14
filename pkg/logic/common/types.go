@@ -111,6 +111,7 @@ type KeibiDrop struct {
 	AutoConnectPeer   string // Saved contact to connect to on startup, with retry. From config.AutoConnectPeer.
 	ShareReadOnly     bool   // Refuse every inbound peer mutation at the service layer. From config.ShareReadOnly.
 	MountReadOnly     bool   // Local FUSE mount returns EROFS on write ops. From config.MountReadOnly.
+	PreserveMetadata  bool   // Apply the origin's mode and times to files saved on disk. From config.PreserveMetadata.
 
 	// Signals for loop management.
 	signals      chan TaskSignal

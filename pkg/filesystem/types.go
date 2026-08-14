@@ -182,6 +182,9 @@ type Dir struct {
 	PrefetchAutoMB int  // Files at or above this many MB prefetch on open (0=off).
 	PushOnWrite    bool // If true, Write() pushes deltas to the peer asynchronously.
 	MountReadOnly  bool // Set on the ROOT dir: local mutating FUSE ops return EROFS.
+	// PreserveMetadata is set on the ROOT dir: when a remote file's content
+	// completes on disk, apply the origin's mode and times to the saved file.
+	PreserveMetadata bool
 
 	// ReadAheadWindowBlocks caps predictive sequential read-ahead. Sequential
 	// reads fetch up to this many ReadAheadBlock-sized blocks ahead of the read
@@ -218,6 +221,16 @@ func (d *Dir) ReadOnlyMount() bool {
 		r = d
 	}
 	return r.MountReadOnly
+}
+
+// PreserveMeta reports the root's preserve-metadata flag. Download-completion
+// paths check it before applying the origin's mode and times to saved files.
+func (d *Dir) PreserveMeta() bool {
+	r := d.Root
+	if r == nil {
+		r = d
+	}
+	return r.PreserveMetadata
 }
 
 // Ctx returns the live FUSE context from the root. Disconnect swaps it, so do
@@ -336,6 +349,13 @@ type File struct {
 	// notifications set it, under RemoteFilesLock. Local ops overwrite
 	// stat.Mtim and must not join the staleness comparison.
 	RemoteMtimeNs int64
+
+	// Origin metadata captured when an announce's stat is adopted, guarded by
+	// metaMu. Getattr mutates f.stat from the local partial file during a
+	// download, so these keep the origin's values for preserve_metadata.
+	OriginMode    uint32
+	OriginAtimeNs int64
+	OriginMtimeNs int64
 
 	// EditBaseMtimeNs is max(HeldMtimeNs, LastAnnouncedMtimeNs), snapshotted
 	// at the first dirtying op of an edit session under metaMu. The announce
