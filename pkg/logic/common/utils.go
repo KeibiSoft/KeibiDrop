@@ -380,6 +380,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs.AutoCache = kd.AutoCache // live_collab → macFUSE auto_cache (set before Mount)
 	fs.PrefetchAutoMB = kd.PrefetchAutoMB
 	fs.ReadAheadWindowMB = kd.ReadAheadWindowMB
+	fs.MountReadOnly = kd.MountReadOnly
 
 	// The handshake emits OnPeerVerified; the FUSE cache reacts by scoping to that peer. A
 	// different peer drops the prior cache (no cross-peer leak); the same peer reconnecting or
@@ -787,11 +788,12 @@ func (kd *KeibiDrop) startGRPCServer() error {
 	ln := NewSingleConnListener(inboundConn)
 
 	svc := &service.KeibidropServiceImpl{
-		Session:      s,
-		Logger:       kd.logger.With("component", "keibidrop-server"),
-		SyncTracker:  kd.SyncTracker,
-		OnEvent:      kd.OnEvent,
-		OnDisconnect: kd.handleNotifyDisconnect,
+		Session:       s,
+		Logger:        kd.logger.With("component", "keibidrop-server"),
+		SyncTracker:   kd.SyncTracker,
+		OnEvent:       kd.OnEvent,
+		OnDisconnect:  kd.handleNotifyDisconnect,
+		ShareReadOnly: kd.ShareReadOnly,
 	}
 	// Re-wire the FUSE tree here: a reconnect rebuilds KDSvc but the post-mount wiring in
 	// Run() is not re-run, so without this a reconnected FUSE peer would never show

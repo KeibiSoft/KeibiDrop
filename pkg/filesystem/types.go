@@ -181,6 +181,7 @@ type Dir struct {
 	PrefetchOnOpen bool // If true, Open() fetches the whole file and writes it to local disk.
 	PrefetchAutoMB int  // Files at or above this many MB prefetch on open (0=off).
 	PushOnWrite    bool // If true, Write() pushes deltas to the peer asynchronously.
+	MountReadOnly  bool // Set on the ROOT dir: local mutating FUSE ops return EROFS.
 
 	// ReadAheadWindowBlocks caps predictive sequential read-ahead. Sequential
 	// reads fetch up to this many ReadAheadBlock-sized blocks ahead of the read
@@ -207,6 +208,16 @@ type Dir struct {
 	// SetCtx while FUSE threads read it, so access is atomic. FS.Unmount()
 	// cancels it to unblock FUSE handlers stuck on gRPC.
 	fsCtx atomic.Pointer[context.Context]
+}
+
+// ReadOnlyMount reports the root's read-only flag. Mutating FUSE ops check it
+// and return EROFS; peer-driven updates (*FromPeer, remote add) bypass it.
+func (d *Dir) ReadOnlyMount() bool {
+	r := d.Root
+	if r == nil {
+		r = d
+	}
+	return r.MountReadOnly
 }
 
 // Ctx returns the live FUSE context from the root. Disconnect swaps it, so do

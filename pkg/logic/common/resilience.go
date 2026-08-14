@@ -143,9 +143,13 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 				continue
 			}
 			name := filepath.Base(cleanPath)
-			kd.SyncTracker.LocalFiles[name] = &synctracker.File{
+			rel := e.Rel
+			if rel == "" {
+				rel = name // entry from an older build: flat announce
+			}
+			kd.SyncTracker.LocalFiles[rel] = &synctracker.File{
 				Name:           name,
-				RelativePath:   name,
+				RelativePath:   rel,
 				RealPathOfFile: cleanPath,
 				Size:           uint64(info.Size()),
 				LastEditTime:   uint64(info.ModTime().UnixNano()),
@@ -163,6 +167,22 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	}
 	kd.lastSharedFiles = nil
 	kd.lastSharedPeerFP = ""
+
+	// Announce files already in the save folder. Runs after the restore block,
+	// so restored files are already tracked and the scan skips them.
+	if kd.ScanSharedOnStart {
+		ctx := kd.ctx
+		go func() {
+			n, err := kd.ScanAndShareSaveDir(ctx)
+			if err != nil {
+				logger.Warn("Save folder scan stopped early", "announced", n, "error", err)
+				return
+			}
+			if n > 0 {
+				logger.Info("Announced pre-existing save folder files", "count", n)
+			}
+		}()
+	}
 
 	logger.Info("Connection resilience initialized")
 	return nil

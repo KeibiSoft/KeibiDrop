@@ -152,6 +152,9 @@ func runDaemon() {
 	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	kd.ReadAheadWindowMB = cfg.ReadAheadWindowMB
+	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
+	kd.ShareReadOnly = cfg.ShareReadOnly
+	kd.MountReadOnly = cfg.MountReadOnly
 	for _, warn := range cfg.Warnings() {
 		logger.Warn("config flag note", "note", warn)
 	}
@@ -186,6 +189,13 @@ func runDaemon() {
 
 	go kd.Run()
 
+	if cfg.AutoConnectPeer != "" {
+		kd.AutoConnectPeer = cfg.AutoConnectPeer
+		if err := kd.StartAutoConnect(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, `{"ok":false,"warning":"auto_connect_peer: %s"}`+"\n", err)
+		}
+	}
+
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"socket listen: %s"}`+"\n", err)
@@ -199,15 +209,19 @@ func runDaemon() {
 
 	fp, _ := kd.ExportFingerprint()
 	startData := map[string]any{
-		"socket":      sock,
-		"fingerprint": fp,
-		"relay":       cfg.Relay,
-		"ip":          kd.LocalIPv6IP,
-		"fuse":        isFuse,
-		"save_path":   cfg.SavePath,
-		"mount_path":  cfg.MountPath,
-		"log_file":    cfg.LogFile,
-		"config_path": config.ConfigPath(),
+		"socket":               sock,
+		"fingerprint":          fp,
+		"relay":                cfg.Relay,
+		"ip":                   kd.LocalIPv6IP,
+		"fuse":                 isFuse,
+		"save_path":            cfg.SavePath,
+		"mount_path":           cfg.MountPath,
+		"log_file":             cfg.LogFile,
+		"config_path":          config.ConfigPath(),
+		"scan_shared_on_start": cfg.ScanSharedOnStart,
+		"auto_connect_peer":    cfg.AutoConnectPeer,
+		"share_read_only":      cfg.ShareReadOnly,
+		"mount_read_only":      cfg.MountReadOnly,
 	}
 	if isLocal {
 		addr, _ := common.GetLinkLocalAddress(kd.InboundPort())
@@ -574,9 +588,9 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 				"warning":  "this code is like cash: anyone holding it can spend it, and it cannot be recovered if lost",
 			})
 		case "balance":
-			return okResponse(map[string]any{"chains": kd.TokensRefreshBalances(), "buy_url": common.TokensBuyURL})
+			return okResponse(map[string]any{"chains": kd.TokensRefreshBalances(), "credit": kd.TokensCreditStatus(), "buy_url": common.TokensBuyURL})
 		case "list":
-			return okResponse(map[string]any{"chains": kd.TokensSummaries(), "buy_url": common.TokensBuyURL})
+			return okResponse(map[string]any{"chains": kd.TokensSummaries(), "credit": kd.TokensCreditStatus(), "buy_url": common.TokensBuyURL})
 		case "buy":
 			return okResponse(map[string]any{
 				"url":  kd.TokensBuyStart(),
@@ -923,6 +937,7 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"save_path":         kd.ToSave,
 		"writer_epoch":      kd.WriterEpoch(),
 		"bridge":            kd.BridgeInfo(),
+		"credit":            kd.TokensCreditStatus(),
 	}
 
 	kd.SyncTracker.LocalFilesMu.RLock()

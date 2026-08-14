@@ -21,6 +21,7 @@ type File struct {
 	CreatedTime  uint64
 
 	Size uint64
+	Mode uint32 // Announced mode bits. 0 means unknown; presenters fall back to 0644.
 }
 
 type SyncTracker struct {

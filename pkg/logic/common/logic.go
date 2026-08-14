@@ -109,6 +109,7 @@ func (kd *KeibiDrop) persistSharedFile(tag [16]byte, file *synctracker.File) {
 		Path:    file.RealPathOfFile,
 		Size:    file.Size,
 		ModTime: file.LastEditTime,
+		Rel:     file.RelativePath,
 	})
 	kd.sharedStore.Save(entries)
 }

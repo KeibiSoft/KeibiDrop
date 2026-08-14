@@ -378,6 +378,41 @@ func (kd *KeibiDrop) noteCreditLevel() {
 	}
 }
 
+// CreditStatus is the level-readable relay credit state. Events are edges;
+// agents and frontends poll this for the current level.
+type CreditStatus struct {
+	WalletGB float64 `json:"wallet_gb"`
+	Level    string  `json:"level"` // "ok", "low", "critical", "empty"
+	Notice   string  `json:"notice,omitempty"`
+	BuyURL   string  `json:"buy_url"`
+}
+
+// TokensCreditStatus reports remaining relay credit against the same
+// thresholds noteCreditLevel uses. The copy stays honest: dry credit means
+// the free tier on bridged transfers, slower only under contention, never a
+// cutoff, and direct connections are never affected.
+func (kd *KeibiDrop) TokensCreditStatus() CreditStatus {
+	left := kd.Wallet().unitsLeft()
+	st := CreditStatus{
+		WalletGB: float64(left) * float64(TokenUnitBytes) / float64(1<<30),
+		BuyURL:   TokensBuyURL,
+	}
+	switch {
+	case left == 0:
+		st.Level = "empty"
+		st.Notice = "No relay credit: bridged transfers ride the free tier, slower when the bridge is busy. Direct connections are unaffected. Top up to restore paid speed."
+	case left < criticalCreditUnits:
+		st.Level = "critical"
+		st.Notice = fmt.Sprintf("Relay credit nearly gone (%.1f GB). At zero, bridged transfers drop to the free tier, slower when the bridge is busy. Top up now to avoid the slowdown.", st.WalletGB)
+	case left < lowCreditUnits:
+		st.Level = "low"
+		st.Notice = fmt.Sprintf("Relay credit is getting low (%.0f GB left). Top up before it runs out to keep paid bridge speed.", st.WalletGB)
+	default:
+		st.Level = "ok"
+	}
+	return st
+}
+
 // TokensSummaries lists wallet chains for display.
 func (kd *KeibiDrop) TokensSummaries() []TokenChainSummary {
 	return kd.Wallet().Summaries()

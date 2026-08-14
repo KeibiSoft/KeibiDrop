@@ -39,6 +39,7 @@ var (
 	ErrGRPCFailedPrecondition = status.Error(codes.FailedPrecondition, "failed precondition")
 	ErrGRPCAlreadyExists      = status.Error(codes.AlreadyExists, "already exists")
 	ErrGRPCNotFound           = status.Error(codes.NotFound, "notFound")
+	ErrGRPCReadOnlyShare      = status.Error(codes.PermissionDenied, "share is read-only")
 )
 
 type KeibidropServiceImpl struct {
@@ -48,6 +49,13 @@ type KeibidropServiceImpl struct {
 	SyncTracker  *synctracker.SyncTracker
 	OnEvent      func(string)
 	OnDisconnect func()
+
+	// ShareReadOnly rejects every inbound mutation before it touches the
+	// tracker. Mirrors the desktop struct; DISCONNECT still passes.
+	ShareReadOnly bool
+
+	// readOnlyRefusalLogged keeps the refusal log to one line per session.
+	readOnlyRefusalLogged atomic.Bool
 
 	// fs mirrors the desktop struct so the common package compiles unchanged.
 	// Android has no FUSE, so it stays nil.
@@ -83,6 +91,14 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			go kd.OnDisconnect()
 		}
 		return &bindings.NotifyResponse{Status: "ok"}, nil
+	}
+
+	// Read-only share: refuse every peer mutation before it reaches the tracker.
+	if kd.ShareReadOnly {
+		if kd.readOnlyRefusalLogged.CompareAndSwap(false, true) {
+			logger.Warn("Refusing peer mutation: share is read-only", "first-path", req.Path)
+		}
+		return nil, ErrGRPCReadOnlyShare
 	}
 
 	if kd.SyncTracker == nil {

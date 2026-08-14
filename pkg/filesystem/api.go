@@ -36,6 +36,7 @@ type FS struct {
 	ReadAheadWindowMB int  // MB cap for predictive sequential read-ahead (0=off). Each Dir converts it to blocks.
 	PushOnWrite       bool // If true, Write() pushes deltas to the peer asynchronously.
 	AutoCache         bool // If true (live_collab), add macFUSE auto_cache so a peer's same-size in-place edit shows live. Costs mmap-write integrity (git) on macOS; no-op on Linux/Windows.
+	MountReadOnly     bool // If true, every mutating FUSE op returns EROFS. Peer updates still apply.
 
 	// host and root are published by Mount and cleared by Unmount while other
 	// goroutines (Run, teardown, gRPC handlers) read them, so access is atomic.
@@ -158,6 +159,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		PrefetchAutoMB:        fs.PrefetchAutoMB,
 		ReadAheadWindowBlocks: readAheadWindowBlocks(fs.ReadAheadWindowMB),
 		PushOnWrite:           fs.PushOnWrite,
+		MountReadOnly:         fs.MountReadOnly,
 
 		RemoteFilesLock: sync.RWMutex{},
 		RemoteFiles:     make(map[string]*File),
