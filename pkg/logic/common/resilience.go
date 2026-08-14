@@ -143,9 +143,13 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 				continue
 			}
 			name := filepath.Base(cleanPath)
-			kd.SyncTracker.LocalFiles[name] = &synctracker.File{
+			rel := e.Rel
+			if rel == "" {
+				rel = name // entry from an older build: flat announce
+			}
+			kd.SyncTracker.LocalFiles[rel] = &synctracker.File{
 				Name:           name,
-				RelativePath:   name,
+				RelativePath:   rel,
 				RealPathOfFile: cleanPath,
 				Size:           uint64(info.Size()),
 				LastEditTime:   uint64(info.ModTime().UnixNano()),
@@ -163,6 +167,22 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	}
 	kd.lastSharedFiles = nil
 	kd.lastSharedPeerFP = ""
+
+	// Announce files already in the save folder. Runs after the restore block,
+	// so restored files are already tracked and the scan skips them.
+	if kd.ScanSharedOnStart {
+		ctx := kd.ctx
+		go func() {
+			n, err := kd.ScanAndShareSaveDir(ctx)
+			if err != nil {
+				logger.Warn("Save folder scan stopped early", "announced", n, "error", err)
+				return
+			}
+			if n > 0 {
+				logger.Info("Announced pre-existing save folder files", "count", n)
+			}
+		}()
+	}
 
 	logger.Info("Connection resilience initialized")
 	return nil
@@ -434,15 +454,17 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 		if err != nil {
 			continue
 		}
+		atime, btime := statTimes(info)
 		_, _ = client.Notify(kd.ctx, &bindings.NotifyRequest{
 			Type: bindings.NotifyType(types.AddFile),
 			Path: file.RelativePath,
 			Attr: &bindings.Attr{
 				Mode:             uint32(info.Mode().Perm()) | 0100000,
 				Size:             info.Size(),
+				AccessTime:       atime,
 				ModificationTime: uint64(info.ModTime().UnixNano()),
 				ChangeTime:       uint64(info.ModTime().UnixNano()),
-				BirthTime:        uint64(info.ModTime().UnixNano()),
+				BirthTime:        btime,
 			},
 		})
 		logger.Info("Re-notified peer about restored file", "path", file.RelativePath)

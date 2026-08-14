@@ -179,6 +179,10 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	kd.ReadAheadWindowMB = cfg.ReadAheadWindowMB
+	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
+	kd.ShareReadOnly = cfg.ShareReadOnly
+	kd.MountReadOnly = cfg.MountReadOnly
+	kd.PreserveMetadata = cfg.PreserveMetadata
 	for _, warn := range cfg.Warnings() {
 		logger.Warn("config flag note", "note", warn)
 	}
@@ -188,6 +192,13 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	}
 
 	go kd.Run()
+
+	if cfg.AutoConnectPeer != "" {
+		kd.AutoConnectPeer = cfg.AutoConnectPeer
+		if err := kd.StartAutoConnect(ctx); err != nil {
+			pushEvent("auto_connect_error:" + err.Error())
+		}
+	}
 	return 0
 }
 
@@ -797,10 +808,11 @@ func KD_GetConfigPath() *C.char {
 func KD_GetConfig() *C.char {
 	cfg, _ := config.Load()
 	return C.CString(fmt.Sprintf(
-		"relay=%s\nsave_path=%s\nmount_path=%s\nlog_file=%s\ninbound_port=%d\noutbound_port=%d\nbridge_addr=%s\nno_fuse=%v\nstrict_mode=%v",
+		"relay=%s\nsave_path=%s\nmount_path=%s\nlog_file=%s\ninbound_port=%d\noutbound_port=%d\nbridge_addr=%s\nno_fuse=%v\nstrict_mode=%v\nscan_shared_on_start=%v\nauto_connect_peer=%s\nshare_read_only=%v\nmount_read_only=%v\npreserve_metadata=%v",
 		cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
-		cfg.NoFUSE, cfg.StrictMode,
+		cfg.NoFUSE, cfg.StrictMode, cfg.ScanSharedOnStart, cfg.AutoConnectPeer,
+		cfg.ShareReadOnly, cfg.MountReadOnly, cfg.PreserveMetadata,
 	))
 }
 
@@ -828,10 +840,12 @@ func KD_TokensStatus() *C.char {
 			chains++
 		}
 	}
+	credit := kd.TokensCreditStatus()
 	return C.CString(fmt.Sprintf(
-		"wallet_gb=%.1f\nchains=%d\nvia=%s\npaid=%v\nbusy=%v\nnotice=%s\nbuy_url=%s",
+		"wallet_gb=%.1f\nchains=%d\nvia=%s\npaid=%v\nbusy=%v\nnotice=%s\nbuy_url=%s\ncredit_level=%s\ncredit_notice=%s",
 		bi.WalletGB, chains, bi.Via, bi.Paid, bi.Busy || bi.Contention,
-		strings.ReplaceAll(bi.Notice, "\n", " "), common.TokensBuyURL))
+		strings.ReplaceAll(bi.Notice, "\n", " "), common.TokensBuyURL,
+		credit.Level, strings.ReplaceAll(credit.Notice, "\n", " ")))
 }
 
 // KD_TokensBuyStart returns the buy URL carrying a fresh claim ref and
@@ -861,6 +875,25 @@ func KD_SaveConfig(relay, savePath, mountPath *C.char) C.int {
 	if err := config.Save(cfg); err != nil {
 		setLastError(err)
 		return -1
+	}
+	return 0
+}
+
+// KD_SetAutoConnectPeer persists the connect-at-startup contact (name or
+// fingerprint, empty clears) and applies it to the running instance. The
+// watchdog arms on the next app start; an already-armed watchdog keeps its
+// original target for this session.
+//
+//export KD_SetAutoConnectPeer
+func KD_SetAutoConnectPeer(peer *C.char) C.int {
+	cfg, _ := config.Load()
+	cfg.AutoConnectPeer = C.GoString(peer)
+	if err := config.Save(cfg); err != nil {
+		setLastError(err)
+		return -1
+	}
+	if kd != nil {
+		kd.AutoConnectPeer = cfg.AutoConnectPeer
 	}
 	return 0
 }

@@ -36,6 +36,7 @@ var (
 )
 
 func pushEvent(evt string) {
+	printCreditEvent(evt)
 	select {
 	case eventCh <- evt:
 	default:
@@ -44,6 +45,27 @@ func pushEvent(evt string) {
 		default:
 		}
 		eventCh <- evt
+	}
+}
+
+// printCreditEvent surfaces credit and bridge warnings in the REPL as they
+// happen. The core emits each threshold crossing once (latched, re-armed on
+// top-up), so this stays one line per crossing, never a stream. Routine
+// events stay in the poll-event queue.
+func printCreditEvent(evt string) {
+	switch {
+	case strings.HasPrefix(evt, "tokens_low:"):
+		color.Yellow("\n[credit] Relay credit low: %s GB left. Top up with: tokens buy", strings.TrimPrefix(evt, "tokens_low:"))
+	case strings.HasPrefix(evt, "tokens_critical:"):
+		color.Red("\n[credit] Relay credit nearly gone: %s GB. At zero, bridged transfers drop to the free tier (slower when the bridge is busy). Top up with: tokens buy", strings.TrimPrefix(evt, "tokens_critical:"))
+	case strings.HasPrefix(evt, "tokens_exhausted:"):
+		color.Red("\n[credit] Relay credit exhausted. Bridged transfers now ride the free tier (slower when the bridge is busy; direct links unaffected). Top up with: tokens buy")
+	case strings.HasPrefix(evt, "tokens_chain_done:"):
+		color.Yellow("\n[credit] A token chain finished; the next funded chain pays from here.")
+	case strings.HasPrefix(evt, "tokens_added:"):
+		color.Green("\n[credit] Token code added to the wallet.")
+	case strings.HasPrefix(evt, "relay_busy:"):
+		color.Yellow("\n[bridge] %s", strings.TrimPrefix(evt, "relay_busy:"))
 	}
 }
 
@@ -317,10 +339,12 @@ func (c *cliContext) executor(in string) {
 			fmt.Printf("Added %.0f GiB of relay credit.\n", gb)
 			fmt.Println("Keep the code safe: it is like cash - anyone holding it can spend it, and it cannot be recovered if lost.")
 		case "list":
+			printCreditStatus(c.kd.TokensCreditStatus())
 			printTokenSummaries(c.kd.TokensSummaries())
 		case "balance":
 			fmt.Println("Checking balances with the relay...")
 			printTokenSummaries(c.kd.TokensRefreshBalances())
+			printCreditStatus(c.kd.TokensCreditStatus())
 		case "buy":
 			fmt.Println("Buy relay credit (prepaid, anonymous, no account, no expiry):")
 			fmt.Println("  " + c.kd.TokensBuyStart())
@@ -468,6 +492,21 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 		{Text: "exit", Description: "Exit the CLI"},
 	}
 	return prompt.FilterHasPrefix(s, d.GetWordBeforeCursor(), true)
+}
+
+// printCreditStatus shows the credit level once per command, colored by
+// severity. Pull-based: no periodic output, no log lines.
+func printCreditStatus(st common.CreditStatus) {
+	switch st.Level {
+	case "critical", "empty":
+		color.Red("Relay credit: %.1f GB (%s)", st.WalletGB, st.Level)
+		color.Red("  %s", st.Notice)
+	case "low":
+		color.Yellow("Relay credit: %.0f GB (low)", st.WalletGB)
+		color.Yellow("  %s", st.Notice)
+	default:
+		fmt.Printf("Relay credit: %.0f GB\n", st.WalletGB)
+	}
 }
 
 func printTokenSummaries(sums []common.TokenChainSummary) {
@@ -826,6 +865,10 @@ func main() {
 	}
 	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
+	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
+	kd.ShareReadOnly = cfg.ShareReadOnly
+	kd.MountReadOnly = cfg.MountReadOnly
+	kd.PreserveMetadata = cfg.PreserveMetadata
 	// The daemon sets these from config; the CLI used to skip them, leaving it
 	// with no relay fallback at all.
 	kd.BridgeAddr = cfg.BridgeAddr
@@ -848,6 +891,15 @@ func main() {
 
 	kd.OnEvent = pushEvent
 	go kd.Run()
+
+	if cfg.AutoConnectPeer != "" {
+		kd.AutoConnectPeer = cfg.AutoConnectPeer
+		if err := kd.StartAutoConnect(kdctx); err != nil {
+			color.Red("auto_connect_peer: %v", err)
+		} else {
+			fmt.Printf("Auto-connect: %s\n", cfg.AutoConnectPeer)
+		}
+	}
 
 	ctx := &cliContext{kd: kd}
 

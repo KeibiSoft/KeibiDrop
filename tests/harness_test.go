@@ -42,6 +42,10 @@ type TestPair struct {
 	runWg *sync.WaitGroup // tracks Run() goroutines for clean shutdown
 }
 
+// PreConnectFunc runs after both peers are constructed, before Run and the
+// room handshake. Tests use it to seed save dirs and set pre-connect flags.
+type PreConnectFunc func(alice, bob *common.KeibiDrop, aliceSave, bobSave string)
+
 // SetupPeerPair creates two KeibiDrop instances connected through a mock relay.
 // Uses t.TempDir() for all directories, dynamic ports in the 26100-26999 range,
 // and ::1 for IPv6 loopback. Returns a fully connected pair ready for file operations.
@@ -53,16 +57,21 @@ func SetupPeerPair(t *testing.T, isFuse bool) *TestPair {
 // This avoids the cgofuse limitation where two concurrent mounts in the same
 // process race on signal handler registration.
 func SetupFUSEPeerPair(t *testing.T, timeout time.Duration) *TestPair {
-	return setupPeerPairImpl(t, true, false, timeout)
+	return setupPeerPairImpl(t, true, false, timeout, nil)
+}
+
+// SetupFUSEPeerPairPreConnect is SetupFUSEPeerPair with a pre-connect hook.
+func SetupFUSEPeerPairPreConnect(t *testing.T, timeout time.Duration, pre PreConnectFunc) *TestPair {
+	return setupPeerPairImpl(t, true, false, timeout, pre)
 }
 
 // SetupPeerPairWithTimeout is like SetupPeerPair but with a custom timeout.
 func SetupPeerPairWithTimeout(t *testing.T, isFuse bool, timeout time.Duration) *TestPair {
-	return setupPeerPairImpl(t, isFuse, isFuse, timeout)
+	return setupPeerPairImpl(t, isFuse, isFuse, timeout, nil)
 }
 
 // setupPeerPairImpl is the shared implementation for all peer pair constructors.
-func setupPeerPairImpl(t *testing.T, aliceFuse bool, bobFuse bool, timeout time.Duration) *TestPair {
+func setupPeerPairImpl(t *testing.T, aliceFuse bool, bobFuse bool, timeout time.Duration, pre PreConnectFunc) *TestPair {
 	t.Helper()
 	require := require.New(t)
 
@@ -134,6 +143,10 @@ func setupPeerPairImpl(t *testing.T, aliceFuse bool, bobFuse bool, timeout time.
 
 	require.NoError(kdAlice.AddPeerFingerprint(bobFp))
 	require.NoError(kdBob.AddPeerFingerprint(aliceFp))
+
+	if pre != nil {
+		pre(kdAlice, kdBob, aliceSave, bobSave)
+	}
 
 	// Start Run() loops (tracked via WaitGroup for clean teardown)
 	var runWg sync.WaitGroup

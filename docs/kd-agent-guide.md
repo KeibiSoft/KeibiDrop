@@ -216,6 +216,19 @@ Returns: `{"ok":true,"data":{"file":"big-video.mp4","size":104857600,"duration":
 - The relay only sees encrypted blobs. It cannot read your files or metadata.
 - Fingerprint exchange is the trust anchor. Send it via a secure channel (Signal, etc.).
 
+## Relay Credit and Throttling (infra deployments)
+
+If you run `kd` as always-on infrastructure behind NAT, bridged transfers spend prepaid relay credit. When credit runs dry nothing breaks and nothing is cut off: bridged transfers fall back to the free tier, which is slower only when the bridge is busy. Direct P2P and LAN connections never spend credit and are never throttled.
+
+How to stay ahead of it:
+
+1. **Poll the level, not the events.** `kd status` and `kd tokens list` both return a `credit` object: `{"wallet_gb": 12.4, "level": "low", "notice": "...", "buy_url": "..."}`. Levels: `ok`, `low` (under 50 GB), `critical` (under 2 GB), `empty`. Alert your operator when it leaves `ok`.
+2. **Edge events, no spam.** The daemon emits `tokens_low:<gb>`, `tokens_critical:<gb>`, and `tokens_exhausted:chain` through `kd poll-event`, once per downward threshold crossing (re-armed by a top-up). Logs are not polluted with periodic warnings.
+3. **Top up non-interactively.** `kd tokens add <code>` pastes a purchased code. `kd tokens buy` returns a payment URL; the code adds itself while the daemon runs and a `tokens_added` event fires.
+4. **Check what a session used.** `kd status` includes `bridge.session_gb`, `bridge.paid`, and `bridge.busy`.
+
+Codes are bearer instruments: anyone holding a code can spend it, and it cannot be recovered if lost.
+
 ## For Agent Developers
 
 When building an agent tool that uses `kd`:

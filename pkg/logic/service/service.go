@@ -38,6 +38,7 @@ var (
 	ErrGRPCFailedPrecondition = status.Error(codes.FailedPrecondition, "failed precondition")
 	ErrGRPCAlreadyExists      = status.Error(codes.AlreadyExists, "already exists")
 	ErrGRPCNotFound           = status.Error(codes.NotFound, "notFound")
+	ErrGRPCReadOnlyShare      = status.Error(codes.PermissionDenied, "share is read-only")
 )
 
 type KeibidropServiceImpl struct {
@@ -47,6 +48,14 @@ type KeibidropServiceImpl struct {
 	SyncTracker  *synctracker.SyncTracker
 	OnEvent      func(string)
 	OnDisconnect func() // Called (in goroutine) when peer sends DISCONNECT; cancels context to trigger cleanup.
+
+	// ShareReadOnly rejects every inbound mutation (add/edit/remove/rename,
+	// file or dir) before it touches disk or the tracker. The origin-side
+	// guarantee behind the read_only share mode; DISCONNECT still passes.
+	ShareReadOnly bool
+
+	// readOnlyRefusalLogged keeps the refusal log to one line per session.
+	readOnlyRefusalLogged atomic.Bool
 
 	// fs is published while the server is already serving: Run() backfills it
 	// after the first mount, and mount/unmount swap it mid-session. Handlers
@@ -111,8 +120,17 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		return &bindings.NotifyResponse{Status: "ok"}, nil
 	}
 
+	// Read-only share: refuse every peer mutation before it reaches disk or
+	// the tracker. Log once per session, not once per refused notify.
+	if kd.ShareReadOnly {
+		if kd.readOnlyRefusalLogged.CompareAndSwap(false, true) {
+			logger.Warn("Refusing peer mutation: share is read-only", "first-path", req.Path)
+		}
+		return nil, ErrGRPCReadOnlyShare
+	}
+
 	// Drop macOS/FUSE internal files — ephemeral, never meant to be synced.
-	if strings.Contains(req.Path, ".fuse_hidden") || strings.Contains(req.Path, ".fseventsd") || strings.Contains(req.Path, ".fseventuuid") || strings.Contains(req.Path, ".DS_Store") {
+	if IsInternalPath(req.Path) {
 		// FUSE turns unlink of a still-open file into a rename to
 		// .fuse_hiddenN. Drop the hidden name but keep the effect: the
 		// source left the folder. Apply it as a buffered remove.
@@ -192,6 +210,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				// Update existing entry (peer overwrote the file).
 				existing.Size = uint64(req.Attr.Size)
 				existing.LastEditTime = req.Attr.ModificationTime
+				existing.Atime = req.Attr.AccessTime
+				existing.Mode = req.Attr.Mode
 				logger.Info("Updated existing remote file", "path", req.Path, "newSize", req.Attr.Size)
 				return &bindings.NotifyResponse{}, nil
 			}
@@ -202,6 +222,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				Size:         uint64(req.Attr.Size),
 				LastEditTime: req.Attr.ModificationTime,
 				CreatedTime:  req.Attr.BirthTime,
+				Atime:        req.Attr.AccessTime,
+				Mode:         req.Attr.Mode,
 			}
 
 			if kd.OnEvent != nil {
@@ -260,6 +282,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 					Size:         uint64(req.Attr.Size),
 					LastEditTime: req.Attr.ModificationTime,
 					CreatedTime:  req.Attr.BirthTime,
+					Atime:        req.Attr.AccessTime,
+					Mode:         req.Attr.Mode,
 				}
 			} else {
 				f.Name = req.Name
@@ -267,6 +291,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				f.Size = uint64(req.Attr.Size)
 				f.LastEditTime = req.Attr.ModificationTime
 				f.CreatedTime = req.Attr.BirthTime
+				f.Atime = req.Attr.AccessTime
+				f.Mode = req.Attr.Mode
 			}
 
 			if kd.OnEvent != nil {
@@ -503,6 +529,13 @@ func (kd *KeibidropServiceImpl) BatchNotify(ctx context.Context, req *bindings.B
 	logger := kd.Logger.With("method", "batch-notify", "count", len(req.Notifications), "seq", req.Seq)
 	logger.Info("Processing batch")
 
+	if kd.ShareReadOnly {
+		if kd.readOnlyRefusalLogged.CompareAndSwap(false, true) {
+			logger.Warn("Refusing peer mutation batch: share is read-only")
+		}
+		return nil, ErrGRPCReadOnlyShare
+	}
+
 	var processed uint32
 	for _, n := range req.Notifications {
 		_, err := kd.Notify(ctx, n)
@@ -635,6 +668,8 @@ func (kd *KeibidropServiceImpl) upsertRemoteInTracker(req *bindings.NotifyReques
 		f.Size = uint64(req.Attr.Size)
 		f.LastEditTime = req.Attr.ModificationTime
 		f.CreatedTime = req.Attr.BirthTime
+		f.Atime = req.Attr.AccessTime
+		f.Mode = req.Attr.Mode
 		return
 	}
 	kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
@@ -643,6 +678,8 @@ func (kd *KeibidropServiceImpl) upsertRemoteInTracker(req *bindings.NotifyReques
 		Size:         uint64(req.Attr.Size),
 		LastEditTime: req.Attr.ModificationTime,
 		CreatedTime:  req.Attr.BirthTime,
+		Atime:        req.Attr.AccessTime,
+		Mode:         req.Attr.Mode,
 	}
 }
 
@@ -729,7 +766,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 					return status.Error(codes.NotFound, "file not found")
 				}
 
-				fh, err = os.Open(realPath)
+				fh, err = kd.openServeRead(realPath)
 				if err != nil {
 					logger.Error("Failed to open real file", "error", err)
 					return status.Error(codes.Internal, "error accessing file")
@@ -813,7 +850,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(realPath) // #nosec G304
+			fh, err = kd.openServeRead(realPath)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
@@ -886,7 +923,7 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 		return status.Error(codes.NotFound, "file not found")
 	}
 
-	fh, err := os.Open(realPath)
+	fh, err := kd.openServeRead(realPath)
 	if err != nil {
 		logger.Error("Failed to open file", "error", err)
 		return status.Error(codes.Internal, "error accessing file")
@@ -976,7 +1013,7 @@ func (kd *KeibidropServiceImpl) GetChunkHashes(req *bindings.GetChunkHashesReque
 		return status.Error(codes.NotFound, "file not found")
 	}
 
-	fh, err := os.Open(realPath) // #nosec G304
+	fh, err := kd.openServeRead(realPath)
 	if err != nil {
 		logger.Error("Failed to open file", "error", err)
 		return status.Error(codes.Internal, "error accessing file")

@@ -39,6 +39,7 @@ var (
 	ErrGRPCFailedPrecondition = status.Error(codes.FailedPrecondition, "failed precondition")
 	ErrGRPCAlreadyExists      = status.Error(codes.AlreadyExists, "already exists")
 	ErrGRPCNotFound           = status.Error(codes.NotFound, "notFound")
+	ErrGRPCReadOnlyShare      = status.Error(codes.PermissionDenied, "share is read-only")
 )
 
 type KeibidropServiceImpl struct {
@@ -48,6 +49,13 @@ type KeibidropServiceImpl struct {
 	SyncTracker  *synctracker.SyncTracker
 	OnEvent      func(string)
 	OnDisconnect func()
+
+	// ShareReadOnly rejects every inbound mutation before it touches the
+	// tracker. Mirrors the desktop struct; DISCONNECT still passes.
+	ShareReadOnly bool
+
+	// readOnlyRefusalLogged keeps the refusal log to one line per session.
+	readOnlyRefusalLogged atomic.Bool
 
 	// fs mirrors the desktop struct so the common package compiles unchanged.
 	// Android has no FUSE, so it stays nil.
@@ -83,6 +91,14 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			go kd.OnDisconnect()
 		}
 		return &bindings.NotifyResponse{Status: "ok"}, nil
+	}
+
+	// Read-only share: refuse every peer mutation before it reaches the tracker.
+	if kd.ShareReadOnly {
+		if kd.readOnlyRefusalLogged.CompareAndSwap(false, true) {
+			logger.Warn("Refusing peer mutation: share is read-only", "first-path", req.Path)
+		}
+		return nil, ErrGRPCReadOnlyShare
 	}
 
 	if kd.SyncTracker == nil {
@@ -124,6 +140,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			}
 			existing.Size = uint64(req.Attr.Size)
 			existing.LastEditTime = req.Attr.ModificationTime
+			existing.Atime = req.Attr.AccessTime
+			existing.Mode = req.Attr.Mode
 			logger.Info("Updated existing remote file", "path", req.Path, "newSize", req.Attr.Size)
 			return &bindings.NotifyResponse{}, nil
 		}
@@ -134,6 +152,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			Size:         uint64(req.Attr.Size),
 			LastEditTime: req.Attr.ModificationTime,
 			CreatedTime:  req.Attr.BirthTime,
+			Atime:        req.Attr.AccessTime,
+			Mode:         req.Attr.Mode,
 		}
 
 		if kd.OnEvent != nil {
@@ -163,6 +183,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				Size:         uint64(req.Attr.Size),
 				LastEditTime: req.Attr.ModificationTime,
 				CreatedTime:  req.Attr.BirthTime,
+				Atime:        req.Attr.AccessTime,
+				Mode:         req.Attr.Mode,
 			}
 		} else {
 			f.Name = req.Name
@@ -170,6 +192,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			f.Size = uint64(req.Attr.Size)
 			f.LastEditTime = req.Attr.ModificationTime
 			f.CreatedTime = req.Attr.BirthTime
+			f.Atime = req.Attr.AccessTime
+			f.Mode = req.Attr.Mode
 		}
 
 		if kd.OnEvent != nil {
@@ -336,7 +360,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(realPath)
+			fh, err = kd.openServeRead(realPath)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
@@ -406,7 +430,7 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 		return status.Error(codes.NotFound, "file not found")
 	}
 
-	fh, err := os.Open(f.RealPathOfFile)
+	fh, err := kd.openServeRead(f.RealPathOfFile)
 	if err != nil {
 		logger.Error("Failed to open file", "error", err)
 		return status.Error(codes.Internal, "error accessing file")

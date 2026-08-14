@@ -123,6 +123,9 @@ func (d *Dir) Chmod(path string, mode uint32) (errCode int) {
 	if e := checkPath(path); e != 0 {
 		return e
 	}
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
+	}
 
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 
@@ -338,6 +341,9 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 	if e := checkPath(path); e != 0 {
 		return e
 	}
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
+	}
 	// d.logger.Info("FUSE create", "path", path, "mode", mode)
 	logger := d.logger.With("method", "create-ex", "path", path)
 
@@ -425,6 +431,10 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	defer d.recoverPanic("OpenEx", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
+	}
+	if d.ReadOnlyMount() &&
+		fi.Flags&(winfuse.O_WRONLY|winfuse.O_RDWR|winfuse.O_APPEND|winfuse.O_CREAT|winfuse.O_TRUNC) != 0 {
+		return -winfuse.EROFS
 	}
 	flags := fi.Flags
 	// d.logger.Info("FUSE open", "path", path, "flags", flags)
@@ -760,6 +770,9 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fh.NotLocalSynced = true
 		fh.StreamPool = pool
 		fh.StreamCancel = streamCancel
+		if cacheFD != nil && fh.CacheFD == nil {
+			fh.beginDiskWriter()
+		}
 		fh.CacheFD = cacheFD
 		fh.Download.Reset(remoteTotalSize)
 
@@ -1103,6 +1116,9 @@ func (d *Dir) Mkdir(path string, mode uint32) (errCode int) {
 	if e := checkPath(path); e != 0 {
 		return e
 	}
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
+	}
 	return d.mkdirInternal(path, mode, true)
 }
 
@@ -1183,6 +1199,9 @@ func (d *Dir) Mknod(path string, mode uint32, dev uint64) (errCode int) {
 	defer d.recoverPanic("Mknod", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
+	}
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
 	}
 	// d.logger.Info("Mknod", "path", path, "inode", d.Inode)
 
@@ -1543,6 +1562,11 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				if closeErr := cacheFD.Close(); closeErr != nil {
 					logger.Error("Failed to close cache FD", "error", closeErr)
 				}
+				// This handle's writer is done. The last writer standing
+				// applies the origin metadata (see endDiskWriter): prefetch
+				// can still be landing bytes, and an apply before its final
+				// write would get restamped.
+				f.endDiskWriter(d, filepath.Clean(filepath.Join(d.LocalDownloadFolder, path)))
 			}
 			return 0 // Already unlocked. Return.
 		}
@@ -1569,6 +1593,9 @@ func (d *Dir) Releasedir(path string, fh uint64) (errCode int) {
 // requests fall back to a basic rename.
 func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	defer d.recoverPanic("Rename", &errCode)
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
+	}
 	if e := checkPath(oldpath); e != 0 {
 		return e
 	}
@@ -1639,6 +1666,9 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		if tgt.CacheFD != nil {
 			_ = tgt.CacheFD.Close()
 			tgt.CacheFD = nil
+			// Counter only: no disk apply under OpenMapLock, and the
+			// rename replaces these bytes anyway.
+			tgt.dropDiskWriter()
 		}
 		d.OpenMapLock.Unlock()
 	}
@@ -1749,6 +1779,9 @@ func (d *Dir) Rmdir(path string) (errCode int) {
 	if e := checkPath(path); e != 0 {
 		return e
 	}
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
+	}
 	return d.rmdirInternal(path, true)
 }
 
@@ -1850,6 +1883,9 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		d.logger.Debug("oplog Truncate", "path", path, "size", size, "fh", fh)
 	}
 	defer d.recoverPanic("Truncate", &errCode)
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
+	}
 	if e := checkPath(path); e != 0 {
 		return e
 	}
@@ -1924,6 +1960,9 @@ func (d *Dir) Unlink(path string) (errCode int) {
 	defer d.recoverPanic("Unlink", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
+	}
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
 	}
 	return d.unlinkInternal(path, true)
 }
@@ -2010,6 +2049,9 @@ func (d *Dir) Utimens(path string, tmsp []winfuse.Timespec) (errCode int) {
 		d.logger.Debug("oplog Utimens", "path", path)
 	}
 	defer d.recoverPanic("Utimens", &errCode)
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
+	}
 	if e := checkPath(path); e != 0 {
 		return e
 	}
@@ -2059,6 +2101,9 @@ func (ws *WriteStats) record(lockTime, pwriteTime, remoteTime time.Duration, byt
 // The method returns the number of bytes written.
 func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode int) {
 	defer d.recoverPanic("Write", &errCode)
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
+	}
 	// d.logger.Info("FUSE write", "path", path, "offset", offset, "len", len(buff))
 	logger := d.logger.With("method", "write", "path", path, "fh", fh, "offset", offset)
 
@@ -3050,6 +3095,9 @@ func (d *Dir) Setxattr(path string, name string, value []byte, flags int) (errCo
 	if e := checkPath(path); e != 0 {
 		return e
 	}
+	if d.ReadOnlyMount() {
+		return -winfuse.EROFS
+	}
 	// Don't log xattr operations - too frequent
 	// I do not support flags for this version.
 	_ = flags
@@ -3296,6 +3344,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 
 		existing.metaMu.Lock()
 		existing.stat = stat
+		captureOriginMeta(existing, stat)
 		existing.metaMu.Unlock()
 
 		if sizeChanged {
@@ -3423,6 +3472,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		Bitmap:          NewChunkBitmap(stat.Size),
 		RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
 	}
+	captureOriginMeta(f, stat)
 	d.RemoteFiles[path] = f
 	d.RemoteFilesLock.Unlock()
 	// Metadata-only on announce: registered with metadata + bitmap +
@@ -3555,24 +3605,32 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		logger.Warn("Prefetch: failed to open local file", "error", err)
 		return
 	}
+	f.beginDiskWriter()
 	// Close and handle rename-on-complete (git .lock -> final path race fix).
 	defer func() {
 		lf.Close()
-		if !bitmap.IsComplete() {
-			return
-		}
-		d.RemoteFilesLock.RLock()
-		currentDiskPath := f.RealPathOfFile
-		d.RemoteFilesLock.RUnlock()
-		if currentDiskPath != realPath {
-			if mkErr := os.MkdirAll(filepath.Dir(currentDiskPath), 0o755); mkErr != nil {
-				logger.Warn("Prefetch: failed to create dirs for renamed path",
-					"path", currentDiskPath, "error", mkErr)
-			} else if rnErr := os.Rename(realPath, currentDiskPath); rnErr != nil {
-				logger.Warn("Prefetch: atomic rename failed",
-					"from", realPath, "to", currentDiskPath, "error", rnErr)
+		finalPath := realPath
+		if bitmap.IsComplete() {
+			d.RemoteFilesLock.RLock()
+			currentDiskPath := f.RealPathOfFile
+			d.RemoteFilesLock.RUnlock()
+			if currentDiskPath != realPath {
+				if mkErr := os.MkdirAll(filepath.Dir(currentDiskPath), 0o755); mkErr != nil {
+					logger.Warn("Prefetch: failed to create dirs for renamed path",
+						"path", currentDiskPath, "error", mkErr)
+				} else if rnErr := os.Rename(realPath, currentDiskPath); rnErr != nil {
+					logger.Warn("Prefetch: atomic rename failed",
+						"from", realPath, "to", currentDiskPath, "error", rnErr)
+				} else {
+					finalPath = currentDiskPath
+				}
 			}
 		}
+		// Prefetch's writer is done, lf closed, file at its final path. The
+		// last writer standing applies the origin metadata (endDiskWriter):
+		// the on-demand cacheFD can still be landing bytes, and an apply
+		// before its final write would get restamped.
+		f.endDiskWriter(d, finalPath)
 	}()
 
 	heldStamped := false
@@ -3693,6 +3751,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 			Bitmap:          NewChunkBitmap(stat.Size),
 			RemoteMtimeNs:   stat.Mtim.Sec*1e9 + stat.Mtim.Nsec,
 		}
+		captureOriginMeta(newFile, stat)
 		d.RemoteFiles[path] = newFile
 		d.RemoteFilesLock.Unlock()
 		// Ensure AllFileMap points to the same object so OpenEx sees correct state.
@@ -3770,6 +3829,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	// PrefetchCancel/Download/Bitmap resets stay outside it.
 	f.metaMu.Lock()
 	f.stat = stat
+	captureOriginMeta(f, stat)
 	f.LocalNewer = false    // Remote has newer content.
 	f.NotLocalSynced = true // Re-fetch the edited bytes on the next read.
 	f.metaMu.Unlock()

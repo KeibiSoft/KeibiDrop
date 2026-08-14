@@ -19,8 +19,10 @@ type File struct {
 
 	LastEditTime uint64 // Use time.Now().UnixNano().
 	CreatedTime  uint64
+	Atime        uint64 // Announced access time, unix nanoseconds. 0 means unknown.
 
 	Size uint64
+	Mode uint32 // Announced mode bits. 0 means unknown; presenters fall back to 0644.
 }
 
 type SyncTracker struct {

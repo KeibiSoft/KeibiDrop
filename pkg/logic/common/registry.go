@@ -132,6 +132,9 @@ type sharedEntry struct {
 	Path    string   `json:"p"`
 	Size    uint64   `json:"s"`
 	ModTime uint64   `json:"m"`
+	// Rel is the announce path relative to the save root. Empty in entries
+	// from older builds; restore falls back to the base name.
+	Rel string `json:"r,omitempty"`
 }
 
 func newSharedFilesStore(configDir string, masterKey []byte) *sharedFilesStore {

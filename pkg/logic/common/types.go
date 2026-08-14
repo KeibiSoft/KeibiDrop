@@ -105,8 +105,13 @@ type KeibiDrop struct {
 	// AutoCache enables the macFUSE auto_cache mount option, so a peer's same-size
 	// in-place edit shows live. The caller sets it from config.LiveCollab. False = git-safe.
 	AutoCache         bool
-	PrefetchAutoMB    int // Files >= this many MB auto-prefetch on open. From config.PrefetchAutoMB. 0 = off.
-	ReadAheadWindowMB int // Cap in MB for predictive sequential read-ahead. From config.ReadAheadWindowMB. 0 = off.
+	PrefetchAutoMB    int    // Files >= this many MB auto-prefetch on open. From config.PrefetchAutoMB. 0 = off.
+	ReadAheadWindowMB int    // Cap in MB for predictive sequential read-ahead. From config.ReadAheadWindowMB. 0 = off.
+	ScanSharedOnStart bool   // Announce files already in ToSave when a session starts. From config.ScanSharedOnStart.
+	AutoConnectPeer   string // Saved contact to connect to on startup, with retry. From config.AutoConnectPeer.
+	ShareReadOnly     bool   // Refuse every inbound peer mutation at the service layer. From config.ShareReadOnly.
+	MountReadOnly     bool   // Local FUSE mount returns EROFS on write ops. From config.MountReadOnly.
+	PreserveMetadata  bool   // Apply the origin's mode and times to files saved on disk. From config.PreserveMetadata.
 
 	// Signals for loop management.
 	signals      chan TaskSignal
@@ -431,6 +436,29 @@ type ErrorMapperFunc func(statusCode int, err error) error
 // InboundPort returns the port this instance listens on for incoming connections.
 func (kd *KeibiDrop) InboundPort() int { return kd.inboundPort }
 
+// WireStats sums bytes over the session's two TCP conns plus the QUIC control
+// lanes (on-demand reads ride there when the lane is up). Counters reset on
+// rekey. For tests and benchmarks.
+func (kd *KeibiDrop) WireStats() (bytesSent, bytesRecv uint64) {
+	kd.mu.Lock()
+	sess := kd.session
+	kd.mu.Unlock()
+	if sess == nil {
+		return 0, 0
+	}
+	conns := []*session.SecureConn{sess.InboundConn(), sess.OutboundConn()}
+	conns = append(conns, kd.quicFoldConns()...)
+	for _, c := range conns {
+		if c == nil {
+			continue
+		}
+		bs, br, _, _ := c.GetStats()
+		bytesSent += bs
+		bytesRecv += br
+	}
+	return bytesSent, bytesRecv
+}
+
 // UpgradeListenerDualStack replaces the IPv6-only listener with a dual-stack one.
 // Local mode uses it: LAN discovery needs IPv4 connectivity.
 func (kd *KeibiDrop) UpgradeListenerDualStack() error {
@@ -665,6 +693,9 @@ func (kd *KeibiDrop) Run() {
 				kd.mu.Unlock()
 				if kd.FS != nil && svc != nil {
 					svc.SetFS(kd.FS)
+					// ADD_FILE notifies that raced this publish landed only in
+					// SyncTracker. Fold them into the tree before serving.
+					kd.BackfillRemoteFilesIntoFS()
 					if kd.FS.IsMounted() {
 						logger.Info("FUSE already mounted, waiting for disconnect")
 						<-kd.ctx.Done()
