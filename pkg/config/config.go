@@ -204,6 +204,8 @@ no_fuse = %v
 #
 # share_read_only: refuse every peer mutation of this node's files, enforced
 # on this node before disk. The share becomes one-way (peer reads only).
+# Serving reads also avoid updating file access times (Linux O_NOATIME,
+# Windows handle sentinel), so evidence atime stays the original.
 # share_read_only = false
 #
 # mount_read_only: local FUSE mount returns EROFS on write ops. Courtesy on
@@ -214,6 +216,10 @@ no_fuse = %v
 # origin's permission bits and timestamps (mtime, atime) to the saved bytes.
 # For forensics/evidence workflows where original timestamps must survive
 # the transfer. Birth time stays view-only (not settable on most systems).
+# Later reads follow the local filesystem's atime policy: for strict work,
+# record stat+hashes right after transfer and keep save_path on a
+# noatime/read-only mount during analysis. The announced origin times also
+# stay recorded in the sync tracker, independent of disk.
 # preserve_metadata = false
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.NoFUSE)
@@ -297,7 +303,9 @@ auto_connect_peer = %q
 # Refuse every peer mutation of this node's files (add/edit/delete/rename).
 # Enforced on this node, before disk: the real read-only guarantee, and it
 # works in no-FUSE mode too. The share becomes one-way: the peer reads, and
-# their own shares to this node are refused while this is on.
+# their own shares to this node are refused while this is on. Serving reads
+# also avoid updating file access times (Linux O_NOATIME, Windows handle
+# sentinel), so evidence atime stays the original.
 share_read_only = %v
 
 # Present the local FUSE mount read-only: local write ops return EROFS.
@@ -309,7 +317,11 @@ mount_read_only = %v
 # saved on disk, once their content completes. For forensics/evidence
 # workflows where original timestamps must survive the transfer. Birth time
 # stays view-only (not settable on most systems). On Windows only the
-# read-only permission bit applies.
+# read-only permission bit applies. Later reads follow the local
+# filesystem's atime policy: for strict work, record stat+hashes right
+# after transfer and keep save_path on a noatime/read-only mount during
+# analysis. The announced origin times also stay recorded in the sync
+# tracker, independent of disk.
 preserve_metadata = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,

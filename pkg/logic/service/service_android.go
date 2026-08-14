@@ -360,7 +360,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(realPath)
+			fh, err = kd.openServeRead(realPath)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
@@ -430,7 +430,7 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 		return status.Error(codes.NotFound, "file not found")
 	}
 
-	fh, err := os.Open(f.RealPathOfFile)
+	fh, err := kd.openServeRead(f.RealPathOfFile)
 	if err != nil {
 		logger.Error("Failed to open file", "error", err)
 		return status.Error(codes.Internal, "error accessing file")

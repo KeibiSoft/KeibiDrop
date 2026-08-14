@@ -766,7 +766,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 					return status.Error(codes.NotFound, "file not found")
 				}
 
-				fh, err = os.Open(realPath)
+				fh, err = kd.openServeRead(realPath)
 				if err != nil {
 					logger.Error("Failed to open real file", "error", err)
 					return status.Error(codes.Internal, "error accessing file")
@@ -850,7 +850,7 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 				return status.Error(codes.NotFound, "file not found")
 			}
 
-			fh, err = os.Open(realPath) // #nosec G304
+			fh, err = kd.openServeRead(realPath)
 			if err != nil {
 				logger.Error("Failed to open real file", "error", err)
 				return status.Error(codes.Internal, "error accessing file")
@@ -923,7 +923,7 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 		return status.Error(codes.NotFound, "file not found")
 	}
 
-	fh, err := os.Open(realPath)
+	fh, err := kd.openServeRead(realPath)
 	if err != nil {
 		logger.Error("Failed to open file", "error", err)
 		return status.Error(codes.Internal, "error accessing file")
@@ -1013,7 +1013,7 @@ func (kd *KeibidropServiceImpl) GetChunkHashes(req *bindings.GetChunkHashesReque
 		return status.Error(codes.NotFound, "file not found")
 	}
 
-	fh, err := os.Open(realPath) // #nosec G304
+	fh, err := kd.openServeRead(realPath)
 	if err != nil {
 		logger.Error("Failed to open file", "error", err)
 		return status.Error(codes.Internal, "error accessing file")
