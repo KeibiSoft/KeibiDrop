@@ -357,6 +357,12 @@ type File struct {
 	OriginAtimeNs int64
 	OriginMtimeNs int64
 
+	// diskWriters counts open write handles on the saved file (on-demand
+	// cacheFD, prefetch fd), guarded by metaMu. The two download paths land
+	// bytes concurrently; preserve_metadata applies when the last one ends,
+	// or a late write restamps the restored times (see endDiskWriter).
+	diskWriters int
+
 	// EditBaseMtimeNs is max(HeldMtimeNs, LastAnnouncedMtimeNs), snapshotted
 	// at the first dirtying op of an edit session under metaMu. The announce
 	// carries it so the receiver can prove a concurrent edit: a base below the

@@ -59,6 +59,70 @@ func TestApplyOriginMetadata_ZeroAtimeFallsBackToMtime(t *testing.T) {
 	require.WithinDuration(t, origMtime, info.ModTime(), time.Second)
 }
 
+// TestEndDiskWriter_OnlyLastWriterApplies reproduces the two-writer race:
+// prefetch and the on-demand cacheFD land bytes concurrently. An apply on the
+// first writer's end gets restamped by the second writer's late write, so
+// only the last endDiskWriter may apply.
+func TestEndDiskWriter_OnlyLastWriterApplies(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "f.bin")
+	require.NoError(t, os.WriteFile(p, []byte("data"), 0o666))
+
+	origMtime := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	announce := &winfuse.Stat_t{
+		Mode: 0o100640,
+		Size: 4,
+		Mtim: winfuse.NewTimespec(origMtime),
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	bm := NewChunkBitmap(4)
+	bm.SetRange(0, 4)
+	require.True(t, bm.IsComplete())
+	f := &File{logger: logger, stat: announce, Bitmap: bm}
+	captureOriginMeta(f, announce)
+	d := &Dir{PreserveMetadata: true}
+
+	f.beginDiskWriter() // prefetch fd
+	f.beginDiskWriter() // on-demand cacheFD
+
+	// First writer ends: no apply, the other writer can still land bytes.
+	f.endDiskWriter(d, p)
+	info, err := os.Stat(p)
+	require.NoError(t, err)
+	require.WithinDuration(t, time.Now(), info.ModTime(), time.Minute,
+		"apply before the last writer would get restamped")
+
+	// The remaining writer's late write, then its end: now the apply runs.
+	require.NoError(t, os.WriteFile(p, []byte("data"), 0o666))
+	f.endDiskWriter(d, p)
+	info, err = os.Stat(p)
+	require.NoError(t, err)
+	require.WithinDuration(t, origMtime, info.ModTime(), time.Second,
+		"last writer applies the origin mtime")
+}
+
+// TestEndDiskWriter_LocalEditsVeto pins the guard: once local edits own the
+// file, the last writer must not stamp origin metadata over them.
+func TestEndDiskWriter_LocalEditsVeto(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "f.bin")
+	require.NoError(t, os.WriteFile(p, []byte("data"), 0o666))
+
+	origMtime := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	announce := &winfuse.Stat_t{Mode: 0o100640, Size: 4, Mtim: winfuse.NewTimespec(origMtime)}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	bm := NewChunkBitmap(4)
+	bm.SetRange(0, 4)
+	f := &File{logger: logger, stat: announce, Bitmap: bm, HadEdits: true}
+	captureOriginMeta(f, announce)
+	d := &Dir{PreserveMetadata: true}
+
+	f.beginDiskWriter()
+	f.endDiskWriter(d, p)
+	info, err := os.Stat(p)
+	require.NoError(t, err)
+	require.WithinDuration(t, time.Now(), info.ModTime(), time.Minute,
+		"local edits keep their times")
+}
+
 // TestCaptureApplyOriginMeta_SurvivesStatPollution reproduces the download
 // race: Getattr adopts the local partial file's stat mid-download, so f.stat
 // no longer holds the origin's times at completion. The captured origin

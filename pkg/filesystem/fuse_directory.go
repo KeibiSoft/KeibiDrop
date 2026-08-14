@@ -770,6 +770,9 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fh.NotLocalSynced = true
 		fh.StreamPool = pool
 		fh.StreamCancel = streamCancel
+		if cacheFD != nil && fh.CacheFD == nil {
+			fh.beginDiskWriter()
+		}
 		fh.CacheFD = cacheFD
 		fh.Download.Reset(remoteTotalSize)
 
@@ -1493,20 +1496,12 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		// Reset sync state for future opens. Guard under metaMu (OpenEx reads
 		// IsLocalPresent/NotLocalSynced via AfmLock, a different lock). Release
 		// metaMu before the AfmLock acquisition below to avoid a metaMu->AfmLock cycle.
-		var preserveMetaPath string
 		f.metaMu.Lock()
 		f.IsLocalPresent = true
 		// Mark as synced only when the download is complete.
 		// Use ChunkBitmap (preferred) or BytesDownloaded as fallback.
 		if f.Bitmap != nil {
 			if f.Bitmap.IsComplete() {
-				// Peer content just completed on disk (not a local edit).
-				// Apply the origin metadata below, AFTER cacheFD closes:
-				// Windows stamps its cached LastWriteTime at handle close,
-				// which would overwrite Chtimes.
-				if f.NotLocalSynced && !hadEdits && !localNewer && d.PreserveMeta() {
-					preserveMetaPath = filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-				}
 				f.NotLocalSynced = false
 				// logger.Info("Download complete (all chunks verified)", "progress", f.Bitmap.Progress())
 			}
@@ -1567,22 +1562,13 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 				if closeErr := cacheFD.Close(); closeErr != nil {
 					logger.Error("Failed to close cache FD", "error", closeErr)
 				}
-			}
-			if preserveMetaPath != "" {
-				f.metaMu.Lock()
-				applyOriginMetaLocked(f, preserveMetaPath)
-				f.metaMu.Unlock()
+				// This handle's writer is done. The last writer standing
+				// applies the origin metadata (see endDiskWriter): prefetch
+				// can still be landing bytes, and an apply before its final
+				// write would get restamped.
+				f.endDiskWriter(d, filepath.Clean(filepath.Join(d.LocalDownloadFolder, path)))
 			}
 			return 0 // Already unlocked. Return.
-		}
-		if preserveMetaPath != "" {
-			// Same rule as above: no disk I/O under OpenMapLock.
-			d.OpenMapLock.Unlock()
-			unlocked = true
-			f.metaMu.Lock()
-			applyOriginMetaLocked(f, preserveMetaPath)
-			f.metaMu.Unlock()
-			return 0
 		}
 	}
 
@@ -1680,6 +1666,9 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		if tgt.CacheFD != nil {
 			_ = tgt.CacheFD.Close()
 			tgt.CacheFD = nil
+			// Counter only: no disk apply under OpenMapLock, and the
+			// rename replaces these bytes anyway.
+			tgt.dropDiskWriter()
 		}
 		d.OpenMapLock.Unlock()
 	}
@@ -3616,35 +3605,32 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		logger.Warn("Prefetch: failed to open local file", "error", err)
 		return
 	}
+	f.beginDiskWriter()
 	// Close and handle rename-on-complete (git .lock -> final path race fix).
 	defer func() {
 		lf.Close()
-		if !bitmap.IsComplete() {
-			return
-		}
-		d.RemoteFilesLock.RLock()
-		currentDiskPath := f.RealPathOfFile
-		d.RemoteFilesLock.RUnlock()
 		finalPath := realPath
-		if currentDiskPath != realPath {
-			if mkErr := os.MkdirAll(filepath.Dir(currentDiskPath), 0o755); mkErr != nil {
-				logger.Warn("Prefetch: failed to create dirs for renamed path",
-					"path", currentDiskPath, "error", mkErr)
-			} else if rnErr := os.Rename(realPath, currentDiskPath); rnErr != nil {
-				logger.Warn("Prefetch: atomic rename failed",
-					"from", realPath, "to", currentDiskPath, "error", rnErr)
-			} else {
-				finalPath = currentDiskPath
+		if bitmap.IsComplete() {
+			d.RemoteFilesLock.RLock()
+			currentDiskPath := f.RealPathOfFile
+			d.RemoteFilesLock.RUnlock()
+			if currentDiskPath != realPath {
+				if mkErr := os.MkdirAll(filepath.Dir(currentDiskPath), 0o755); mkErr != nil {
+					logger.Warn("Prefetch: failed to create dirs for renamed path",
+						"path", currentDiskPath, "error", mkErr)
+				} else if rnErr := os.Rename(realPath, currentDiskPath); rnErr != nil {
+					logger.Warn("Prefetch: atomic rename failed",
+						"from", realPath, "to", currentDiskPath, "error", rnErr)
+				} else {
+					finalPath = currentDiskPath
+				}
 			}
 		}
-		// Apply origin metadata after lf closed and the file reached its final
-		// path: Windows stamps its cached LastWriteTime at handle close, which
-		// would overwrite Chtimes.
-		if d.PreserveMeta() {
-			f.metaMu.Lock()
-			applyOriginMetaLocked(f, finalPath)
-			f.metaMu.Unlock()
-		}
+		// Prefetch's writer is done, lf closed, file at its final path. The
+		// last writer standing applies the origin metadata (endDiskWriter):
+		// the on-demand cacheFD can still be landing bytes, and an apply
+		// before its final write would get restamped.
+		f.endDiskWriter(d, finalPath)
 	}()
 
 	heldStamped := false
