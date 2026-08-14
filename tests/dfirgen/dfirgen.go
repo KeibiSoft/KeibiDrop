@@ -133,6 +133,7 @@ func Generate(root string, totalMB int, seed int64) (*Summary, error) {
 		return nil, fmt.Errorf("totalMB %d too small, need at least 8", totalMB)
 	}
 	total := int64(totalMB) << 20
+	//nolint:gosec // G404: test data must be reproducible; crypto/rand takes no seed
 	w := &writer{root: root, rng: rand.New(rand.NewSource(seed)), sum: &Summary{}}
 
 	// Windows event logs: 45% of the budget across a scaled file count.
