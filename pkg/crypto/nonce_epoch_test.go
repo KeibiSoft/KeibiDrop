@@ -75,13 +75,19 @@ func TestNonceGenerator_ConcurrentNextUnique(t *testing.T) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	seen := make(map[[NonceSize]byte]struct{}, goroutines*per)
+	// require.* calls t.FailNow, which is only legal on the test goroutine. Off it the
+	// test HANGS instead of failing, so a Next() error is collected and checked here.
+	errs := make(chan error, goroutines*per)
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := 0; i < per; i++ {
 				n, err := ng.Next()
-				require.NoError(t, err)
+				if err != nil {
+					errs <- err
+					return
+				}
 				mu.Lock()
 				seen[n] = struct{}{}
 				mu.Unlock()
@@ -89,5 +95,9 @@ func TestNonceGenerator_ConcurrentNextUnique(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
 	require.Len(t, seen, goroutines*per, "no nonce repeats under concurrent Next()")
 }

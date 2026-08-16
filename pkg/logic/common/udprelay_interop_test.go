@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -59,7 +60,12 @@ func TestRealRelayInterop(t *testing.T) {
 			accepted <- rErr
 			return
 		}
-		require.Equal(t, msg, string(got))
+		// require.* calls t.FailNow, which is only legal on the test goroutine.
+		// Off it, the test HANGS instead of failing. Report through the channel.
+		if string(got) != msg {
+			accepted <- fmt.Errorf("payload mismatch: got %q, want %q", got, msg)
+			return
+		}
 		_, wErr := c.Write([]byte("ack"))
 		accepted <- wErr
 	}()

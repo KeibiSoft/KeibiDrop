@@ -89,11 +89,3 @@ func Len[T any](what string, got []T, want int) error {
 	}
 	return nil
 }
-
-// Empty reports an error when got holds any item.
-func Empty[T any](what string, got []T) error {
-	if len(got) != 0 {
-		return fmt.Errorf("%s: got len %d, want empty", what, len(got))
-	}
-	return nil
-}

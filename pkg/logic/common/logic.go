@@ -33,6 +33,10 @@ import (
 // margin, matching the relay registration TTL.
 const Timeout = 10*60 - 5
 
+// bridgeRoundWait bounds one round's wait for a joiner on the bridge. It matches the
+// direct accept window, so a round is the same length whichever path it takes.
+const bridgeRoundWait = 15 * time.Second
+
 // Add a file to be tracked.
 func (kd *KeibiDrop) AddFile(path string) error {
 	logger := kd.logger.With("method", "add-file")
@@ -1041,16 +1045,81 @@ func (kd *KeibiDrop) CreateRoom() error {
 		logger.Info("Local key exchange complete (create side)")
 	}
 
-	// Try direct P2P: accept inbound with timeout. If no peer arrives and
-	// bridge is configured, fall back to bridge relay.
+	// Rendezvous loop. One round is [direct accept window] then [one bridge attempt].
+	// The LOOP supplies the window a human needs, not the per-round timeouts: one person
+	// creates, sends the code by chat, the other pastes it. Measured on the WAN pair, the
+	// old single round gave up 38s after create and the joiner arrived at 51s. The budget
+	// is Timeout, the same 595s the relay registration already lives for, so one number
+	// governs the whole connect flow.
+	{
+		budget := time.Now().Add(Timeout * time.Second)
+		kd.connectAborted.Store(false)
+		registered := time.Now()
+		for round := 0; ; round++ {
+			if kd.connectAborted.Load() {
+				return fmt.Errorf("create-room: cancelled")
+			}
+			done, err := kd.createRendezvousRound(logger, round)
+			if err != nil {
+				return err
+			}
+			if done {
+				break
+			}
+			if !time.Now().Before(budget) {
+				return fmt.Errorf("create-room: no peer arrived within %ds", Timeout)
+			}
+			// The relay keepalive only starts after a peer connects, and a registration
+			// lives relayEntryTTL. Without this refresh the room stops being findable
+			// halfway through its own budget and the joiner gets "peer not found".
+			if !kd.IsLocalMode && time.Since(registered) >= defaultKeepaliveInterval {
+				if rErr := kd.registerRoomToRelay(); rErr != nil {
+					logger.Warn("Could not refresh the relay registration while waiting", "error", rErr)
+				} else {
+					registered = time.Now()
+				}
+			}
+			logger.Info("No peer yet; reopening the room for another round",
+				"round", round, "remaining", time.Until(budget).Round(time.Second))
+		}
+	}
+
+	// Reopen listener if it was closed during bridge fallback.
+	if kd.listener == nil {
+		addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
+		newLn, lnErr := net.Listen("tcp", addr)
+		if lnErr != nil {
+			return fmt.Errorf("reopen listener: %w", lnErr)
+		}
+		kd.listener = newLn
+	}
+
+	return kd.finishConnect(logger)
+}
+
+// createRendezvousRound runs one direct-accept window then one bridge attempt. It reports
+// whether the session is connected. A false with no error means nobody arrived, and the
+// caller re-arms for another round while its budget lasts.
+func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool, error) {
 	{
 		useBridge := false
+
+		// A previous round closed the listener on its way to the bridge. Re-arm it, so
+		// this round can still take a direct joiner.
+		if kd.listener == nil && kd.BridgeAddr != "" && round > 0 && !kd.InboundBlocked() {
+			addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
+			if newLn, lnErr := net.Listen("tcp", addr); lnErr == nil {
+				kd.listener = newLn
+			} else {
+				logger.Warn("Could not re-arm the inbound listener for this round", "error", lnErr)
+			}
+		}
 
 		// kd.listener is nil if a prior bridge fallback closed it and we returned
 		// before reopening it; use the bridge (reopened below) instead of nil-derefing.
 		if kd.listener == nil {
 			if kd.BridgeAddr == "" {
-				return fmt.Errorf("create-room: inbound listener not open and no bridge configured")
+				return false, fmt.Errorf("create-room: inbound listener not open and no bridge configured")
 			}
 			logger.Warn("Inbound listener not open (prior bridge fallback), using bridge")
 			useBridge = true
@@ -1109,12 +1178,16 @@ func (kd *KeibiDrop) CreateRoom() error {
 			if kd.BridgeAddr == "" {
 				logger.Error("Direct P2P accept timed out and no bridge configured", "error", acceptErr)
 				if kd.StrictMode {
-					return fmt.Errorf("direct P2P accept timed out; strict mode keeps the relay fallback off: %w", acceptErr)
+					return false, fmt.Errorf("direct P2P accept timed out; strict mode keeps the relay fallback off: %w", acceptErr)
 				}
-				return acceptErr
+				return false, acceptErr
 			}
 			logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
-			kd.markInboundBlocked() // nothing reached us here; skip the wait next time
+			if round == 0 {
+				// Learn reachability once. Re-marking every round would say nothing new
+				// and would keep skipping the direct window for the rest of the budget.
+				kd.markInboundBlocked()
+			}
 			useBridge = true
 		}
 
@@ -1124,7 +1197,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 			addr, ok := conn.RemoteAddr().(*net.TCPAddr)
 			if !ok {
-				return fmt.Errorf("failed to cast TCP address")
+				return false, fmt.Errorf("failed to cast TCP address")
 			}
 			peerIP := addr.IP.String()
 			if addr.Zone != "" {
@@ -1148,7 +1221,7 @@ func (kd *KeibiDrop) CreateRoom() error {
 					kd.session.ResetInboundCrypto()
 					useBridge = true
 				} else {
-					return err
+					return false, err
 				}
 			}
 		}
@@ -1172,35 +1245,32 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 			inConn, err := kd.dialBridgeDir("pair1", logger)
 			if err != nil {
-				return fmt.Errorf("bridge dial (inbound): %w", err)
+				logger.Warn("Bridge dial (inbound) failed this round", "error", err)
+				return false, nil
 			}
+			// Bound the wait for the joiner. Without a deadline this blocks until the
+			// REMOTE bridge closes the unpaired room, which is what produced the +38s
+			// EOF and made the round length a property of the bridge, not of us.
+			_ = inConn.SetReadDeadline(time.Now().Add(bridgeRoundWait))
 			if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
 				inConn.Close()
-				return fmt.Errorf("bridge inbound handshake: %w", err)
+				kd.session.ResetInboundCrypto()
+				logger.Info("No joiner on the bridge this round", "error", err)
+				return false, nil
 			}
+			_ = inConn.SetReadDeadline(time.Time{}) // This conn is now the session transport.
 
 			outConn, err := kd.dialBridgeDir("pair2", logger)
 			if err != nil {
-				return fmt.Errorf("bridge dial (outbound): %w", err)
+				return false, fmt.Errorf("bridge dial (outbound): %w", err)
 			}
 			if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
 				outConn.Close()
-				return fmt.Errorf("bridge outbound handshake: %w", err)
+				return false, fmt.Errorf("bridge outbound handshake: %w", err)
 			}
 		}
 	}
-
-	// Reopen listener if it was closed during bridge fallback.
-	if kd.listener == nil {
-		addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
-		newLn, lnErr := net.Listen("tcp", addr)
-		if lnErr != nil {
-			return fmt.Errorf("reopen listener: %w", lnErr)
-		}
-		kd.listener = newLn
-	}
-
-	return kd.finishConnect(logger)
+	return true, nil
 }
 
 // ConnectToContact looks up a contact by fingerprint, registers it, and connects.
@@ -1252,6 +1322,9 @@ func (kd *KeibiDrop) IsPeerPersistent() bool {
 // so they can clean up immediately instead of waiting for health monitor timeout.
 func (kd *KeibiDrop) NotifyDisconnect() {
 	logger := kd.logger.With("method", "notify-disconnect")
+	// A create that is still waiting for its peer has no session yet, so kd.Stop returns
+	// early and cannot reach it. The rendezvous loop watches this flag instead.
+	kd.connectAborted.Store(true)
 	if kd.session == nil || kd.session.GRPCClient == nil {
 		logger.Warn("Skipping disconnect notification: no session or gRPC client")
 		return
