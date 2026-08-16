@@ -11,58 +11,49 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 )
 
 // TestDialQUICMigratable checks that after Migrate the local address changes and the
 // same stream keeps carrying bytes, with no re-dial.
 func TestDialQUICMigratable(t *testing.T) {
-	ln, err := QUIC().Listen("127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer ln.Close()
+	testkit.Run(t, func() error {
+		ln := testkit.Must(QUIC().Listen("127.0.0.1:0"))
+		defer ln.Close()
 
-	go func() {
-		c, err := ln.Accept()
-		if err != nil {
-			return
+		go func() {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+			_, _ = io.Copy(c, c)
+		}()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		mc := testkit.Must(DialQUICMigratable(ctx, ln.Addr().String()))
+		defer mc.Close()
+
+		echo := func(msg string) error {
+			testkit.Must(mc.Write([]byte(msg)))
+			buf := make([]byte, len(msg))
+			testkit.Must(io.ReadFull(mc, buf))
+			return fp.Equal("echo", string(buf), msg)
 		}
-		defer c.Close()
-		_, _ = io.Copy(c, c)
-	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	mc, err := DialQUICMigratable(ctx, ln.Addr().String())
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer mc.Close()
-
-	echo := func(msg string) {
-		t.Helper()
-		if _, err := mc.Write([]byte(msg)); err != nil {
-			t.Fatalf("write %q: %v", msg, err)
+		if err := echo("before-migration"); err != nil {
+			return err
 		}
-		buf := make([]byte, len(msg))
-		if _, err := io.ReadFull(mc, buf); err != nil {
-			t.Fatalf("read %q: %v", msg, err)
+
+		oldAddr, newAddr := testkit.Must2(mc.Migrate(ctx))
+		if err := fp.NotEqual("local address after Migrate", newAddr.String(), oldAddr.String()); err != nil {
+			return err
 		}
-		if string(buf) != msg {
-			t.Fatalf("echo mismatch: got %q want %q", buf, msg)
-		}
-	}
+		t.Logf("migrated %v -> %v", oldAddr, newAddr)
 
-	echo("before-migration")
-
-	oldAddr, newAddr, err := mc.Migrate(ctx)
-	if err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-	if oldAddr.String() == newAddr.String() {
-		t.Fatalf("migration did not change the local address: %v", newAddr)
-	}
-	t.Logf("migrated %v -> %v", oldAddr, newAddr)
-
-	echo("after-migration") // same conn, same stream, new path
+		return echo("after-migration") // same conn, same stream, new path
+	})
 }

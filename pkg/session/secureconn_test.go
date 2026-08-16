@@ -10,30 +10,15 @@
 package session
 
 import (
-	"crypto/rand"
 	"io"
 	"net"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/stretchr/testify/require"
 )
-
-func randomKey(t *testing.T) []byte {
-	t.Helper()
-	key := make([]byte, 32)
-	_, err := rand.Read(key)
-	require.NoError(t, err)
-	return key
-}
-
-func randomBytes(t *testing.T, n int) []byte {
-	t.Helper()
-	buf := make([]byte, n)
-	_, err := rand.Read(buf)
-	require.NoError(t, err)
-	return buf
-}
 
 func newConnPair(t *testing.T, key []byte, suite kbc.CipherSuite) (writer, reader *SecureConn) {
 	t.Helper()
@@ -52,10 +37,10 @@ func newConnPair(t *testing.T, key []byte, suite kbc.CipherSuite) (writer, reade
 func TestSecureConn_MismatchedKeyFailsClosed(t *testing.T) {
 	c1, c2 := net.Pipe()
 	t.Cleanup(func() { c1.Close(); c2.Close() })
-	writer := NewSecureConn(c1, randomKey(t), kbc.CipherChaCha20, NoncePrefixOutbound)
-	reader := NewSecureConn(c2, randomKey(t), kbc.CipherChaCha20, NoncePrefixInbound) // divergent key
+	writer := NewSecureConn(c1, testkit.RandBytes(t, 32), kbc.CipherChaCha20, NoncePrefixOutbound)
+	reader := NewSecureConn(c2, testkit.RandBytes(t, 32), kbc.CipherChaCha20, NoncePrefixInbound) // divergent key
 
-	go func() { _, _ = writer.Write(randomBytes(t, 64)) }()
+	go func() { _, _ = writer.Write(testkit.RandBytes(t, 64)) }()
 
 	got := make([]byte, 64)
 	_, err := io.ReadFull(reader, got)
@@ -64,46 +49,36 @@ func TestSecureConn_MismatchedKeyFailsClosed(t *testing.T) {
 
 var cipherSuites = []kbc.CipherSuite{kbc.CipherChaCha20, kbc.CipherAES256}
 
+var roundTripSizes = []testkit.NamedSize{
+	{Name: "small_64bytes", Size: 64},
+	{Name: "large_4MiB", Size: 4 * 1024 * 1024},
+}
+
 func TestSecureConn_RoundTrip(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
 		t.Run(string(suite), func(t *testing.T) {
-			key := randomKey(t)
+			key := testkit.RandBytes(t, 32)
 
-			t.Run("small_64bytes", func(t *testing.T) {
-				writer, reader := newConnPair(t, key, suite)
-				original := randomBytes(t, 64)
+			testkit.RunTable(t, roundTripSizes, func(c testkit.NamedSize) string { return c.Name },
+				func(t *testing.T, c testkit.NamedSize) error {
+					writer, reader := newConnPair(t, key, suite)
+					original := testkit.RandBytes(t, c.Size)
 
-				errCh := make(chan error, 1)
-				go func() {
-					_, err := writer.Write(original)
-					errCh <- err
-				}()
+					join := testkit.Go(func() error {
+						_, err := writer.Write(original)
+						return err
+					})
 
-				got := make([]byte, 64)
-				_, err := io.ReadFull(reader, got)
-				require.NoError(t, err)
-				require.Equal(t, original, got)
-				require.NoError(t, <-errCh)
-			})
+					got := make([]byte, c.Size)
+					_, err := io.ReadFull(reader, got)
 
-			t.Run("large_4MiB", func(t *testing.T) {
-				writer, reader := newConnPair(t, key, suite)
-				const size = 4 * 1024 * 1024
-				original := randomBytes(t, size)
-
-				errCh := make(chan error, 1)
-				go func() {
-					_, err := writer.Write(original)
-					errCh <- err
-				}()
-
-				got := make([]byte, size)
-				_, err := io.ReadFull(reader, got)
-				require.NoError(t, err)
-				require.Equal(t, original, got)
-				require.NoError(t, <-errCh)
-			})
+					return fp.All(
+						fp.NoErr("readfull", err),
+						fp.BytesEqual("payload", got, original),
+						join(),
+					)
+				})
 		})
 	}
 }
@@ -113,17 +88,16 @@ func TestSecureConn_PartialReads(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
 		t.Run(string(suite), func(t *testing.T) {
-			key := randomKey(t)
+			key := testkit.RandBytes(t, 32)
 			writer, reader := newConnPair(t, key, suite)
 
 			const size = 1 * 1024 * 1024
-			original := randomBytes(t, size)
+			original := testkit.RandBytes(t, size)
 
-			errCh := make(chan error, 1)
-			go func() {
+			join := testkit.Go(func() error {
 				_, err := writer.Write(original)
-				errCh <- err
-			}()
+				return err
+			})
 
 			got := make([]byte, size)
 			chunk := make([]byte, 4096)
@@ -140,31 +114,28 @@ func TestSecureConn_PartialReads(t *testing.T) {
 			}
 
 			require.Equal(t, original, got)
-			require.NoError(t, <-errCh)
+			require.NoError(t, join())
 		})
 	}
 }
 
 // SecureConn is a byte stream: messages are not framed, so 3 messages are read back with exact-size reads.
 func TestSecureConn_MultiMessage(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
 
-	msg1 := randomBytes(t, 100)
-	msg2 := randomBytes(t, 1000)
-	msg3 := randomBytes(t, 500)
+	msg1 := testkit.RandBytes(t, 100)
+	msg2 := testkit.RandBytes(t, 1000)
+	msg3 := testkit.RandBytes(t, 500)
 
-	errCh := make(chan error, 1)
-	go func() {
-		var writeErr error
+	join := testkit.Go(func() error {
 		for _, msg := range [][]byte{msg1, msg2, msg3} {
 			if _, err := writer.Write(msg); err != nil {
-				writeErr = err
-				break
+				return err
 			}
 		}
-		errCh <- writeErr
-	}()
+		return nil
+	})
 
 	buf1 := make([]byte, 100)
 	_, err := io.ReadFull(reader, buf1)
@@ -181,67 +152,69 @@ func TestSecureConn_MultiMessage(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, msg3, buf3)
 
-	require.NoError(t, <-errCh)
+	require.NoError(t, join())
 }
 
 func TestSecureConn_LargeMessage(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
 		t.Run(string(suite), func(t *testing.T) {
-			key := randomKey(t)
+			key := testkit.RandBytes(t, 32)
 			writer, reader := newConnPair(t, key, suite)
 
 			const size = 4 * 1024 * 1024
-			original := randomBytes(t, size)
+			original := testkit.RandBytes(t, size)
 
-			errCh := make(chan error, 1)
-			go func() {
+			join := testkit.Go(func() error {
 				_, err := writer.Write(original)
-				errCh <- err
-			}()
+				return err
+			})
 
 			got := make([]byte, size)
 			_, err := io.ReadFull(reader, got)
-			require.NoError(t, err)
-			require.Equal(t, original, got)
-			require.NoError(t, <-errCh)
+
+			require.NoError(t, fp.All(
+				fp.NoErr("readfull", err),
+				fp.BytesEqual("payload", got, original),
+				join(),
+			))
 		})
 	}
 }
 
 func TestSecureConn_ConcurrentReadWrite(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
 
 	const msgCount = 100
 	const msgSize = 1024
 	const totalSize = msgCount * msgSize
 
-	original := randomBytes(t, totalSize)
+	original := testkit.RandBytes(t, totalSize)
 
-	errCh := make(chan error, 1)
-	go func() {
-		var writeErr error
+	join := testkit.Go(func() error {
 		for i := 0; i < msgCount; i++ {
 			chunk := original[i*msgSize : (i+1)*msgSize]
 			if _, err := writer.Write(chunk); err != nil {
-				writeErr = err
-				break
+				return err
 			}
 		}
-		errCh <- writeErr
-	}()
+		return nil
+	})
 
 	got := make([]byte, totalSize)
 	_, err := io.ReadFull(reader, got)
-	require.NoError(t, err)
-	require.Equal(t, original, got)
-	require.NoError(t, <-errCh)
+
+	require.NoError(t, fp.All(
+		fp.NoErr("readfull", err),
+		fp.BytesEqual("payload", got, original),
+		join(),
+	))
 }
 
 // A length header over MaxSecureMessageSize must error, not allocate an unbounded buffer.
 func TestSecureReader_RejectsOversizedLength(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	c1, c2 := net.Pipe()
 	t.Cleanup(func() {
 		c1.Close()
@@ -268,45 +241,44 @@ func TestSecureReader_RejectsOversizedLength(t *testing.T) {
 
 // A message exactly at MaxSecureMessageSize is accepted (boundary of the bounds check).
 func TestSecureReader_AcceptsMaxSizeLength(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
 
-	original := randomBytes(t, 64)
+	original := testkit.RandBytes(t, 64)
 
-	errCh := make(chan error, 1)
-	go func() {
+	join := testkit.Go(func() error {
 		_, err := writer.Write(original)
-		errCh <- err
-	}()
+		return err
+	})
 
 	got, err := reader.r.Read()
-	require.NoError(t, err)
-	require.Equal(t, original, got)
-	require.NoError(t, <-errCh)
+
+	require.NoError(t, fp.All(
+		fp.NoErr("read", err),
+		fp.BytesEqual("payload", got, original),
+		join(),
+	))
 }
 
 // Reads two messages in 5000-byte chunks, crossing message boundaries to exercise leftover logic.
 func TestSecureConn_LeftoverAcrossMessages(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	writer, reader := newConnPair(t, key, kbc.CipherChaCha20)
 
-	msg1 := randomBytes(t, 8192)
-	msg2 := randomBytes(t, 4096)
+	msg1 := testkit.RandBytes(t, 8192)
+	msg2 := testkit.RandBytes(t, 4096)
 	combined := append([]byte{}, msg1...)
 	combined = append(combined, msg2...)
 	const totalSize = 8192 + 4096
 
-	errCh := make(chan error, 1)
-	go func() {
-		var writeErr error
+	join := testkit.Go(func() error {
 		for _, msg := range [][]byte{msg1, msg2} {
 			if _, err := writer.Write(msg); err != nil {
-				writeErr = err
-				break
+				return err
 			}
 		}
-		errCh <- writeErr
-	}()
+		return nil
+	})
 
 	got := make([]byte, totalSize)
 	const chunkSize = 5000
@@ -323,5 +295,5 @@ func TestSecureConn_LeftoverAcrossMessages(t *testing.T) {
 	}
 
 	require.Equal(t, combined, got)
-	require.NoError(t, <-errCh)
+	require.NoError(t, join())
 }

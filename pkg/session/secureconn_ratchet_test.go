@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +56,7 @@ func nonceCounter(n []byte) uint64 { return binary.BigEndian.Uint64(n[4:]) & (1<
 func TestSecureConn_WriterRatchetsEpochOnWire(t *testing.T) {
 	shrinkRekeyThresholds(t, 2048, 1<<20) // trigger on bytes, not on message count
 
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	sink := &writeSink{}
 	sc := NewSecureConn(sink, key, kbc.CipherChaCha20, NoncePrefixOutbound)
 	sc.SetKeyUpdate(true)
@@ -89,14 +90,14 @@ func TestSecureConn_RatchetRoundTripAcrossEpochs(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
 		t.Run(string(suite), func(t *testing.T) {
-			key := randomKey(t)
+			key := testkit.RandBytes(t, 32)
 			writer, reader := newConnPair(t, key, suite)
 			writer.SetKeyUpdate(true)
 			reader.SetKeyUpdate(true)
 
 			const msgs, sz = 50, 1024
 			total := msgs * sz
-			original := randomBytes(t, total)
+			original := testkit.RandBytes(t, total)
 
 			errCh := make(chan error, 1)
 			go func() {
@@ -127,7 +128,7 @@ func TestSecureConn_RatchetRoundTripAcrossEpochs(t *testing.T) {
 // A far-future epoch (a gap) must be rejected before the reader derives any key, so a forged frame
 // cannot force an unbounded run of HKDF steps.
 func TestSecureConn_ReaderRejectsEpochGap(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	suite := kbc.CipherChaCha20
 	sink := &writeSink{}
 
@@ -148,7 +149,7 @@ func TestSecureConn_ReaderRejectsEpochGap(t *testing.T) {
 
 // A replayed or rolled-back frame (nonce not strictly increasing) must be rejected.
 func TestSecureConn_ReaderRejectsReplay(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	suite := kbc.CipherChaCha20
 	sink := &writeSink{}
 
@@ -179,7 +180,7 @@ func TestSecureConn_ReaderRejectsReplay(t *testing.T) {
 func TestSecureConn_WriterStopsRatchetingAtEpochGuard(t *testing.T) {
 	shrinkRekeyThresholds(t, 1, 1<<20) // ratchet on essentially every write
 
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	sink := &writeSink{}
 	sc := NewSecureConn(sink, key, kbc.CipherChaCha20, NoncePrefixOutbound)
 	sc.SetKeyUpdate(true)
@@ -204,7 +205,7 @@ func TestSecureConn_WriterStopsRatchetingAtEpochGuard(t *testing.T) {
 func TestSecureConn_ConcurrentWritersNoNonceReuse(t *testing.T) {
 	shrinkRekeyThresholds(t, 4096, 256) // ratchet often, on both bytes and message count
 
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	sink := &syncSink{}
 	sc := NewSecureConn(sink, key, kbc.CipherChaCha20, NoncePrefixOutbound)
 	sc.SetKeyUpdate(true)

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/quic-go/quic-go"
 )
 
@@ -21,52 +23,39 @@ import (
 // *quic.Conn, *quic.Stream): server echoes bytes on the first stream the client opens,
 // client round-trips a message. No gRPC.
 func TestQUICEcho(t *testing.T) {
-	ln, err := quic.ListenAddr("127.0.0.1:0", serverTLSConfig(), nil)
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer ln.Close()
+	testkit.Run(t, func() error {
+		ln := testkit.Must(quic.ListenAddr("127.0.0.1:0", serverTLSConfig(), nil))
+		defer ln.Close()
 
-	serverErr := make(chan error, 1)
-	go func() {
-		conn, err := ln.Accept(context.Background())
-		if err != nil {
+		serverErr := make(chan error, 1)
+		go func() {
+			conn, err := ln.Accept(context.Background())
+			if err != nil {
+				serverErr <- err
+				return
+			}
+			stream, err := conn.AcceptStream(context.Background())
+			if err != nil {
+				serverErr <- err
+				return
+			}
+			_, err = io.Copy(stream, stream) // echo until the client half-closes
 			serverErr <- err
-			return
-		}
-		stream, err := conn.AcceptStream(context.Background())
-		if err != nil {
-			serverErr <- err
-			return
-		}
-		_, err = io.Copy(stream, stream) // echo until the client half-closes
-		serverErr <- err
-	}()
+		}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	conn, err := quic.DialAddr(ctx, ln.Addr().String(), clientTLSConfig(), nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer conn.CloseWithError(0, "")
+		conn := testkit.Must(quic.DialAddr(ctx, ln.Addr().String(), clientTLSConfig(), nil))
+		defer conn.CloseWithError(0, "")
 
-	stream, err := conn.OpenStreamSync(ctx)
-	if err != nil {
-		t.Fatalf("open stream: %v", err)
-	}
+		stream := testkit.Must(conn.OpenStreamSync(ctx))
 
-	msg := []byte("keibidrop-quic-echo")
-	if _, err := stream.Write(msg); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+		msg := []byte("keibidrop-quic-echo")
+		testkit.Must(stream.Write(msg))
 
-	buf := make([]byte, len(msg))
-	if _, err := io.ReadFull(stream, buf); err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if string(buf) != string(msg) {
-		t.Fatalf("echo mismatch: got %q want %q", buf, msg)
-	}
+		buf := make([]byte, len(msg))
+		testkit.Must(io.ReadFull(stream, buf))
+		return fp.BytesEqual("echo", buf, msg)
+	})
 }

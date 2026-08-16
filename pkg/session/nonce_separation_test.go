@@ -13,11 +13,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
-	"log/slog"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/stretchr/testify/require"
@@ -78,7 +78,7 @@ func TestNonceDirectionSeparation(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
 		t.Run(string(suite), func(t *testing.T) {
-			key := randomKey(t)
+			key := testkit.RandBytes(t, 32)
 			out := firstNonce(t, key, suite, NoncePrefixOutbound)
 			in := firstNonce(t, key, suite, NoncePrefixInbound)
 			require.NotEqual(t, out, in, "the two endpoints of a socket must not share a nonce")
@@ -93,7 +93,7 @@ func TestNonceDirectionSeparation(t *testing.T) {
 // Guards the handshake wiring: after a real handshake the dialing side's Outbound writer uses OUTB
 // and the accepting side's Inbound writer uses INBD, though both ends share one key.
 func TestHandshakeAssignsOppositeNoncePrefixes(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := testkit.DiscardLogger()
 	alice, err := InitSession(log, config.OutboundPort, config.InboundPort)
 	require.NoError(t, err)
 	bob, err := InitSession(log, config.OutboundPort, config.InboundPort)
@@ -120,7 +120,7 @@ func TestRoundTripBothDirections(t *testing.T) {
 	for _, suite := range cipherSuites {
 		suite := suite
 		t.Run(string(suite), func(t *testing.T) {
-			key := randomKey(t)
+			key := testkit.RandBytes(t, 32)
 			c1, c2 := net.Pipe()
 			t.Cleanup(func() { c1.Close(); c2.Close() })
 			outbound := NewSecureConn(c1, key, suite, NoncePrefixOutbound)
@@ -134,7 +134,7 @@ func TestRoundTripBothDirections(t *testing.T) {
 				{"inbound_to_outbound", inbound, outbound},
 			} {
 				t.Run(dir.name, func(t *testing.T) {
-					msg := randomBytes(t, 300)
+					msg := testkit.RandBytes(t, 300)
 					errCh := make(chan error, 1)
 					go func() { _, e := dir.from.Write(msg); errCh <- e }()
 					got := make([]byte, len(msg))
@@ -151,7 +151,7 @@ func TestRoundTripBothDirections(t *testing.T) {
 // 0.3.x wire-compat guard: a prefix-agnostic reader (nonce taken from the frame) decrypts an
 // INBD-sealed frame; the fix does not change the wire format.
 func TestReaderDecryptsInboundPrefixFrame(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	suite := kbc.CipherAES256
 	sink := &writeSink{}
 	sc := NewSecureConn(sink, key, suite, NoncePrefixInbound)
@@ -166,8 +166,8 @@ func TestReaderDecryptsInboundPrefixFrame(t *testing.T) {
 
 // A rekey must keep the direction prefix: UpdateKey must not revert an inbound writer to outbound.
 func TestUpdateKeyPersistsWriterPrefix(t *testing.T) {
-	key := randomKey(t)
-	newKey := randomKey(t)
+	key := testkit.RandBytes(t, 32)
+	newKey := testkit.RandBytes(t, 32)
 	suite := kbc.CipherAES256
 	sink := &writeSink{}
 	sc := NewSecureConn(sink, key, suite, NoncePrefixInbound)

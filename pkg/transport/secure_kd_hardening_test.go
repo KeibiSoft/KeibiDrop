@@ -11,12 +11,15 @@ package transport
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
@@ -61,137 +64,114 @@ func (t *tapConn) sent() []byte {
 // must not appear in the raw wire bytes but must decrypt on the server. Runs over a
 // plaintext pipe so the only thing encrypting is our layer.
 func TestKDWireIsCiphertext(t *testing.T) {
-	serverID, _ := NewIdentity()
-	clientID, _ := NewIdentity()
+	testkit.Run(t, func() error {
+		serverID, _ := NewIdentity()
+		clientID, _ := NewIdentity()
 
-	c, s := net.Pipe()
-	tap := &tapConn{Conn: c}
+		c, s := net.Pipe()
+		tap := &tapConn{Conn: c}
 
-	srv := make(chan net.Conn, 1)
-	go func() {
-		sec, err := SecureKD(s, serverID, clientID.Fingerprint(), RoleServer)
-		if err != nil {
-			srv <- nil
-			return
+		var serverSec net.Conn
+		joinServer := testkit.Go(func() error {
+			sec, err := SecureKD(s, serverID, clientID.Fingerprint(), RoleServer)
+			if err != nil {
+				return nil
+			}
+			serverSec = sec
+			return nil
+		})
+
+		clientSec := testkit.Must(SecureKD(tap, clientID, serverID.Fingerprint(), RoleClient))
+		_ = joinServer()
+		if err := fp.True("server handshake succeeded", serverSec != nil); err != nil {
+			return err
 		}
-		srv <- sec
-	}()
 
-	clientSec, err := SecureKD(tap, clientID, serverID.Fingerprint(), RoleClient)
-	if err != nil {
-		t.Fatalf("client handshake: %v", err)
-	}
-	serverSec := <-srv
-	if serverSec == nil {
-		t.Fatal("server handshake failed")
-	}
-
-	marker := []byte("TOP-SECRET-PLAINTEXT-MARKER-9F3A")
-	go func() { _, _ = clientSec.Write(marker) }()
-	got := make([]byte, len(marker))
-	if _, err := io.ReadFull(serverSec, got); err != nil {
-		t.Fatalf("server read: %v", err)
-	}
-	if !bytes.Equal(got, marker) {
-		t.Fatal("server did not decrypt the marker")
-	}
-	if bytes.Contains(tap.sent(), marker) {
-		t.Fatal("plaintext marker found on the wire: SecureConn did not encrypt the payload")
-	}
+		marker := []byte("TOP-SECRET-PLAINTEXT-MARKER-9F3A")
+		go func() { _, _ = clientSec.Write(marker) }()
+		got := make([]byte, len(marker))
+		testkit.Must(io.ReadFull(serverSec, got))
+		if err := fp.BytesEqual("decrypted marker", got, marker); err != nil {
+			return err
+		}
+		return fp.False("plaintext marker found on the wire (SecureConn did not encrypt)", bytes.Contains(tap.sent(), marker))
+	})
 }
 
 // TestKDTamperDetected proves AEAD integrity: flipping one byte of a sealed frame
 // makes the reader reject it instead of returning corrupted plaintext.
 func TestKDTamperDetected(t *testing.T) {
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		t.Fatal(err)
-	}
+	testkit.Run(t, func() error {
+		key := make([]byte, 32)
+		testkit.Must(rand.Read(key))
 
-	var buf bytes.Buffer
-	wc, err := newSecureConnSuite(memConn{w: &buf}, kbc.CipherChaCha20, key, key)
-	if err != nil {
-		t.Fatalf("writer: %v", err)
-	}
-	if _, err := wc.Write([]byte("integrity-must-hold")); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+		var buf bytes.Buffer
+		wc := testkit.Must(newSecureConnSuite(memConn{w: &buf}, kbc.CipherChaCha20, key, key))
+		testkit.Must(wc.Write([]byte("integrity-must-hold")))
 
-	raw := buf.Bytes()
-	if len(raw) <= 4+12 {
-		t.Fatalf("frame too short: %d", len(raw))
-	}
-	raw[len(raw)-1] ^= 0x01 // corrupt one byte inside ciphertext+tag
+		raw := buf.Bytes()
+		if err := fp.True("frame is long enough to corrupt", len(raw) > 4+12); err != nil {
+			return err
+		}
+		raw[len(raw)-1] ^= 0x01 // corrupt one byte inside ciphertext+tag
 
-	rc, err := newSecureConnSuite(memConn{r: bytes.NewReader(raw)}, kbc.CipherChaCha20, key, key)
-	if err != nil {
-		t.Fatalf("reader: %v", err)
-	}
-	if _, err := rc.Read(make([]byte, 64)); err == nil {
-		t.Fatal("tampered ciphertext was accepted: AEAD integrity check is not effective")
-	}
+		rc := testkit.Must(newSecureConnSuite(memConn{r: bytes.NewReader(raw)}, kbc.CipherChaCha20, key, key))
+		_, err := rc.Read(make([]byte, 64))
+		return fp.WantErr("tampered ciphertext rejected (AEAD integrity check)", err)
+	})
 }
 
 // TestKDBothCipherSuites checks the record layer for both negotiable ciphers, covering
 // AES-256-GCM and ChaCha20-Poly1305 wire formats explicitly.
 func TestKDBothCipherSuites(t *testing.T) {
-	for _, suite := range []kbc.CipherSuite{kbc.CipherChaCha20, kbc.CipherAES256} {
-		key := make([]byte, 32)
-		if _, err := rand.Read(key); err != nil {
-			t.Fatal(err)
-		}
-		c, s := net.Pipe()
-		wc, err := newSecureConnSuite(c, suite, key, key)
-		if err != nil {
-			t.Fatalf("[%s] writer: %v", suite, err)
-		}
-		rc, err := newSecureConnSuite(s, suite, key, key)
-		if err != nil {
-			t.Fatalf("[%s] reader: %v", suite, err)
-		}
-		msg := []byte("suite round-trip " + string(suite))
-		go func() { _, _ = wc.Write(msg) }()
-		got := make([]byte, len(msg))
-		if _, err := io.ReadFull(rc, got); err != nil {
-			t.Fatalf("[%s] read: %v", suite, err)
-		}
-		if !bytes.Equal(got, msg) {
-			t.Fatalf("[%s] round-trip mismatch", suite)
-		}
-		_ = c.Close()
-		_ = s.Close()
-	}
+	testkit.Run(t, func() error {
+		suites := []kbc.CipherSuite{kbc.CipherChaCha20, kbc.CipherAES256}
+		return fp.Each("cipher suite round trip", suites, func(suite kbc.CipherSuite) error {
+			key := make([]byte, 32)
+			testkit.Must(rand.Read(key))
+			c, s := net.Pipe()
+			defer c.Close()
+			defer s.Close()
+			wc := testkit.Must(newSecureConnSuite(c, suite, key, key))
+			rc := testkit.Must(newSecureConnSuite(s, suite, key, key))
+			msg := []byte("suite round-trip " + string(suite))
+			go func() { _, _ = wc.Write(msg) }()
+			got := make([]byte, len(msg))
+			testkit.Must(io.ReadFull(rc, got))
+			return fp.BytesEqual(fmt.Sprintf("[%s] round trip", suite), got, msg)
+		})
+	})
 }
 
 // TestKDSeedDerivation checks the KEM exchange is correct and directional: encap and
 // decap yield the same 32-byte key, and two independent encapsulations yield different
 // keys, so the two send directions are independently keyed.
 func TestKDSeedDerivation(t *testing.T) {
-	a, _ := NewIdentity()
-	b, _ := NewIdentity()
-	peerB := &kbc.PeerKeys{MlKemPublic: b.keys.MlKemPublic, X25519Public: b.keys.X25519Public}
-	peerA := &kbc.PeerKeys{MlKemPublic: a.keys.MlKemPublic, X25519Public: a.keys.X25519Public}
+	testkit.Run(t, func() error {
+		a, _ := NewIdentity()
+		b, _ := NewIdentity()
+		peerB := &kbc.PeerKeys{MlKemPublic: b.keys.MlKemPublic, X25519Public: b.keys.X25519Public}
+		peerA := &kbc.PeerKeys{MlKemPublic: a.keys.MlKemPublic, X25519Public: a.keys.X25519Public}
 
-	k1, encX, encK, err := encapSeed(a.keys, peerB, kbc.CipherChaCha20)
-	if err != nil {
-		t.Fatalf("encap: %v", err)
-	}
-	k1b, err := decapSeed(b.keys, peerA, kbc.CipherChaCha20, encX, encK)
-	if err != nil {
-		t.Fatalf("decap: %v", err)
-	}
-	if !bytes.Equal(k1, k1b) {
-		t.Fatal("encap and decap derived different keys")
-	}
-	if len(k1) != 32 {
-		t.Fatalf("key size %d, want 32", len(k1))
-	}
+		k1, encX, encK, err := encapSeed(a.keys, peerB, kbc.CipherChaCha20)
+		if err != nil {
+			return fmt.Errorf("encap: %w", err)
+		}
+		k1b, err := decapSeed(b.keys, peerA, kbc.CipherChaCha20, encX, encK)
+		if err != nil {
+			return fmt.Errorf("decap: %w", err)
+		}
+		if err := fp.All(
+			fp.BytesEqual("encap/decap derived key", k1b, k1),
+			fp.Equal("key size", len(k1), 32),
+		); err != nil {
+			return err
+		}
 
-	k2, _, _, err := encapSeed(a.keys, peerB, kbc.CipherChaCha20)
-	if err != nil {
-		t.Fatalf("encap 2: %v", err)
-	}
-	if bytes.Equal(k1, k2) {
-		t.Fatal("two independent encapsulations produced the same key")
-	}
+		k2, _, _, err := encapSeed(a.keys, peerB, kbc.CipherChaCha20)
+		if err != nil {
+			return fmt.Errorf("encap 2: %w", err)
+		}
+		return fp.NotEqual("two independent encapsulations", string(k2), string(k1))
+	})
 }

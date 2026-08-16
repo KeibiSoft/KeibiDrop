@@ -11,14 +11,13 @@ package session
 
 import (
 	"bytes"
-	"io"
-	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
@@ -28,9 +27,9 @@ import (
 // round on its fresh writer's first bump. The fresh reader must follow via the session's
 // pending-fold custody.
 func TestFoldSurvivesConnReinstall(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := testkit.DiscardLogger()
 	sess := NewSession(logger, "", time.Minute)
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	suite := kbc.CipherChaCha20
 
 	// The pre-reconnect conn pair; the round stages on it (the RespondToFold effect).
@@ -67,8 +66,8 @@ func TestFoldSurvivesConnReinstall(t *testing.T) {
 // -count=50+. Pre-fix (remember-after-snapshot or adopt-before-assign) this fails as
 // "decryption failed at epoch N".
 func TestFoldStageInstallOrdering(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	key := randomKey(t)
+	logger := testkit.DiscardLogger()
+	key := testkit.RandBytes(t, 32)
 	suite := kbc.CipherChaCha20
 	secret := bytes.Repeat([]byte{9}, 32)
 

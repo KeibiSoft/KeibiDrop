@@ -12,10 +12,10 @@ package session
 import (
 	"encoding/json"
 	"io"
-	"log/slog"
 	"net"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/stretchr/testify/require"
@@ -23,7 +23,7 @@ import (
 
 // A real handshake propagates key-update: the inbound side learns the dialer advertised it, arming the ratchet.
 func TestInboundHandshakeLearnsKeyUpdateCapability(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := testkit.DiscardLogger()
 	alice, err := InitSession(log, config.OutboundPort, config.InboundPort)
 	require.NoError(t, err)
 	bob, err := InitSession(log, config.OutboundPort, config.InboundPort)
@@ -51,8 +51,8 @@ func TestInboundHandshakeLearnsKeyUpdateCapability(t *testing.T) {
 // The key-update capability is bound into the SEK: a relay stripping the plaintext bit makes the
 // two ends derive different keys (fail-closed), not a silent downgrade to the non-FS fallback.
 func TestKeyUpdateCapabilityBoundIntoSEK(t *testing.T) {
-	seed1 := randomBytes(t, kbc.KeySize)
-	seed2 := randomBytes(t, kbc.KeySize)
+	seed1 := testkit.RandBytes(t, kbc.KeySize)
+	seed2 := testkit.RandBytes(t, kbc.KeySize)
 
 	// Dialer advertised key-update=true and binds its own capability.
 	dialerOut, err := kbc.DeriveKey(kbc.CipherChaCha20, seed1, seed2, keyUpdateBinding(true))
@@ -73,8 +73,8 @@ func TestKeyUpdateCapabilityBoundIntoSEK(t *testing.T) {
 // New-to-old fails closed by design: the new peer always mixes the key-update capability binding
 // into its SEK, diverging from an old peer's secrets-only key. No silent non-FS downgrade exists.
 func TestKeyUpdateBindingBreaksOldPeerInterop(t *testing.T) {
-	seed1 := randomBytes(t, kbc.KeySize)
-	seed2 := randomBytes(t, kbc.KeySize)
+	seed1 := testkit.RandBytes(t, kbc.KeySize)
+	seed2 := testkit.RandBytes(t, kbc.KeySize)
 
 	// What a pre-patch (old) peer computes: no capability binding, just the two secrets.
 	oldSEK, err := kbc.DeriveKey(kbc.CipherChaCha20, seed1, seed2)
@@ -92,7 +92,7 @@ func TestKeyUpdateBindingBreaksOldPeerInterop(t *testing.T) {
 // A key-update session must force a re-handshake as its ratchet epoch nears the wrap guard, where
 // the ratchet stops advancing; otherwise the epoch pins and forward secrecy stalls.
 func TestSession_NearEpochWrap(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	newSess := func(peerKeyUpdate bool) *Session {
 		return &Session{
 			PeerSupportsKeyUpdate: peerKeyUpdate,
@@ -118,7 +118,7 @@ func TestSession_NearEpochWrap(t *testing.T) {
 // The monitor must default to RekeyEnabled so onReconnected rebuilds never drop the near-wrap
 // re-handshake for a key-update pair.
 func TestNewHealthMonitor_RekeyEnabledByDefault(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := testkit.DiscardLogger()
 	m := NewHealthMonitor(&Session{}, nil, log)
 	require.True(t, m.RekeyEnabled, "the monitor must default to rekey-enabled")
 }
@@ -143,7 +143,7 @@ func TestUseKeyUpdate(t *testing.T) {
 // ApplyKeyUpdateNegotiation arms or disarms the ratchet on both directions (reader and writer) to
 // match the negotiated capability.
 func TestApplyKeyUpdateNegotiationTogglesBothConns(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	c1, c2 := net.Pipe()
 	t.Cleanup(func() { c1.Close(); c2.Close() })
 	s := &Session{Session: &SessionSockets{
@@ -170,7 +170,7 @@ func TestApplyKeyUpdateNegotiationTogglesBothConns(t *testing.T) {
 func TestNegotiatedRatchetRoundTripsOverRealHandshake(t *testing.T) {
 	shrinkRekeyThresholds(t, 4096, 1<<20)
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := testkit.DiscardLogger()
 	alice, err := InitSession(log, config.OutboundPort, config.InboundPort)
 	require.NoError(t, err)
 	bob, err := InitSession(log, config.OutboundPort, config.InboundPort)
@@ -195,7 +195,7 @@ func TestNegotiatedRatchetRoundTripsOverRealHandshake(t *testing.T) {
 	reader.SetKeyUpdate(true)
 
 	const msgs, sz = 50, 1024
-	original := randomBytes(t, msgs*sz)
+	original := testkit.RandBytes(t, msgs*sz)
 	werr := make(chan error, 1)
 	go func() {
 		var e error

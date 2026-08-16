@@ -12,6 +12,7 @@ package session
 import (
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -21,11 +22,11 @@ func TestHealthMonitorProactiveRekeyTrigger(t *testing.T) {
 	RekeyBytesThreshold = 1
 	t.Cleanup(func() { RekeyBytesThreshold = old })
 
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	sink := &writeSink{}
 	sc := NewSecureConn(sink, key, kbc.CipherChaCha20, NoncePrefixOutbound)
 	// Move more than the idle delta so the session looks ACTIVE (serving) on the first check.
-	_, err := sc.Write(randomBytes(t, rekeyIdleByteDelta+4096))
+	_, err := sc.Write(testkit.RandBytes(t, rekeyIdleByteDelta+4096))
 	require.NoError(t, err)
 	require.True(t, sc.ShouldRekey())
 
@@ -65,7 +66,7 @@ func TestHealthMonitorNearWrapTriggersRekey(t *testing.T) {
 	RekeyBytesThreshold = 1 << 62
 	t.Cleanup(func() { RekeyBytesThreshold = old })
 
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	sc := NewSecureConn(&writeSink{}, key, kbc.CipherChaCha20, NoncePrefixOutbound)
 	sc.SetWriterEpochForTest(epochRehandshakeThreshold)
 	require.False(t, sc.ShouldRekey(), "below the byte threshold, so only near-wrap can fire")
@@ -87,7 +88,7 @@ func TestHealthMonitorQUICNearWrapTriggersRekey(t *testing.T) {
 	RekeyBytesThreshold = 1 << 62
 	t.Cleanup(func() { RekeyBytesThreshold = old })
 
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	sc := NewSecureConn(&writeSink{}, key, kbc.CipherChaCha20, NoncePrefixOutbound)
 	require.Equal(t, uint16(0), sc.WriterEpoch(), "TCP pair stays at epoch 0 in this scenario")
 
@@ -115,14 +116,14 @@ func TestHealthMonitorVolumeTriggerGatedOffWhenRatcheting(t *testing.T) {
 	RekeyBytesThreshold = 1
 	t.Cleanup(func() { RekeyBytesThreshold = old })
 
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	sc := NewSecureConn(&writeSink{}, key, kbc.CipherChaCha20, NoncePrefixOutbound)
 	sc.SetKeyUpdate(true)
 	// make-before-break checks thresholds BEFORE sealing: the first (large) frame seals at epoch 0,
 	// the second carries the rotation.
-	_, err := sc.Write(randomBytes(t, rekeyIdleByteDelta+4096))
+	_, err := sc.Write(testkit.RandBytes(t, rekeyIdleByteDelta+4096))
 	require.NoError(t, err)
-	_, err = sc.Write(randomBytes(t, 64))
+	_, err = sc.Write(testkit.RandBytes(t, 64))
 	require.NoError(t, err)
 	require.True(t, sc.ShouldRekey(), "cumulative counters must be past the threshold")
 	require.GreaterOrEqual(t, sc.WriterEpoch(), uint16(1), "the second write must have carried a rotation")

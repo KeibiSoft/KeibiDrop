@@ -10,45 +10,42 @@ import (
 	"encoding/binary"
 	"net"
 	"testing"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDNSNameEncode_Simple(t *testing.T) {
 	got := dnsNameEncode("_keibidrop._tcp.local.")
 	want := []byte{10, '_', 'k', 'e', 'i', 'b', 'i', 'd', 'r', 'o', 'p', 4, '_', 't', 'c', 'p', 5, 'l', 'o', 'c', 'a', 'l', 0}
-	if len(got) != len(want) {
-		t.Fatalf("length mismatch: got %d, want %d", len(got), len(want))
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("byte %d: got %02x, want %02x", i, got[i], want[i])
-		}
-	}
+	testkit.Run(t, func() error {
+		return fp.BytesEqual("encoded name", got, want)
+	})
 }
 
 func TestDNSNameEncode_SingleLabel(t *testing.T) {
 	got := dnsNameEncode("local.")
 	want := []byte{5, 'l', 'o', 'c', 'a', 'l', 0}
-	if len(got) != len(want) {
-		t.Fatalf("length: got %d want %d", len(got), len(want))
-	}
+	require.Len(t, got, len(want), "length")
 }
 
 func TestDNSNameEncode_Root(t *testing.T) {
 	got := dnsNameEncode(".")
-	if len(got) != 1 || got[0] != 0 {
-		t.Errorf("root: got %v, want [0]", got)
-	}
+	testkit.Run(t, func() error {
+		return fp.BytesEqual("root", got, []byte{0})
+	})
 }
 
 func TestDNSNameEncode_WithSpaces(t *testing.T) {
 	got := dnsNameEncode("Cosmic Waffle._keibidrop._tcp.local.")
-	if got[0] != 13 {
-		t.Errorf("first label length: got %d, want 13 (len of 'Cosmic Waffle')", got[0])
-	}
 	label := string(got[1:14])
-	if label != "Cosmic Waffle" {
-		t.Errorf("first label: got %q, want %q", label, "Cosmic Waffle")
-	}
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.Equal("first label length", got[0], byte(13)),
+			fp.Equal("first label", label, "Cosmic Waffle"),
+		)
+	})
 }
 
 func TestDNSNameDecode_Roundtrip(t *testing.T) {
@@ -58,20 +55,21 @@ func TestDNSNameDecode_Roundtrip(t *testing.T) {
 		"Cosmic Waffle._keibidrop._tcp.local.",
 		"a.b.c.d.e.",
 	}
-	for _, name := range names {
-		encoded := dnsNameEncode(name)
-		decoded, off, err := dnsNameDecode(encoded, 0)
-		if err != nil {
-			t.Errorf("decode %q: %v", name, err)
-			continue
-		}
-		if decoded != name {
-			t.Errorf("roundtrip %q: got %q", name, decoded)
-		}
-		if off != len(encoded) {
-			t.Errorf("offset %q: got %d, want %d", name, off, len(encoded))
-		}
-	}
+	testkit.Run(t, func() error {
+		return fp.Each("roundtrip", names, func(name string) error {
+			encoded := dnsNameEncode(name)
+			decoded, off, err := dnsNameDecode(encoded, 0)
+			return fp.Steps(
+				func() error { return fp.NoErr("decode "+name, err) },
+				func() error {
+					return fp.All(
+						fp.Equal("decoded", decoded, name),
+						fp.Equal("offset", off, len(encoded)),
+					)
+				},
+			)
+		})
+	})
 }
 
 func TestDNSNameDecode_Compressed(t *testing.T) {
@@ -82,36 +80,25 @@ func TestDNSNameDecode_Compressed(t *testing.T) {
 	buf = append(buf, 0xC0, 0x00)
 
 	decoded, _, err := dnsNameDecode(buf, nameStart)
-	if err != nil {
-		t.Fatalf("compressed decode: %v", err)
-	}
-	want := "Cosmic._keibidrop._tcp.local."
-	if decoded != want {
-		t.Errorf("got %q, want %q", decoded, want)
-	}
+	require.NoError(t, err, "compressed decode")
+	require.Equal(t, "Cosmic._keibidrop._tcp.local.", decoded, "decoded")
 }
 
 func TestDNSNameDecode_PointerLoop(t *testing.T) {
 	buf := []byte{0xC0, 0x02, 0xC0, 0x00}
 	_, _, err := dnsNameDecode(buf, 0)
-	if err == nil {
-		t.Error("expected error for pointer loop")
-	}
+	require.Error(t, err, "expected error for pointer loop")
 }
 
 func TestDNSNameDecode_Truncated(t *testing.T) {
 	buf := []byte{5, 'h', 'e'}
 	_, _, err := dnsNameDecode(buf, 0)
-	if err == nil {
-		t.Error("expected error for truncated label")
-	}
+	require.Error(t, err, "expected error for truncated label")
 }
 
 func TestDNSNameDecode_Empty(t *testing.T) {
 	_, _, err := dnsNameDecode([]byte{}, 0)
-	if err == nil {
-		t.Error("expected error for empty buffer")
-	}
+	require.Error(t, err, "expected error for empty buffer")
 }
 
 func TestDNSHeader_Roundtrip(t *testing.T) {
@@ -120,12 +107,8 @@ func TestDNSHeader_Roundtrip(t *testing.T) {
 	h.marshal(buf[:])
 
 	var h2 dnsHeader
-	if err := h2.unmarshal(buf[:]); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if h2 != h {
-		t.Errorf("roundtrip: got %+v, want %+v", h2, h)
-	}
+	require.NoError(t, h2.unmarshal(buf[:]), "unmarshal")
+	require.Equal(t, h, h2, "roundtrip")
 }
 
 func TestDNSMessage_QueryRoundtrip(t *testing.T) {
@@ -133,111 +116,91 @@ func TestDNSMessage_QueryRoundtrip(t *testing.T) {
 		Questions: []dnsQuestion{{Name: mdnsService, Type: dnsTypePTR, Class: dnsClassIN}},
 	}
 	data, err := dnsMessageMarshal(msg)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
+	require.NoError(t, err, "marshal")
 
 	parsed, err := dnsMessageParse(data)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if len(parsed.Questions) != 1 {
-		t.Fatalf("questions: got %d, want 1", len(parsed.Questions))
-	}
-	if parsed.Questions[0].Name != mdnsService {
-		t.Errorf("name: got %q, want %q", parsed.Questions[0].Name, mdnsService)
-	}
-	if parsed.Questions[0].Type != dnsTypePTR {
-		t.Errorf("type: got %d, want %d", parsed.Questions[0].Type, dnsTypePTR)
-	}
+	require.NoError(t, err, "parse")
+	require.Len(t, parsed.Questions, 1, "questions")
+
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.Equal("name", parsed.Questions[0].Name, mdnsService),
+			fp.Equal("type", parsed.Questions[0].Type, uint16(dnsTypePTR)),
+		)
+	})
 }
 
 func TestDNSMessage_ResponseRoundtrip(t *testing.T) {
 	ip := net.IP{192, 168, 1, 42}
 	data, err := buildServiceResponse("Swift Penguin", "myhost", 26531, ip, 120)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
+	require.NoError(t, err, "build")
 
 	parsed, err := dnsMessageParse(data)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
+	require.NoError(t, err, "parse")
+	require.Len(t, parsed.Answers, 1, "answers")
+	require.True(t, len(parsed.Additional) >= 2, "additional: got %d, want >=2", len(parsed.Additional))
 
-	if parsed.Header.Flags&dnsFlagQR == 0 {
-		t.Error("expected QR flag set")
-	}
-	if len(parsed.Answers) != 1 {
-		t.Fatalf("answers: got %d, want 1", len(parsed.Answers))
-	}
 	ptr := parsed.Answers[0]
-	if ptr.Type != dnsTypePTR {
-		t.Errorf("answer type: got %d, want PTR (%d)", ptr.Type, dnsTypePTR)
-	}
-	if ptr.PtrName != "Swift Penguin."+mdnsService {
-		t.Errorf("PTR name: got %q", ptr.PtrName)
-	}
-
-	if len(parsed.Additional) < 2 {
-		t.Fatalf("additional: got %d, want >=2", len(parsed.Additional))
-	}
-
 	var foundSRV, foundA bool
-	for _, r := range parsed.Additional {
-		if r.Type == dnsTypeSRV {
-			foundSRV = true
-			if r.SrvPort != 26531 {
-				t.Errorf("SRV port: got %d, want 26531", r.SrvPort)
-			}
-			if r.SrvTarget != "myhost.local." {
-				t.Errorf("SRV target: got %q", r.SrvTarget)
-			}
-		}
-		if r.Type == dnsTypeA {
-			foundA = true
-			if !r.AAddr.Equal(ip) {
-				t.Errorf("A addr: got %v, want %v", r.AAddr, ip)
-			}
-		}
-	}
-	if !foundSRV {
-		t.Error("no SRV record in additional")
-	}
-	if !foundA {
-		t.Error("no A record in additional")
-	}
+
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error {
+				return fp.All(
+					fp.True("QR flag set", parsed.Header.Flags&dnsFlagQR != 0),
+					fp.Equal("answer type", ptr.Type, uint16(dnsTypePTR)),
+					fp.Equal("PTR name", ptr.PtrName, "Swift Penguin."+mdnsService),
+				)
+			},
+			func() error {
+				return fp.Each("additional records", parsed.Additional, func(r dnsRecord) error {
+					switch r.Type {
+					case dnsTypeSRV:
+						foundSRV = true
+						return fp.All(
+							fp.Equal("SRV port", r.SrvPort, uint16(26531)),
+							fp.Equal("SRV target", r.SrvTarget, "myhost.local."),
+						)
+					case dnsTypeA:
+						foundA = true
+						return fp.True("A addr matches", r.AAddr.Equal(ip))
+					}
+					return nil
+				})
+			},
+			func() error {
+				return fp.All(
+					fp.True("SRV record found", foundSRV),
+					fp.True("A record found", foundA),
+				)
+			},
+		)
+	})
 }
 
 func TestBuildPTRQuery(t *testing.T) {
 	data, err := buildPTRQuery(mdnsService)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
+	require.NoError(t, err, "build")
+
 	parsed, err := dnsMessageParse(data)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	if parsed.Header.Flags&dnsFlagQR != 0 {
-		t.Error("query should not have QR flag")
-	}
-	if len(parsed.Questions) != 1 {
-		t.Fatalf("questions: got %d", len(parsed.Questions))
-	}
-	if parsed.Questions[0].Name != mdnsService {
-		t.Errorf("service: got %q", parsed.Questions[0].Name)
-	}
+	require.NoError(t, err, "parse")
+	require.Len(t, parsed.Questions, 1, "questions")
+
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.False("query should not have QR flag", parsed.Header.Flags&dnsFlagQR != 0),
+			fp.Equal("service", parsed.Questions[0].Name, mdnsService),
+		)
+	})
 }
 
 func TestMDNSProcessResponse_ExtractPeer(t *testing.T) {
 	ip := net.IP{10, 0, 0, 5}
 	data, err := buildServiceResponse("Turbo Raccoon", "raccoon-pc", 26431, ip, 120)
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
+	require.NoError(t, err, "build")
+
 	parsed, err := dnsMessageParse(data)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
+	require.NoError(t, err, "parse")
 
 	candidates := make(map[string]*mdnsCandidate)
 	var allRecords []dnsRecord
@@ -265,15 +228,14 @@ func TestMDNSProcessResponse_ExtractPeer(t *testing.T) {
 	}
 
 	c, ok := candidates["Turbo Raccoon"]
-	if !ok {
-		t.Fatal("candidate not found")
-	}
-	if c.port != 26431 {
-		t.Errorf("port: got %d", c.port)
-	}
-	if !c.ipv4.Equal(ip) {
-		t.Errorf("ip: got %v", c.ipv4)
-	}
+	require.True(t, ok, "candidate not found")
+
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.Equal("port", c.port, uint16(26431)),
+			fp.True("ip matches", c.ipv4.Equal(ip)),
+		)
+	})
 }
 
 func extractInstanceFromPTR(ptrName string) string {
@@ -289,15 +251,14 @@ func TestMDNSProcessResponse_SkipSelf(t *testing.T) {
 	data, _ := buildServiceResponse("My Name", "myhost", 26431, ip, 120)
 	parsed, _ := dnsMessageParse(data)
 
+	// The PTR record must be present so the self-filter has a match to skip.
+	found := false
 	for _, r := range parsed.Answers {
-		if r.Type == dnsTypePTR {
-			name := extractInstanceFromPTR(r.PtrName)
-			if name == "My Name" {
-				return // correctly would be skipped
-			}
+		if r.Type == dnsTypePTR && extractInstanceFromPTR(r.PtrName) == "My Name" {
+			found = true
 		}
 	}
-	t.Error("should have found self in PTR")
+	require.True(t, found, "should have found self in PTR")
 }
 
 func TestMDNSProcessResponse_Goodbye(t *testing.T) {
@@ -305,12 +266,13 @@ func TestMDNSProcessResponse_Goodbye(t *testing.T) {
 	data, _ := buildServiceResponse("Leaving Peer", "host", 26431, ip, 0)
 	parsed, _ := dnsMessageParse(data)
 
+	found := false
 	for _, r := range parsed.Answers {
 		if r.Type == dnsTypePTR && r.TTL == 0 {
-			return // correctly detected goodbye
+			found = true
 		}
 	}
-	t.Error("should have found TTL=0 goodbye")
+	require.True(t, found, "should have found TTL=0 goodbye")
 }
 
 func TestMDNSProcessResponse_NonKeibidrop(t *testing.T) {
@@ -329,51 +291,49 @@ func TestMDNSProcessResponse_NonKeibidrop(t *testing.T) {
 	data, _ := dnsMessageMarshal(msg)
 	parsed, _ := dnsMessageParse(data)
 
-	for _, r := range parsed.Answers {
-		if r.Type == dnsTypePTR {
-			name := extractInstanceFromPTR(r.PtrName)
-			if name != "" {
-				t.Errorf("should not extract from non-keibidrop service, got %q", name)
+	testkit.Run(t, func() error {
+		return fp.Each("answers", parsed.Answers, func(r dnsRecord) error {
+			if r.Type != dnsTypePTR {
+				return nil
 			}
-		}
-	}
+			return fp.Equal("extracted instance from non-keibidrop service", extractInstanceFromPTR(r.PtrName), "")
+		})
+	})
 }
 
 func TestHasKeibidropQuestion(t *testing.T) {
 	yes := &dnsMessage{Questions: []dnsQuestion{{Name: mdnsService, Type: dnsTypePTR}}}
-	if !hasKeibidropQuestion(yes) {
-		t.Error("should match keibidrop PTR question")
-	}
-
 	no := &dnsMessage{Questions: []dnsQuestion{{Name: "_http._tcp.local.", Type: dnsTypePTR}}}
-	if hasKeibidropQuestion(no) {
-		t.Error("should not match http service")
-	}
-
 	wrongType := &dnsMessage{Questions: []dnsQuestion{{Name: mdnsService, Type: dnsTypeA}}}
-	if hasKeibidropQuestion(wrongType) {
-		t.Error("should not match A query for service")
-	}
+
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.True("should match keibidrop PTR question", hasKeibidropQuestion(yes)),
+			fp.False("should not match http service", hasKeibidropQuestion(no)),
+			fp.False("should not match A query for service", hasKeibidropQuestion(wrongType)),
+		)
+	})
 }
 
 func TestMDNSHostname(t *testing.T) {
 	h := mdnsHostname()
-	if h == "" {
-		t.Error("hostname should not be empty")
-	}
-	for _, r := range h {
-		if r >= 'A' && r <= 'Z' {
-			t.Errorf("hostname should be lowercase, got %q", h)
-			break
-		}
-	}
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.NotEqual("hostname", h, ""),
+			fp.Each("hostname runes", []rune(h), func(r rune) error {
+				return fp.False("hostname should be lowercase", r >= 'A' && r <= 'Z')
+			}),
+		)
+	})
+}
+
+type ipPrivacyCase struct {
+	ip   net.IP
+	want bool
 }
 
 func TestIsPrivateIP(t *testing.T) {
-	tests := []struct {
-		ip   net.IP
-		want bool
-	}{
+	tests := []ipPrivacyCase{
 		{net.IP{192, 168, 1, 1}, true},
 		{net.IP{10, 0, 0, 1}, true},
 		{net.IP{172, 16, 0, 1}, true},
@@ -381,28 +341,32 @@ func TestIsPrivateIP(t *testing.T) {
 		{net.IP{8, 8, 8, 8}, false},
 		{net.IP{172, 32, 0, 1}, false},
 	}
-	for _, tt := range tests {
-		if got := isPrivateIP(tt.ip); got != tt.want {
-			t.Errorf("isPrivateIP(%v) = %v, want %v", tt.ip, got, tt.want)
-		}
-	}
+	testkit.RunTable(t, tests, func(tt ipPrivacyCase) string { return tt.ip.String() },
+		func(t *testing.T, tt ipPrivacyCase) error {
+			return fp.Equal("isPrivateIP", isPrivateIP(tt.ip), tt.want)
+		})
+}
+
+type instanceNameCase struct {
+	full string
+	want string
 }
 
 func TestExtractInstanceName(t *testing.T) {
-	tests := []struct {
-		full string
-		want string
-	}{
+	tests := []instanceNameCase{
 		{"Swift Penguin._keibidrop._tcp.local.", "Swift Penguin"},
 		{"_keibidrop._tcp.local.", ""},
 		{"random._http._tcp.local.", ""},
 		{"", ""},
 	}
-	for _, tt := range tests {
-		if got := extractInstanceName(tt.full); got != tt.want {
-			t.Errorf("extractInstanceName(%q) = %q, want %q", tt.full, got, tt.want)
+	testkit.RunTable(t, tests, func(tt instanceNameCase) string {
+		if tt.full == "" {
+			return "empty"
 		}
-	}
+		return tt.full
+	}, func(t *testing.T, tt instanceNameCase) error {
+		return fp.Equal("extractInstanceName", extractInstanceName(tt.full), tt.want)
+	})
 }
 
 func TestDNSMessage_ParseRealBonjourPacket(t *testing.T) {
@@ -450,16 +414,9 @@ func TestDNSMessage_ParseRealBonjourPacket(t *testing.T) {
 	_ = instanceNameOff
 
 	parsed, err := dnsMessageParse(buf)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-
-	if len(parsed.Answers) != 1 {
-		t.Fatalf("answers: got %d", len(parsed.Answers))
-	}
-	if parsed.Answers[0].PtrName == "" {
-		t.Fatal("PTR name not parsed")
-	}
+	require.NoError(t, err, "parse")
+	require.Len(t, parsed.Answers, 1, "answers")
+	require.NotEqual(t, "", parsed.Answers[0].PtrName, "PTR name not parsed")
 
 	var srvPort uint16
 	var aIP net.IP
@@ -471,30 +428,32 @@ func TestDNSMessage_ParseRealBonjourPacket(t *testing.T) {
 			aIP = r.AAddr
 		}
 	}
-	if srvPort != 26431 {
-		t.Errorf("SRV port: got %d", srvPort)
-	}
-	if !aIP.Equal(net.IP{192, 168, 1, 100}) {
-		t.Errorf("A addr: got %v", aIP)
-	}
+
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.Equal("SRV port", srvPort, uint16(26431)),
+			fp.True("A addr matches", aIP.Equal(net.IP{192, 168, 1, 100})),
+		)
+	})
 }
 
 func TestMakeSRVRData(t *testing.T) {
 	data := makeSRVRData(0, 0, 8080, "host.local.")
-	if len(data) < 6 {
-		t.Fatalf("SRV rdata too short: %d", len(data))
-	}
+	require.True(t, len(data) >= 6, "SRV rdata too short: %d", len(data))
+
 	priority := binary.BigEndian.Uint16(data[0:])
 	weight := binary.BigEndian.Uint16(data[2:])
 	port := binary.BigEndian.Uint16(data[4:])
-	if priority != 0 || weight != 0 || port != 8080 {
-		t.Errorf("SRV fields: priority=%d weight=%d port=%d", priority, weight, port)
-	}
+
 	target, _, err := dnsNameDecode(data, 6)
-	if err != nil {
-		t.Fatalf("decode target: %v", err)
-	}
-	if target != "host.local." {
-		t.Errorf("target: got %q", target)
-	}
+	require.NoError(t, err, "decode target")
+
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.Equal("SRV priority", priority, uint16(0)),
+			fp.Equal("SRV weight", weight, uint16(0)),
+			fp.Equal("SRV port", port, uint16(8080)),
+			fp.Equal("target", target, "host.local."),
+		)
+	})
 }

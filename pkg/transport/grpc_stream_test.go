@@ -13,10 +13,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
@@ -40,30 +41,28 @@ func TestGRPCDownload(t *testing.T) {
 			t.Run(tr.name+"/"+tc.name, func(t *testing.T) {
 				client, cleanup := tr.newClient(t)
 				defer cleanup()
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
 
-				stream, err := client.Download(ctx, &pb.DownloadRequest{TotalBytes: tc.total, ChunkSize: tc.chunkSize})
-				if err != nil {
-					t.Fatalf("Download: %v", err)
-				}
-				var soFar uint64
-				got, err := drainDownload(stream, func(c *pb.Chunk) error {
-					if c.Offset != soFar {
-						return fmt.Errorf("offset gap: got %d want %d", c.Offset, soFar)
+				testkit.Run(t, func() error {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+
+					stream := testkit.Must(client.Download(ctx, &pb.DownloadRequest{TotalBytes: tc.total, ChunkSize: tc.chunkSize}))
+					var soFar uint64
+					got, err := drainDownload(stream, func(c *pb.Chunk) error {
+						if c.Offset != soFar {
+							return fmt.Errorf("offset gap: got %d want %d", c.Offset, soFar)
+						}
+						if !verifyChunk(c.Data) {
+							return fmt.Errorf("corrupt chunk at offset %d", c.Offset)
+						}
+						soFar += uint64(len(c.Data))
+						return nil
+					})
+					if err != nil {
+						return err
 					}
-					if !verifyChunk(c.Data) {
-						return fmt.Errorf("corrupt chunk at offset %d", c.Offset)
-					}
-					soFar += uint64(len(c.Data))
-					return nil
+					return fp.Equal("byte count", got, tc.total)
 				})
-				if err != nil {
-					t.Fatalf("recv: %v", err)
-				}
-				if got != tc.total {
-					t.Fatalf("byte count: got %d want %d", got, tc.total)
-				}
 			})
 		}
 	}
@@ -79,35 +78,24 @@ func TestConcurrentDownloads(t *testing.T) {
 			client, cleanup := tr.newClient(t)
 			defer cleanup()
 
-			var wg sync.WaitGroup
-			errs := make(chan error, n)
-			for i := 0; i < n; i++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					stream, err := client.Download(ctx, &pb.DownloadRequest{TotalBytes: per, ChunkSize: 64 << 10})
-					if err != nil {
-						errs <- err
-						return
-					}
-					got, err := drainDownload(stream, nil)
-					if err != nil {
-						errs <- err
-						return
-					}
-					if got != per {
-						errs <- io.ErrUnexpectedEOF
-					}
-				}()
-			}
-			wg.Wait()
-			close(errs)
-			for err := range errs {
+			join := testkit.GoN(n, func(i int) error {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				stream, err := client.Download(ctx, &pb.DownloadRequest{TotalBytes: per, ChunkSize: 64 << 10})
 				if err != nil {
-					t.Fatalf("concurrent download: %v", err)
+					return err
 				}
+				got, err := drainDownload(stream, nil)
+				if err != nil {
+					return err
+				}
+				if got != per {
+					return io.ErrUnexpectedEOF
+				}
+				return nil
+			})
+			if err := join(); err != nil {
+				t.Fatalf("concurrent download: %v", err)
 			}
 		})
 	}
@@ -128,36 +116,34 @@ func TestServerStreamCancel(t *testing.T) {
 			client, cleanup := tr.newClient(t)
 			defer cleanup()
 
-			ctx, cancel := context.WithCancel(context.Background())
-			stream, err := client.Download(ctx, &pb.DownloadRequest{TotalBytes: 512 << 10, ChunkSize: 64 << 10})
-			if err != nil {
-				t.Fatalf("Download: %v", err)
-			}
-			for i := 0; i < 3; i++ {
-				if _, err := stream.Recv(); err != nil {
-					t.Fatalf("early recv %d: %v", i, err)
+			testkit.Run(t, func() error {
+				ctx, cancel := context.WithCancel(context.Background())
+				stream := testkit.Must(client.Download(ctx, &pb.DownloadRequest{TotalBytes: 512 << 10, ChunkSize: 64 << 10}))
+				for i := 0; i < 3; i++ {
+					testkit.Must(stream.Recv())
 				}
-			}
-			cancel()
+				cancel()
 
-			// After cancel, Recv must return a terminal error promptly. Buffered chunks
-			// may still be in flight, so drain until the error rather than asserting on a
-			// single Recv, which can return buffered data before the cancellation lands.
-			done := make(chan error, 1)
-			go func() {
-				for {
-					if _, e := stream.Recv(); e != nil {
-						done <- e
-						return
+				// After cancel, Recv must return a terminal error promptly. Buffered chunks
+				// may still be in flight, so drain until the error rather than asserting on a
+				// single Recv, which can return buffered data before the cancellation lands.
+				done := make(chan error, 1)
+				go func() {
+					for {
+						if _, e := stream.Recv(); e != nil {
+							done <- e
+							return
+						}
 					}
+				}()
+				select {
+				case <-done:
+					// Recv returned a terminal error: the client is not stuck.
+					return nil
+				case <-time.After(5 * time.Second):
+					return fmt.Errorf("client Recv did not return an error after cancel")
 				}
-			}()
-			select {
-			case <-done:
-				// Recv returned a terminal error: the client is not stuck.
-			case <-time.After(5 * time.Second):
-				t.Fatal("client Recv did not return an error after cancel")
-			}
+			})
 		})
 	}
 }
@@ -178,15 +164,13 @@ func TestEchoCornerCases(t *testing.T) {
 			t.Run(tr.name+"/"+pc.name, func(t *testing.T) {
 				client, cleanup := tr.newClient(t)
 				defer cleanup()
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				reply, err := client.Echo(ctx, &pb.EchoRequest{Payload: pc.p})
-				if err != nil {
-					t.Fatalf("Echo: %v", err)
-				}
-				if !bytes.Equal(reply.Payload, pc.p) {
-					t.Fatalf("mismatch: got %d bytes want %d", len(reply.Payload), len(pc.p))
-				}
+
+				testkit.Run(t, func() error {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					reply := testkit.Must(client.Echo(ctx, &pb.EchoRequest{Payload: pc.p}))
+					return fp.BytesEqual("echo", reply.Payload, pc.p)
+				})
 			})
 		}
 	}

@@ -10,9 +10,11 @@ package transport
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
@@ -25,42 +27,42 @@ func TestMissReadUnderBulk(t *testing.T) {
 	quicAddr, tcpAddr, stop := twoChannelServers(t, serverID, clientID.Fingerprint())
 	defer stop()
 
-	ctx := context.Background()
-	m, err := DialControl(ctx, quicAddr, clientID, serverID.Fingerprint())
-	if err != nil {
-		t.Fatalf("DialControl: %v", err)
-	}
-	defer m.Close()
-	if err := m.DialBulk(ctx, tcpAddr); err != nil {
-		t.Fatalf("DialBulk: %v", err)
-	}
-
-	// Saturate the TCP bulk channel in the background.
-	bulk := pb.NewBenchServiceClient(m.BulkConn())
-	stopBulk := saturateBulk(ctx, bulk, 64<<20)
-	defer stopBulk()
-	time.Sleep(200 * time.Millisecond)
-
-	// Cache-miss reads over the QUIC interactive channel, under the bulk load.
-	const n = 40
-	const readLen = 512 << 10 // KeibiDrop's block: the first chunk fetched on a miss
-	lat := make([]time.Duration, 0, n)
-	for i := 0; i < n; i++ {
-		off := uint64(i) * readLen
-		c, cancel := context.WithTimeout(ctx, 5*time.Second)
-		t0 := time.Now()
-		data, err := m.MissRead(c, off, readLen)
-		d := time.Since(t0)
-		cancel()
-		if err != nil {
-			t.Fatalf("miss read %d: %v", i, err)
+	testkit.Run(t, func() error {
+		ctx := context.Background()
+		m := testkit.Must(DialControl(ctx, quicAddr, clientID, serverID.Fingerprint()))
+		defer m.Close()
+		if err := m.DialBulk(ctx, tcpAddr); err != nil {
+			return err
 		}
-		if len(data) != readLen || !verifyRange(data, off) {
-			t.Fatalf("miss read %d: wrong bytes (len %d)", i, len(data))
-		}
-		lat = append(lat, d)
-	}
 
-	t.Logf("512 KiB cache-miss read over QUIC, under saturating TCP bulk (loopback):")
-	t.Logf("  p50=%v  p99=%v  max=%v  (byte-correct)", pctile(lat, .5), pctile(lat, .99), pctile(lat, 1))
+		// Saturate the TCP bulk channel in the background.
+		bulk := pb.NewBenchServiceClient(m.BulkConn())
+		stopBulk := saturateBulk(ctx, bulk, 64<<20)
+		defer stopBulk()
+		time.Sleep(200 * time.Millisecond)
+
+		// Cache-miss reads over the QUIC interactive channel, under the bulk load.
+		const n = 40
+		const readLen = 512 << 10 // KeibiDrop's block: the first chunk fetched on a miss
+		lat := make([]time.Duration, 0, n)
+		for i := 0; i < n; i++ {
+			off := uint64(i) * readLen
+			c, cancel := context.WithTimeout(ctx, 5*time.Second)
+			t0 := time.Now()
+			data, err := m.MissRead(c, off, readLen)
+			d := time.Since(t0)
+			cancel()
+			if err != nil {
+				return fmt.Errorf("miss read %d: %w", i, err)
+			}
+			if len(data) != readLen || !verifyRange(data, off) {
+				return fmt.Errorf("miss read %d: wrong bytes (len %d)", i, len(data))
+			}
+			lat = append(lat, d)
+		}
+
+		t.Logf("512 KiB cache-miss read over QUIC, under saturating TCP bulk (loopback):")
+		t.Logf("  p50=%v  p99=%v  max=%v  (byte-correct)", pctile(lat, .5), pctile(lat, .99), pctile(lat, 1))
+		return nil
+	})
 }
