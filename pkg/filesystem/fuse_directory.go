@@ -3284,7 +3284,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		}
 		accepted := incomingMtime > existingMtime
 		// The edit is concurrent when its declared base is older than the
-		// version we hold: it provably never saw our bytes (model v2, T3b).
+		// version we hold: it provably never saw our bytes.
 		// Turn-taking edits carry base == our version and never trip this.
 		conflict := accepted && wasLocalNewer && baseMtimeNs != 0 && baseMtimeNs < existingMtime
 		if fuseOpLog {

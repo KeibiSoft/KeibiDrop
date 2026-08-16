@@ -9,6 +9,7 @@ package identity
 import (
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,13 +19,8 @@ func TestAddAndLookup(t *testing.T) {
 	dir := t.TempDir()
 	src := newTestMasterKeySource(t)
 	ab, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("LoadAddressBook: %v", err)
-	}
-
-	if err := ab.Add("Alice", "fp-alice-1234"); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, ab.Add("Alice", "fp-alice-1234"))
 
 	c := ab.Lookup("fp-alice-1234")
 	require.NotNil(t, c)
@@ -35,153 +31,101 @@ func TestAddDuplicate(t *testing.T) {
 	dir := t.TempDir()
 	src := newTestMasterKeySource(t)
 	ab, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("LoadAddressBook: %v", err)
-	}
+	require.NoError(t, err)
 
-	if err := ab.Add("Alice", "fp-alice-1234"); err != nil {
-		t.Fatalf("first Add: %v", err)
-	}
-	if err := ab.Add("Alice2", "fp-alice-1234"); err == nil {
-		t.Fatal("expected error on duplicate fingerprint")
-	}
+	require.NoError(t, ab.Add("Alice", "fp-alice-1234"))
+	require.Error(t, ab.Add("Alice2", "fp-alice-1234"), "expected error on duplicate fingerprint")
 }
 
 func TestRemove(t *testing.T) {
 	dir := t.TempDir()
 	src := newTestMasterKeySource(t)
 	ab, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("LoadAddressBook: %v", err)
-	}
+	require.NoError(t, err)
 
 	_ = ab.Add("Alice", "fp-alice")
 	_ = ab.Add("Bob", "fp-bob")
 
-	if err := ab.Remove("fp-alice"); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
-
-	if ab.Lookup("fp-alice") != nil {
-		t.Fatal("Alice should be removed")
-	}
-	if ab.Lookup("fp-bob") == nil {
-		t.Fatal("Bob should still exist")
-	}
-	if ab.Count() != 1 {
-		t.Fatalf("expected 1 contact, got %d", ab.Count())
-	}
+	require.NoError(t, ab.Remove("fp-alice"))
+	require.Nil(t, ab.Lookup("fp-alice"), "Alice should be removed")
+	require.NotNil(t, ab.Lookup("fp-bob"), "Bob should still exist")
+	require.Equal(t, 1, ab.Count())
 }
 
 func TestRemoveNotFound(t *testing.T) {
 	dir := t.TempDir()
 	src := newTestMasterKeySource(t)
 	ab, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("LoadAddressBook: %v", err)
-	}
+	require.NoError(t, err)
 
-	if err := ab.Remove("nonexistent"); err == nil {
-		t.Fatal("expected error removing nonexistent contact")
-	}
+	require.Error(t, ab.Remove("nonexistent"), "expected error removing nonexistent contact")
 }
 
 func TestList(t *testing.T) {
 	dir := t.TempDir()
 	src := newTestMasterKeySource(t)
 	ab, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("LoadAddressBook: %v", err)
-	}
+	require.NoError(t, err)
 
 	_ = ab.Add("Alice", "fp-alice")
 	_ = ab.Add("Bob", "fp-bob")
 
 	contacts := ab.List()
-	if len(contacts) != 2 {
-		t.Fatalf("expected 2 contacts, got %d", len(contacts))
-	}
+	require.Len(t, contacts, 2)
 
 	// Verify it's a copy (mutations don't affect the address book).
 	contacts[0].Name = "MUTATED"
 	original := ab.Lookup("fp-alice")
-	if original.Name == "MUTATED" {
-		t.Fatal("List returned a reference, not a copy")
-	}
+	require.NotEqual(t, "MUTATED", original.Name, "List returned a reference, not a copy")
 }
 
 func TestPersistence(t *testing.T) {
 	dir := t.TempDir()
 	src := newTestMasterKeySource(t)
 
-	// Create and populate.
-	ab1, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("LoadAddressBook: %v", err)
-	}
-	_ = ab1.Add("Alice", "fp-alice")
-	_ = ab1.Add("Bob", "fp-bob")
-	if err := ab1.Save(); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+	testkit.Run(t, func() error {
+		// Create and populate.
+		ab1 := testkit.Must(LoadAddressBook(dir, src))
+		_ = ab1.Add("Alice", "fp-alice")
+		_ = ab1.Add("Bob", "fp-bob")
+		require.NoError(t, ab1.Save())
 
-	// Reload from disk.
-	ab2, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("second LoadAddressBook: %v", err)
-	}
+		// Reload from disk.
+		ab2 := testkit.Must(LoadAddressBook(dir, src))
+		require.Equal(t, 2, ab2.Count())
 
-	if ab2.Count() != 2 {
-		t.Fatalf("expected 2 contacts after reload, got %d", ab2.Count())
-	}
-
-	c := ab2.Lookup("fp-alice")
-	if c == nil || c.Name != "Alice" {
-		t.Fatal("Alice not found after reload")
-	}
+		c := ab2.Lookup("fp-alice")
+		require.True(t, c != nil && c.Name == "Alice", "Alice not found after reload")
+		return nil
+	})
 }
 
 func TestUpdateLastSeen(t *testing.T) {
 	dir := t.TempDir()
 	src := newTestMasterKeySource(t)
 	ab, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("LoadAddressBook: %v", err)
-	}
+	require.NoError(t, err)
 
 	_ = ab.Add("Alice", "fp-alice")
 
 	c := ab.Lookup("fp-alice")
-	if !c.LastSeen.IsZero() {
-		t.Fatal("LastSeen should be zero initially")
-	}
+	require.True(t, c.LastSeen.IsZero(), "LastSeen should be zero initially")
 
 	ab.UpdateLastSeen("fp-alice")
 
 	c = ab.Lookup("fp-alice")
-	if c.LastSeen.IsZero() {
-		t.Fatal("LastSeen should be set after update")
-	}
+	require.False(t, c.LastSeen.IsZero(), "LastSeen should be set after update")
 }
 
 func TestEmptyAddressBook(t *testing.T) {
 	dir := t.TempDir()
 	src := newTestMasterKeySource(t)
 	ab, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("LoadAddressBook: %v", err)
-	}
+	require.NoError(t, err)
 
-	if ab.Count() != 0 {
-		t.Fatalf("expected 0 contacts, got %d", ab.Count())
-	}
-	if ab.Lookup("anything") != nil {
-		t.Fatal("Lookup should return nil on empty book")
-	}
-	contacts := ab.List()
-	if len(contacts) != 0 {
-		t.Fatalf("expected empty list, got %d", len(contacts))
-	}
+	require.Equal(t, 0, ab.Count())
+	require.Nil(t, ab.Lookup("anything"), "Lookup should return nil on empty book")
+	require.Empty(t, ab.List())
 }
 
 // ── New v2 tests ─────────────────────────────────────────────────────────────
@@ -190,21 +134,14 @@ func TestContactsV2RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	src := newTestMasterKeySource(t)
 
-	ab, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("LoadAddressBook: %v", err)
-	}
-	_ = ab.Add("Charlie", "fp-charlie")
-	if err := ab.Save(); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+	testkit.Run(t, func() error {
+		ab := testkit.Must(LoadAddressBook(dir, src))
+		_ = ab.Add("Charlie", "fp-charlie")
+		require.NoError(t, ab.Save())
 
-	ab2, err := LoadAddressBook(dir, src)
-	if err != nil {
-		t.Fatalf("second LoadAddressBook: %v", err)
-	}
-	c := ab2.Lookup("fp-charlie")
-	if c == nil || c.Name != "Charlie" {
-		t.Fatal("contact not found after v2 round-trip")
-	}
+		ab2 := testkit.Must(LoadAddressBook(dir, src))
+		c := ab2.Lookup("fp-charlie")
+		require.True(t, c != nil && c.Name == "Charlie", "contact not found after v2 round-trip")
+		return nil
+	})
 }

@@ -10,10 +10,10 @@
 package identity
 
 import (
-	"crypto/rand"
 	"errors"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -24,10 +24,8 @@ func randomEnvelopeHeader(t *testing.T, kdfID uint8) EnvelopeHeader {
 	h.KDFID = kdfID
 	h.Flags = 0x00
 	h.KDFParam = 0x00
-	_, err := rand.Read(h.Salt[:])
-	require.NoError(t, err)
-	_, err = rand.Read(h.Nonce[:])
-	require.NoError(t, err)
+	copy(h.Salt[:], testkit.RandBytes(t, len(h.Salt)))
+	copy(h.Nonce[:], testkit.RandBytes(t, len(h.Nonce)))
 	return h
 }
 
@@ -153,9 +151,7 @@ func FuzzParseEnvelope(f *testing.F) {
 func TestEnvelopeAADBindsHeader(t *testing.T) {
 	req := require.New(t)
 
-	key := make([]byte, kbc.KeySize)
-	_, err := rand.Read(key)
-	req.NoError(err)
+	key := testkit.RandBytes(t, kbc.KeySize)
 
 	h := randomEnvelopeHeader(t, KDFKeychain)
 	plaintext := []byte("sensitive identity data")

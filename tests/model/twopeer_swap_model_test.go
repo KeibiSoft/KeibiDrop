@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 
-// Model v2: the copy-then-swap save (temp file with a declared base version) and
+// Models the copy-then-swap save (temp file with a declared base version) and
 // receiver-side stale-base detection. An announcement carries the base its edit
 // started from. The receiver compares the base with its current version: an older
 // base is a provable conflict, and the conflict-copy policy preserves the loser.
-// The checked claim (T3b): with the policy on, no interleaving loses a version
+// The checked claim: with the policy on, no interleaving loses a version
 // silently: every overwritten version is causally superseded or preserved.
 package model
 
