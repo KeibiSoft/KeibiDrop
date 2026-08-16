@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/stretchr/testify/require"
 )
@@ -39,8 +41,7 @@ func SetupPeerPairViaConnect(t *testing.T, isFuse bool) *TestPair {
 	aliceMount := t.TempDir()
 	bobMount := t.TempDir()
 
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})
-	logger := slog.New(handler)
+	logger := testkit.StdoutLogger(slog.LevelWarn)
 
 	aliceInPort := getFreePortInRange(t, 26100, 26249)
 	aliceOutPort := getFreePortInRange(t, 26250, 26399)
@@ -71,27 +72,17 @@ func SetupPeerPairViaConnect(t *testing.T, isFuse bool) *TestPair {
 	go func() { defer runWg.Done(); kdAlice.Run() }()
 	go func() { defer runWg.Done(); kdBob.Run() }()
 
-	// Both call Connect() simultaneously — no WaitForCondition needed.
-	// The retry loop in JoinRoom handles the timing.
-	aliceReady := make(chan error, 1)
-	bobReady := make(chan error, 1)
+	// Both call Connect() simultaneously. No WaitForCondition is needed:
+	// the retry loop in JoinRoom handles the timing.
+	aliceReady := testkit.Go(func() error { return kdAlice.Connect() })
+	bobReady := testkit.Go(func() error { return kdBob.Connect() })
 
-	go func() { aliceReady <- kdAlice.Connect() }()
-	go func() { bobReady <- kdBob.Connect() }()
-
-	select {
-	case err := <-aliceReady:
-		require.NoError(err, "Alice Connect failed")
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for Alice Connect")
-	}
-
-	select {
-	case err := <-bobReady:
-		require.NoError(err, "Bob Connect failed")
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for Bob Connect")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return testkit.WithinCtx(ctx, "Alice Connect", aliceReady) },
+			func() error { return testkit.WithinCtx(ctx, "Bob Connect", bobReady) },
+		)
+	})
 
 	// The Run() goroutine sets the running flag after it receives the Start
 	// signal. Wait for both flags: a Stop() before the flag is set is a no-op,
@@ -162,7 +153,7 @@ func TestConnect_FileTransferWorks(t *testing.T) {
 func TestConnect_IdenticalFingerprints(t *testing.T) {
 	require := require.New(t)
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testkit.StdoutLogger(slog.LevelError)
 	relayURL, _ := url.Parse("https://localhost:9999")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -184,7 +175,7 @@ func TestConnect_IdenticalFingerprints(t *testing.T) {
 func TestConnect_EmptyPeerFingerprint(t *testing.T) {
 	require := require.New(t)
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testkit.StdoutLogger(slog.LevelError)
 	relayURL, _ := url.Parse("https://localhost:9999")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -208,8 +199,7 @@ func TestConnect_RetryOn404(t *testing.T) {
 	relayURL, err := url.Parse(relay.URL())
 	require.NoError(err)
 
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})
-	logger := slog.New(handler)
+	logger := testkit.StdoutLogger(slog.LevelWarn)
 
 	aliceInPort := getFreePortInRange(t, 26100, 26249)
 	aliceOutPort := getFreePortInRange(t, 26250, 26399)
@@ -252,30 +242,21 @@ func TestConnect_RetryOn404(t *testing.T) {
 	// Start joiner FIRST — relay has nothing yet, so it will get 404s and retry.
 	require.Equal(0, relay.EntryCount(), "relay should be empty before creator registers")
 
-	joinerReady := make(chan error, 1)
-	go func() { joinerReady <- joiner.Connect() }()
+	joinerReady := testkit.Go(func() error { return joiner.Connect() })
 
 	// Wait a moment to let joiner hit some 404 retries, then start creator.
 	time.Sleep(2 * time.Second)
 	require.Equal(0, relay.EntryCount(), "relay should still be empty")
 
-	creatorReady := make(chan error, 1)
-	go func() { creatorReady <- creator.Connect() }()
+	creatorReady := testkit.Go(func() error { return creator.Connect() })
 
 	// Both should eventually succeed.
-	select {
-	case err := <-creatorReady:
-		require.NoError(err, "Creator Connect failed")
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for creator Connect")
-	}
-
-	select {
-	case err := <-joinerReady:
-		require.NoError(err, "Joiner Connect failed")
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for joiner Connect")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return testkit.WithinCtx(ctx, "creator Connect", creatorReady) },
+			func() error { return testkit.WithinCtx(ctx, "joiner Connect", joinerReady) },
+		)
+	})
 
 	WaitForCondition(t, 5*time.Second, 100*time.Millisecond, func() bool {
 		return creator.IsRunning() && joiner.IsRunning()
@@ -286,12 +267,8 @@ func TestConnect_RetryOn404(t *testing.T) {
 		kdBob.StopConnectionResilience()
 		kdAlice.Shutdown()
 		kdBob.Shutdown()
-		done := make(chan struct{})
-		go func() { runWg.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
+		// A timeout is not a failure here. Teardown proceeds either way.
+		_ = testkit.Within(5*time.Second, "peer Run goroutines", func() error { runWg.Wait(); return nil })
 		relay.Close()
 	})
 }

@@ -137,7 +137,8 @@ func TestEditRemoteFileWithBase_CurrentBaseNoConflict(t *testing.T) {
 	require.Empty(t, conflictSiblings(t, d.LocalDownloadFolder))
 }
 
-// Base 0 (unknown, pre-T3b peer): plain LWW, never a conflict copy.
+// Base 0 means the peer declares no base, as older peers do. Plain LWW then,
+// never a conflict copy.
 func TestEditRemoteFileWithBase_UnknownBaseNoConflict(t *testing.T) {
 	d, _ := newConflictTestDir(t)
 	seedLocalFile(t, d, "/doc.txt", "local-authoritative-content")

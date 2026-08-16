@@ -8,37 +8,26 @@ package tests
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
 
 // generateTestKeyPairs creates two sets of keys (Alice and Bob) for testing.
-func generateTestKeyPairs(t *testing.T) (*crypto.OwnKeys, *crypto.PeerKeys, *crypto.OwnKeys, *crypto.PeerKeys) {
-	t.Helper()
+// The caller must run inside testkit.Run or testkit.Within, which recover the
+// panic Must raises on a key generation failure.
+func generateTestKeyPairs() (*crypto.OwnKeys, *crypto.PeerKeys, *crypto.OwnKeys, *crypto.PeerKeys) {
+	aliceKemPriv, aliceKemPub := testkit.Must2(crypto.GenerateMLKEMKeypair())
+	aliceX25519Priv, aliceX25519Pub := testkit.Must2(crypto.GenerateX25519Keypair())
 
-	// Alice's keys.
-	aliceKemPriv, aliceKemPub, err := crypto.GenerateMLKEMKeypair()
-	if err != nil {
-		t.Fatalf("Failed to generate Alice ML-KEM keys: %v", err)
-	}
-	aliceX25519Priv, aliceX25519Pub, err := crypto.GenerateX25519Keypair()
-	if err != nil {
-		t.Fatalf("Failed to generate Alice X25519 keys: %v", err)
-	}
-
-	// Bob's keys.
-	bobKemPriv, bobKemPub, err := crypto.GenerateMLKEMKeypair()
-	if err != nil {
-		t.Fatalf("Failed to generate Bob ML-KEM keys: %v", err)
-	}
-	bobX25519Priv, bobX25519Pub, err := crypto.GenerateX25519Keypair()
-	if err != nil {
-		t.Fatalf("Failed to generate Bob X25519 keys: %v", err)
-	}
+	bobKemPriv, bobKemPub := testkit.Must2(crypto.GenerateMLKEMKeypair())
+	bobX25519Priv, bobX25519Pub := testkit.Must2(crypto.GenerateX25519Keypair())
 
 	aliceOwn := &crypto.OwnKeys{
 		MlKemPrivate:  aliceKemPriv,
@@ -70,358 +59,167 @@ func generateTestKeyPairs(t *testing.T) (*crypto.OwnKeys, *crypto.PeerKeys, *cry
 // TestRekeyRequest_KeyDerivation tests that both parties derive the same key from a rekey request.
 func TestRekeyRequest_KeyDerivation(t *testing.T) {
 	t.Parallel()
-	timeout := time.After(10 * time.Second)
-	done := make(chan bool)
+	testkit.Run(t, func() error {
+		return testkit.Within(10*time.Second, "rekey request key derivation", func() error {
+			aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs()
 
-	go func() {
-		aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs(t)
+			req, aliceNewKey := testkit.Must2(session.CreateRekeyRequest(aliceOwn, alicePeer, 1, crypto.CipherChaCha20))
+			if err := fp.Len("alice new key", aliceNewKey, 32); err != nil {
+				return err
+			}
 
-		// Alice creates a rekey request.
-		req, aliceNewKey, err := session.CreateRekeyRequest(aliceOwn, alicePeer, 1, crypto.CipherChaCha20)
-		if err != nil {
-			t.Errorf("CreateRekeyRequest failed: %v", err)
-			done <- false
-			return
-		}
+			resp, bobNewKey := testkit.Must2(session.ProcessRekeyRequest(req, bobOwn, bobPeer, crypto.CipherChaCha20))
 
-		if len(aliceNewKey) != 32 {
-			t.Errorf("Expected 32-byte key, got %d", len(aliceNewKey))
-			done <- false
-			return
-		}
-
-		// Bob processes the request.
-		resp, bobNewKey, err := session.ProcessRekeyRequest(req, bobOwn, bobPeer, crypto.CipherChaCha20)
-		if err != nil {
-			t.Errorf("ProcessRekeyRequest failed: %v", err)
-			done <- false
-			return
-		}
-
-		if resp == nil {
-			t.Error("ProcessRekeyRequest returned nil response")
-			done <- false
-			return
-		}
-
-		// Both keys should match for the same direction.
-		if !bytes.Equal(aliceNewKey, bobNewKey) {
-			t.Error("Alice and Bob derived different keys")
-			done <- false
-			return
-		}
-
-		done <- true
-	}()
-
-	select {
-	case <-timeout:
-		t.Fatal("Test timed out - possible deadlock")
-	case success := <-done:
-		if !success {
-			t.Fatal("Test failed")
-		}
-	}
+			// Both keys must match for the same direction.
+			return fp.All(
+				fp.True("response is not nil", resp != nil),
+				fp.BytesEqual("alice and bob derive the same key", aliceNewKey, bobNewKey),
+			)
+		})
+	})
 }
 
 // TestRekeyResponse_KeyDerivation tests full rekey handshake.
 func TestRekeyResponse_KeyDerivation(t *testing.T) {
 	t.Parallel()
-	timeout := time.After(10 * time.Second)
-	done := make(chan bool)
+	testkit.Run(t, func() error {
+		return testkit.Within(10*time.Second, "rekey response key derivation", func() error {
+			aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs()
 
-	go func() {
-		aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs(t)
+			req, _ := testkit.Must2(session.CreateRekeyRequest(aliceOwn, alicePeer, 1, crypto.CipherChaCha20))
+			resp, _ := testkit.Must2(session.ProcessRekeyRequest(req, bobOwn, bobPeer, crypto.CipherChaCha20))
+			newKey := testkit.Must(session.ProcessRekeyResponse(resp, aliceOwn, alicePeer, crypto.CipherChaCha20))
 
-		// Alice initiates rekey.
-		req, _, err := session.CreateRekeyRequest(aliceOwn, alicePeer, 1, crypto.CipherChaCha20)
-		if err != nil {
-			t.Errorf("CreateRekeyRequest failed: %v", err)
-			done <- false
-			return
-		}
-
-		// Bob processes request and creates response.
-		resp, _, err := session.ProcessRekeyRequest(req, bobOwn, bobPeer, crypto.CipherChaCha20)
-		if err != nil {
-			t.Errorf("ProcessRekeyRequest failed: %v", err)
-			done <- false
-			return
-		}
-
-		// Alice processes Bob's response.
-		newKey, err := session.ProcessRekeyResponse(resp, aliceOwn, alicePeer, crypto.CipherChaCha20)
-		if err != nil {
-			t.Errorf("ProcessRekeyResponse failed: %v", err)
-			done <- false
-			return
-		}
-
-		if len(newKey) != 32 {
-			t.Errorf("Expected 32-byte key, got %d", len(newKey))
-			done <- false
-			return
-		}
-
-		done <- true
-	}()
-
-	select {
-	case <-timeout:
-		t.Fatal("Test timed out - possible deadlock")
-	case success := <-done:
-		if !success {
-			t.Fatal("Test failed")
-		}
-	}
+			return fp.Len("new key", newKey, 32)
+		})
+	})
 }
 
 // TestRekeyRequest_MissingSeeds tests error handling for malformed requests.
 func TestRekeyRequest_MissingSeeds(t *testing.T) {
 	t.Parallel()
-	timeout := time.After(5 * time.Second)
-	done := make(chan bool)
+	testkit.Run(t, func() error {
+		return testkit.Within(5*time.Second, "rekey request missing seeds", func() error {
+			_, _, bobOwn, bobPeer := generateTestKeyPairs()
 
-	go func() {
-		_, _, bobOwn, bobPeer := generateTestKeyPairs(t)
+			// Malformed request is missing the x25519 seed.
+			badReq := &bindings.RekeyRequest{
+				EncSeeds: map[string][]byte{
+					"mlkem": make([]byte, 32),
+				},
+				Epoch: 1,
+			}
 
-		// Create malformed request missing x25519 seed.
-		badReq := &bindings.RekeyRequest{
-			EncSeeds: map[string][]byte{
-				"mlkem": make([]byte, 32),
-				// Missing "x25519"
-			},
-			Epoch: 1,
-		}
-
-		_, _, err := session.ProcessRekeyRequest(badReq, bobOwn, bobPeer, crypto.CipherChaCha20)
-		if err == nil {
-			t.Error("Expected error for missing x25519 seed")
-			done <- false
-			return
-		}
-
-		done <- true
-	}()
-
-	select {
-	case <-timeout:
-		t.Fatal("Test timed out")
-	case success := <-done:
-		if !success {
-			t.Fatal("Test failed")
-		}
-	}
+			_, _, err := session.ProcessRekeyRequest(badReq, bobOwn, bobPeer, crypto.CipherChaCha20)
+			return fp.WantErr("reject request missing x25519 seed", err)
+		})
+	})
 }
 
 // TestRekeyEpochIncreases tests that epoch values are monotonic.
 func TestRekeyEpochIncreases(t *testing.T) {
 	t.Parallel()
-	timeout := time.After(10 * time.Second)
-	done := make(chan bool)
+	testkit.Run(t, func() error {
+		return testkit.Within(10*time.Second, "rekey epoch increases", func() error {
+			aliceOwn, alicePeer, _, _ := generateTestKeyPairs()
 
-	go func() {
-		aliceOwn, alicePeer, _, _ := generateTestKeyPairs(t)
+			var prevEpoch uint64
+			for i := 1; i <= 5; i++ {
+				epoch := uint64(i)
+				req, _ := testkit.Must2(session.CreateRekeyRequest(aliceOwn, alicePeer, epoch, crypto.CipherChaCha20))
 
-		var prevEpoch uint64
-		for i := 1; i <= 5; i++ {
-			epoch := uint64(i)
-			req, _, err := session.CreateRekeyRequest(aliceOwn, alicePeer, epoch, crypto.CipherChaCha20)
-			if err != nil {
-				t.Errorf("CreateRekeyRequest failed at epoch %d: %v", epoch, err)
-				done <- false
-				return
+				if i > 1 {
+					if err := fp.True("epoch increases", req.Epoch > prevEpoch); err != nil {
+						return err
+					}
+				}
+				prevEpoch = req.Epoch
 			}
-
-			if req.Epoch <= prevEpoch && i > 1 {
-				t.Errorf("Epoch should increase: prev=%d, current=%d", prevEpoch, req.Epoch)
-				done <- false
-				return
-			}
-			prevEpoch = req.Epoch
-		}
-
-		done <- true
-	}()
-
-	select {
-	case <-timeout:
-		t.Fatal("Test timed out")
-	case success := <-done:
-		if !success {
-			t.Fatal("Test failed")
-		}
-	}
+			return nil
+		})
+	})
 }
 
 // TestMultipleRekeys tests that multiple consecutive rekeys work.
 func TestMultipleRekeys(t *testing.T) {
 	t.Parallel()
-	timeout := time.After(15 * time.Second)
-	done := make(chan bool)
+	testkit.Run(t, func() error {
+		return testkit.Within(15*time.Second, "multiple rekeys", func() error {
+			aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs()
 
-	go func() {
-		aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs(t)
+			var prevAliceKey, prevBobKey []byte
 
-		var prevAliceKey, prevBobKey []byte
+			for i := 1; i <= 3; i++ {
+				epoch := uint64(i)
 
-		for i := 1; i <= 3; i++ {
-			epoch := uint64(i)
+				req, aliceKey := testkit.Must2(session.CreateRekeyRequest(aliceOwn, alicePeer, epoch, crypto.CipherChaCha20))
+				_, bobKey := testkit.Must2(session.ProcessRekeyRequest(req, bobOwn, bobPeer, crypto.CipherChaCha20))
 
-			// Alice initiates.
-			req, aliceKey, err := session.CreateRekeyRequest(aliceOwn, alicePeer, epoch, crypto.CipherChaCha20)
-			if err != nil {
-				t.Errorf("Rekey %d CreateRekeyRequest failed: %v", i, err)
-				done <- false
-				return
+				if err := fp.True(fmt.Sprintf("rekey %d keys match", i), bytes.Equal(aliceKey, bobKey)); err != nil {
+					return err
+				}
+
+				// Forward secrecy: a rekeyed key must differ from the previous epoch's key.
+				if prevAliceKey != nil {
+					if err := fp.False(fmt.Sprintf("rekey %d key same as previous", i), bytes.Equal(aliceKey, prevAliceKey)); err != nil {
+						return err
+					}
+				}
+
+				prevAliceKey = aliceKey
+				prevBobKey = bobKey
 			}
 
-			// Bob processes.
-			resp, bobKey, err := session.ProcessRekeyRequest(req, bobOwn, bobPeer, crypto.CipherChaCha20)
-			if err != nil {
-				t.Errorf("Rekey %d ProcessRekeyRequest failed: %v", i, err)
-				done <- false
-				return
-			}
-
-			// Keys should match.
-			if !bytes.Equal(aliceKey, bobKey) {
-				t.Errorf("Rekey %d: keys don't match", i)
-				done <- false
-				return
-			}
-
-			// Keys should differ from previous.
-			if prevAliceKey != nil && bytes.Equal(aliceKey, prevAliceKey) {
-				t.Errorf("Rekey %d: key same as previous (no forward secrecy)", i)
-				done <- false
-				return
-			}
-
-			prevAliceKey = aliceKey
-			prevBobKey = bobKey
-			_ = resp // used for response processing
-		}
-
-		// Verify we don't have nil keys.
-		if prevAliceKey == nil || prevBobKey == nil {
-			t.Error("Final keys are nil")
-			done <- false
-			return
-		}
-
-		done <- true
-	}()
-
-	select {
-	case <-timeout:
-		t.Fatal("Test timed out - possible deadlock in rekey chain")
-	case success := <-done:
-		if !success {
-			t.Fatal("Test failed")
-		}
-	}
+			return fp.True("final keys are set", prevAliceKey != nil && prevBobKey != nil)
+		})
+	})
 }
 
 // TestCompromisedKeyLimitedExposure tests forward secrecy property.
 func TestCompromisedKeyLimitedExposure(t *testing.T) {
 	t.Parallel()
-	timeout := time.After(10 * time.Second)
-	done := make(chan bool)
+	testkit.Run(t, func() error {
+		return testkit.Within(10*time.Second, "compromised key limited exposure", func() error {
+			aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs()
 
-	go func() {
-		aliceOwn, alicePeer, bobOwn, bobPeer := generateTestKeyPairs(t)
+			req1, key1, _ := session.CreateRekeyRequest(aliceOwn, alicePeer, 1, crypto.CipherChaCha20)
+			_, bobKey1, _ := session.ProcessRekeyRequest(req1, bobOwn, bobPeer, crypto.CipherChaCha20)
 
-		// Generate key for epoch 1.
-		req1, key1, _ := session.CreateRekeyRequest(aliceOwn, alicePeer, 1, crypto.CipherChaCha20)
-		_, bobKey1, _ := session.ProcessRekeyRequest(req1, bobOwn, bobPeer, crypto.CipherChaCha20)
+			req2, key2, _ := session.CreateRekeyRequest(aliceOwn, alicePeer, 2, crypto.CipherChaCha20)
+			_, bobKey2, _ := session.ProcessRekeyRequest(req2, bobOwn, bobPeer, crypto.CipherChaCha20)
 
-		// Generate key for epoch 2.
-		req2, key2, _ := session.CreateRekeyRequest(aliceOwn, alicePeer, 2, crypto.CipherChaCha20)
-		_, bobKey2, _ := session.ProcessRekeyRequest(req2, bobOwn, bobPeer, crypto.CipherChaCha20)
+			if err := fp.All(
+				fp.BytesEqual("epoch 1 keys match", key1, bobKey1),
+				fp.BytesEqual("epoch 2 keys match", key2, bobKey2),
+				fp.False("keys differ between epochs, forward secrecy", bytes.Equal(key1, key2)),
+			); err != nil {
+				return err
+			}
 
-		// Verify keys match within each epoch.
-		if !bytes.Equal(key1, bobKey1) {
-			t.Error("Epoch 1 keys don't match")
-			done <- false
-			return
-		}
-		if !bytes.Equal(key2, bobKey2) {
-			t.Error("Epoch 2 keys don't match")
-			done <- false
-			return
-		}
+			testData := []byte("secret message for epoch 1")
+			encrypted1 := testkit.Must(crypto.Encrypt(key1, testData))
 
-		// Verify keys differ between epochs (forward secrecy).
-		if bytes.Equal(key1, key2) {
-			t.Error("Keys should differ between epochs for forward secrecy")
-			done <- false
-			return
-		}
-
-		// Encrypt data with key1.
-		testData := []byte("secret message for epoch 1")
-		encrypted1, err := crypto.Encrypt(key1, testData)
-		if err != nil {
-			t.Errorf("Encrypt with key1 failed: %v", err)
-			done <- false
-			return
-		}
-
-		// key2 should NOT decrypt data encrypted with key1.
-		_, err = crypto.Decrypt(key2, encrypted1)
-		if err == nil {
-			t.Error("key2 should not decrypt data from key1 (forward secrecy violation)")
-			done <- false
-			return
-		}
-
-		done <- true
-	}()
-
-	select {
-	case <-timeout:
-		t.Fatal("Test timed out")
-	case success := <-done:
-		if !success {
-			t.Fatal("Test failed")
-		}
-	}
+			// A later epoch's key must not decrypt an earlier epoch's data.
+			_, err := crypto.Decrypt(key2, encrypted1)
+			return fp.WantErr("decrypt with wrong epoch key", err)
+		})
+	})
 }
 
 // TestRekeyRequest_NilKeys tests error handling for nil keys.
 func TestRekeyRequest_NilKeys(t *testing.T) {
 	t.Parallel()
-	timeout := time.After(5 * time.Second)
-	done := make(chan bool)
+	testkit.Run(t, func() error {
+		return testkit.Within(5*time.Second, "rekey request nil keys", func() error {
+			_, _, err1 := session.CreateRekeyRequest(nil, &crypto.PeerKeys{}, 1, crypto.CipherChaCha20)
 
-	go func() {
-		// Test with nil OwnKeys.
-		_, _, err := session.CreateRekeyRequest(nil, &crypto.PeerKeys{}, 1, crypto.CipherChaCha20)
-		if err == nil {
-			t.Error("Expected error for nil OwnKeys")
-			done <- false
-			return
-		}
+			aliceOwn, _, _, _ := generateTestKeyPairs()
+			_, _, err2 := session.CreateRekeyRequest(aliceOwn, nil, 1, crypto.CipherChaCha20)
 
-		// Test with nil PeerKeys.
-		aliceOwn, _, _, _ := generateTestKeyPairs(t)
-		_, _, err = session.CreateRekeyRequest(aliceOwn, nil, 1, crypto.CipherChaCha20)
-		if err == nil {
-			t.Error("Expected error for nil PeerKeys")
-			done <- false
-			return
-		}
-
-		done <- true
-	}()
-
-	select {
-	case <-timeout:
-		t.Fatal("Test timed out")
-	case success := <-done:
-		if !success {
-			t.Fatal("Test failed")
-		}
-	}
+			return fp.All(
+				fp.WantErr("nil own keys rejected", err1),
+				fp.WantErr("nil peer keys rejected", err2),
+			)
+		})
+	})
 }

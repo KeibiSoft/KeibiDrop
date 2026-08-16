@@ -12,11 +12,12 @@ package crypto
 import (
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRatchetKeys_DeterministicAndDistinct(t *testing.T) {
-	ck0 := randomBytes(t, KeySize)
+	ck0 := testkit.RandBytes(t, KeySize)
 
 	ck1, mk1, err := RatchetKeys(ck0, 0x01, 1, nil)
 	require.NoError(t, err)
@@ -35,7 +36,7 @@ func TestRatchetKeys_DeterministicAndDistinct(t *testing.T) {
 }
 
 func TestRatchetKeys_DomainSeparation(t *testing.T) {
-	ck0 := randomBytes(t, KeySize)
+	ck0 := testkit.RandBytes(t, KeySize)
 
 	ck1, _, err := RatchetKeys(ck0, 0x01, 1, nil)
 	require.NoError(t, err)
@@ -50,9 +51,9 @@ func TestRatchetKeys_DomainSeparation(t *testing.T) {
 }
 
 func TestRatchetKeys_FoldMixesEntropy(t *testing.T) {
-	ck0 := randomBytes(t, KeySize)
-	s1 := randomBytes(t, KeySize)
-	s2 := randomBytes(t, KeySize)
+	ck0 := testkit.RandBytes(t, KeySize)
+	s1 := testkit.RandBytes(t, KeySize)
+	s2 := testkit.RandBytes(t, KeySize)
 
 	plainCK, plainMK, err := RatchetKeys(ck0, 0x01, 1, nil)
 	require.NoError(t, err)
@@ -76,13 +77,13 @@ func TestRatchetKeys_FoldMixesEntropy(t *testing.T) {
 }
 
 func TestRatchetKeys_RejectsShortChainKey(t *testing.T) {
-	short := randomBytes(t, KeySize-1)
+	short := testkit.RandBytes(t, KeySize-1)
 	_, _, err := RatchetKeys(short, 0x01, 1, nil)
 	require.Error(t, err, "a chain key shorter than 32 bytes must be rejected")
 }
 
 func TestRatchetKeys_RejectsWrongLengthFoldSecret(t *testing.T) {
-	ck0 := randomBytes(t, KeySize)
-	_, _, err := RatchetKeys(ck0, 0x01, 1, randomBytes(t, 16))
+	ck0 := testkit.RandBytes(t, KeySize)
+	_, _, err := RatchetKeys(ck0, 0x01, 1, testkit.RandBytes(t, 16))
 	require.Error(t, err, "a fold secret that is not 32 bytes must be rejected")
 }

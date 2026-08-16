@@ -13,11 +13,11 @@ import (
 	"context"
 	"log/slog"
 	"net/url"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +39,7 @@ func TestAutoConnect_BothSidesEstablishSession(t *testing.T) {
 	relayURL, err := url.Parse(relay.URL())
 	require.NoError(err)
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := testkit.StdoutLogger(slog.LevelWarn)
 
 	aIn := getFreePortInRange(t, 26100, 26249)
 	aOut := getFreePortInRange(t, 26250, 26399)
@@ -88,10 +88,6 @@ func TestAutoConnect_BothSidesEstablishSession(t *testing.T) {
 	alice.Shutdown()
 	bob.Shutdown()
 
-	done := make(chan struct{})
-	go func() { runWg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-	}
+	// A timeout is not a failure here. Teardown proceeds either way.
+	_ = testkit.Within(10*time.Second, "peer Run goroutines", func() error { runWg.Wait(); return nil })
 }

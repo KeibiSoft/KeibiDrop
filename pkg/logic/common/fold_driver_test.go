@@ -10,8 +10,6 @@
 package common
 
 import (
-	"io"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -44,10 +42,8 @@ func TestMaybeStartEagerFold_SingleFlightGuardBlocksSecond(t *testing.T) {
 }
 
 func TestRunEagerFold_RearmRunsFollowUpThenClears(t *testing.T) {
-	kd := &KeibiDrop{
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		session: &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true},
-	}
+	kd := newBareKD()
+	kd.session = &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true}
 	kd.eagerFoldRearm.Store(true)
 	// No GRPCClient: both the round and its rearmed follow-up fail fast.
 	kd.maybeStartEagerFold()
@@ -57,10 +53,8 @@ func TestRunEagerFold_RearmRunsFollowUpThenClears(t *testing.T) {
 }
 
 func TestMaybeStartEagerFoldSoon_CoalescesIntoOneTimer(t *testing.T) {
-	kd := &KeibiDrop{
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		session: &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true},
-	}
+	kd := newBareKD()
+	kd.session = &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true}
 	kd.maybeStartEagerFoldSoon()
 	kd.maybeStartEagerFoldSoon()
 	kd.maybeStartEagerFoldSoon()
@@ -77,10 +71,8 @@ func TestMaybeStartEagerFoldSoon_CoalescesIntoOneTimer(t *testing.T) {
 // must notice the round is gone and fold anyway. Not -race-detectable (all atomics), so this
 // wedges the interleaving through the eagerFoldRearmGate seam.
 func TestMaybeStartEagerFold_ReclaimsRearmWhenRoundRetiresMidPublish(t *testing.T) {
-	kd := &KeibiDrop{
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		session: &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true},
-	}
+	kd := newBareKD()
+	kd.session = &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true}
 	kd.eagerFoldInFlight.Store(true) // a round R is in flight, so the trigger's CAS fails
 
 	parked := make(chan struct{}, 1) // buffered: the gate signals once even before we receive
@@ -113,10 +105,8 @@ func TestMaybeStartEagerFold_ReclaimsRearmWhenRoundRetiresMidPublish(t *testing.
 }
 
 func TestMaybeStartEagerFold_ClearsGuardWhenRoundFails(t *testing.T) {
-	kd := &KeibiDrop{
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		session: &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true},
-	}
+	kd := newBareKD()
+	kd.session = &session.Session{OwnFingerprint: "aaa", ExpectedPeerFingerprint: "bbb", PeerSupportsKeyUpdate: true}
 	// No GRPCClient, so InitiateFold fails fast; the guard must clear so a reconnect re-folds.
 	kd.maybeStartEagerFold()
 	require.Eventually(t, func() bool { return !kd.eagerFoldInFlight.Load() },

@@ -8,12 +8,15 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
@@ -96,7 +99,11 @@ type quicControlListener struct {
 	key       []byte
 	suite     kbc.CipherSuite
 	keyUpdate bool
-	onAccept  func() // Fold trigger on conn-up. Set before Serve.
+	onAccept  func()                // Fold trigger on conn-up. Set before Serve.
+	onInbound func(remote net.Addr) // Inbound-half visibility. Set before Serve.
+
+	accepts atomic.Uint64 // Conns accepted by THIS listener. Zero means the peer never reached it.
+	live    atomic.Int64  // Accepted conns not yet closed. Zero means no peer is on the inbound half.
 
 	mu   sync.Mutex
 	last *session.SecureConn // Most recent accepted conn: epoch observability and fold staging.
@@ -107,7 +114,16 @@ func (l *quicControlListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	sc := session.NewSecureConn(c, l.key, l.suite, session.NoncePrefixInbound)
+	// The inbound half had no signal of its own before. A lane can be up outbound and
+	// dead inbound, which is how the two peers disagreed on 2026-08-16.
+	l.accepts.Add(1)
+	l.live.Add(1)
+	if l.onInbound != nil {
+		l.onInbound(c.RemoteAddr())
+	}
+	// laneConn goes UNDER the SecureConn, so Accept still returns a *session.SecureConn
+	// and SecureConn.Close, which closes what it wraps, reports the death for us.
+	sc := session.NewSecureConn(&laneConn{Conn: c, closed: &l.live}, l.key, l.suite, session.NoncePrefixInbound)
 	sc.SetKeyUpdate(l.keyUpdate)
 	l.mu.Lock()
 	l.last = sc
@@ -118,6 +134,20 @@ func (l *quicControlListener) Accept() (net.Conn, error) {
 		l.onAccept()
 	}
 	return sc, nil
+}
+
+// laneConn reports the inbound conn's death back to the listener. Without it the listener
+// cannot tell a healthy quiet lane from a room whose peer has gone, and only one of those
+// needs re-registering.
+type laneConn struct {
+	net.Conn
+	once   sync.Once
+	closed *atomic.Int64
+}
+
+func (c *laneConn) Close() error {
+	c.once.Do(func() { c.closed.Add(-1) })
+	return c.Conn.Close()
 }
 
 // LastAccepted returns the most recently accepted server-side SecureConn, or nil.
@@ -145,39 +175,43 @@ func relayQUICRooms(s *session.Session) (dial, listen string) {
 }
 
 // listenQUICControlRelay registers the inbound room and serves QUIC on the paired socket.
-func (kd *KeibiDrop) listenQUICControlRelay(ctx context.Context, s *session.Session, room string) (net.Listener, error) {
+// rs owns the socket across attempts, exactly as on the dial side.
+func (kd *KeibiDrop) listenQUICControlRelay(ctx context.Context, s *session.Session, room string, rs *roomSocket, logger *slog.Logger) (net.Listener, error) {
 	key, err := inboundQUICKey(s)
 	if err != nil {
 		return nil, err
 	}
-	udp, _, err := kd.dialUDPRelayDir(ctx, s, room, kd.logger.With("component", "quic-control"))
+	udp, _, err := rs.pair(ctx, s, logger.With("half", "listen"))
 	if err != nil {
 		return nil, err
 	}
 	ln, err := transport.ListenOnConn(udp)
 	if err != nil {
-		_ = udp.Close()
+		rs.poison()
 		return nil, fmt.Errorf("quic control relay listen %s: %w", room, err)
 	}
+	rs.release() // The QUIC listener owns the socket now.
 	return newQUICControlListener(s, ln, key), nil
 }
 
-// dialQUICControlRelay brings up the outbound channel through the relay's UDP room.
-// The relay path yields no migration handle.
-func (kd *KeibiDrop) dialQUICControlRelay(ctx context.Context, s *session.Session, room string) (net.Conn, error) {
+// dialQUICControlRelay brings up the outbound channel through rs's UDP room. The relay
+// path yields no migration handle. rs owns the socket across attempts, so a failed
+// handshake poisons it and the next attempt rebinds; a failed registration keeps it.
+func (kd *KeibiDrop) dialQUICControlRelay(ctx context.Context, s *session.Session, room string, rs *roomSocket, logger *slog.Logger) (net.Conn, error) {
 	key := s.SEKOutboundQUIC
 	if len(key) == 0 {
 		return nil, fmt.Errorf("quic control: no outbound QUIC key (peer did not negotiate QUIC)")
 	}
-	udp, relayAddr, err := kd.dialUDPRelayDir(ctx, s, room, kd.logger.With("component", "quic-control"))
+	udp, relayAddr, err := rs.pair(ctx, s, logger.With("half", "dial"))
 	if err != nil {
 		return nil, err
 	}
 	conn, err := transport.DialOnConn(ctx, udp, relayAddr)
 	if err != nil {
-		_ = udp.Close()
+		rs.poison() // The room paired but the far end is dead. Never reuse this pairing.
 		return nil, fmt.Errorf("quic control relay dial %s: %w", room, err)
 	}
+	rs.release() // QUIC owns the socket now.
 	sc := session.NewSecureConn(conn, key, s.NegotiatedSuite(), session.NoncePrefixOutbound)
 	sc.SetKeyUpdate(s.UseKeyUpdate())
 	return sc, nil
@@ -185,8 +219,8 @@ func (kd *KeibiDrop) dialQUICControlRelay(ctx context.Context, s *session.Sessio
 
 // startQUICControlRelay brings the lane up through the relay's UDP rooms. It runs in its
 // own goroutine: registration blocks until the peer registers and must not delay connect.
-func (kd *KeibiDrop) startQUICControlRelay(ctx context.Context, s *session.Session, dialRoom, listenRoom string) {
-	logger := kd.logger.With("component", "quic-control")
+func (kd *KeibiDrop) startQUICControlRelay(ctx context.Context, gen uint64, s *session.Session, dialRoom, listenRoom string) {
+	logger := kd.logger.With("component", "quic-control", "gen", gen)
 
 	// Start the dial half first, concurrent with the listen half. The peer's dial room
 	// pairs the listen room, so listen-first deadlocks both peers until the budget expires.
@@ -198,30 +232,119 @@ func (kd *KeibiDrop) startQUICControlRelay(ctx context.Context, s *session.Sessi
 			kd.quicPeerAddr = peerAddr // Generation marker for the maintainer's self-heal redial.
 		}
 		kd.mu.Unlock()
-		if current && kd.quicRedialing.CompareAndSwap(false, true) {
-			go kd.maintainQUICControl(ctx, peerAddr)
+		if current {
+			go kd.ensureQUICMaintainer(ctx, gen, peerAddr)
 		}
 	}
 
-	ln, err := kd.listenQUICControlRelay(ctx, s, listenRoom)
-	if err != nil {
-		logger.Warn("QUIC relay listen failed; staying TCP-only", "room", listenRoom, "error", err)
-		return
+	kd.maintainQUICListen(ctx, gen, s, listenRoom, logger)
+}
+
+// maintainQUICListen keeps the inbound room usable for the whole generation.
+//
+// It replaces a single listen attempt, which could not survive its own success. A relay
+// room is CONSUMED by its first pairing: once our listen socket is paired to the peer's
+// dial socket, the peer's next dial attempt finds no waiter and parks forever, because
+// nothing on our side ever registers the room again. That is why the lane on the WAN pair
+// worked once, carried 1.6 MB, and then never came back for the rest of the session.
+//
+// So the loop watches for a listener that pairs but never accepts. Zero accepts after a
+// re-probe interval means the room is paired to a socket the peer has abandoned, and the
+// only way to rebuild it is to rebind and register again.
+func (kd *KeibiDrop) maintainQUICListen(ctx context.Context, gen uint64, s *session.Session, room string, logger *slog.Logger) {
+	logger = logger.With("half", "listen", "room", room)
+	rs := kd.newRoomSocket(room)
+	defer rs.close()
+	quiet := 0 // Consecutive checks that found no live inbound conn.
+
+	for {
+		kd.mu.Lock()
+		current := kd.ctx == ctx
+		kd.mu.Unlock()
+		if !current || ctx.Err() != nil {
+			return
+		}
+
+		ln, err := kd.listenQUICControlRelay(ctx, s, room, rs, logger)
+		if err != nil {
+			// No ack only means the peer has not registered yet. Re-register at once, so
+			// the waiter stays fresh and the room pairs the moment the peer arrives.
+			// Backing off here left the socket registered but unserved, and the peer
+			// paired with it and lost a whole cycle to a QUIC handshake against nothing.
+			if errors.Is(err, errNoPairingAck) {
+				continue
+			}
+			logger.Warn("QUIC relay listen failed; retrying, staying TCP-only for now",
+				"error", err, "every", quicReprobeInterval)
+			select {
+			case <-time.After(quicReprobeInterval):
+				continue
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		qln, _ := ln.(*quicControlListener)
+		if qln != nil {
+			qln.onAccept = kd.maybeStartEagerFoldSoon // Set before Serve starts accepting.
+			qln.onInbound = kd.inboundQUICObserver(gen, room)
+		}
+		kd.mu.Lock()
+		superseded := kd.ctx != ctx // A reconnect swapped the generation during registration.
+		if !superseded {
+			old := kd.quicControlLn
+			oldSrv := kd.quicControlServer
+			kd.quicControlLn = ln
+			kd.quicControlServer = nil
+			kd.mu.Unlock()
+			if oldSrv != nil {
+				oldSrv.Stop() // Retires the previous serve goroutine.
+			}
+			if old != nil {
+				_ = old.Close()
+			}
+		} else {
+			kd.mu.Unlock()
+			_ = ln.Close()
+			return
+		}
+		go kd.serveQUICControl(ln, relayAddrPrefix+room)
+
+		select {
+		case <-time.After(quicReprobeInterval):
+		case <-ctx.Done():
+			return
+		}
+		if qln == nil {
+			return
+		}
+		kd.mu.Lock()
+		stillOurs := kd.quicControlLn == ln && kd.ctx == ctx
+		kd.mu.Unlock()
+		if !stillOurs {
+			return
+		}
+		if qln.live.Load() > 0 {
+			quiet = 0
+			continue // A peer is on the inbound half. Keep this room and check again later.
+		}
+		// No live inbound conn. Either the peer never arrived, or it arrived and left.
+		// Both mean the room may be paired to a socket nobody is using, and the peer's
+		// dial attempts would park against it forever.
+		//
+		// Wait for a SECOND quiet observation before rebuilding. A healthy lane can go
+		// briefly connectionless when the inbound conn hits its 20s QUIC idle timeout
+		// between bursts, and rebinding on that single sample churned the room every
+		// re-probe on an idle session.
+		quiet++
+		if quiet < quietRoundsBeforeRebind && qln.accepts.Load() > 0 {
+			continue
+		}
+		quiet = 0
+		logger.Warn("inbound QUIC room has no live peer; rebinding so the peer can pair again",
+			"accepts", qln.accepts.Load(), "after", quicReprobeInterval)
+		rs.close() // Registering from a paired socket only re-acks. A fresh one can pair.
 	}
-	if qln, ok := ln.(*quicControlListener); ok {
-		qln.onAccept = kd.maybeStartEagerFoldSoon // Set before Serve starts accepting.
-	}
-	kd.mu.Lock()
-	superseded := kd.ctx != ctx // A reconnect swapped the generation during registration.
-	if !superseded {
-		kd.quicControlLn = ln
-	}
-	kd.mu.Unlock()
-	if superseded {
-		_ = ln.Close()
-		return
-	}
-	go kd.serveQUICControl(ln, relayAddrPrefix+listenRoom)
 }
 
 // StartQUICControlChannel brings up the QUIC control pair alongside the TCP session:
@@ -231,7 +354,10 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 	// Reconnect re-runs this function, so release any prior instance first.
 	kd.StopQUICControlChannel()
 
-	logger := kd.logger.With("component", "quic-control")
+	// One generation per bring-up. Every lane log line carries it, so a stale cycle's
+	// lines can never be read as the current one's.
+	gen := kd.quicGen.Add(1)
+	logger := kd.logger.With("component", "quic-control", "gen", gen)
 	// Snapshot session and ctx under kd.mu. Teardown nils kd.session under the lock.
 	kd.mu.Lock()
 	s := kd.session
@@ -248,7 +374,7 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 		dialRoom, listenRoom := relayQUICRooms(s)
 		logger.Info("Bridge mode: bringing the QUIC lane up over the relay",
 			"relay", kd.BridgeAddr, "dial", dialRoom, "listen", listenRoom)
-		go kd.startQUICControlRelay(ctx, s, dialRoom, listenRoom)
+		go kd.startQUICControlRelay(ctx, gen, s, dialRoom, listenRoom)
 		return
 	}
 
@@ -261,6 +387,7 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 	} else {
 		if qln, ok := ln.(*quicControlListener); ok {
 			qln.onAccept = kd.maybeStartEagerFoldSoon // Set before Serve starts accepting.
+			qln.onInbound = kd.inboundQUICObserver(gen, "direct")
 		}
 		kd.mu.Lock()
 		kd.quicControlLn = ln
@@ -276,9 +403,7 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 	kd.mu.Lock()
 	kd.quicPeerAddr = peerAddr // Generation marker for the maintainer's self-heal redial.
 	kd.mu.Unlock()
-	if kd.quicRedialing.CompareAndSwap(false, true) {
-		go kd.maintainQUICControl(ctx, peerAddr)
-	}
+	go kd.ensureQUICMaintainer(ctx, gen, peerAddr)
 }
 
 // quicReprobeInterval sets how often a session with QUIC down re-probes UDP. The probe
@@ -288,9 +413,9 @@ const quicReprobeInterval = 30 * time.Second
 // maintainQUICControl re-establishes the outbound channel: a dial burst, then a
 // periodic re-probe while down. It exits when up, on generation change, or when ctx
 // ends. Single-flight via kd.quicRedialing.
-func (kd *KeibiDrop) maintainQUICControl(ctx context.Context, peerAddr string) {
+func (kd *KeibiDrop) maintainQUICControl(ctx context.Context, gen uint64, peerAddr string) {
 	defer kd.quicRedialing.Store(false)
-	logger := kd.logger.With("component", "quic-control")
+	logger := kd.logger.With("component", "quic-control", "gen", gen, "half", "dial")
 	for first := true; ; first = false {
 		kd.mu.Lock()
 		cur := kd.quicPeerAddr
@@ -299,12 +424,21 @@ func (kd *KeibiDrop) maintainQUICControl(ctx context.Context, peerAddr string) {
 		if ctx.Err() != nil || cur != peerAddr || up {
 			return
 		}
-		if kd.dialQUICControlWithRetry(ctx, peerAddr) {
+		ok, lastErr := kd.dialQUICControlWithRetry(ctx, gen, peerAddr)
+		if ok {
 			return
 		}
+		kd.setQUICDialErr(lastErr)
 		if first {
-			logger.Info("QUIC channel unavailable; staying on TCP, re-probing periodically",
-				"peer", peerAddr, "every", quicReprobeInterval)
+			// In bridge mode the lane is the product's latency feature and there is no
+			// direct path to fall back to, so its loss is an operator signal, not a note.
+			if kd.ConnectionMode == "bridge" {
+				logger.Warn("QUIC lane down in bridge mode; on-demand reads fall back to TCP",
+					"peer", peerAddr, "every", quicReprobeInterval, "error", lastErr)
+			} else {
+				logger.Info("QUIC channel unavailable; staying on TCP, re-probing periodically",
+					"peer", peerAddr, "every", quicReprobeInterval, "error", lastErr)
+			}
 		}
 		select {
 		case <-time.After(quicReprobeInterval):
@@ -314,20 +448,89 @@ func (kd *KeibiDrop) maintainQUICControl(ctx context.Context, peerAddr string) {
 	}
 }
 
+// quietRoundsBeforeRebind is how many consecutive checks must find no live inbound
+// conn before the listen room is rebuilt. One is too eager: a healthy lane goes
+// connectionless whenever the inbound conn hits its 20s QUIC idle timeout.
+const quietRoundsBeforeRebind = 2
+
+// quicArmRetryInterval sets how often arming retries while a stale maintainer holds the
+// single-flight flag. It is short because the window it covers is a lost dial half.
+const quicArmRetryInterval = 1 * time.Second
+
+// ensureQUICMaintainer arms the dial maintainer for this generation and keeps trying.
+//
+// A maintainer from a PREVIOUS generation can still hold the single-flight flag while it
+// sleeps out its 30s re-probe. One CAS attempt therefore left the new generation with no
+// dial half at all, for the whole session: the old maintainer wakes, sees the address
+// changed, exits and clears the flag, and nobody re-arms.
+func (kd *KeibiDrop) ensureQUICMaintainer(ctx context.Context, gen uint64, peerAddr string) {
+	if !kd.quicArming.CompareAndSwap(false, true) {
+		return // Another arming loop is already waiting for the flag.
+	}
+	defer kd.quicArming.Store(false)
+	for {
+		kd.mu.Lock()
+		current := kd.ctx == ctx && kd.quicPeerAddr == peerAddr
+		up := kd.quicControlClient != nil
+		kd.mu.Unlock()
+		if !current || up || ctx.Err() != nil {
+			return
+		}
+		if kd.quicRedialing.CompareAndSwap(false, true) {
+			kd.maintainQUICControl(ctx, gen, peerAddr) // Clears the flag on exit.
+			return
+		}
+		select {
+		case <-time.After(quicArmRetryInterval):
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// quicVerifyTimeout bounds the control Ping that proves the peer is really there. It must
+// outlast the peer's own server start: serveQUICControl waits up to 5s for the service
+// impl before it serves anything. A shorter bound rejects healthy peers.
+const quicVerifyTimeout = 12 * time.Second
+
+// verifyQUICPeer sends one control Ping over cc before the lane is published. A relay
+// room can pair with a dead socket, so a completed QUIC handshake alone proves nothing
+// about WHO answered. Only an answered Ping does.
+//
+// WaitForReady keeps the call queued while the peer's server attaches, instead of failing
+// the instant the connection is not ready yet.
+func verifyQUICPeer(ctx context.Context, cc *grpc.ClientConn) error {
+	vctx, cancel := context.WithTimeout(ctx, quicVerifyTimeout)
+	defer cancel()
+	if _, err := cpb.NewControlClient(cc).Ping(vctx, &cpb.PingRequest{}, grpc.WaitForReady(true)); err != nil {
+		return fmt.Errorf("quic control verification ping: %w", err)
+	}
+	return nil
+}
+
 // dialQUICControlWithRetry dials the peer's QUIC control endpoint with retries,
-// because the peer's listener may not be up yet. It reports whether the channel came up.
-func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr string) bool {
-	logger := kd.logger.With("component", "quic-control")
+// because the peer's listener may not be up yet. It reports whether the channel came up
+// and, when it did not, the last failure so the caller can name a reason.
+func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, gen uint64, peerAddr string) (bool, error) {
+	logger := kd.logger.With("component", "quic-control", "gen", gen, "half", "dial")
+	var lastErr error
+	// One socket for every attempt of this burst. Binding per attempt is what let the
+	// client pair with its own corpse at the bridge.
+	var rs *roomSocket
+	if room, relayed := strings.CutPrefix(peerAddr, relayAddrPrefix); relayed {
+		rs = kd.newRoomSocket(room)
+		defer rs.close()
+	}
 	for attempt := 0; attempt < 5; attempt++ {
 		if ctx.Err() != nil {
-			return false
+			return false, ctx.Err()
 		}
 		// Read under kd.mu. Teardown can nil kd.session concurrently.
 		kd.mu.Lock()
 		s := kd.session
 		kd.mu.Unlock()
 		if s == nil {
-			return false
+			return false, ErrInvalidSession
 		}
 		// A relay room registers with the bridge and yields no migration handle. A direct
 		// endpoint dials the peer. Everything downstream is the same either way.
@@ -343,7 +546,7 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 			err  error
 		)
 		if relayed {
-			conn, err = kd.dialQUICControlRelay(dctx, s, room)
+			conn, err = kd.dialQUICControlRelay(dctx, s, room, rs, logger.With("attempt", attempt))
 		} else {
 			conn, mc, err = DialQUICControl(dctx, s, peerAddr)
 		}
@@ -361,8 +564,30 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 				if mc != nil { // Nil on the relay path: not migratable.
 					_ = mc.Close()
 				}
-				return false
+				return false, cErr
 			}
+			logger.Debug("outbound QUIC transport handshake complete (unverified)",
+				"attempt", attempt, "peer", peerAddr)
+			// A relay room pairs on address, not identity, so the handshake can complete
+			// against a stale socket. Verify the PEER answers before publishing the lane.
+			t0 := time.Now()
+			if vErr := verifyQUICPeer(ctx, cc); vErr != nil {
+				logger.Debug("QUIC control verification failed; treating as a failed attempt",
+					"attempt", attempt, "error", vErr)
+				lastErr = vErr
+				_ = cc.Close()
+				_ = conn.Close()
+				if mc != nil { // Nil on the relay path: not migratable.
+					_ = mc.Close()
+				}
+				select {
+				case <-time.After(1 * time.Second):
+				case <-ctx.Done():
+					return false, ctx.Err()
+				}
+				continue
+			}
+			rtt := time.Since(t0)
 			kd.mu.Lock()
 			if kd.quicPeerAddr != peerAddr { // Channel stopped or superseded during the dial.
 				kd.mu.Unlock()
@@ -370,7 +595,7 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 				if mc != nil { // Nil on the relay path: not migratable.
 					_ = mc.Close()
 				}
-				return false
+				return false, nil
 			}
 			hbCtx, hbCancel := context.WithCancel(ctx)
 			old := kd.quicControlClient
@@ -380,6 +605,7 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 			kd.quicControlMig = mc
 			kd.quicHBCancel = hbCancel
 			kd.quicControlSC, _ = conn.(*session.SecureConn) // Epoch observability handle.
+			kd.quicLastDialErr = ""
 			kd.mu.Unlock()
 			if oldHB != nil {
 				oldHB() // The superseded heartbeat exits now.
@@ -390,22 +616,26 @@ func (kd *KeibiDrop) dialQUICControlWithRetry(ctx context.Context, peerAddr stri
 			if oldMig != nil {
 				_ = oldMig.Close()
 			}
-			logger.Info("QUIC control channel connected", "peer", peerAddr)
+			// verify_ms is the round trip PLUS whatever the peer's server took to attach,
+			// so it is a bring-up cost, not a link RTT. Do not read it as latency.
+			logger.Info("QUIC control lane verified", "peer", peerAddr,
+				"attempt", attempt, "verify_ms", rtt.Milliseconds())
 			// The control-Ping heartbeat owns QUIC-lane liveness. Metadata rides TCP first.
 			go kd.quicControlHeartbeat(hbCtx, cc)
 			kd.maybeStartEagerFoldSoon() // New wire: one coalesced fold round covers it.
-			return true
+			return true, nil
 		}
+		lastErr = err
 		logger.Debug("QUIC control dial attempt failed", "attempt", attempt, "error", err)
 		select {
 		case <-time.After(1 * time.Second):
 		case <-ctx.Done():
-			return false
+			return false, ctx.Err()
 		}
 	}
 	// The caller, maintainQUICControl, logs the stay-on-TCP state once and re-probes.
-	logger.Debug("QUIC control dial burst exhausted", "peer", peerAddr)
-	return false
+	logger.Debug("QUIC control dial burst exhausted", "peer", peerAddr, "error", lastErr)
+	return false, lastErr
 }
 
 // serveQUICControl attaches the control Ping plus the full KeibiService to ln.
@@ -622,9 +852,7 @@ func (kd *KeibiDrop) demoteQUICControl(err error) {
 	if peerAddr == "" || ctx == nil || ctx.Err() != nil {
 		return
 	}
-	if kd.quicRedialing.CompareAndSwap(false, true) { // Single-flight.
-		go kd.maintainQUICControl(ctx, peerAddr)
-	}
+	go kd.ensureQUICMaintainer(ctx, kd.quicGen.Load(), peerAddr)
 }
 
 // metadataSend routes metadata TCP-first with QUIC as a bounded fallback. Notify
@@ -674,11 +902,53 @@ func (kd *KeibiDrop) sendBatchNotify(ctx context.Context, req *bindings.BatchNot
 	})
 }
 
-// QUICControlConnected reports whether the outbound QUIC control channel is up. For tests.
+// QUICControlConnected reports whether the outbound QUIC control channel is up and
+// VERIFIED: the client is published only after a control Ping the peer answered.
 func (kd *KeibiDrop) QUICControlConnected() bool {
 	kd.mu.Lock()
 	defer kd.mu.Unlock()
 	return kd.quicControlClient != nil
+}
+
+// QUICInboundAccepted reports how many inbound QUIC control conns this peer accepted.
+// The outbound half can be up while this stays 0, which is a one-directional lane.
+func (kd *KeibiDrop) QUICInboundAccepted() uint64 { return kd.quicAccepted.Load() }
+
+// inboundQUICObserver returns the accept-side hook: count and log. The inbound half had
+// no signal of its own, so a lane that was up one way looked fully up.
+func (kd *KeibiDrop) inboundQUICObserver(gen uint64, room string) func(net.Addr) {
+	return func(remote net.Addr) {
+		kd.logger.Info("QUIC control inbound accepted", "component", "quic-control",
+			"gen", gen, "half", "listen", "room", room, "remote", remote,
+			"total", kd.quicAccepted.Add(1))
+	}
+}
+
+// QUICLaneStatus reports the outbound lane as "up", or "down (<reason>)". kd status and
+// peer-info show it, so a silently dead lane is visible without reading DEBUG logs.
+func (kd *KeibiDrop) QUICLaneStatus() string {
+	kd.mu.Lock()
+	up := kd.quicControlClient != nil
+	reason := kd.quicLastDialErr
+	kd.mu.Unlock()
+	if up {
+		return "up"
+	}
+	if reason == "" {
+		return "down"
+	}
+	return "down (" + reason + ")"
+}
+
+// setQUICDialErr records why the outbound lane is down, for QUICLaneStatus.
+func (kd *KeibiDrop) setQUICDialErr(err error) {
+	kd.mu.Lock()
+	if err == nil {
+		kd.quicLastDialErr = ""
+	} else {
+		kd.quicLastDialErr = err.Error()
+	}
+	kd.mu.Unlock()
 }
 
 // quicHeartbeatInterval sets how often the QUIC lane pings to detect a dead channel.

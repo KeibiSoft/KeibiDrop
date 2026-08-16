@@ -12,15 +12,13 @@
 package service
 
 import (
-	"context"
-	"io"
-	"log/slog"
 	"math"
 	"os"
 	"sync"
 	"testing"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
@@ -28,32 +26,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zeebo/xxh3"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
-
-// mockGetChunkHashesStream implements bindings.KeibiService_GetChunkHashesServer.
-type mockGetChunkHashesStream struct {
-	sent []*bindings.GetChunkHashesResponse
-}
-
-func (m *mockGetChunkHashesStream) Send(resp *bindings.GetChunkHashesResponse) error {
-	m.sent = append(m.sent, resp)
-	return nil
-}
-
-func (m *mockGetChunkHashesStream) SetHeader(metadata.MD) error  { return nil }
-func (m *mockGetChunkHashesStream) SendHeader(metadata.MD) error { return nil }
-func (m *mockGetChunkHashesStream) SetTrailer(metadata.MD)       {}
-func (m *mockGetChunkHashesStream) Context() context.Context     { return context.Background() }
-func (m *mockGetChunkHashesStream) SendMsg(interface{}) error    { return nil }
-func (m *mockGetChunkHashesStream) RecvMsg(interface{}) error    { return nil }
 
 // newTestSvc builds a KeibidropServiceImpl backed by AllFileMap and LocalFiles.
 func newTestSvc(t *testing.T, localPath string, trackerKey string) *KeibidropServiceImpl {
 	t.Helper()
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	fsForSvc := &filesystem.FS{}
@@ -85,7 +65,7 @@ func TestGetChunkHashes_HashCorrectness(t *testing.T) {
 
 	svc := newTestSvc(t, tmpFile.Name(), "hashes.bin")
 
-	stream := &mockGetChunkHashesStream{}
+	stream := &testkit.Stream[struct{}, *bindings.GetChunkHashesResponse]{}
 	req := &bindings.GetChunkHashesRequest{
 		Path:      "hashes.bin",
 		ChunkSize: 4,
@@ -94,16 +74,16 @@ func TestGetChunkHashes_HashCorrectness(t *testing.T) {
 	}
 	err = svc.GetChunkHashes(req, stream)
 	require.NoError(t, err)
-	require.Len(t, stream.sent, 3)
+	require.Len(t, stream.Sent, 3)
 
-	assert.Equal(t, uint64(0), stream.sent[0].ChunkIndex)
-	assert.Equal(t, xxh3.Hash(content[0:4]), stream.sent[0].Hash)
+	assert.Equal(t, uint64(0), stream.Sent[0].ChunkIndex)
+	assert.Equal(t, xxh3.Hash(content[0:4]), stream.Sent[0].Hash)
 
-	assert.Equal(t, uint64(1), stream.sent[1].ChunkIndex)
-	assert.Equal(t, xxh3.Hash(content[4:8]), stream.sent[1].Hash)
+	assert.Equal(t, uint64(1), stream.Sent[1].ChunkIndex)
+	assert.Equal(t, xxh3.Hash(content[4:8]), stream.Sent[1].Hash)
 
-	assert.Equal(t, uint64(2), stream.sent[2].ChunkIndex)
-	assert.Equal(t, xxh3.Hash(content[8:10]), stream.sent[2].Hash)
+	assert.Equal(t, uint64(2), stream.Sent[2].ChunkIndex)
+	assert.Equal(t, xxh3.Hash(content[8:10]), stream.Sent[2].Hash)
 }
 
 // TestGetChunkHashes_SubRange verifies from_chunk and count limit the response.
@@ -118,7 +98,7 @@ func TestGetChunkHashes_SubRange(t *testing.T) {
 
 	svc := newTestSvc(t, tmpFile.Name(), "subrange.bin")
 
-	stream := &mockGetChunkHashesStream{}
+	stream := &testkit.Stream[struct{}, *bindings.GetChunkHashesResponse]{}
 	req := &bindings.GetChunkHashesRequest{
 		Path:      "subrange.bin",
 		ChunkSize: 4,
@@ -127,17 +107,17 @@ func TestGetChunkHashes_SubRange(t *testing.T) {
 	}
 	err = svc.GetChunkHashes(req, stream)
 	require.NoError(t, err)
-	require.Len(t, stream.sent, 1)
+	require.Len(t, stream.Sent, 1)
 
-	assert.Equal(t, uint64(1), stream.sent[0].ChunkIndex)
-	assert.Equal(t, xxh3.Hash(content[4:8]), stream.sent[0].Hash)
+	assert.Equal(t, uint64(1), stream.Sent[0].ChunkIndex)
+	assert.Equal(t, xxh3.Hash(content[4:8]), stream.Sent[0].Hash)
 }
 
 // TestGetChunkHashes_ZeroChunkSize verifies InvalidArgument is returned.
 func TestGetChunkHashes_ZeroChunkSize(t *testing.T) {
 	svc := newTestSvc(t, "", "")
 
-	stream := &mockGetChunkHashesStream{}
+	stream := &testkit.Stream[struct{}, *bindings.GetChunkHashesResponse]{}
 	req := &bindings.GetChunkHashesRequest{
 		Path:      "any.bin",
 		ChunkSize: 0,
@@ -156,7 +136,7 @@ func TestGetChunkHashes_OversizeChunkSize(t *testing.T) {
 	svc := newTestSvc(t, "", "")
 
 	for _, cs := range []uint64{math.MaxUint64, uint64(config.GRPCStreamBuffer) + 1, 1 << 30} {
-		stream := &mockGetChunkHashesStream{}
+		stream := &testkit.Stream[struct{}, *bindings.GetChunkHashesResponse]{}
 		req := &bindings.GetChunkHashesRequest{
 			Path:      "any.bin",
 			ChunkSize: cs,
@@ -168,7 +148,7 @@ func TestGetChunkHashes_OversizeChunkSize(t *testing.T) {
 		st, ok := status.FromError(err)
 		require.True(t, ok, "chunk_size=%d", cs)
 		assert.Equal(t, codes.InvalidArgument, st.Code(), "chunk_size=%d", cs)
-		assert.Empty(t, stream.sent, "chunk_size=%d must send nothing", cs)
+		assert.Empty(t, stream.Sent, "chunk_size=%d must send nothing", cs)
 	}
 }
 
@@ -178,7 +158,7 @@ func TestGetChunkHashes_OversizeChunkSize(t *testing.T) {
 // traversal surface: both RPCs share the same resolution logic.
 func TestGetChunkHashes_PathNotFound_ParityWithStreamFile(t *testing.T) {
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	fsForSvc := &filesystem.FS{}
@@ -189,7 +169,7 @@ func TestGetChunkHashes_PathNotFound_ParityWithStreamFile(t *testing.T) {
 	svc.SetFS(fsForSvc)
 
 	// GetChunkHashes on unknown path.
-	chStream := &mockGetChunkHashesStream{}
+	chStream := &testkit.Stream[struct{}, *bindings.GetChunkHashesResponse]{}
 	chErr := svc.GetChunkHashes(&bindings.GetChunkHashesRequest{
 		Path:      "nonexistent.bin",
 		ChunkSize: 512,
@@ -200,7 +180,7 @@ func TestGetChunkHashes_PathNotFound_ParityWithStreamFile(t *testing.T) {
 	assert.Equal(t, codes.NotFound, chSt.Code())
 
 	// StreamFile on the same unknown path must return the same status code.
-	sfStream := &mockStreamFileStream{}
+	sfStream := &testkit.Stream[struct{}, *bindings.StreamFileResponse]{}
 	sfErr := svc.StreamFile(&bindings.StreamFileRequest{Path: "nonexistent.bin"}, sfStream)
 	require.Error(t, sfErr)
 	sfSt, ok := status.FromError(sfErr)
@@ -221,7 +201,7 @@ func TestGetChunkHashes_NoFUSE_HashCorrectness(t *testing.T) {
 	tmpFile.Close()
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	svc.SyncTracker.LocalFiles["nofuse.bin"] = &synctracker.File{
@@ -230,7 +210,7 @@ func TestGetChunkHashes_NoFUSE_HashCorrectness(t *testing.T) {
 		RealPathOfFile: tmpFile.Name(),
 	}
 
-	stream := &mockGetChunkHashesStream{}
+	stream := &testkit.Stream[struct{}, *bindings.GetChunkHashesResponse]{}
 	req := &bindings.GetChunkHashesRequest{
 		Path:      "nofuse.bin",
 		ChunkSize: 4,
@@ -239,25 +219,14 @@ func TestGetChunkHashes_NoFUSE_HashCorrectness(t *testing.T) {
 	}
 	err = svc.GetChunkHashes(req, stream)
 	require.NoError(t, err)
-	require.Len(t, stream.sent, 3)
+	require.Len(t, stream.Sent, 3)
 
-	assert.Equal(t, uint64(0), stream.sent[0].ChunkIndex)
-	assert.Equal(t, xxh3.Hash(content[0:4]), stream.sent[0].Hash)
+	assert.Equal(t, uint64(0), stream.Sent[0].ChunkIndex)
+	assert.Equal(t, xxh3.Hash(content[0:4]), stream.Sent[0].Hash)
 
-	assert.Equal(t, uint64(1), stream.sent[1].ChunkIndex)
-	assert.Equal(t, xxh3.Hash(content[4:8]), stream.sent[1].Hash)
+	assert.Equal(t, uint64(1), stream.Sent[1].ChunkIndex)
+	assert.Equal(t, xxh3.Hash(content[4:8]), stream.Sent[1].Hash)
 
-	assert.Equal(t, uint64(2), stream.sent[2].ChunkIndex)
-	assert.Equal(t, xxh3.Hash(content[8:11]), stream.sent[2].Hash)
+	assert.Equal(t, uint64(2), stream.Sent[2].ChunkIndex)
+	assert.Equal(t, xxh3.Hash(content[8:11]), stream.Sent[2].Hash)
 }
-
-// mockStreamFileStream is the minimal stub needed for the parity test.
-type mockStreamFileStream struct{}
-
-func (m *mockStreamFileStream) Send(*bindings.StreamFileResponse) error { return nil }
-func (m *mockStreamFileStream) SetHeader(metadata.MD) error             { return nil }
-func (m *mockStreamFileStream) SendHeader(metadata.MD) error            { return nil }
-func (m *mockStreamFileStream) SetTrailer(metadata.MD)                  {}
-func (m *mockStreamFileStream) Context() context.Context                { return context.Background() }
-func (m *mockStreamFileStream) SendMsg(interface{}) error               { return nil }
-func (m *mockStreamFileStream) RecvMsg(interface{}) error               { return nil }

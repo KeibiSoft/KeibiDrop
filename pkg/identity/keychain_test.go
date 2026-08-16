@@ -10,9 +10,9 @@
 package identity
 
 import (
-	"crypto/rand"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/stretchr/testify/require"
 	keyring "github.com/zalando/go-keyring"
 )
@@ -22,7 +22,7 @@ import (
 // test is skipped by design.
 func TestIsKeychainAvailable_True(t *testing.T) {
 	if !IsKeychainAvailable() {
-		t.Skip("no keychain available — skipping")
+		t.Skip("no keychain available, skipping")
 	}
 	// If IsKeychainAvailable returned true we've already done a roundtrip.
 	// No additional assertion needed; reaching here means the keychain works.
@@ -30,7 +30,7 @@ func TestIsKeychainAvailable_True(t *testing.T) {
 
 func TestKeychainSetGetDelete_Roundtrip(t *testing.T) {
 	if !IsKeychainAvailable() {
-		t.Skip("no keychain available — skipping")
+		t.Skip("no keychain available, skipping")
 	}
 	req := require.New(t)
 
@@ -39,9 +39,7 @@ func TestKeychainSetGetDelete_Roundtrip(t *testing.T) {
 	// Make sure we start clean.
 	_ = KeychainDelete(account)
 
-	value := make([]byte, 32)
-	_, err := rand.Read(value)
-	req.NoError(err)
+	value := testkit.RandBytes(t, 32)
 
 	req.NoError(KeychainSet(account, value))
 
@@ -60,7 +58,7 @@ func TestKeychainSetGetDelete_Roundtrip(t *testing.T) {
 // account surfaces an error rather than returning empty bytes silently.
 func TestKeychainGet_Missing_ReturnsError(t *testing.T) {
 	if !IsKeychainAvailable() {
-		t.Skip("no keychain available — skipping")
+		t.Skip("no keychain available, skipping")
 	}
 	req := require.New(t)
 
@@ -74,9 +72,7 @@ func TestKeychainGet_Missing_ReturnsError(t *testing.T) {
 
 func randomHex(t *testing.T, n int) string {
 	t.Helper()
-	b := make([]byte, n)
-	_, err := rand.Read(b)
-	require.NoError(t, err)
+	b := testkit.RandBytes(t, n)
 	const hexChars = "0123456789abcdef"
 	out := make([]byte, n*2)
 	for i, v := range b {

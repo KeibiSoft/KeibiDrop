@@ -281,8 +281,8 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		waitConverged(t, alice, bob, f+".owner", 60*time.Second)
 	})
 
-	// C.4 (model v2, T3b): both peers save divergent content inside one
-	// debounce window — neither edit saw the other (announced base < holder's
+	// Both peers save divergent content inside one debounce window, so neither
+	// edit saw the other (announced base < holder's
 	// version). LWW converges the canonical name; the loser must survive as a
 	// .conflict- sibling on BOTH peers. Turn-taking flows above prove the
 	// negative: none of them may produce a conflict file.
@@ -320,7 +320,7 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		waitConverged(t, alice, bob, conflicts[0], 60*time.Second)
 	})
 
-	// T3b for swaps: the reader swap-saves a WORKING COPY taken from version
+	// The swap case: the reader swap-saves a WORKING COPY taken from version
 	// v1 while the owner concurrently edits to v2. The rename announce
 	// declares base=v1; the owner holds v2 with authority, so its bytes are
 	// preserved as a conflict sibling instead of silently clobbered.

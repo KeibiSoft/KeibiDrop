@@ -160,6 +160,14 @@ func runDaemon() {
 		logger.Warn("config flag note", "note", warn)
 	}
 
+	// Learn reachability now, not at first connect. The only trigger used to be inside
+	// registerRoomToRelay, so a pure joiner never probed and a creator learned during its
+	// own window, paying the full direct-accept stall on the first try. The probe caches
+	// for probeCacheTTL, which covers the first connect.
+	if !isLocal {
+		go kd.ProbeInboundReachability(ctx)
+	}
+
 	if !cfg.Incognito {
 		opts := common.EnableOpts{
 			PassphraseProtect: cfg.PassphraseProtect,
@@ -629,6 +637,7 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 			"peer_fingerprint": pfp,
 			"peer_ip":          kd.PeerIPv6IP,
 			"connection_mode":  kd.ConnectionMode,
+			"quic_lane":        kd.QUICLaneStatus(),
 			"peer_persistent":  kd.IsPeerPersistent(),
 		}
 		if kd.AddressBook != nil && pfp != "" && pfp != "TOFU" {
@@ -933,6 +942,9 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"ip":                kd.LocalIPv6IP,
 		"peer_ip":           kd.PeerIPv6IP,
 		"connection_mode":   kd.ConnectionMode,
+		"quic_lane":         kd.QUICLaneStatus(),
+		"quic_inbound":      kd.QUICInboundAccepted(),
+		"reveals":           kd.RevealHealth(),
 		"relay":             kd.RelayEndoint.String(),
 		"fuse":              kd.IsFUSE,
 		"mount_path":        kd.ToMount,

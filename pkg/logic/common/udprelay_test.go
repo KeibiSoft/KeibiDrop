@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/KeibiSoft/KeibiDrop/pkg/transport"
 	"github.com/stretchr/testify/require"
@@ -31,19 +32,40 @@ import (
 type fakeRelay struct {
 	conn *net.UDPConn
 
-	mu   sync.Mutex
-	wait map[string]*net.UDPAddr // token hex -> first peer to register
-	peer map[string]*net.UDPAddr // src -> paired counterpart
+	mu    sync.Mutex
+	wait  map[string]*fakeWaiter  // token hex -> first peer to register
+	peer  map[string]*net.UDPAddr // src -> paired counterpart
+	seen  map[string]time.Time    // src -> last datagram, for the idle GC
+	pairs int                     // pairings made, so a test can count self-pairs
+	drop  func(pkt []byte) bool   // limiter stand-in: report true to swallow a forward
+}
+
+// fakeWaiter mirrors the bridge's udpWaiter: an unpaired registration and when it arrived.
+type fakeWaiter struct {
+	addr    *net.UDPAddr
+	created time.Time
 }
 
 func startFakeRelay(t *testing.T) *fakeRelay {
 	t.Helper()
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv6loopback})
 	require.NoError(t, err)
-	r := &fakeRelay{conn: conn, wait: map[string]*net.UDPAddr{}, peer: map[string]*net.UDPAddr{}}
+	r := &fakeRelay{
+		conn: conn,
+		wait: map[string]*fakeWaiter{},
+		peer: map[string]*net.UDPAddr{},
+		seen: map[string]time.Time{},
+	}
 	go r.serve()
 	t.Cleanup(func() { _ = conn.Close() })
 	return r
+}
+
+// pairCount reports how many pairings the relay has made.
+func (r *fakeRelay) pairCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pairs
 }
 
 func (r *fakeRelay) addr() string { return r.conn.LocalAddr().String() }
@@ -59,16 +81,29 @@ func (r *fakeRelay) serve() {
 	}
 }
 
+// dispatch mirrors cmd/bridge/udp.go dispatch + registerLocked, including the two
+// behaviours that matter for the room lifecycle: a registration is 32 or 64 bytes after
+// the magic (the 64-byte form carries a funded anchor), and pairing is on DISTINCT
+// address only, so it will happily pair a client with its own abandoned socket.
 func (r *fakeRelay) dispatch(pkt []byte, src *net.UDPAddr) {
 	key := src.String()
-	isReg := len(pkt) == len(udpRelayMagic)+32 && bytes.HasPrefix(pkt, udpRelayMagic)
+	rest := 0
+	if bytes.HasPrefix(pkt, udpRelayMagic) {
+		rest = len(pkt) - len(udpRelayMagic)
+	}
+	isReg := rest == 32 || rest == 64
 
 	r.mu.Lock()
 	if dst, ok := r.peer[key]; ok {
+		r.seen[key] = time.Now() // A paired peer's traffic refreshes its idle timer.
+		drop := r.drop
 		r.mu.Unlock()
 		if isReg { // already paired: re-ACK, never forward the magic
 			_, _ = r.conn.WriteToUDP(udpRelayMagic, src)
 			return
+		}
+		if drop != nil && drop(pkt) {
+			return // limiter stand-in swallowed it
 		}
 		_, _ = r.conn.WriteToUDP(pkt, dst)
 		return
@@ -77,16 +112,21 @@ func (r *fakeRelay) dispatch(pkt []byte, src *net.UDPAddr) {
 		r.mu.Unlock()
 		return
 	}
-	token := hex.EncodeToString(pkt[len(udpRelayMagic):])
-	if w, ok := r.wait[token]; ok && w.String() != key {
+	token := hex.EncodeToString(pkt[len(udpRelayMagic) : len(udpRelayMagic)+32])
+	if w, ok := r.wait[token]; ok && w.addr.String() != key {
 		delete(r.wait, token)
-		r.peer[w.String()], r.peer[key] = src, w
+		now := time.Now()
+		r.peer[w.addr.String()], r.peer[key] = src, w.addr
+		r.seen[w.addr.String()], r.seen[key] = now, now
+		r.pairs++
 		r.mu.Unlock()
-		_, _ = r.conn.WriteToUDP(udpRelayMagic, w)
+		_, _ = r.conn.WriteToUDP(udpRelayMagic, w.addr)
 		_, _ = r.conn.WriteToUDP(udpRelayMagic, src)
 		return
 	}
-	r.wait[token] = src
+	// Same address, or no waiter: park and refresh. This is what makes one socket per
+	// room safe, and what makes a socket per attempt dangerous.
+	r.wait[token] = &fakeWaiter{addr: src, created: time.Now()}
 	r.mu.Unlock()
 }
 
@@ -118,10 +158,9 @@ func TestUDPRelay_RegisterPairsOnMatchingToken(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	errA := make(chan error, 1)
-	go func() { errA <- registerUDPRelay(ctx, a, relayAddr, regDatagram(t, "quic1")) }()
+	join := testkit.Go(func() error { return registerUDPRelay(ctx, a, relayAddr, regDatagram(t, "quic1")) })
 	require.NoError(t, registerUDPRelay(ctx, b, relayAddr, regDatagram(t, "quic1")))
-	require.NoError(t, <-errA)
+	require.NoError(t, join())
 
 	// Paired: a datagram from one side reaches the other through the relay.
 	_, err = a.WriteToUDP([]byte("through the room"), relayAddr)
@@ -170,16 +209,19 @@ func TestUDPRelay_QUICRunsOverPairedSockets(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	errS := make(chan error, 1)
-	go func() { errS <- registerUDPRelay(ctx, server, relayAddr, regDatagram(t, "quic1")) }()
+	join := testkit.Go(func() error { return registerUDPRelay(ctx, server, relayAddr, regDatagram(t, "quic1")) })
 	require.NoError(t, registerUDPRelay(ctx, client, relayAddr, regDatagram(t, "quic1")))
-	require.NoError(t, <-errS)
+	require.NoError(t, join())
 
 	ln, err := transport.ListenOnConn(server)
 	require.NoError(t, err)
 	defer ln.Close()
 
 	const msg = "relayed quic payload"
+	// NOT testkit.Go: the goroutine's cleanup defer blocks on done, which this
+	// function only closes after reading the result. A return statement waits
+	// for that defer before testkit.Go's channel ever receives it: deadlock.
+	// The plain buffered send below does not wait for that defer, so it stays safe.
 	accepted := make(chan error, 1)
 	done := make(chan struct{})
 	defer close(done)

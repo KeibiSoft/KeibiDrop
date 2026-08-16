@@ -12,20 +12,14 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-func randomBytes(t *testing.T, size int) []byte {
-	b := make([]byte, size)
-	_, err := rand.Read(b)
-	require.NoError(t, err, "failed to generate random bytes")
-	return b
-}
-
 func TestSymmetricEncryption(t *testing.T) {
 	req := require.New(t)
-	kek := randomBytes(t, seedSize)
+	kek := testkit.RandBytes(t, seedSize)
 	plaintext := []byte("this is a secret message")
 
 	ciphertext, err := Encrypt(kek, plaintext)
@@ -52,8 +46,8 @@ func TestAsymmetricKeyExchange(t *testing.T) {
 func TestHybridKeyDerivation(t *testing.T) {
 	req := require.New(t)
 
-	sharedX := randomBytes(t, seedSize)
-	sharedKEM := randomBytes(t, seedSize)
+	sharedX := testkit.RandBytes(t, seedSize)
+	sharedKEM := testkit.RandBytes(t, seedSize)
 
 	kek1, err := DeriveChaCha20Key(sharedX, sharedKEM)
 	req.NoError(err, "DeriveChaCha20Key failed")
@@ -66,7 +60,7 @@ func TestHybridKeyDerivation(t *testing.T) {
 
 func TestDeriveFoldSalt_DeterministicAndDistinct(t *testing.T) {
 	req := require.New(t)
-	ikm := randomBytes(t, 2*seedSize) // stands in for two concatenated SEKs
+	ikm := testkit.RandBytes(t, 2*seedSize) // stands in for two concatenated SEKs
 
 	salt1, err := DeriveFoldSalt(ikm)
 	req.NoError(err, "DeriveFoldSalt failed")
@@ -95,7 +89,7 @@ func TestProtocolEndToEndStream(t *testing.T) {
 	bobPrivCurve, bobPubCurve, _ := GenerateX25519Keypair()
 
 	seedKEM, ctKEM := alicePubMLKEM.Encapsulate()
-	seedCurve := randomBytes(t, seedSize)
+	seedCurve := testkit.RandBytes(t, seedSize)
 	ctCurve, err := X25519Decapsulate(seedCurve, bobPrivCurve, alicePubCurve)
 	req.NoError(err)
 
@@ -124,7 +118,7 @@ func TestProtocolEndToEndStream(t *testing.T) {
 
 func TestEncryptWithAAD_RoundTrip(t *testing.T) {
 	req := require.New(t)
-	kek := randomBytes(t, KeySize)
+	kek := testkit.RandBytes(t, KeySize)
 	plaintext := []byte("hello AAD world")
 	aad := []byte{0xde, 0xad, 0xbe, 0xef}
 
@@ -138,7 +132,7 @@ func TestEncryptWithAAD_RoundTrip(t *testing.T) {
 
 func TestDecryptWithAAD_AADTampered(t *testing.T) {
 	req := require.New(t)
-	kek := randomBytes(t, KeySize)
+	kek := testkit.RandBytes(t, KeySize)
 	plaintext := []byte("tamper test")
 	aad := []byte{0x01, 0x02, 0x03}
 
@@ -152,7 +146,7 @@ func TestDecryptWithAAD_AADTampered(t *testing.T) {
 
 func TestDecryptWithAAD_NilAADCompatibleWithEncrypt(t *testing.T) {
 	req := require.New(t)
-	kek := randomBytes(t, KeySize)
+	kek := testkit.RandBytes(t, KeySize)
 	plaintext := []byte("nil aad compat")
 
 	ct, err := Encrypt(kek, plaintext)
@@ -188,7 +182,7 @@ func TestEncrypt_NilAAD_BackCompat(t *testing.T) {
 	req.Equal(plaintext, got)
 
 	// Length invariant across plaintext sizes.
-	kek2 := randomBytes(t, KeySize)
+	kek2 := testkit.RandBytes(t, KeySize)
 	cases := []int{0, 1, 1024, 64 * 1024}
 	for _, size := range cases {
 		pt := make([]byte, size)
@@ -217,7 +211,7 @@ func TestEncrypt_NilAAD_BackCompat(t *testing.T) {
 
 func TestEncryptWithAAD_EmptyAADEqualsNoAAD(t *testing.T) {
 	req := require.New(t)
-	kek := randomBytes(t, KeySize)
+	kek := testkit.RandBytes(t, KeySize)
 	plaintext := []byte("empty vs nil aad")
 
 	for _, aad := range [][]byte{nil, {}} {
@@ -233,8 +227,8 @@ func TestEncryptWithAAD_EmptyAADEqualsNoAAD(t *testing.T) {
 
 func TestDeriveFileEncryptionKey_Stable(t *testing.T) {
 	req := require.New(t)
-	master := randomBytes(t, 32)
-	salt := randomBytes(t, 16)
+	master := testkit.RandBytes(t, 32)
+	salt := testkit.RandBytes(t, 16)
 	info := "keibidrop-identity-file-v2"
 
 	k1, err := DeriveFileEncryptionKey(master, salt, info)
@@ -248,9 +242,9 @@ func TestDeriveFileEncryptionKey_Stable(t *testing.T) {
 
 func TestDeriveFileEncryptionKey_DiffersBySalt(t *testing.T) {
 	req := require.New(t)
-	master := randomBytes(t, 32)
-	salt1 := randomBytes(t, 16)
-	salt2 := randomBytes(t, 16)
+	master := testkit.RandBytes(t, 32)
+	salt1 := testkit.RandBytes(t, 16)
+	salt2 := testkit.RandBytes(t, 16)
 	info := "keibidrop-identity-file-v2"
 
 	k1, err := DeriveFileEncryptionKey(master, salt1, info)
@@ -264,8 +258,8 @@ func TestDeriveFileEncryptionKey_DiffersBySalt(t *testing.T) {
 
 func TestDeriveFileEncryptionKey_DiffersByInfo(t *testing.T) {
 	req := require.New(t)
-	master := randomBytes(t, 32)
-	salt := randomBytes(t, 16)
+	master := testkit.RandBytes(t, 32)
+	salt := testkit.RandBytes(t, 16)
 
 	k1, err := DeriveFileEncryptionKey(master, salt, "keibidrop-identity-file-v2")
 	req.NoError(err)
@@ -278,8 +272,8 @@ func TestDeriveFileEncryptionKey_DiffersByInfo(t *testing.T) {
 
 func TestDeriveFileEncryptionKey_RejectsShortSalt(t *testing.T) {
 	req := require.New(t)
-	master := randomBytes(t, 32)
-	shortSalt := randomBytes(t, 8)
+	master := testkit.RandBytes(t, 32)
+	shortSalt := testkit.RandBytes(t, 8)
 
 	_, err := DeriveFileEncryptionKey(master, shortSalt, "info")
 	req.Error(err, "must reject salt shorter than 16 bytes")
@@ -287,7 +281,7 @@ func TestDeriveFileEncryptionKey_RejectsShortSalt(t *testing.T) {
 
 func TestDeriveFileEncryptionKey_RejectsEmptyMaster(t *testing.T) {
 	req := require.New(t)
-	salt := randomBytes(t, 16)
+	salt := testkit.RandBytes(t, 16)
 
 	_, err := DeriveFileEncryptionKey(nil, salt, "info")
 	req.Error(err, "must reject empty master key")
@@ -308,7 +302,7 @@ func TestProtocolMimic(t *testing.T) {
 	})
 	req.NoError(err, "Alice fingerprint generation failed")
 
-	seed := randomBytes(t, seedSize)
+	seed := testkit.RandBytes(t, seedSize)
 	ct, err := X25519Encapsulate(seed, privAliceX, pubAliceX)
 	req.NoError(err)
 

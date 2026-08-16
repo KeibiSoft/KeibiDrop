@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/quic-go/quic-go"
+	"github.com/stretchr/testify/require"
 )
 
 // BenchmarkRawTransport measures raw throughput with no gRPC: a single QUIC stream vs a
@@ -28,9 +29,7 @@ func BenchmarkRawTransport(b *testing.B) {
 
 	b.Run("quic", func(b *testing.B) {
 		ln, err := quic.ListenAddr("127.0.0.1:0", serverTLSConfig(), quicConfig())
-		if err != nil {
-			b.Fatal(err)
-		}
+		require.NoError(b, err)
 		defer ln.Close()
 		go func() {
 			conn, err := ln.Accept(context.Background())
@@ -44,22 +43,16 @@ func BenchmarkRawTransport(b *testing.B) {
 			rawSource(st, total)
 		}()
 		conn, err := quic.DialAddr(context.Background(), ln.Addr().String(), clientTLSConfig(), quicConfig())
-		if err != nil {
-			b.Fatal(err)
-		}
+		require.NoError(b, err)
 		defer conn.CloseWithError(0, "")
 		st, err := conn.OpenStreamSync(context.Background())
-		if err != nil {
-			b.Fatal(err)
-		}
+		require.NoError(b, err)
 		rawSink(b, st, total)
 	})
 
 	b.Run("tcp", func(b *testing.B) {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			b.Fatal(err)
-		}
+		require.NoError(b, err)
 		defer ln.Close()
 		go func() {
 			conn, err := ln.Accept()
@@ -69,9 +62,7 @@ func BenchmarkRawTransport(b *testing.B) {
 			rawSource(conn, total)
 		}()
 		conn, err := net.Dial("tcp", ln.Addr().String())
-		if err != nil {
-			b.Fatal(err)
-		}
+		require.NoError(b, err)
 		defer conn.Close()
 		rawSink(b, conn, total)
 	})

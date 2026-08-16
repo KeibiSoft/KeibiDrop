@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
+	"github.com/stretchr/testify/require"
 )
 
 // transport is one of the two wirings under test, QUIC or plain TCP. Identical start
@@ -62,13 +63,11 @@ func (tr transport) newClient(t testing.TB) (pb.BenchServiceClient, func()) {
 func (tr transport) newClientSvc(t testing.TB, svc pb.BenchServiceServer) (pb.BenchServiceClient, func()) {
 	t.Helper()
 	srv, addr, err := tr.start("127.0.0.1:0", svc)
-	if err != nil {
-		t.Fatalf("[%s] start server: %v", tr.name, err)
-	}
+	require.NoError(t, err, "[%s] start server", tr.name)
 	cc, err := tr.dial(addr.String())
 	if err != nil {
 		srv.Stop()
-		t.Fatalf("[%s] dial: %v", tr.name, err)
+		require.NoError(t, err, "[%s] dial", tr.name)
 	}
 	return pb.NewBenchServiceClient(cc), func() {
 		_ = cc.Close()

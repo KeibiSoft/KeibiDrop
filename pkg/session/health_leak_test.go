@@ -10,12 +10,11 @@
 package session
 
 import (
-	"io"
-	"log/slog"
 	"runtime"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +22,7 @@ import (
 // goroutine, a pair reconnecting on every blip leaks one per reconnect. Interval is out of reach so
 // the nil-client heartbeat never fires, isolating lifecycle from the tick.
 func TestHealthMonitor_NoGoroutineLeakAcrossRestarts(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := testkit.DiscardLogger()
 	runtime.GC()
 	base := runtime.NumGoroutine()
 

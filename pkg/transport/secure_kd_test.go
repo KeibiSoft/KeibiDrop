@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
 
@@ -24,141 +26,109 @@ import (
 // ML-KEM-1024 identities, mutual fingerprint verification) over a QUIC stream, then
 // sends AEAD data both ways.
 func TestKDHandshakeOverQUIC(t *testing.T) {
-	serverID, err := NewIdentity()
-	if err != nil {
-		t.Fatalf("server identity: %v", err)
-	}
-	clientID, err := NewIdentity()
-	if err != nil {
-		t.Fatalf("client identity: %v", err)
-	}
+	testkit.Run(t, func() error {
+		serverID := testkit.Must(NewIdentity())
+		clientID := testkit.Must(NewIdentity())
 
-	p := newConnPair(t)
-	defer p.close()
+		p := newConnPair(t)
+		defer p.close()
 
-	type res struct {
-		c   net.Conn
-		err error
-	}
-	srv := make(chan res, 1)
-	go func() {
-		sc := p.awaitServer(t)
-		secured, err := SecureKD(sc, serverID, clientID.Fingerprint(), RoleServer)
-		srv <- res{secured, err}
-	}()
+		var serverSecured net.Conn
+		joinServer := testkit.Go(func() error {
+			sc := p.awaitServer(t)
+			secured, err := SecureKD(sc, serverID, clientID.Fingerprint(), RoleServer)
+			serverSecured = secured
+			return err
+		})
 
-	clientSecured, err := SecureKD(p.client, clientID, serverID.Fingerprint(), RoleClient)
-	if err != nil {
-		t.Fatalf("client SecureKD: %v", err)
-	}
-	sr := <-srv
-	if sr.err != nil {
-		t.Fatalf("server SecureKD: %v", sr.err)
-	}
-	serverSecured := sr.c
+		clientSecured := testkit.Must(SecureKD(p.client, clientID, serverID.Fingerprint(), RoleClient))
+		if err := joinServer(); err != nil {
+			return fmt.Errorf("server SecureKD: %w", err)
+		}
 
-	// client -> server, larger than one read buffer (exercises leftover buffering)
-	msg := bytes.Repeat([]byte("kd"), 8192) // 16 KiB
-	werr := make(chan error, 1)
-	go func() { _, e := clientSecured.Write(msg); werr <- e }()
-	got := make([]byte, len(msg))
-	if _, err := io.ReadFull(serverSecured, got); err != nil {
-		t.Fatalf("server read: %v", err)
-	}
-	if !bytes.Equal(got, msg) {
-		t.Fatal("client->server did not round-trip")
-	}
-	if err := <-werr; err != nil {
-		t.Fatalf("client write: %v", err)
-	}
+		// client -> server, larger than one read buffer (exercises leftover buffering)
+		msg := bytes.Repeat([]byte("kd"), 8192) // 16 KiB
+		writeErr := testkit.Go(func() error {
+			_, e := clientSecured.Write(msg)
+			return e
+		})
+		got := make([]byte, len(msg))
+		testkit.Must(io.ReadFull(serverSecured, got))
+		if err := fp.BytesEqual("client->server round trip", got, msg); err != nil {
+			return err
+		}
+		if err := writeErr(); err != nil {
+			return fmt.Errorf("client write: %w", err)
+		}
 
-	// server -> client (proves the second, independently-keyed direction)
-	reply := []byte("kd-ack-from-server")
-	if _, err := serverSecured.Write(reply); err != nil {
-		t.Fatalf("server write: %v", err)
-	}
-	rb := make([]byte, len(reply))
-	if _, err := io.ReadFull(clientSecured, rb); err != nil {
-		t.Fatalf("client read: %v", err)
-	}
-	if !bytes.Equal(rb, reply) {
-		t.Fatal("server->client did not round-trip")
-	}
+		// server -> client (proves the second, independently-keyed direction)
+		reply := []byte("kd-ack-from-server")
+		testkit.Must(serverSecured.Write(reply))
+		rb := make([]byte, len(reply))
+		testkit.Must(io.ReadFull(clientSecured, rb))
+		return fp.BytesEqual("server->client round trip", rb, reply)
+	})
 }
 
 // TestKDFingerprintMismatch checks authentication gates the connection: a server
 // expecting a different client fingerprint rejects the handshake.
 func TestKDFingerprintMismatch(t *testing.T) {
-	serverID, _ := NewIdentity()
-	clientID, _ := NewIdentity()
-	wrong, _ := NewIdentity() // the client the server *expects*, not the one that connects
+	testkit.Run(t, func() error {
+		serverID, _ := NewIdentity()
+		clientID, _ := NewIdentity()
+		wrong, _ := NewIdentity() // the client the server *expects*, not the one that connects
 
-	p := newConnPair(t)
-	defer p.close()
+		p := newConnPair(t)
+		defer p.close()
 
-	srvErr := make(chan error, 1)
-	go func() {
-		sc := p.awaitServer(t)
-		_, err := SecureKD(sc, serverID, wrong.Fingerprint(), RoleServer)
-		if err != nil {
-			_ = sc.Close() // unblock the client's read, mirroring the real listener
-		}
-		srvErr <- err
-	}()
+		joinServer := testkit.Go(func() error {
+			sc := p.awaitServer(t)
+			_, err := SecureKD(sc, serverID, wrong.Fingerprint(), RoleServer)
+			if err != nil {
+				_ = sc.Close() // unblock the client's read, mirroring the real listener
+			}
+			return err
+		})
 
-	_, cerr := SecureKD(p.client, clientID, serverID.Fingerprint(), RoleClient)
-	serr := <-srvErr
-	if serr == nil {
-		t.Fatal("server accepted a client whose fingerprint did not match the expected one")
-	}
-	_ = cerr // the client also fails once the server drops the conn; the server-side reject is the assertion
+		_, cerr := SecureKD(p.client, clientID, serverID.Fingerprint(), RoleClient)
+		_ = cerr // the client also fails once the server drops the conn; the server-side reject is the assertion
+		return fp.WantErr("server rejects a client whose fingerprint does not match the expected one", joinServer())
+	})
 }
 
 // TestGRPCOverKDSecureQUIC is the full stack: gRPC (unary + server-stream) over
 // KeibiDrop's PQC handshake over QUIC, with fingerprint authentication on both ends.
 func TestGRPCOverKDSecureQUIC(t *testing.T) {
-	serverID, _ := NewIdentity()
-	clientID, _ := NewIdentity()
+	testkit.Run(t, func() error {
+		serverID, _ := NewIdentity()
+		clientID, _ := NewIdentity()
 
-	srv, addr, err := ServeGRPCKD("127.0.0.1:0", benchService{}, serverID, clientID.Fingerprint())
-	if err != nil {
-		t.Fatalf("start server: %v", err)
-	}
-	defer srv.Stop()
+		srv, addr := testkit.Must2(ServeGRPCKD("127.0.0.1:0", benchService{}, serverID, clientID.Fingerprint()))
+		defer srv.Stop()
 
-	cc, err := DialGRPCKD(addr.String(), clientID, serverID.Fingerprint())
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer cc.Close()
-	client := pb.NewBenchServiceClient(cc)
+		cc := testkit.Must(DialGRPCKD(addr.String(), clientID, serverID.Fingerprint()))
+		defer cc.Close()
+		client := pb.NewBenchServiceClient(cc)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	reply, err := client.Echo(ctx, &pb.EchoRequest{Payload: []byte("kd-pq-grpc")})
-	if err != nil {
-		t.Fatalf("Echo: %v", err)
-	}
-	if string(reply.Payload) != "kd-pq-grpc" {
-		t.Fatalf("echo mismatch: %q", reply.Payload)
-	}
-
-	const total = 4 << 20
-	stream, err := client.Download(ctx, &pb.DownloadRequest{TotalBytes: total, ChunkSize: 64 << 10})
-	if err != nil {
-		t.Fatalf("Download: %v", err)
-	}
-	got, err := drainDownload(stream, func(c *pb.Chunk) error {
-		if !verifyChunk(c.Data) {
-			return fmt.Errorf("corrupt chunk at offset %d", c.Offset)
+		reply := testkit.Must(client.Echo(ctx, &pb.EchoRequest{Payload: []byte("kd-pq-grpc")}))
+		if err := fp.Equal("echo", string(reply.Payload), "kd-pq-grpc"); err != nil {
+			return err
 		}
-		return nil
+
+		const total = 4 << 20
+		stream := testkit.Must(client.Download(ctx, &pb.DownloadRequest{TotalBytes: total, ChunkSize: 64 << 10}))
+		got, err := drainDownload(stream, func(c *pb.Chunk) error {
+			if !verifyChunk(c.Data) {
+				return fmt.Errorf("corrupt chunk at offset %d", c.Offset)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		return fp.Equal("byte count", got, uint64(total))
 	})
-	if err != nil {
-		t.Fatalf("recv: %v", err)
-	}
-	if got != total {
-		t.Fatalf("byte count: got %d want %d", got, total)
-	}
 }

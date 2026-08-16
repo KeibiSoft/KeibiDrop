@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+	"github.com/stretchr/testify/require"
 )
 
 func collectEvents(kd *KeibiDrop) *[]string {
@@ -53,9 +54,7 @@ func TestWireReconnectEvents_EventFired(t *testing.T) {
 			kd.wireReconnectEvents()
 			tc.trigger(kd.ReconnectManager)
 
-			if len(*events) != 1 || (*events)[0] != tc.want {
-				t.Fatalf("expected [%s], got %v", tc.want, *events)
-			}
+			require.Equal(t, []string{tc.want}, *events)
 		})
 	}
 }
@@ -70,12 +69,8 @@ func TestWireReconnectEvents_OriginalCallbackPreserved(t *testing.T) {
 	kd.wireReconnectEvents()
 	kd.ReconnectManager.OnReconnected()
 
-	if !originalCalled {
-		t.Fatal("original OnReconnected callback was not called")
-	}
-	if len(*events) != 1 || (*events)[0] != "reconnected:" {
-		t.Fatalf("expected [reconnected:], got %v", *events)
-	}
+	require.True(t, originalCalled, "original OnReconnected callback was not called")
+	require.Equal(t, []string{"reconnected:"}, *events)
 }
 
 func TestWireReconnectEvents_NilReconnectManagerIsNoop(t *testing.T) {

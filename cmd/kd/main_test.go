@@ -12,17 +12,21 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
+	"github.com/stretchr/testify/require"
 )
 
 // isLoopbackAddr must refuse any off-box bind for the debug pprof endpoint, so KD_PPROF can never
 // expose profiles beyond the local host.
 func TestIsLoopbackAddr(t *testing.T) {
-	cases := []struct {
+	type loopbackCase struct {
 		addr string
 		want bool
-	}{
+	}
+	cases := []loopbackCase{
 		{"127.0.0.1:6060", true},
 		{"[::1]:6060", true},
 		{"localhost:6060", true},
@@ -32,11 +36,16 @@ func TestIsLoopbackAddr(t *testing.T) {
 		{"6060", false},             // not host:port
 		{"", false},
 	}
-	for _, tc := range cases {
-		if got := isLoopbackAddr(tc.addr); got != tc.want {
-			t.Errorf("isLoopbackAddr(%q) = %v, want %v", tc.addr, got, tc.want)
+	// Name the empty case. An empty subtest name auto-numbers to #00.
+	name := func(c loopbackCase) string {
+		if c.addr == "" {
+			return "empty"
 		}
+		return c.addr
 	}
+	testkit.RunTable(t, cases, name, func(_ *testing.T, c loopbackCase) error {
+		return fp.Equal("isLoopbackAddr", isLoopbackAddr(c.addr), c.want)
+	})
 }
 
 var testPortBase int32 = 26900
@@ -57,9 +66,7 @@ func newTestKD(t *testing.T) *common.KeibiDrop {
 		port, port+1, "", t.TempDir(),
 		false, false, "::1",
 	)
-	if err != nil {
-		t.Fatalf("NewKeibiDropWithIP: %v", err)
-	}
+	require.NoError(t, err, "NewKeibiDropWithIP")
 	return kd
 }
 
@@ -73,11 +80,12 @@ func dispatchTest(kd *common.KeibiDrop, cmd string, args ...string) Response {
 }
 
 func TestIsShowAll(t *testing.T) {
-	cases := []struct {
+	type showAllCase struct {
 		name string
 		args []string
 		want bool
-	}{
+	}
+	cases := []showAllCase{
 		{"no args", nil, true},
 		{"empty slice", []string{}, true},
 		{"explicit all", []string{"all"}, true},
@@ -86,21 +94,19 @@ func TestIsShowAll(t *testing.T) {
 		{"all with extra", []string{"all", "extra"}, false},
 		{"capitalised", []string{"All"}, false},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := isShowAll(tc.args); got != tc.want {
-				t.Fatalf("isShowAll(%v) = %v, want %v", tc.args, got, tc.want)
-			}
+	testkit.RunTable(t, cases, func(c showAllCase) string { return c.name },
+		func(_ *testing.T, c showAllCase) error {
+			return fp.Equal("isShowAll", isShowAll(c.args), c.want)
 		})
-	}
 }
 
 func TestDispatch_MissingArgs(t *testing.T) {
 	kd := newTestKD(t)
-	cases := []struct {
+	type missingArgsCase struct {
 		cmd  string
 		args []string
-	}{
+	}
+	cases := []missingArgsCase{
 		{"register", nil},
 		{"add", nil},
 		{"pull", nil},
@@ -113,89 +119,62 @@ func TestDispatch_MissingArgs(t *testing.T) {
 		{"cancel-download", nil},
 		{"progress", nil},
 	}
-	for _, tc := range cases {
-		t.Run(tc.cmd, func(t *testing.T) {
-			resp := dispatchTest(kd, tc.cmd, tc.args...)
-			if resp.OK {
-				t.Fatalf("%s with missing args should fail", tc.cmd)
-			}
+	testkit.RunTable(t, cases, func(c missingArgsCase) string { return c.cmd },
+		func(_ *testing.T, c missingArgsCase) error {
+			resp := dispatchTest(kd, c.cmd, c.args...)
+			return fp.False(c.cmd+" with missing args should fail", resp.OK)
 		})
-	}
 }
 
 func TestDispatch_UnknownCommand(t *testing.T) {
 	kd := newTestKD(t)
 	resp := dispatchTest(kd, "bogus-command")
-	if resp.OK {
-		t.Fatal("unknown command should fail")
-	}
+	require.False(t, resp.OK, "unknown command should fail")
 }
 
 func TestDispatch_Version(t *testing.T) {
 	kd := newTestKD(t)
 	resp := dispatchTest(kd, "version")
-	if !resp.OK {
-		t.Fatalf("version should succeed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "version should succeed: %s", resp.Error)
 	var data map[string]string
-	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := data["version"]; !ok {
-		t.Fatal("version response missing 'version' field")
-	}
+	require.NoError(t, json.Unmarshal(resp.Data, &data))
+	_, ok := data["version"]
+	require.True(t, ok, "version response missing 'version' field")
 }
 
 func TestDispatch_PollEventEmpty(t *testing.T) {
 	kd := newTestKD(t)
 	resp := dispatchTest(kd, "poll-event")
-	if !resp.OK {
-		t.Fatalf("poll-event should succeed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "poll-event should succeed: %s", resp.Error)
 	var data map[string]string
-	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		t.Fatal(err)
-	}
-	if data["event"] != "" {
-		t.Fatalf("expected empty event, got %q", data["event"])
-	}
+	require.NoError(t, json.Unmarshal(resp.Data, &data))
+	require.Equal(t, "", data["event"])
 }
 
 func TestDispatch_PollEventWithData(t *testing.T) {
 	kd := newTestKD(t)
 	eventCh <- "reconnected:"
 	resp := dispatchTest(kd, "poll-event")
-	if !resp.OK {
-		t.Fatalf("poll-event should succeed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "poll-event should succeed: %s", resp.Error)
 	var data map[string]string
 	_ = json.Unmarshal(resp.Data, &data)
-	if data["event"] != "reconnected:" {
-		t.Fatalf("expected 'reconnected:', got %q", data["event"])
-	}
+	require.Equal(t, "reconnected:", data["event"])
 }
 
 func TestDispatch_PeerInfo(t *testing.T) {
 	kd := newTestKD(t)
 	resp := dispatchTest(kd, "peer-info")
-	if !resp.OK {
-		t.Fatalf("peer-info should succeed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "peer-info should succeed: %s", resp.Error)
 	var data map[string]any
-	if err := json.Unmarshal(resp.Data, &data); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := data["connection_mode"]; !ok {
-		t.Fatal("missing connection_mode")
-	}
+	require.NoError(t, json.Unmarshal(resp.Data, &data))
+	_, ok := data["connection_mode"]
+	require.True(t, ok, "missing connection_mode")
 }
 
 func TestDispatch_IncognitoQuery(t *testing.T) {
 	kd := newTestKD(t)
 	resp := dispatchTest(kd, "incognito")
-	if !resp.OK {
-		t.Fatalf("incognito query should succeed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "incognito query should succeed: %s", resp.Error)
 }
 
 func TestDispatch_UnshareExistingFile(t *testing.T) {
@@ -204,23 +183,17 @@ func TestDispatch_UnshareExistingFile(t *testing.T) {
 		Name: "test.txt",
 	}
 	resp := dispatchTest(kd, "unshare", "test.txt")
-	if !resp.OK {
-		t.Fatalf("unshare should succeed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "unshare should succeed: %s", resp.Error)
 	kd.SyncTracker.LocalFilesMu.RLock()
 	_, exists := kd.SyncTracker.LocalFiles["test.txt"]
 	kd.SyncTracker.LocalFilesMu.RUnlock()
-	if exists {
-		t.Fatal("file should be removed from tracker")
-	}
+	require.False(t, exists, "file should be removed from tracker")
 }
 
 func TestDispatch_UnshareNonexistent(t *testing.T) {
 	kd := newTestKD(t)
 	resp := dispatchTest(kd, "unshare", "ghost.txt")
-	if resp.OK {
-		t.Fatal("unshare nonexistent should fail")
-	}
+	require.False(t, resp.OK, "unshare nonexistent should fail")
 }
 
 func TestDispatch_ListPrunesStale(t *testing.T) {
@@ -230,29 +203,21 @@ func TestDispatch_ListPrunesStale(t *testing.T) {
 		RealPathOfFile: "/nonexistent/gone.txt",
 	}
 	resp := dispatchTest(kd, "list")
-	if !resp.OK {
-		t.Fatalf("list should succeed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "list should succeed: %s", resp.Error)
 	kd.SyncTracker.LocalFilesMu.RLock()
 	_, exists := kd.SyncTracker.LocalFiles["gone.txt"]
 	kd.SyncTracker.LocalFilesMu.RUnlock()
-	if exists {
-		t.Fatal("stale file should be pruned by list")
-	}
+	require.False(t, exists, "stale file should be pruned by list")
 }
 
 func TestDispatch_Status(t *testing.T) {
 	kd := newTestKD(t)
 	resp := dispatchTest(kd, "status")
-	if !resp.OK {
-		t.Fatalf("status should succeed: %s", resp.Error)
-	}
+	require.True(t, resp.OK, "status should succeed: %s", resp.Error)
 	var data map[string]any
 	_ = json.Unmarshal(resp.Data, &data)
-	if _, ok := data["fingerprint"]; !ok {
-		t.Fatal("status missing fingerprint")
-	}
-	if _, ok := data["connection_mode"]; !ok {
-		t.Fatal("status missing connection_mode")
-	}
+	_, hasFingerprint := data["fingerprint"]
+	require.True(t, hasFingerprint, "status missing fingerprint")
+	_, hasMode := data["connection_mode"]
+	require.True(t, hasMode, "status missing connection_mode")
 }

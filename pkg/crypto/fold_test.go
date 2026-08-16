@@ -12,6 +12,7 @@ package crypto
 import (
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,7 +32,7 @@ func runFold(t *testing.T, salt []byte) []byte {
 }
 
 func TestEphemeralFold_RoundTripAgrees(t *testing.T) {
-	salt := randomBytes(t, minFoldSaltSize)
+	salt := testkit.RandBytes(t, minFoldSaltSize)
 	init, err := NewFoldInitiator()
 	require.NoError(t, err)
 
@@ -46,14 +47,14 @@ func TestEphemeralFold_RoundTripAgrees(t *testing.T) {
 }
 
 func TestEphemeralFold_FreshPerRound(t *testing.T) {
-	salt := randomBytes(t, minFoldSaltSize)
+	salt := testkit.RandBytes(t, minFoldSaltSize)
 	require.NotEqual(t, runFold(t, salt), runFold(t, salt),
 		"each round uses fresh ephemerals, so the fold secret must differ even under the same salt")
 }
 
 func TestEphemeralFold_SaltBinding(t *testing.T) {
-	saltA := randomBytes(t, minFoldSaltSize)
-	saltB := randomBytes(t, minFoldSaltSize)
+	saltA := testkit.RandBytes(t, minFoldSaltSize)
+	saltB := testkit.RandBytes(t, minFoldSaltSize)
 
 	init, err := NewFoldInitiator()
 	require.NoError(t, err)
@@ -67,7 +68,7 @@ func TestEphemeralFold_SaltBinding(t *testing.T) {
 }
 
 func TestEphemeralFold_TamperedCiphertextDiverges(t *testing.T) {
-	salt := randomBytes(t, minFoldSaltSize)
+	salt := testkit.RandBytes(t, minFoldSaltSize)
 	init, err := NewFoldInitiator()
 	require.NoError(t, err)
 
@@ -81,7 +82,7 @@ func TestEphemeralFold_TamperedCiphertextDiverges(t *testing.T) {
 }
 
 func TestEphemeralFold_MalformedPublicsRejected(t *testing.T) {
-	salt := randomBytes(t, minFoldSaltSize)
+	salt := testkit.RandBytes(t, minFoldSaltSize)
 
 	_, mlkemPub, err := GenerateMLKEMKeypair()
 	require.NoError(t, err)
@@ -104,19 +105,19 @@ func TestEphemeralFold_MalformedPublicsRejected(t *testing.T) {
 func TestEphemeralFold_RejectsShortSalt(t *testing.T) {
 	init, err := NewFoldInitiator()
 	require.NoError(t, err)
-	_, _, _, err = EphemeralFoldRespond(init.MLKEMPublic(), init.X25519Public(), randomBytes(t, minFoldSaltSize-1))
+	_, _, _, err = EphemeralFoldRespond(init.MLKEMPublic(), init.X25519Public(), testkit.RandBytes(t, minFoldSaltSize-1))
 	require.Error(t, err, "responder rejects a short salt")
 
 	init2, err := NewFoldInitiator()
 	require.NoError(t, err)
-	_, ct, respPub, err := EphemeralFoldRespond(init2.MLKEMPublic(), init2.X25519Public(), randomBytes(t, minFoldSaltSize))
+	_, ct, respPub, err := EphemeralFoldRespond(init2.MLKEMPublic(), init2.X25519Public(), testkit.RandBytes(t, minFoldSaltSize))
 	require.NoError(t, err)
-	_, err = init2.Derive(ct, respPub, randomBytes(t, minFoldSaltSize-1))
+	_, err = init2.Derive(ct, respPub, testkit.RandBytes(t, minFoldSaltSize-1))
 	require.Error(t, err, "initiator rejects a short salt")
 }
 
 func TestEphemeralFold_DeriveConsumesInitiator(t *testing.T) {
-	salt := randomBytes(t, minFoldSaltSize)
+	salt := testkit.RandBytes(t, minFoldSaltSize)
 	init, err := NewFoldInitiator()
 	require.NoError(t, err)
 	_, ct, respPub, err := EphemeralFoldRespond(init.MLKEMPublic(), init.X25519Public(), salt)

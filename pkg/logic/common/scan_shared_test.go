@@ -8,8 +8,6 @@ package common
 import (
 	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -65,14 +63,12 @@ func (f *fakeNotifyCli) batchCount() int {
 func newScanTestKD(t *testing.T, saveDir string) (*KeibiDrop, *fakeNotifyCli) {
 	t.Helper()
 	cli := &fakeNotifyCli{}
-	kd := &KeibiDrop{
-		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		SyncTracker: synctracker.NewSyncTracker(),
-		ToSave:      saveDir,
-		session: &session.Session{
-			GRPCClient:              cli,
-			ExpectedPeerFingerprint: "test-peer",
-		},
+	kd := newBareKD()
+	kd.SyncTracker = synctracker.NewSyncTracker()
+	kd.ToSave = saveDir
+	kd.session = &session.Session{
+		GRPCClient:              cli,
+		ExpectedPeerFingerprint: "test-peer",
 	}
 	return kd, cli
 }
@@ -147,11 +143,9 @@ func TestScanAndShareSaveDir_SkipsPeerOwnedFiles(t *testing.T) {
 }
 
 func TestScanAndShareSaveDir_NoSession(t *testing.T) {
-	kd := &KeibiDrop{
-		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		SyncTracker: synctracker.NewSyncTracker(),
-		ToSave:      t.TempDir(),
-	}
+	kd := newBareKD()
+	kd.SyncTracker = synctracker.NewSyncTracker()
+	kd.ToSave = t.TempDir()
 	_, err := kd.ScanAndShareSaveDir(context.Background())
 	require.ErrorIs(t, err, ErrInvalidSession)
 }

@@ -6,6 +6,9 @@ package synctracker
 import (
 	"sync"
 	"testing"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 )
 
 func TestConcurrentEditAndRead_Race(t *testing.T) {
@@ -49,9 +52,13 @@ func TestConcurrentEditAndRead_Race(t *testing.T) {
 	st.RemoteFilesMu.RLock()
 	f := st.RemoteFiles["/test.txt"]
 	st.RemoteFilesMu.RUnlock()
-	if f == nil {
-		t.Fatal("file must still exist after concurrent edits")
-	} else if f.Size == 0 && f.LastEditTime == 0 {
-		t.Fatal("file fields should have been updated by at least one writer")
-	}
+
+	// Dependent: the second check dereferences f, so it must not run when
+	// f is nil. Steps short-circuits, All would not.
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return fp.True("file still exists", f != nil) },
+			func() error { return fp.True("a writer updated the fields", f.Size != 0 || f.LastEditTime != 0) },
+		)
+	})
 }

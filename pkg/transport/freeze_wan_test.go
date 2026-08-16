@@ -10,6 +10,7 @@ package transport
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"net"
 	"testing"
@@ -18,6 +19,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/benchmark/latency"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
 )
@@ -85,99 +88,101 @@ func TestWANFreezeUnderPrefetch(t *testing.T) {
 		grpc.WithReadBufferSize(config.GRPCIOBufferSize),
 	}
 
-	// One peer serving both the bulk prefetch and the on-demand reads.
-	srv, addr, err := ServeGRPCKDOver(tr, "127.0.0.1:0", benchService{}, serverID, clientID.Fingerprint(), srvOpts...)
-	if err != nil {
-		t.Fatalf("server: %v", err)
-	}
-	defer srv.Stop()
+	testkit.Run(t, func() error {
+		// One peer serving both the bulk prefetch and the on-demand reads.
+		srv, addr := testkit.Must2(ServeGRPCKDOver(tr, "127.0.0.1:0", benchService{}, serverID, clientID.Fingerprint(), srvOpts...))
+		defer srv.Stop()
 
-	ctx := context.Background()
+		ctx := context.Background()
 
-	// Channel A carries the prefetch (and, in the muxed case, the reads too).
-	bulkCh, err := DialGRPCKDOver(tr, addr.String(), clientID, serverID.Fingerprint(), cliOpts...)
-	if err != nil {
-		t.Fatalf("dial bulk channel: %v", err)
-	}
-	defer bulkCh.Close()
-	// Channel B is the separate fast lane.
-	fastCh, err := DialGRPCKDOver(tr, addr.String(), clientID, serverID.Fingerprint(), cliOpts...)
-	if err != nil {
-		t.Fatalf("dial fast channel: %v", err)
-	}
-	defer fastCh.Close()
+		// Channel A carries the prefetch (and, in the muxed case, the reads too).
+		bulkCh := testkit.Must(DialGRPCKDOver(tr, addr.String(), clientID, serverID.Fingerprint(), cliOpts...))
+		defer bulkCh.Close()
+		// Channel B is the separate fast lane.
+		fastCh := testkit.Must(DialGRPCKDOver(tr, addr.String(), clientID, serverID.Fingerprint(), cliOpts...))
+		defer fastCh.Close()
 
-	const readLen = 512 << 10  // KeibiDrop's block: the first chunk fetched on a miss
-	const fileBlocks = 1 << 14 // 8 GiB of virtual file to jump around in
-	rng := rand.New(rand.NewSource(42))
+		const readLen = 512 << 10  // KeibiDrop's block: the first chunk fetched on a miss
+		const fileBlocks = 1 << 14 // 8 GiB of virtual file to jump around in
+		rng := rand.New(rand.NewSource(42))
 
-	read := func(cc pb.BenchServiceClient, off uint64) (time.Duration, error) {
-		c, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		t0 := time.Now()
-		reply, err := cc.Read(c, &pb.ReadRequest{Offset: off, Length: readLen})
-		d := time.Since(t0)
+		// The timed section below (t0 to time.Since(t0)) brackets only the RPC call.
+		// Verification runs after d is captured, so it never perturbs the measurement.
+		read := func(cc pb.BenchServiceClient, off uint64) (time.Duration, error) {
+			c, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			t0 := time.Now()
+			reply, err := cc.Read(c, &pb.ReadRequest{Offset: off, Length: readLen})
+			d := time.Since(t0)
+			if err != nil {
+				return d, err
+			}
+			if len(reply.Data) != readLen || !verifyRange(reply.Data, off) {
+				return d, fmt.Errorf("read at %d: wrong bytes (len %d)", off, len(reply.Data))
+			}
+			return d, nil
+		}
+		bulk := pb.NewBenchServiceClient(bulkCh)
+		fast := pb.NewBenchServiceClient(fastCh)
+
+		// Reference: a cache-miss read on an idle link, the floor (one round trip plus the transfer).
+		idle, err := measureReads(t, 5, func(i int) (time.Duration, error) {
+			return read(bulk, uint64(rng.Intn(fileBlocks))*readLen)
+		})
 		if err != nil {
-			return d, err
+			return err
 		}
-		if len(reply.Data) != readLen || !verifyRange(reply.Data, off) {
-			t.Fatalf("read at %d: wrong bytes (len %d)", off, len(reply.Data))
+
+		// Start the prefetch saturating channel A, then let it fill the pipe.
+		stop := saturateBulk(ctx, bulk, 256<<20)
+		defer stop()
+		time.Sleep(1 * time.Second) // let the prefetch saturate the link
+
+		// The freeze: random-jump reads muxed onto the busy bulk channel.
+		muxed, err := measureReads(t, 6, func(i int) (time.Duration, error) {
+			return read(bulk, uint64(rng.Intn(fileBlocks))*readLen)
+		})
+		if err != nil {
+			return err
 		}
-		return d, nil
-	}
-	bulk := pb.NewBenchServiceClient(bulkCh)
-	fast := pb.NewBenchServiceClient(fastCh)
+		// The fix: the same reads on the separate fast lane.
+		lane, err := measureReads(t, 10, func(i int) (time.Duration, error) {
+			return read(fast, uint64(rng.Intn(fileBlocks))*readLen)
+		})
+		if err != nil {
+			return err
+		}
 
-	// Reference: a cache-miss read on an idle link, the floor (one round trip plus the transfer).
-	idle := measureReads(t, 5, func(i int) (time.Duration, error) {
-		return read(bulk, uint64(rng.Intn(fileBlocks))*readLen)
+		t.Logf("motel WAN (60 Mbps, ~80 ms RTT, NO loss), 512 KiB cache-miss read, random jumps:")
+		t.Logf("  idle (no prefetch)           : p50=%v  max=%v", pctile(idle, .5), pctile(idle, 1))
+		t.Logf("  muxed on prefetch (today)    : p50=%v  p99=%v  max=%v", pctile(muxed, .5), pctile(muxed, .99), pctile(muxed, 1))
+		t.Logf("  separate fast lane (the fix) : p50=%v  p99=%v  max=%v", pctile(lane, .5), pctile(lane, .99), pctile(lane, 1))
+		t.Logf("  contention factor (muxed/lane p50): %.1fx", float64(pctile(muxed, .5))/float64(pctile(lane, .5)))
+		t.Logf("  NOTE: shaper models latency+bandwidth but NOT loss, so this is only the")
+		t.Logf("  bandwidth-contention share. Verified empirically: even with KeibiDrop's real")
+		t.Logf("  16 MiB fixed window the muxed read stays sub-second here, because gRPC's")
+		t.Logf("  loopyWriter fair-schedules streams as the window drains. The seconds-long")
+		t.Logf("  freeze is loss-driven TCP head-of-line blocking; real-WAN magnitude is 3066")
+		t.Logf("  ms vs 109 ms (blog, 72 ms lossy link). Reproduce that on the lossy fleet.")
+
+		// What this loss-free emulation can assert: the separate lane stays near the idle
+		// floor (isolated from the prefetch), and muxing onto the busy channel is worse.
+		return fp.All(
+			fp.True("fast lane stays near the idle floor (isolated from bulk)", pctile(lane, .5) <= 2*pctile(idle, .5)),
+			fp.True("muxing onto the prefetch channel is slower than the separate lane", pctile(muxed, .5) > pctile(lane, .5)),
+		)
 	})
-
-	// Start the prefetch saturating channel A, then let it fill the pipe.
-	stop := saturateBulk(ctx, bulk, 256<<20)
-	defer stop()
-	time.Sleep(1 * time.Second) // let the prefetch saturate the link
-
-	// The freeze: random-jump reads muxed onto the busy bulk channel.
-	muxed := measureReads(t, 6, func(i int) (time.Duration, error) {
-		return read(bulk, uint64(rng.Intn(fileBlocks))*readLen)
-	})
-	// The fix: the same reads on the separate fast lane.
-	lane := measureReads(t, 10, func(i int) (time.Duration, error) {
-		return read(fast, uint64(rng.Intn(fileBlocks))*readLen)
-	})
-
-	t.Logf("motel WAN (60 Mbps, ~80 ms RTT, NO loss), 512 KiB cache-miss read, random jumps:")
-	t.Logf("  idle (no prefetch)           : p50=%v  max=%v", pctile(idle, .5), pctile(idle, 1))
-	t.Logf("  muxed on prefetch (today)    : p50=%v  p99=%v  max=%v", pctile(muxed, .5), pctile(muxed, .99), pctile(muxed, 1))
-	t.Logf("  separate fast lane (the fix) : p50=%v  p99=%v  max=%v", pctile(lane, .5), pctile(lane, .99), pctile(lane, 1))
-	t.Logf("  contention factor (muxed/lane p50): %.1fx", float64(pctile(muxed, .5))/float64(pctile(lane, .5)))
-	t.Logf("  NOTE: shaper models latency+bandwidth but NOT loss, so this is only the")
-	t.Logf("  bandwidth-contention share. Verified empirically: even with KeibiDrop's real")
-	t.Logf("  16 MiB fixed window the muxed read stays sub-second here, because gRPC's")
-	t.Logf("  loopyWriter fair-schedules streams as the window drains. The seconds-long")
-	t.Logf("  freeze is loss-driven TCP head-of-line blocking; real-WAN magnitude is 3066")
-	t.Logf("  ms vs 109 ms (blog, 72 ms lossy link). Reproduce that on the lossy fleet.")
-
-	// What this loss-free emulation can assert: the separate lane stays near the idle
-	// floor (isolated from the prefetch), and muxing onto the busy channel is worse.
-	if pctile(lane, .5) > 2*pctile(idle, .5) {
-		t.Errorf("fast lane should stay near the idle floor (isolated from bulk); lane p50=%v idle p50=%v", pctile(lane, .5), pctile(idle, .5))
-	}
-	if pctile(muxed, .5) <= pctile(lane, .5) {
-		t.Errorf("muxing the read onto the prefetch channel should be slower than the separate lane; muxed p50=%v lane p50=%v", pctile(muxed, .5), pctile(lane, .5))
-	}
 }
 
-func measureReads(t *testing.T, n int, do func(i int) (time.Duration, error)) []time.Duration {
+func measureReads(t *testing.T, n int, do func(i int) (time.Duration, error)) ([]time.Duration, error) {
 	t.Helper()
 	out := make([]time.Duration, 0, n)
 	for i := 0; i < n; i++ {
 		d, err := do(i)
 		if err != nil {
-			t.Fatalf("read %d: %v", i, err)
+			return nil, fmt.Errorf("read %d: %w", i, err)
 		}
 		out = append(out, d)
 	}
-	return out
+	return out, nil
 }

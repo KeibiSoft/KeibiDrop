@@ -9,8 +9,6 @@ package service
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,6 +16,7 @@ import (
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/stretchr/testify/assert"
@@ -47,7 +46,7 @@ func TestAddFile_FuseMode_WritesSyncTracker(t *testing.T) {
 	root.Root = root
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	fsForSvc := &filesystem.FS{}
@@ -98,7 +97,7 @@ func TestAddFile_NoFUSE_RejectsStaleSmallerOlder_AcceptsNewerShrink(t *testing.T
 	st.RemoteFilesMu.Unlock()
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: st,
 	}
 	sizeOf := func() uint64 {
@@ -179,7 +178,7 @@ func TestEditFile_FuseMode_UpdatesSyncTracker(t *testing.T) {
 	}
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: tracker,
 	}
 	fsForSvc := &filesystem.FS{}
@@ -232,7 +231,7 @@ func TestEditFile_FuseMode_CreatesNewSyncTrackerEntry(t *testing.T) {
 	root.Root = root
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	fsForSvc := &filesystem.FS{}
@@ -285,7 +284,7 @@ func TestRemoveFile_NoFUSE_BufferedThenCancelledByAdd(t *testing.T) {
 	st.RemoteFilesMu.Unlock()
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: st,
 	}
 	tracked := func() bool {
@@ -322,7 +321,7 @@ func TestRemoveFile_NoFUSE_ExecutesAfterWindow(t *testing.T) {
 	st.RemoteFilesMu.Unlock()
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: st,
 	}
 
@@ -353,7 +352,7 @@ func TestRenameToFuseHidden_NoFUSE_AppliesAsRemoveOfSource(t *testing.T) {
 	st.RemoteFilesMu.Unlock()
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: st,
 	}
 	tracked := func(p string) bool {
@@ -405,7 +404,7 @@ func TestRenameToFuseHidden_FuseMode_RemovesSourceEverywhere(t *testing.T) {
 	root.Root = root
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	fsForSvc := &filesystem.FS{}
@@ -464,7 +463,7 @@ func TestTextEditSafeSave_BatchSequence_NoGhostBackup(t *testing.T) {
 	st.RemoteFilesMu.Unlock()
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: st,
 	}
 	sizeOf := func(p string) (uint64, bool) {
@@ -541,7 +540,7 @@ func TestRemoveFile_NoFUSE_DisconnectCancelsPendingRemoves(t *testing.T) {
 	st.RemoteFilesMu.Unlock()
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: st,
 	}
 

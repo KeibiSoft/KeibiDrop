@@ -3,17 +3,15 @@
 package common
 
 import (
-	"io"
-	"log/slog"
 	"testing"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newBridgePolicyTestKD() *KeibiDrop {
-	return &KeibiDrop{
-		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
+	return newBareKD()
 }
 
 func TestValidBridgeHintAddr(t *testing.T) {
@@ -25,9 +23,7 @@ func TestValidBridgeHintAddr(t *testing.T) {
 		"bridge.keibisoft.com.:26600", // trailing dot FQDN
 	}
 	for _, addr := range valid {
-		if !validBridgeHintAddr(addr) {
-			t.Errorf("rejected valid hint %q", addr)
-		}
+		assert.True(t, validBridgeHintAddr(addr), "rejected valid hint %q", addr)
 	}
 
 	invalid := []string{
@@ -45,9 +41,7 @@ func TestValidBridgeHintAddr(t *testing.T) {
 		"bridge.keibisoft.com:26600:26600", // malformed
 	}
 	for _, addr := range invalid {
-		if validBridgeHintAddr(addr) {
-			t.Errorf("accepted invalid hint %q", addr)
-		}
+		assert.False(t, validBridgeHintAddr(addr), "accepted invalid hint %q", addr)
 	}
 }
 
@@ -56,9 +50,7 @@ func TestAcceptBridgeHint_AppliesValidHint(t *testing.T) {
 	kd.BridgeAddr = "bridge.keibisoft.com:26600"
 
 	kd.acceptBridgeHint("fra1.bridge.keibidrop.com:26600", kd.logger)
-	if kd.BridgeAddr != "fra1.bridge.keibidrop.com:26600" {
-		t.Fatalf("hint not applied, BridgeAddr=%q", kd.BridgeAddr)
-	}
+	require.Equal(t, "fra1.bridge.keibidrop.com:26600", kd.BridgeAddr, "hint not applied")
 }
 
 func TestAcceptBridgeHint_RejectsForeignHost(t *testing.T) {
@@ -66,9 +58,7 @@ func TestAcceptBridgeHint_RejectsForeignHost(t *testing.T) {
 	kd.BridgeAddr = "bridge.keibisoft.com:26600"
 
 	kd.acceptBridgeHint("evil.example.com:26600", kd.logger)
-	if kd.BridgeAddr != "bridge.keibisoft.com:26600" {
-		t.Fatalf("foreign hint applied, BridgeAddr=%q", kd.BridgeAddr)
-	}
+	require.Equal(t, "bridge.keibisoft.com:26600", kd.BridgeAddr, "foreign hint applied")
 }
 
 func TestAcceptBridgeHint_StrictIgnoresHint(t *testing.T) {
@@ -76,9 +66,7 @@ func TestAcceptBridgeHint_StrictIgnoresHint(t *testing.T) {
 	kd.StrictMode = true
 
 	kd.acceptBridgeHint("fra1.bridge.keibidrop.com:26600", kd.logger)
-	if kd.BridgeAddr != "" {
-		t.Fatalf("strict mode accepted a hint, BridgeAddr=%q", kd.BridgeAddr)
-	}
+	require.Empty(t, kd.BridgeAddr, "strict mode accepted a hint")
 }
 
 func TestAcceptBridgeHint_FrozenMidSession(t *testing.T) {
@@ -89,9 +77,7 @@ func TestAcceptBridgeHint_FrozenMidSession(t *testing.T) {
 	kd.ReconnectManager = session.NewReconnectManager(nil, kd.logger)
 
 	kd.acceptBridgeHint("fra1.bridge.keibidrop.com:26600", kd.logger)
-	if kd.BridgeAddr != "bridge.keibisoft.com:26600" {
-		t.Fatalf("mid-session hint applied, BridgeAddr=%q", kd.BridgeAddr)
-	}
+	require.Equal(t, "bridge.keibisoft.com:26600", kd.BridgeAddr, "mid-session hint applied")
 }
 
 func TestPrepareBridgePolicy_StrictClearsBridge(t *testing.T) {
@@ -100,12 +86,8 @@ func TestPrepareBridgePolicy_StrictClearsBridge(t *testing.T) {
 	kd.StrictMode = true
 
 	kd.prepareBridgePolicy(kd.logger)
-	if kd.BridgeAddr != "" {
-		t.Fatalf("strict mode left BridgeAddr=%q", kd.BridgeAddr)
-	}
-	if kd.effectiveBridgeAddr() != "" {
-		t.Fatalf("strict mode left effective bridge %q", kd.effectiveBridgeAddr())
-	}
+	require.Empty(t, kd.BridgeAddr, "strict mode left BridgeAddr set")
+	require.Empty(t, kd.effectiveBridgeAddr(), "strict mode left an effective bridge")
 }
 
 func TestPrepareBridgePolicy_CapturesBaseAndResetsFailover(t *testing.T) {
@@ -114,25 +96,17 @@ func TestPrepareBridgePolicy_CapturesBaseAndResetsFailover(t *testing.T) {
 	kd.bridgeFellBack.Store(true)
 
 	kd.prepareBridgePolicy(kd.logger)
-	if kd.bridgeBase != "bridge.keibisoft.com:26600" {
-		t.Fatalf("base not captured, got %q", kd.bridgeBase)
-	}
-	if kd.bridgeFellBack.Load() {
-		t.Fatal("failover flag not reset at room entry")
-	}
+	require.Equal(t, "bridge.keibisoft.com:26600", kd.bridgeBase, "base not captured")
+	require.False(t, kd.bridgeFellBack.Load(), "failover flag not reset at room entry")
 
 	// A later hint moves BridgeAddr; the base keeps the pre-hint value.
 	kd.acceptBridgeHint("fra1.bridge.keibidrop.com:26600", kd.logger)
-	if kd.bridgeBase != "bridge.keibisoft.com:26600" {
-		t.Fatalf("base moved with the hint, got %q", kd.bridgeBase)
-	}
-	if kd.effectiveBridgeAddr() != "fra1.bridge.keibidrop.com:26600" {
-		t.Fatalf("effective addr should follow the hint, got %q", kd.effectiveBridgeAddr())
-	}
+	require.Equal(t, "bridge.keibisoft.com:26600", kd.bridgeBase, "base moved with the hint")
+	require.Equal(t, "fra1.bridge.keibidrop.com:26600", kd.effectiveBridgeAddr(),
+		"effective addr should follow the hint")
 
 	// After a failover every lane must dial the base.
 	kd.bridgeFellBack.Store(true)
-	if kd.effectiveBridgeAddr() != "bridge.keibisoft.com:26600" {
-		t.Fatalf("effective addr should be the base after failover, got %q", kd.effectiveBridgeAddr())
-	}
+	require.Equal(t, "bridge.keibisoft.com:26600", kd.effectiveBridgeAddr(),
+		"effective addr should be the base after failover")
 }

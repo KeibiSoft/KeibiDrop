@@ -15,6 +15,7 @@ import (
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
+	"github.com/stretchr/testify/require"
 )
 
 // TestSessionTeardownRacesNotifyFlush proves the F2 hardening is incomplete on the reader
@@ -36,9 +37,7 @@ func TestSessionTeardownRacesNotifyFlush(t *testing.T) {
 	sessB := &session.Session{GRPCClient: fake}
 
 	// Start the real notify worker (creates kd.FS and the flush goroutine).
-	if err := kd.setupFilesystem(kd.logger, nil); err != nil {
-		t.Fatalf("setupFilesystem: %v", err)
-	}
+	require.NoError(t, kd.setupFilesystem(kd.logger, nil), "setupFilesystem")
 
 	var start, done sync.WaitGroup
 	start.Add(1)

@@ -2,12 +2,14 @@ package common
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/transport"
 	"github.com/stretchr/testify/require"
 )
@@ -30,10 +32,9 @@ func TestRealRelayInterop(t *testing.T) {
 	defer cancel()
 
 	t0 := time.Now()
-	errS := make(chan error, 1)
-	go func() { errS <- registerUDPRelay(ctx, server, relayAddr, regDatagram(t, "realprobe")) }()
+	join := testkit.Go(func() error { return registerUDPRelay(ctx, server, relayAddr, regDatagram(t, "realprobe")) })
 	require.NoError(t, registerUDPRelay(ctx, client, relayAddr, regDatagram(t, "realprobe")))
-	require.NoError(t, <-errS)
+	require.NoError(t, join())
 	t.Logf("REAL RELAY paired both rooms in %v", time.Since(t0))
 
 	ln, err := transport.ListenOnConn(server)
@@ -41,9 +42,12 @@ func TestRealRelayInterop(t *testing.T) {
 	defer ln.Close()
 
 	const msg = "payload through the real relay"
+	// Not testkit.Go. The goroutine's cleanup defer blocks on done, which this
+	// function closes only after it reads the result. A return runs that defer
+	// first, so the join never receives: deadlock. A buffered send does not.
+	accepted := make(chan error, 1)
 	done := make(chan struct{})
 	defer close(done)
-	accepted := make(chan error, 1)
 	go func() {
 		c, aErr := ln.Accept()
 		if aErr != nil {
@@ -56,7 +60,12 @@ func TestRealRelayInterop(t *testing.T) {
 			accepted <- rErr
 			return
 		}
-		require.Equal(t, msg, string(got))
+		// require.* calls t.FailNow, which is only legal on the test goroutine.
+		// Off it, the test HANGS instead of failing. Report through the channel.
+		if string(got) != msg {
+			accepted <- fmt.Errorf("payload mismatch: got %q, want %q", got, msg)
+			return
+		}
 		_, wErr := c.Write([]byte("ack"))
 		accepted <- wErr
 	}()

@@ -4,14 +4,14 @@ package session
 
 import (
 	"fmt"
-	"io"
-	"log/slog"
 	"net"
 	"testing"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 )
 
 func newPolicyTestManager() *ReconnectManager {
-	return NewReconnectManager(nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return NewReconnectManager(nil, testkit.DiscardLogger())
 }
 
 func TestUseBridgeFirst(t *testing.T) {
@@ -49,7 +49,7 @@ func TestUseBridgeFirst(t *testing.T) {
 
 func TestDirectFailureFlipsToBridge(t *testing.T) {
 	r := newPolicyTestManager()
-	r.session = &Session{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r.session = &Session{logger: testkit.DiscardLogger()}
 	r.BridgeAddr = "b:26600"
 	dialed := 0
 	r.DialBridge = func(string) (net.Conn, error) {

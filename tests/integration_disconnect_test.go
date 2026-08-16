@@ -18,14 +18,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/stretchr/testify/require"
 )
 
-// reconnectReady runs join and sends the result on ready, retrying while the
-// running flag is still set. The tests wait for the flag before they Stop(),
-// so this retry is insurance against residual teardown lag on slow CI.
-func reconnectReady(join func() error, ready chan error) {
+// reconnectJoin runs join, retrying while the running flag is still set. The
+// tests wait for the flag before they Stop(), so this retry is insurance
+// against residual teardown lag on slow CI.
+func reconnectJoin(join func() error) error {
 	var err error
 	for range 25 {
 		err = join()
@@ -34,7 +36,7 @@ func reconnectReady(join func() error, ready chan error) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	ready <- err
+	return err
 }
 
 // TestDisconnect_NoFUSE_StopAndReconnect verifies that after both peers
@@ -81,30 +83,20 @@ func TestDisconnect_NoFUSE_StopAndReconnect(t *testing.T) {
 	tp.Relay.Clear()
 
 	// Reconnect: CreateRoom (Alice) + JoinRoom (Bob).
-	aliceReady := make(chan error, 1)
-	bobReady := make(chan error, 1)
-
-	go reconnectReady(tp.Alice.CreateRoom, aliceReady)
+	aliceReady := testkit.Go(func() error { return reconnectJoin(tp.Alice.CreateRoom) })
 
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return tp.Relay.EntryCount() > 0
 	}, "waiting for Alice to re-register on relay")
 
-	go reconnectReady(tp.Bob.JoinRoom, bobReady)
+	bobReady := testkit.Go(func() error { return reconnectJoin(tp.Bob.JoinRoom) })
 
-	select {
-	case err := <-aliceReady:
-		require.NoError(err, "Alice CreateRoom (round 2) failed")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout waiting for Alice CreateRoom round 2")
-	}
-
-	select {
-	case err := <-bobReady:
-		require.NoError(err, "Bob JoinRoom (round 2) failed")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout waiting for Bob JoinRoom round 2")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return testkit.Within(15*time.Second, "Alice CreateRoom round 2", aliceReady) },
+			func() error { return testkit.Within(15*time.Second, "Bob JoinRoom round 2", bobReady) },
+		)
+	})
 
 	// --- Phase 4: verify reconnected session works ---
 	content2 := []byte("after reconnect!")
@@ -149,30 +141,24 @@ func TestDisconnect_NoFUSE_OnePeerDisconnects(t *testing.T) {
 
 	tp.Relay.Clear()
 
-	aliceReady := make(chan error, 1)
-	bobReady := make(chan error, 1)
-
-	go reconnectReady(tp.Alice.CreateRoom, aliceReady)
+	aliceReady := testkit.Go(func() error { return reconnectJoin(tp.Alice.CreateRoom) })
 
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return tp.Relay.EntryCount() > 0
 	}, "waiting for Alice to re-register on relay")
 
-	go reconnectReady(tp.Bob.JoinRoom, bobReady)
+	bobReady := testkit.Go(func() error { return reconnectJoin(tp.Bob.JoinRoom) })
 
-	select {
-	case err := <-aliceReady:
-		require.NoError(err, "Alice CreateRoom failed after one-sided disconnect")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout on Alice CreateRoom after one-sided disconnect")
-	}
-
-	select {
-	case err := <-bobReady:
-		require.NoError(err, "Bob JoinRoom failed after one-sided disconnect")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout on Bob JoinRoom after one-sided disconnect")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error {
+				return testkit.Within(15*time.Second, "Alice CreateRoom after one-sided disconnect", aliceReady)
+			},
+			func() error {
+				return testkit.Within(15*time.Second, "Bob JoinRoom after one-sided disconnect", bobReady)
+			},
+		)
+	})
 
 	// Verify the new session works.
 	content := []byte("reconnected after one-sided disconnect")
@@ -224,30 +210,20 @@ func TestDisconnect_NoFUSE_AutoStopOnPeerDisconnect(t *testing.T) {
 
 	tp.Relay.Clear()
 
-	aliceReady := make(chan error, 1)
-	bobReady := make(chan error, 1)
-
-	go reconnectReady(tp.Alice.CreateRoom, aliceReady)
+	aliceReady := testkit.Go(func() error { return reconnectJoin(tp.Alice.CreateRoom) })
 
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return tp.Relay.EntryCount() > 0
 	}, "waiting for Alice to re-register on relay")
 
-	go reconnectReady(tp.Bob.JoinRoom, bobReady)
+	bobReady := testkit.Go(func() error { return reconnectJoin(tp.Bob.JoinRoom) })
 
-	select {
-	case err := <-aliceReady:
-		require.NoError(err, "Alice CreateRoom after auto-stop")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout Alice CreateRoom after auto-stop")
-	}
-
-	select {
-	case err := <-bobReady:
-		require.NoError(err, "Bob JoinRoom after auto-stop")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout Bob JoinRoom after auto-stop")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return testkit.Within(15*time.Second, "Alice CreateRoom after auto-stop", aliceReady) },
+			func() error { return testkit.Within(15*time.Second, "Bob JoinRoom after auto-stop", bobReady) },
+		)
+	})
 
 	// Verify the reconnected session works.
 	content := []byte("after auto-stop reconnect")
@@ -294,30 +270,21 @@ func TestDisconnect_NoFUSE_RoleSwap(t *testing.T) {
 	require.NoError(tp.Bob.AddPeerFingerprint(aliceFp))
 	tp.Relay.Clear()
 
-	bobReady := make(chan error, 1)
-	aliceReady := make(chan error, 1)
-
 	// Bob creates this time (was joiner in round 1).
-	go func() { bobReady <- tp.Bob.CreateRoom() }()
+	bobReady := testkit.Go(func() error { return tp.Bob.CreateRoom() })
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return tp.Relay.EntryCount() > 0
 	}, "waiting for Bob to register on relay")
 
 	// Alice joins this time (was creator in round 1).
-	go func() { aliceReady <- tp.Alice.JoinRoom() }()
+	aliceReady := testkit.Go(func() error { return tp.Alice.JoinRoom() })
 
-	select {
-	case err := <-bobReady:
-		require.NoError(err, "Bob CreateRoom (round 2, role swap)")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout Bob CreateRoom round 2")
-	}
-	select {
-	case err := <-aliceReady:
-		require.NoError(err, "Alice JoinRoom (round 2, role swap)")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout Alice JoinRoom round 2")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return testkit.Within(15*time.Second, "Bob CreateRoom (round 2, role swap)", bobReady) },
+			func() error { return testkit.Within(15*time.Second, "Alice JoinRoom (round 2, role swap)", aliceReady) },
+		)
+	})
 
 	// Verify swapped session works — Bob sends file to Alice.
 	content2 := []byte("round2 swapped roles")
@@ -348,27 +315,18 @@ func TestDisconnect_NoFUSE_RoleSwap(t *testing.T) {
 	require.NoError(tp.Bob.AddPeerFingerprint(aliceFp))
 	tp.Relay.Clear()
 
-	aliceReady2 := make(chan error, 1)
-	bobReady2 := make(chan error, 1)
-
-	go func() { aliceReady2 <- tp.Alice.CreateRoom() }()
+	aliceReady2 := testkit.Go(func() error { return tp.Alice.CreateRoom() })
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return tp.Relay.EntryCount() > 0
 	}, "waiting for Alice to register on relay round 3")
-	go func() { bobReady2 <- tp.Bob.JoinRoom() }()
+	bobReady2 := testkit.Go(func() error { return tp.Bob.JoinRoom() })
 
-	select {
-	case err := <-aliceReady2:
-		require.NoError(err, "Alice CreateRoom round 3")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout Alice CreateRoom round 3")
-	}
-	select {
-	case err := <-bobReady2:
-		require.NoError(err, "Bob JoinRoom round 3")
-	case <-time.After(15 * time.Second):
-		t.Fatal("timeout Bob JoinRoom round 3")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return testkit.Within(15*time.Second, "Alice CreateRoom round 3", aliceReady2) },
+			func() error { return testkit.Within(15*time.Second, "Bob JoinRoom round 3", bobReady2) },
+		)
+	})
 
 	// Verify round 3 works.
 	content3 := []byte("round3 back to original")
@@ -403,27 +361,22 @@ func TestDisconnect_NoFUSE_MultipleRounds(t *testing.T) {
 
 			tp.Relay.Clear()
 
-			aliceReady := make(chan error, 1)
-			bobReady := make(chan error, 1)
-
-			go func() { aliceReady <- tp.Alice.CreateRoom() }()
+			aliceReady := testkit.Go(func() error { return tp.Alice.CreateRoom() })
 			WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 				return tp.Relay.EntryCount() > 0
 			}, "waiting for relay registration")
-			go func() { bobReady <- tp.Bob.JoinRoom() }()
+			bobReady := testkit.Go(func() error { return tp.Bob.JoinRoom() })
 
-			select {
-			case err := <-aliceReady:
-				require.NoError(err, "Alice CreateRoom round %d", round)
-			case <-time.After(15 * time.Second):
-				t.Fatalf("timeout Alice CreateRoom round %d", round)
-			}
-			select {
-			case err := <-bobReady:
-				require.NoError(err, "Bob JoinRoom round %d", round)
-			case <-time.After(15 * time.Second):
-				t.Fatalf("timeout Bob JoinRoom round %d", round)
-			}
+			testkit.Run(t, func() error {
+				return fp.Steps(
+					func() error {
+						return testkit.Within(15*time.Second, fmt.Sprintf("Alice CreateRoom round %d", round), aliceReady)
+					},
+					func() error {
+						return testkit.Within(15*time.Second, fmt.Sprintf("Bob JoinRoom round %d", round), bobReady)
+					},
+				)
+			})
 		}
 
 		// File transfer in this round (unique names to avoid duplicate errors).
@@ -492,28 +445,18 @@ func TestDisconnect_FUSE_StopAndReconnect(t *testing.T) {
 
 	tp.Relay.Clear()
 
-	aliceReady := make(chan error, 1)
-	bobReady := make(chan error, 1)
-
-	go func() { aliceReady <- tp.Alice.CreateRoom() }()
+	aliceReady := testkit.Go(func() error { return tp.Alice.CreateRoom() })
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return tp.Relay.EntryCount() > 0
 	}, "waiting for Alice FUSE to re-register")
-	go func() { bobReady <- tp.Bob.JoinRoom() }()
+	bobReady := testkit.Go(func() error { return tp.Bob.JoinRoom() })
 
-	select {
-	case err := <-aliceReady:
-		require.NoError(err, "Alice (FUSE) CreateRoom round 2")
-	case <-time.After(20 * time.Second):
-		t.Fatal("timeout Alice FUSE CreateRoom round 2")
-	}
-
-	select {
-	case err := <-bobReady:
-		require.NoError(err, "Bob JoinRoom round 2")
-	case <-time.After(20 * time.Second):
-		t.Fatal("timeout Bob JoinRoom round 2")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return testkit.Within(20*time.Second, "Alice (FUSE) CreateRoom round 2", aliceReady) },
+			func() error { return testkit.Within(20*time.Second, "Bob JoinRoom round 2", bobReady) },
+		)
+	})
 
 	// Phase 4: verify FUSE works again.
 	content2 := []byte("fuse after reconnect!")
@@ -539,8 +482,7 @@ func TestDisconnect_NoFUSE_StopRightAfterConnect(t *testing.T) {
 	relayURL, err := url.Parse(relay.URL())
 	require.NoError(err)
 
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})
-	logger := slog.New(handler)
+	logger := testkit.StdoutLogger(slog.LevelWarn)
 
 	aliceInPort := getFreePortInRange(t, 26100, 26249)
 	aliceOutPort := getFreePortInRange(t, 26250, 26399)
@@ -575,32 +517,20 @@ func TestDisconnect_NoFUSE_StopRightAfterConnect(t *testing.T) {
 		kdBob.Stop()
 		kdAlice.Shutdown()
 		kdBob.Shutdown()
-		done := make(chan struct{})
-		go func() { runWg.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
+		// A timeout is not a failure here. Teardown proceeds either way.
+		_ = testkit.Within(5*time.Second, "peer Run goroutines", func() error { runWg.Wait(); return nil })
 		relay.Close()
 	})
 
-	aliceReady := make(chan error, 1)
-	bobReady := make(chan error, 1)
-	go func() { aliceReady <- kdAlice.Connect() }()
-	go func() { bobReady <- kdBob.Connect() }()
+	aliceReady := testkit.Go(func() error { return kdAlice.Connect() })
+	bobReady := testkit.Go(func() error { return kdBob.Connect() })
 
-	select {
-	case err := <-aliceReady:
-		require.NoError(err, "Alice Connect failed")
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for Alice Connect")
-	}
-	select {
-	case err := <-bobReady:
-		require.NoError(err, "Bob Connect failed")
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for Bob Connect")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return testkit.WithinCtx(ctx, "Alice Connect", aliceReady) },
+			func() error { return testkit.WithinCtx(ctx, "Bob Connect", bobReady) },
+		)
+	})
 
 	// Stop the instant Connect() returns: no IsRunning wait before this call.
 	kdBob.Stop()

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
+	"github.com/stretchr/testify/require"
 )
 
 func newUnshareTestKD() *KeibiDrop {
@@ -26,26 +27,20 @@ func TestUnshareFile_RemovesFromTracker(t *testing.T) {
 		Size:           1024,
 	}
 
-	if err := kd.UnshareFile("photo.jpg"); err != nil {
-		t.Fatalf("UnshareFile: %v", err)
-	}
+	require.NoError(t, kd.UnshareFile("photo.jpg"))
 
 	kd.SyncTracker.LocalFilesMu.RLock()
 	_, exists := kd.SyncTracker.LocalFiles["photo.jpg"]
 	kd.SyncTracker.LocalFilesMu.RUnlock()
 
-	if exists {
-		t.Fatal("file should be removed from LocalFiles")
-	}
+	require.False(t, exists, "file should be removed from LocalFiles")
 }
 
 func TestUnshareFile_ErrorOnMissing(t *testing.T) {
 	kd := newUnshareTestKD()
 
 	err := kd.UnshareFile("nonexistent.txt")
-	if err == nil {
-		t.Fatal("expected error for unsharing missing file")
-	}
+	require.Error(t, err, "expected error for unsharing missing file")
 }
 
 func TestUnshareFile_DoesNotAffectOtherFiles(t *testing.T) {
@@ -57,19 +52,15 @@ func TestUnshareFile_DoesNotAffectOtherFiles(t *testing.T) {
 		Name: "remove.txt",
 	}
 
-	if err := kd.UnshareFile("remove.txt"); err != nil {
-		t.Fatalf("UnshareFile: %v", err)
-	}
+	require.NoError(t, kd.UnshareFile("remove.txt"))
 
 	kd.SyncTracker.LocalFilesMu.RLock()
 	defer kd.SyncTracker.LocalFilesMu.RUnlock()
 
-	if _, ok := kd.SyncTracker.LocalFiles["keep.txt"]; !ok {
-		t.Fatal("other files should not be affected")
-	}
-	if _, ok := kd.SyncTracker.LocalFiles["remove.txt"]; ok {
-		t.Fatal("removed file should be gone")
-	}
+	_, ok := kd.SyncTracker.LocalFiles["keep.txt"]
+	require.True(t, ok, "other files should not be affected")
+	_, ok = kd.SyncTracker.LocalFiles["remove.txt"]
+	require.False(t, ok, "removed file should be gone")
 }
 
 func TestUnshareFile_NoSessionNoPanic(t *testing.T) {
@@ -78,7 +69,5 @@ func TestUnshareFile_NoSessionNoPanic(t *testing.T) {
 		Name: "file.txt",
 	}
 
-	if err := kd.UnshareFile("file.txt"); err != nil {
-		t.Fatalf("UnshareFile without session should succeed: %v", err)
-	}
+	require.NoError(t, kd.UnshareFile("file.txt"), "UnshareFile without session should succeed")
 }

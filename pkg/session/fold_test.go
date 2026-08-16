@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -23,8 +24,8 @@ import (
 // The two peers label the same key pair oppositely, so FoldSalt must sort the SEKs before
 // deriving; differing salts would make the two sides derive different fold secrets.
 func TestSession_FoldSaltSymmetry(t *testing.T) {
-	sekX := randomBytes(t, kbc.KeySize)
-	sekY := randomBytes(t, kbc.KeySize)
+	sekX := testkit.RandBytes(t, kbc.KeySize)
+	sekY := testkit.RandBytes(t, kbc.KeySize)
 
 	a := &Session{SEKInbound: sekX, SEKOutbound: sekY}
 	b := &Session{SEKInbound: sekY, SEKOutbound: sekX} // swapped: A.in == B.out, A.out == B.in
@@ -43,10 +44,10 @@ func TestSession_FoldSaltRejectsEmptySEKs(t *testing.T) {
 	_, err := (&Session{}).FoldSalt()
 	require.Error(t, err, "no SEKs")
 
-	_, err = (&Session{SEKInbound: randomBytes(t, kbc.KeySize)}).FoldSalt()
+	_, err = (&Session{SEKInbound: testkit.RandBytes(t, kbc.KeySize)}).FoldSalt()
 	require.Error(t, err, "outbound SEK missing")
 
-	_, err = (&Session{SEKOutbound: randomBytes(t, kbc.KeySize)}).FoldSalt()
+	_, err = (&Session{SEKOutbound: testkit.RandBytes(t, kbc.KeySize)}).FoldSalt()
 	require.Error(t, err, "inbound SEK missing")
 }
 
@@ -61,10 +62,10 @@ func TestSession_IsFoldInitiator(t *testing.T) {
 // A full fold exchange without gRPC: the initiator's publics go to RespondToFold, it finishes
 // with Derive, and both sides land on the same secret, staged on both responder conns.
 func TestSession_FoldExchangeMatches(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	suite := kbc.CipherChaCha20
-	sekX := randomBytes(t, kbc.KeySize)
-	sekY := randomBytes(t, kbc.KeySize)
+	sekX := testkit.RandBytes(t, kbc.KeySize)
+	sekY := testkit.RandBytes(t, kbc.KeySize)
 
 	// Responder: SEKs are the swapped pair, both conns stubbed, ratchet negotiated on.
 	responder := &Session{
@@ -108,10 +109,10 @@ func TestSession_FoldExchangeMatches(t *testing.T) {
 // A fold round must stage its secret on the ExtraFoldConns (the QUIC control lane) too, nil
 // entries skipped. Guards the responder-side hook, which skips the eager-fold driver.
 func TestSession_FoldStagesExtraConns(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	suite := kbc.CipherChaCha20
-	sekX := randomBytes(t, kbc.KeySize)
-	sekY := randomBytes(t, kbc.KeySize)
+	sekX := testkit.RandBytes(t, kbc.KeySize)
+	sekY := testkit.RandBytes(t, kbc.KeySize)
 
 	extraIn := NewSecureConn(&writeSink{}, key, suite, NoncePrefixInbound)
 	extraOut := NewSecureConn(&writeSink{}, key, suite, NoncePrefixOutbound)
@@ -146,10 +147,10 @@ func TestSession_FoldStagesExtraConns(t *testing.T) {
 // A successful responder fold emits one structured event="fold" line, so both peers surface
 // the fold. The kd-bench harness keys on this marker.
 func TestSession_RespondToFoldLogsCommit(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	suite := kbc.CipherChaCha20
-	sekX := randomBytes(t, kbc.KeySize)
-	sekY := randomBytes(t, kbc.KeySize)
+	sekX := testkit.RandBytes(t, kbc.KeySize)
+	sekY := testkit.RandBytes(t, kbc.KeySize)
 
 	var buf bytes.Buffer
 	responder := &Session{
@@ -198,13 +199,13 @@ func TestSession_InitiateFoldRequiresClient(t *testing.T) {
 // only the responder answers, so a peer calling Rekey out of role cannot race a conflicting
 // secret into the initiator's staged fold state.
 func TestSession_RespondToFoldRejectsInitiatorRole(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	suite := kbc.CipherChaCha20
 	initiator := &Session{
 		OwnFingerprint:          "aaa", // lower than the peer's, so this session is the initiator
 		ExpectedPeerFingerprint: "bbb",
-		SEKInbound:              randomBytes(t, kbc.KeySize),
-		SEKOutbound:             randomBytes(t, kbc.KeySize),
+		SEKInbound:              testkit.RandBytes(t, kbc.KeySize),
+		SEKOutbound:             testkit.RandBytes(t, kbc.KeySize),
 		PeerSupportsKeyUpdate:   true,
 		Session: &SessionSockets{
 			Inbound:  NewSecureConn(&writeSink{}, key, suite, NoncePrefixInbound),

@@ -12,50 +12,19 @@
 package service
 
 import (
-	"context"
-	"io"
-	"log/slog"
 	"os"
 	"sync"
 	"testing"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
-
-// mockReadStream implements bindings.KeibiService_ReadServer for testing.
-type mockReadStream struct {
-	requests []*bindings.ReadRequest
-	idx      int
-	sent     []*bindings.ReadResponse
-}
-
-func (m *mockReadStream) Send(resp *bindings.ReadResponse) error {
-	m.sent = append(m.sent, resp)
-	return nil
-}
-
-func (m *mockReadStream) Recv() (*bindings.ReadRequest, error) {
-	if m.idx >= len(m.requests) {
-		return nil, io.EOF
-	}
-	req := m.requests[m.idx]
-	m.idx++
-	return req, nil
-}
-
-func (m *mockReadStream) SetHeader(metadata.MD) error  { return nil }
-func (m *mockReadStream) SendHeader(metadata.MD) error { return nil }
-func (m *mockReadStream) SetTrailer(metadata.MD)       {}
-func (m *mockReadStream) Context() context.Context     { return context.Background() }
-func (m *mockReadStream) SendMsg(interface{}) error    { return nil }
-func (m *mockReadStream) RecvMsg(interface{}) error    { return nil }
 
 // TestRead_FUSEMode_FallbackToLocalFiles verifies that when FUSE is active but a
 // file was added via drag-and-drop (AddFile → SyncTracker.LocalFiles), the Read
@@ -70,7 +39,7 @@ func TestRead_FUSEMode_FallbackToLocalFiles(t *testing.T) {
 	tmpFile.Close()
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	fsForSvc := &filesystem.FS{}
@@ -88,16 +57,16 @@ func TestRead_FUSEMode_FallbackToLocalFiles(t *testing.T) {
 		Size:           uint64(len(content)),
 	}
 
-	stream := &mockReadStream{
-		requests: []*bindings.ReadRequest{
+	stream := &testkit.Stream[*bindings.ReadRequest, *bindings.ReadResponse]{
+		Requests: []*bindings.ReadRequest{
 			{Handle: 0, Path: "test.txt", Offset: 0, Size: uint32(len(content))},
 		},
 	}
 
 	err = svc.Read(stream)
 	require.NoError(t, err)
-	require.Len(t, stream.sent, 1)
-	assert.Equal(t, content, stream.sent[0].Data)
+	require.Len(t, stream.Sent, 1)
+	assert.Equal(t, content, stream.Sent[0].Data)
 }
 
 // TestRead_FUSEMode_AllFileMapStillWorks verifies the normal FUSE path still works
@@ -111,7 +80,7 @@ func TestRead_FUSEMode_AllFileMapStillWorks(t *testing.T) {
 	tmpFile.Close()
 
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	fsForSvc := &filesystem.FS{}
@@ -125,23 +94,23 @@ func TestRead_FUSEMode_AllFileMapStillWorks(t *testing.T) {
 	})
 	svc.SetFS(fsForSvc)
 
-	stream := &mockReadStream{
-		requests: []*bindings.ReadRequest{
+	stream := &testkit.Stream[*bindings.ReadRequest, *bindings.ReadResponse]{
+		Requests: []*bindings.ReadRequest{
 			{Handle: 0, Path: "test.txt", Offset: 0, Size: uint32(len(content))},
 		},
 	}
 
 	err = svc.Read(stream)
 	require.NoError(t, err)
-	require.Len(t, stream.sent, 1)
-	assert.Equal(t, content, stream.sent[0].Data)
+	require.Len(t, stream.Sent, 1)
+	assert.Equal(t, content, stream.Sent[0].Data)
 }
 
 // TestRead_FUSEMode_FileNotFoundAnywhere verifies we still get NotFound when
 // the file isn't in AllFileMap OR LocalFiles.
 func TestRead_FUSEMode_FileNotFoundAnywhere(t *testing.T) {
 	svc := &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	fsForSvc := &filesystem.FS{}
@@ -151,8 +120,8 @@ func TestRead_FUSEMode_FileNotFoundAnywhere(t *testing.T) {
 	})
 	svc.SetFS(fsForSvc)
 
-	stream := &mockReadStream{
-		requests: []*bindings.ReadRequest{
+	stream := &testkit.Stream[*bindings.ReadRequest, *bindings.ReadResponse]{
+		Requests: []*bindings.ReadRequest{
 			{Handle: 0, Path: "nonexistent.txt", Offset: 0, Size: 100},
 		},
 	}

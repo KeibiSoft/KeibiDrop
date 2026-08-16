@@ -8,25 +8,38 @@ package common
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/stretchr/testify/require"
 )
+
+// newBareKD builds a KeibiDrop with a discard logger and nothing else, for
+// tests that exercise a single method without the full NewKeibiDrop startup
+// path. Each option sets one field, so a test states only what it depends on.
+//
+// Not named newTestKD: types_test.go already defines newTestKD(t) for the
+// real NewKeibiDrop constructor, a different, heavier helper used elsewhere
+// in this package.
+func newBareKD(opts ...func(*KeibiDrop)) *KeibiDrop {
+	kd := &KeibiDrop{logger: testkit.DiscardLogger()}
+	for _, o := range opts {
+		o(kd)
+	}
+	return kd
+}
 
 func newAutoConnectTestKD(t *testing.T) *KeibiDrop {
 	t.Helper()
 	ab, err := identity.LoadAddressBook(t.TempDir(), nil) // no file yet: empty book
 	require.NoError(t, err)
 	require.NoError(t, ab.Add("dataset-box", "FP-AAAA-BBBB"))
-	return &KeibiDrop{
-		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		AddressBook: ab,
-	}
+	kd := newBareKD()
+	kd.AddressBook = ab
+	return kd
 }
 
 func TestResolveContact_ByNameAndFingerprint(t *testing.T) {
@@ -53,14 +66,14 @@ func TestResolveContact_RejectsUnknown(t *testing.T) {
 }
 
 func TestResolveContact_RejectsIncognito(t *testing.T) {
-	kd := &KeibiDrop{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	kd := newBareKD()
 	_, err := kd.ResolveContact("anyone")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "persistent identity")
 }
 
 func TestStartAutoConnect_EmptyIsNoop(t *testing.T) {
-	kd := &KeibiDrop{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	kd := newBareKD()
 	require.NoError(t, kd.StartAutoConnect(context.Background()))
 }
 
@@ -87,7 +100,7 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) 
 // TestAutoConnectLoop_RetriesUntilPeerAppears is the offline-then-appears case:
 // dials fail while the peer is away, then one succeeds and the loop goes idle.
 func TestAutoConnectLoop_RetriesUntilPeerAppears(t *testing.T) {
-	kd := &KeibiDrop{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	kd := newBareKD()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -120,7 +133,7 @@ func TestAutoConnectLoop_RetriesUntilPeerAppears(t *testing.T) {
 // TestAutoConnectLoop_RearmsAfterTeardown: after a session existed and went
 // away with no reconnect in progress, the loop waits the grace and dials again.
 func TestAutoConnectLoop_RearmsAfterTeardown(t *testing.T) {
-	kd := &KeibiDrop{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	kd := newBareKD()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -152,7 +165,7 @@ func TestAutoConnectLoop_RearmsAfterTeardown(t *testing.T) {
 // TestAutoConnectLoop_DefersToReconnectManager: while reconnect owns the
 // session the watchdog must not dial, even past the rearm grace.
 func TestAutoConnectLoop_DefersToReconnectManager(t *testing.T) {
-	kd := &KeibiDrop{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	kd := newBareKD()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

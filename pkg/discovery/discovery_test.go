@@ -6,6 +6,10 @@ import (
 	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClearPeers_EmptiesMap(t *testing.T) {
@@ -23,22 +27,16 @@ func TestClearPeers_EmptiesMap(t *testing.T) {
 	}
 	s.mu.Unlock()
 
-	if len(s.Peers()) != 2 {
-		t.Fatalf("setup: expected 2 peers, got %d", len(s.Peers()))
-	}
+	require.Len(t, s.Peers(), 2, "setup")
 
 	s.ClearPeers()
 
-	if got := len(s.Peers()); got != 0 {
-		t.Errorf("after ClearPeers: expected 0 peers, got %d", got)
-	}
+	require.Empty(t, s.Peers(), "after ClearPeers")
 }
 
 func TestClearPeers_ServiceKeepsRunning(t *testing.T) {
 	s := New(26001, slog.Default())
-	if err := s.Start(); err != nil {
-		t.Fatalf("start: %v", err)
-	}
+	require.NoError(t, s.Start(), "start")
 	defer s.Stop()
 
 	s.ClearPeers()
@@ -46,9 +44,7 @@ func TestClearPeers_ServiceKeepsRunning(t *testing.T) {
 	s.mu.RLock()
 	running := s.running
 	s.mu.RUnlock()
-	if !running {
-		t.Error("service should still be running after ClearPeers")
-	}
+	require.True(t, running, "service should still be running after ClearPeers")
 }
 
 func TestStalePeers_ReproduceBug(t *testing.T) {
@@ -62,8 +58,8 @@ func TestStalePeers_ReproduceBug(t *testing.T) {
 	}
 	s.mu.Unlock()
 
-	// Peer disconnects and re-advertises with a new name on a DIFFERENT port.
-	// The old entry is still in the map because cleanup hasn't run yet.
+	// Peer disconnects and re-advertises with a new name on a different port.
+	// The old entry is still in the map because cleanup has not run yet.
 	s.mu.Lock()
 	s.peers["192.168.1.10:26005"] = &Peer{
 		Name:     "Swift Penguin",
@@ -72,23 +68,21 @@ func TestStalePeers_ReproduceBug(t *testing.T) {
 	}
 	s.mu.Unlock()
 
-	// BUG: both entries exist — same IP, different ports, different names.
+	// BUG: both entries exist, same IP, different ports, different names.
 	peers := s.Peers()
-	if len(peers) != 2 {
-		t.Fatalf("reproduction: expected 2 stale entries, got %d", len(peers))
-	}
+	require.Len(t, peers, 2, "reproduction: expected 2 stale entries")
 	t.Logf("BUG REPRODUCED: %d peers from same IP (stale + fresh)", len(peers))
 	for _, p := range peers {
 		t.Logf("  %s @ %s", p.Name, p.Addr)
 	}
 
-	// After ClearPeers + re-discovery, only the fresh one should appear.
+	// After ClearPeers and re-discovery, only the fresh one should appear.
 	s.ClearPeers()
 	if got := len(s.Peers()); got != 0 {
 		t.Errorf("after clear: expected 0, got %d", got)
 	}
 
-	// Simulate only the new beacon arriving
+	// Simulate only the new beacon arriving.
 	s.mu.Lock()
 	s.peers["192.168.1.10:26005"] = &Peer{
 		Name:     "Swift Penguin",
@@ -98,12 +92,8 @@ func TestStalePeers_ReproduceBug(t *testing.T) {
 	s.mu.Unlock()
 
 	peers = s.Peers()
-	if len(peers) != 1 {
-		t.Errorf("after re-discovery: expected 1 peer, got %d", len(peers))
-	}
-	if len(peers) == 1 && peers[0].Name != "Swift Penguin" {
-		t.Errorf("expected 'Swift Penguin', got %q", peers[0].Name)
-	}
+	require.Len(t, peers, 1, "after re-discovery")
+	require.Equal(t, "Swift Penguin", peers[0].Name, "after re-discovery")
 }
 
 func TestUpsertPeer_DedupByName(t *testing.T) {
@@ -113,18 +103,14 @@ func TestUpsertPeer_DedupByName(t *testing.T) {
 	s.upsertPeer("Neon Comet", "192.168.1.10:26003")
 	s.mu.Unlock()
 
-	// Same peer re-discovered via mDNS at a different address
+	// Same peer re-discovered via mDNS at a different address.
 	s.mu.Lock()
 	s.upsertPeer("Neon Comet", "192.168.1.10:43210")
 	s.mu.Unlock()
 
 	peers := s.Peers()
-	if len(peers) != 1 {
-		t.Fatalf("expected 1 peer after dedup, got %d", len(peers))
-	}
-	if peers[0].Addr != "192.168.1.10:43210" {
-		t.Errorf("expected new addr 192.168.1.10:43210, got %s", peers[0].Addr)
-	}
+	require.Len(t, peers, 1, "expected 1 peer after dedup")
+	require.Equal(t, "192.168.1.10:43210", peers[0].Addr, "expected new addr")
 }
 
 func TestClearPeers_FreshBeaconsAppear(t *testing.T) {
@@ -148,12 +134,8 @@ func TestClearPeers_FreshBeaconsAppear(t *testing.T) {
 	s.mu.Unlock()
 
 	peers := s.Peers()
-	if len(peers) != 1 {
-		t.Fatalf("expected 1 peer, got %d", len(peers))
-	}
-	if peers[0].Name != "Fresh Otter" {
-		t.Errorf("expected name 'Fresh Otter', got %q", peers[0].Name)
-	}
+	require.Len(t, peers, 1, "expected 1 peer")
+	require.Equal(t, "Fresh Otter", peers[0].Name, "expected fresh name")
 }
 
 func TestIsSelfBeacon(t *testing.T) {
@@ -179,25 +161,24 @@ func TestIsSelfBeacon(t *testing.T) {
 
 func TestGenerateInstanceID(t *testing.T) {
 	id := generateInstanceID()
-	if len(id) != 32 {
-		t.Errorf("len(id) = %d, want 32 hex chars", len(id))
-	}
-	if id == generateInstanceID() {
-		t.Error("two calls returned the same id")
-	}
+	require.Len(t, id, 32, "generateInstanceID")
+	require.NotEqual(t, id, generateInstanceID(), "two calls returned the same id")
 }
 
 func TestServiceBeaconCarriesInstanceID(t *testing.T) {
 	s := New(26001, slog.Default())
 	b := s.beacon()
-	if b.Name != s.name || b.Port != s.port {
-		t.Errorf("beacon = %+v, want name=%q port=%d", b, s.name, s.port)
-	}
-	if b.ID == "" || b.ID != s.instanceID {
-		t.Errorf("beacon.ID = %q, want service instanceID %q", b.ID, s.instanceID)
-	}
+
 	// A second service must advertise a different id so same-named peers differ.
-	if s2 := New(26001, slog.Default()); s2.beacon().ID == b.ID {
-		t.Error("two services share an instance id")
-	}
+	s2 := New(26001, slog.Default())
+
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.Equal("beacon name", b.Name, s.name),
+			fp.Equal("beacon port", b.Port, s.port),
+			fp.NotEqual("beacon.ID not empty", b.ID, ""),
+			fp.Equal("beacon.ID matches instanceID", b.ID, s.instanceID),
+			fp.NotEqual("second service instance id", s2.beacon().ID, b.ID),
+		)
+	})
 }

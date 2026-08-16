@@ -14,13 +14,13 @@ package common_test
 import (
 	"context"
 	"io"
-	"log/slog"
 	"net"
 	"os"
 	"sync"
 	"testing"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
@@ -45,8 +45,9 @@ func startServer(t *testing.T, svc bindings.KeibiServiceServer) (*grpc.ClientCon
 	srv := grpc.NewServer()
 	bindings.RegisterKeibiServiceServer(srv, svc)
 	go func() {
-		if err := srv.Serve(lis); err != nil && err != grpc.ErrServerStopped {
-			t.Errorf("srv.Serve: %v", err)
+		err := srv.Serve(lis)
+		if err != nil && err != grpc.ErrServerStopped {
+			assert.NoError(t, err, "srv.Serve")
 		}
 	}()
 	dial := func(ctx context.Context, _ string) (net.Conn, error) {
@@ -71,7 +72,7 @@ func startServer(t *testing.T, svc bindings.KeibiServiceServer) (*grpc.ClientCon
 func newTestSvcIntegration(t *testing.T, localPath, trackerKey string) *service.KeibidropServiceImpl {
 	t.Helper()
 	svc := &service.KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 	fsForSvc := &filesystem.FS{}

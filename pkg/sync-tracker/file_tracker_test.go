@@ -1,4 +1,4 @@
-// ABOUTME: Tests for PruneStaleLocalFiles — removes entries for deleted files.
+// ABOUTME: Tests for PruneStaleLocalFiles, which removes entries for deleted files.
 // ABOUTME: Covers existing files, deleted files, empty paths, and empty tracker.
 package synctracker
 
@@ -6,33 +6,32 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPruneStaleLocalFiles_RemovesDeleted(t *testing.T) {
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "exists.txt")
-	if err := os.WriteFile(existing, []byte("data"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(existing, []byte("data"), 0600))
 
 	st := NewSyncTracker()
-	st.LocalFiles["exists.txt"] = &File{
-		Name:           "exists.txt",
-		RealPathOfFile: existing,
-	}
-	st.LocalFiles["gone.txt"] = &File{
-		Name:           "gone.txt",
-		RealPathOfFile: filepath.Join(dir, "gone.txt"),
-	}
+	st.LocalFiles["exists.txt"] = &File{Name: "exists.txt", RealPathOfFile: existing}
+	st.LocalFiles["gone.txt"] = &File{Name: "gone.txt", RealPathOfFile: filepath.Join(dir, "gone.txt")}
 
 	st.PruneStaleLocalFiles()
 
-	if _, ok := st.LocalFiles["exists.txt"]; !ok {
-		t.Fatal("existing file should be kept")
-	}
-	if _, ok := st.LocalFiles["gone.txt"]; ok {
-		t.Fatal("deleted file should be pruned")
-	}
+	_, keptExisting := st.LocalFiles["exists.txt"]
+	_, keptGone := st.LocalFiles["gone.txt"]
+
+	testkit.Run(t, func() error {
+		return fp.All(
+			fp.True("existing file kept", keptExisting),
+			fp.False("deleted file pruned", keptGone),
+		)
+	})
 }
 
 func TestPruneStaleLocalFiles_SkipsEmptyPath(t *testing.T) {
@@ -44,18 +43,15 @@ func TestPruneStaleLocalFiles_SkipsEmptyPath(t *testing.T) {
 
 	st.PruneStaleLocalFiles()
 
-	if _, ok := st.LocalFiles["no-path"]; !ok {
-		t.Fatal("entry with empty RealPathOfFile should be kept")
-	}
+	_, kept := st.LocalFiles["no-path"]
+	require.True(t, kept, "entry with empty RealPathOfFile must be kept")
 }
 
 func TestPruneStaleLocalFiles_EmptyTracker(t *testing.T) {
 	st := NewSyncTracker()
 	st.PruneStaleLocalFiles()
 
-	if len(st.LocalFiles) != 0 {
-		t.Fatal("empty tracker should remain empty")
-	}
+	require.Len(t, st.LocalFiles, 0, "empty tracker must remain empty")
 }
 
 func TestPruneStaleLocalFiles_AllDeleted(t *testing.T) {
@@ -71,7 +67,5 @@ func TestPruneStaleLocalFiles_AllDeleted(t *testing.T) {
 
 	st.PruneStaleLocalFiles()
 
-	if len(st.LocalFiles) != 0 {
-		t.Fatalf("all stale files should be pruned, got %d", len(st.LocalFiles))
-	}
+	require.Len(t, st.LocalFiles, 0, "all stale files should be pruned")
 }

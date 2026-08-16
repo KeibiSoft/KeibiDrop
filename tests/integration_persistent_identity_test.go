@@ -20,13 +20,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/stretchr/testify/require"
 )
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// Helpers
 
 // newFileSource returns a file-tier MasterKeySource that never uses the
 // OS keychain, making tests self-contained.
@@ -57,7 +58,7 @@ func newPassphraseSource(t *testing.T, passphrase string) identity.MasterKeySour
 // identityFilePath returns the expected identity.enc path inside configDir.
 const identityFileName = "identity.enc"
 
-// ── tests ─────────────────────────────────────────────────────────────────────
+// Tests
 
 // TestPersistentIdentitySurvivesRestart saves an identity, drops state, reloads
 // with a fresh source, and verifies the fingerprint is byte-identical.
@@ -98,7 +99,7 @@ func TestPassphraseTier_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, id1.Fingerprint)
 
-	// Reload with the same passphrase — fingerprint must match.
+	// Reload with the same passphrase. The fingerprint must match.
 	src2 := newPassphraseSource(t, goodPassphrase)
 	id2, err := identity.LoadOrCreate(tmp, src2)
 	require.NoError(t, err)
@@ -161,8 +162,7 @@ func TestCorruptionReturnsTypedError(t *testing.T) {
 func TestEnablePersistentIdentity_FullStack(t *testing.T) {
 	tmp := t.TempDir()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout,
-		&slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testkit.StdoutLogger(slog.LevelError)
 	relayURL, _ := url.Parse("http://127.0.0.1:54321")
 
 	newKD := func() *common.KeibiDrop {
@@ -230,7 +230,7 @@ func TestEnablePersistentIdentity_FullStack(t *testing.T) {
 	require.NoError(t, statErr, "original file must remain in place")
 }
 
-// ── vulnerability tests ───────────────────────────────────────────────────────
+// Vulnerability tests
 
 // TestVuln_NonEnvelopeFileRejected writes random bytes to identity.enc and
 // verifies that LoadOrCreate returns *error (not a silent

@@ -88,9 +88,14 @@ type KeibiDrop struct {
 	quicControlSC       *session.SecureConn       // Dial-side conn: epoch observability for QUICWriterEpoch.
 	quicPeerAddr        string                    // Peer's UDP control endpoint, kept for the self-heal redial.
 	quicRedialing       atomic.Bool               // Single-flight guard: at most one background redial.
+	quicArming          atomic.Bool               // Single-flight guard for the arming loop that waits out a stale maintainer.
+	connectAborted      atomic.Bool               // Set by NotifyDisconnect so a create still waiting for its peer stops.
 	quicHBCancel        context.CancelFunc        // Cancels the current generation's control heartbeat. Guarded by kd.mu.
 	disconnectDeferrals atomic.Int32              // Bounded count of disconnects deferred for active transfers.
 	quicMetaSent        atomic.Uint64             // Metadata RPCs that rode the QUIC channel. For diagnostics and tests.
+	quicGen             atomic.Uint64             // Channel generation. Every lane log line carries it, so two cycles never read as one.
+	quicAccepted        atomic.Uint64             // Inbound QUIC control conns accepted. The half-lane that was invisible before.
+	quicLastDialErr     string                    // Reason the outbound lane is down, for kd status. Guarded by kd.mu.
 
 	// Non-FUSE fallback.
 	SyncTracker *synctracker.SyncTracker

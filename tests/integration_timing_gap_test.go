@@ -13,11 +13,12 @@ import (
 	"context"
 	"log/slog"
 	"net/url"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/stretchr/testify/require"
 )
@@ -42,8 +43,7 @@ func TestConnect_TimingGap_JoinerAfterCreatorP2PTimeout(t *testing.T) {
 	bridge, err := NewMockBridge()
 	require.NoError(err)
 
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
-	logger := slog.New(handler)
+	logger := testkit.StdoutLogger(slog.LevelInfo)
 
 	aliceInPort := getFreePortInRange(t, 26100, 26249)
 	aliceOutPort := getFreePortInRange(t, 26250, 26399)
@@ -81,8 +81,7 @@ func TestConnect_TimingGap_JoinerAfterCreatorP2PTimeout(t *testing.T) {
 	go func() { defer runWg.Done(); kdBob.Run() }()
 
 	// Step 1: Alice is the creator (explicit role, no tiebreak randomness).
-	aliceReady := make(chan error, 1)
-	go func() { aliceReady <- kdAlice.CreateRoom() }()
+	aliceReady := testkit.Go(func() error { return kdAlice.CreateRoom() })
 
 	// Wait for Alice to register on relay.
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
@@ -96,24 +95,23 @@ func TestConnect_TimingGap_JoinerAfterCreatorP2PTimeout(t *testing.T) {
 	// Step 3: NOW start joiner. This is the timing gap scenario from #146.
 	t.Log("Starting joiner (Bob) after creator's P2P timeout...")
 	bobStart := time.Now()
-	bobReady := make(chan error, 1)
-	go func() { bobReady <- kdBob.JoinRoom() }()
+	bobReady := testkit.Go(func() error { return kdBob.JoinRoom() })
 
 	// Both should connect via bridge within 30s.
-	select {
-	case err := <-aliceReady:
-		require.NoError(err, "Alice CreateRoom failed")
-		t.Logf("Alice connected (mode: %s)", kdAlice.ConnectionMode)
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for Alice CreateRoom")
-	}
-
-	select {
-	case err := <-bobReady:
-		require.NoError(err, "Bob JoinRoom failed")
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for Bob JoinRoom — joiner stuck (issue #146)")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error {
+				if err := testkit.WithinCtx(ctx, "Alice CreateRoom", aliceReady); err != nil {
+					return err
+				}
+				t.Logf("Alice connected (mode: %s)", kdAlice.ConnectionMode)
+				return nil
+			},
+			func() error {
+				return testkit.WithinCtx(ctx, "Bob JoinRoom, joiner stuck (issue #146)", bobReady)
+			},
+		)
+	})
 
 	bobDuration := time.Since(bobStart)
 	t.Logf("Bob connected in %s (mode: %s)", bobDuration, kdBob.ConnectionMode)
@@ -126,12 +124,8 @@ func TestConnect_TimingGap_JoinerAfterCreatorP2PTimeout(t *testing.T) {
 	kdBob.StopConnectionResilience()
 	kdAlice.Shutdown()
 	kdBob.Shutdown()
-	done := make(chan struct{})
-	go func() { runWg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-	}
+	// A timeout is not a failure here. Teardown proceeds either way.
+	_ = testkit.Within(5*time.Second, "peer Run goroutines", func() error { runWg.Wait(); return nil })
 	relay.Close()
 	bridge.Close()
 	cancel()

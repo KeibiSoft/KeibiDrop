@@ -8394,6 +8394,9 @@ extern "C" {
     pub fn KD_GetConnectionMode() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {
+    pub fn KD_GetQUICLane() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
     pub fn KD_SetStrictMode(enabled: ::std::os::raw::c_int);
 }
 extern "C" {

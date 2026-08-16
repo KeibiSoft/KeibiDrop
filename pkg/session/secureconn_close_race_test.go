@@ -1,4 +1,4 @@
-// ABOUTME: Regression race test for concurrent SecureConn.Close (F1).
+// ABOUTME: Regression race test for concurrent SecureConn.Close.
 // ABOUTME: The proactive rekey drop and gRPC's transport both close the same conn.
 
 // SPDX-License-Identifier: MPL-2.0
@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
@@ -21,7 +22,7 @@ import (
 // concurrently. Both pass the check-then-act on the non-atomic `done` (data race) and both run
 // close(s.closed) (panic). Start-barrier + high iteration make the window deterministic under -race.
 func TestSecureConnConcurrentClose(t *testing.T) {
-	key := randomKey(t)
+	key := testkit.RandBytes(t, 32)
 	const iters = 300
 	for i := 0; i < iters; i++ {
 		c1, c2 := net.Pipe()
