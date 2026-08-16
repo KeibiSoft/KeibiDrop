@@ -68,7 +68,9 @@ func TestManagerMigration(t *testing.T) {
 		select {
 		case e := <-evCh:
 			if err := fp.Steps(
-				func() error { return fp.True("network-change event has addresses", e.OldLocalAddr != nil && e.NewLocalAddr != nil) },
+				func() error {
+					return fp.True("network-change event has addresses", e.OldLocalAddr != nil && e.NewLocalAddr != nil)
+				},
 				func() error {
 					return fp.NotEqual("local address after migration", e.NewLocalAddr.String(), e.OldLocalAddr.String())
 				},

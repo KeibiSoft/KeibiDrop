@@ -14,6 +14,7 @@ import (
 	"time"
 
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
+	"github.com/stretchr/testify/require"
 )
 
 // BenchmarkEcho measures unary round-trip latency over each transport, reporting mean
@@ -28,9 +29,8 @@ func BenchmarkEcho(b *testing.B) {
 			req := &pb.EchoRequest{Payload: make([]byte, 64)}
 
 			for i := 0; i < 50; i++ { // warm up: TLS/QUIC handshake, BDP ramp
-				if _, err := client.Echo(ctx, req); err != nil {
-					b.Fatalf("warmup: %v", err)
-				}
+				_, err := client.Echo(ctx, req)
+				require.NoError(b, err, "warmup")
 			}
 
 			samples := make([]time.Duration, b.N)

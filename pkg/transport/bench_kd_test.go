@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	pb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto"
+	"github.com/stretchr/testify/require"
 )
 
 // BenchmarkKDHandshake measures the PQC handshake cost (2x ML-KEM-1024 + 2x X25519 +
@@ -48,13 +49,11 @@ func startKDClient(b *testing.B) (pb.BenchServiceClient, func()) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()
 	srv, addr, err := ServeGRPCKD("127.0.0.1:0", benchService{}, serverID, clientID.Fingerprint())
-	if err != nil {
-		b.Fatalf("start: %v", err)
-	}
+	require.NoError(b, err, "start")
 	cc, err := DialGRPCKD(addr.String(), clientID, serverID.Fingerprint())
 	if err != nil {
 		srv.Stop()
-		b.Fatalf("dial: %v", err)
+		require.NoError(b, err, "dial")
 	}
 	return pb.NewBenchServiceClient(cc), func() { _ = cc.Close(); srv.Stop() }
 }

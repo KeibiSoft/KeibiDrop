@@ -11,6 +11,8 @@ package transport
 import (
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // BenchmarkBulkGet measures the resumable bulk path (Manager.BulkGet over TCP).
@@ -20,26 +22,20 @@ func BenchmarkBulkGet(b *testing.B) {
 	serverID, _ := NewIdentity()
 	clientID, _ := NewIdentity()
 	qsrv, qaddr, err := ServeGRPCKD("127.0.0.1:0", benchService{}, serverID, clientID.Fingerprint())
-	if err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, err)
 	defer qsrv.Stop()
 	tsrv, taddr, err := ServeGRPCKDOver(TCP(), "127.0.0.1:0", benchService{}, serverID, clientID.Fingerprint())
 	if err != nil {
 		qsrv.Stop()
-		b.Fatal(err)
+		require.NoError(b, err)
 	}
 	defer tsrv.Stop()
 
 	ctx := context.Background()
 	m, err := DialControl(ctx, qaddr.String(), clientID, serverID.Fingerprint())
-	if err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, err)
 	defer m.Close()
-	if err := m.DialBulk(ctx, taddr.String()); err != nil {
-		b.Fatal(err)
-	}
+	require.NoError(b, m.DialBulk(ctx, taddr.String()))
 
 	const total = 64 << 20 // 64 MiB per op
 	b.SetBytes(total)
