@@ -9,7 +9,34 @@
 
 package testkit
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
+
+// Within runs body and reports an error if body does not return inside d.
+// It replaces the hand-rolled shape that starts a goroutine, reports through a
+// bool channel and races a time.After.
+//
+// A panic in body becomes an error, so Must is safe inside body. A bare
+// goroutine cannot do this: only the goroutine that panics can recover it, so a
+// Must in a plain go func ends the test binary instead of failing the test.
+//
+// After a timeout body keeps running. Do not call t.Error or t.Fatal in body. A
+// late call panics after the test ends. Return an error instead.
+func Within(d time.Duration, what string, body func() error) error {
+	if body == nil {
+		return fmt.Errorf("testkit: Within got a nil body")
+	}
+	done := make(chan error, 1)
+	go func() { done <- recovering(body) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(d):
+		return fmt.Errorf("%s: did not finish in %v", what, d)
+	}
+}
 
 // Go starts fn and returns a join function.
 // Call the join function to wait for fn and get its error. The join function

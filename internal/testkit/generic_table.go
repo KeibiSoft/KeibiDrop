@@ -17,14 +17,15 @@ type NamedSize struct {
 	Size int
 }
 
-// StdSizes is the size ladder shared by 6 of the 9 tables in
-// tests/benchmark_test.go, at lines 48, 476, 570, 644, 875 and 977.
+// StdSizes is the size ladder repeated by 6 of the 10 size tables in
+// tests/benchmark_test.go. Match a table by its ladder, not by line number.
 //
-// The other three tables are deliberately NOT covered here. They measure
-// different things and must keep their own ladders:
-//   - line 164: 10MB, 100MB, 600MB       (netem profiles)
-//   - line 381: 1KB to 1GB, seven steps  (chunk-size sweep)
-//   - line 1087: 1KB, 10KB, 100KB, 1MB   (mount latency)
+// The other four are deliberately NOT covered. They measure different things
+// and keep their own ladders:
+//   - 10MB, 100MB, 600MB               netem profiles
+//   - 1KB to 1GB, seven steps          chunk-size sweep
+//   - 1KB, 10KB, 100KB, 1MB            mount latency
+//   - a {name, count, size} triple     multi-file write
 //
 // Names must stay exactly as written. Subtest names depend on them.
 var StdSizes = []NamedSize{

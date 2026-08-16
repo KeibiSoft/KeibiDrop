@@ -180,6 +180,53 @@ func TestGoN_DoesNotLeakGoroutines(t *testing.T) {
 		"goroutines leaked: before=%d after=%d", before, runtime.NumGoroutine())
 }
 
+func TestWithin_PassesTheBodyResultThrough(t *testing.T) {
+	require.NoError(t, Within(2*time.Second, "quick", func() error { return nil }))
+	require.ErrorIs(t, Within(2*time.Second, "quick", func() error { return errBoom }), errBoom)
+	require.Error(t, Within(time.Second, "nil body", nil))
+}
+
+func TestWithin_TimesOutAndNamesTheSubject(t *testing.T) {
+	err := Within(20*time.Millisecond, "slow handshake", func() error {
+		time.Sleep(2 * time.Second)
+		return nil
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "slow handshake")
+	require.Contains(t, err.Error(), "did not finish")
+}
+
+// The reason Within owns the goroutine. Must panics, and only the goroutine
+// that panics can recover it, so a Must in a bare go func ends the binary.
+func TestWithin_RecoversAMustSoTheBinarySurvives(t *testing.T) {
+	err := Within(2*time.Second, "body with a failing Must", func() error {
+		_ = Must(0, errBoom)
+		return nil
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "panic")
+	require.Contains(t, err.Error(), errBoom.Error())
+}
+
+// A body that finishes late must not block the goroutine forever.
+func TestWithin_LateBodyDoesNotLeak(t *testing.T) {
+	before := runtime.NumGoroutine()
+	release := make(chan struct{})
+	for i := 0; i < 20; i++ {
+		require.Error(t, Within(time.Millisecond, "late", func() error {
+			<-release
+			return nil
+		}))
+	}
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && runtime.NumGoroutine() > before+2 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.LessOrEqual(t, runtime.NumGoroutine(), before+2,
+		"goroutines leaked: before=%d after=%d", before, runtime.NumGoroutine())
+}
+
 func TestRandFile_WritesExactlyWhatItReturns(t *testing.T) {
 	dir := t.TempDir()
 	path, data := RandFile(t, dir, "blob.bin", 4096)
