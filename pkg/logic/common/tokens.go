@@ -533,12 +533,76 @@ type tokenSession struct {
 	conns      atomic.Int32
 	everConn   atomic.Bool
 
+	// baseRevealed is the chain's revealed position when this session started. The
+	// reveal target is measured FROM it, because sent/recv count this session only
+	// while chain.Revealed is the chain's lifetime total. Comparing the two directly
+	// meant a used chain never revealed again until one session out-transferred the
+	// whole history of the chain, so every later session rode for free.
+	baseRevealed int
+
 	paid       atomic.Bool
 	contention atomic.Bool
+
+	// Reveal health. A failed reveal used to be silent, so a chain that never paid
+	// looked exactly like one that was merely behind, and the bridge marked the
+	// session delinquent with nobody able to say why.
+	revealOK     atomic.Int64 // Reveals the ledger accepted.
+	revealFails  atomic.Int64 // Consecutive failures. Reset on success.
+	revealLastAt atomic.Int64 // Unix nano of the last accepted reveal.
+	revealErr    atomic.Pointer[string]
 
 	startOnce sync.Once
 	stop      chan struct{}
 	stopOnce  sync.Once
+}
+
+// revealAlarmAfter is how many consecutive failed reveals turn the WARN on. At a 3s
+// tick that is about 30s of a chain paying nothing while it keeps consuming.
+const revealAlarmAfter = 10
+
+// noteRevealResult records a reveal outcome and warns once the failures stop looking
+// like a blip. The bridge demotes a chain that consumes without paying, so silence
+// here is what turns a broken reveal path into an unexplained delinquency.
+func (ts *tokenSession) noteRevealResult(err error) {
+	if err == nil {
+		ts.revealOK.Add(1)
+		ts.revealFails.Store(0)
+		ts.revealLastAt.Store(time.Now().UnixNano())
+		ts.revealErr.Store(nil)
+		return
+	}
+	msg := err.Error()
+	ts.revealErr.Store(&msg)
+	n := ts.revealFails.Add(1)
+	switch {
+	case n == revealAlarmAfter:
+		ts.logger.Warn("Prepaid reveals are not reaching the ledger; the bridge will demote this session to the free tier",
+			"consecutive_failures", n, "accepted_so_far", ts.revealOK.Load(), "error", msg)
+	case n%100 == 0:
+		ts.logger.Warn("Prepaid reveals still failing", "consecutive_failures", n, "error", msg)
+	default:
+		ts.logger.Debug("Prepaid reveal failed; retrying next tick", "consecutive_failures", n, "error", msg)
+	}
+}
+
+// RevealHealth reports the payment-reveal state for kd status: accepted count,
+// consecutive failures, and the last error. Empty when the session is not funded.
+func (kd *KeibiDrop) RevealHealth() map[string]any {
+	ts := kd.currentTokenSession()
+	if ts == nil {
+		return nil
+	}
+	out := map[string]any{
+		"accepted": ts.revealOK.Load(),
+		"failing":  ts.revealFails.Load(),
+	}
+	if e := ts.revealErr.Load(); e != nil {
+		out["last_error"] = *e
+	}
+	if at := ts.revealLastAt.Load(); at > 0 {
+		out["last_accepted_s_ago"] = int(time.Since(time.Unix(0, at)).Seconds())
+	}
+	return out
 }
 
 // tokenSessionFor returns the session's payment state, creating it on the
@@ -558,7 +622,7 @@ func (kd *KeibiDrop) tokenSessionFor(addr string, logger *slog.Logger) *tokenSes
 	if c == nil {
 		return nil
 	}
-	ts := &tokenSession{kd: kd, chain: c, logger: logger, stop: make(chan struct{})}
+	ts := &tokenSession{kd: kd, chain: c, logger: logger, stop: make(chan struct{}), baseRevealed: c.Revealed}
 	kd.tokenSess = ts
 	logger.Info("Session funded by prepaid chain",
 		"gb_left", float64(c.Units-c.Revealed)*float64(TokenUnitBytes)/float64(1<<30))
@@ -636,8 +700,9 @@ func (ts *tokenSession) revealLoop() {
 // the chain has no value left.
 func (ts *tokenSession) postReveals() (exhausted bool) {
 	c := ts.chain
-	total := ts.sent.Load() + ts.recv.Load()
-	target := int((total/2)/TokenUnitBytes) + revealLead
+	// Cover half of what THIS session moved, on top of where the chain already stood.
+	// The peer covers the other half; the bridge expects exactly that split.
+	target := ts.baseRevealed + ts.sessionUnits() + revealLead
 	if target > c.Units {
 		target = c.Units
 	}
@@ -668,6 +733,7 @@ func (ts *tokenSession) postReveals() (exhausted bool) {
 			"hash":   base64.RawURLEncoding.EncodeToString(reveal[:]),
 			"steps":  steps,
 		}, &resp)
+		ts.noteRevealResult(err)
 		switch {
 		case err == nil:
 			ts.kd.Wallet().markRevealed(c, c.Units-resp.UnitsRemaining, resp.UnitsRemaining == 0)
@@ -679,6 +745,11 @@ func (ts *tokenSession) postReveals() (exhausted bool) {
 			return false // relay unreachable or chain inactive: retry next tick
 		}
 	}
+}
+
+// sessionUnits is the units this session owes: half its observed bytes, rounded down.
+func (ts *tokenSession) sessionUnits() int {
+	return int(((ts.sent.Load() + ts.recv.Load()) / 2) / TokenUnitBytes)
 }
 
 // resyncFromLedger walks the chain against the ledger's last accepted hash,
@@ -705,6 +776,10 @@ func (ts *tokenSession) resyncFromLedger() bool {
 		v := chainHashAt(c.seed, pos)
 		if bytes.Equal(v[:], last) {
 			ts.kd.Wallet().markRevealed(c, c.Units-pos, resp.State == "spent")
+			// Re-base, or the session's own reveals would be demanded a second time.
+			if base := (c.Units - pos) - ts.sessionUnits(); base > ts.baseRevealed {
+				ts.baseRevealed = base
+			}
 			ts.logger.Info("Chain position resynced from ledger", "revealed", c.Units-pos)
 			return resp.State != "spent"
 		}
@@ -741,6 +816,7 @@ type payConn struct {
 	net.Conn
 	ts         *tokenSession
 	ackPending bool
+	closeOnce  sync.Once
 	mu         sync.Mutex
 }
 
@@ -779,13 +855,12 @@ func (p *payConn) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Close decrements the live-conn count exactly once. The previous guard tested
+// p.ts == nil, which is never true, so a second Close double-decremented. The reveal
+// loop stops when the count reaches zero, so an early zero silently ends payment for
+// the rest of the session while the transfer keeps consuming.
 func (p *payConn) Close() error {
-	p.mu.Lock()
-	closedBefore := p.ts == nil
-	p.mu.Unlock()
-	if !closedBefore {
-		p.ts.conns.Add(-1)
-	}
+	p.closeOnce.Do(func() { p.ts.conns.Add(-1) })
 	return p.Conn.Close()
 }
 

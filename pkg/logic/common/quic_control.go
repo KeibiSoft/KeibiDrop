@@ -255,6 +255,7 @@ func (kd *KeibiDrop) maintainQUICListen(ctx context.Context, gen uint64, s *sess
 	logger = logger.With("half", "listen", "room", room)
 	rs := kd.newRoomSocket(room)
 	defer rs.close()
+	quiet := 0 // Consecutive checks that found no live inbound conn.
 
 	for {
 		kd.mu.Lock()
@@ -324,11 +325,22 @@ func (kd *KeibiDrop) maintainQUICListen(ctx context.Context, gen uint64, s *sess
 			return
 		}
 		if qln.live.Load() > 0 {
+			quiet = 0
 			continue // A peer is on the inbound half. Keep this room and check again later.
 		}
-		// No live inbound conn. Either the peer never arrived, or it arrived and left. Both
-		// mean this room is paired to a socket nobody is using, and the peer's own dial
-		// attempts are parking against it. Only a fresh registration can rebuild the room.
+		// No live inbound conn. Either the peer never arrived, or it arrived and left.
+		// Both mean the room may be paired to a socket nobody is using, and the peer's
+		// dial attempts would park against it forever.
+		//
+		// Wait for a SECOND quiet observation before rebuilding. A healthy lane can go
+		// briefly connectionless when the inbound conn hits its 20s QUIC idle timeout
+		// between bursts, and rebinding on that single sample churned the room every
+		// re-probe on an idle session.
+		quiet++
+		if quiet < quietRoundsBeforeRebind && qln.accepts.Load() > 0 {
+			continue
+		}
+		quiet = 0
 		logger.Warn("inbound QUIC room has no live peer; rebinding so the peer can pair again",
 			"accepts", qln.accepts.Load(), "after", quicReprobeInterval)
 		rs.close() // Registering from a paired socket only re-acks. A fresh one can pair.
@@ -435,6 +447,11 @@ func (kd *KeibiDrop) maintainQUICControl(ctx context.Context, gen uint64, peerAd
 		}
 	}
 }
+
+// quietRoundsBeforeRebind is how many consecutive checks must find no live inbound
+// conn before the listen room is rebuilt. One is too eager: a healthy lane goes
+// connectionless whenever the inbound conn hits its 20s QUIC idle timeout.
+const quietRoundsBeforeRebind = 2
 
 // quicArmRetryInterval sets how often arming retries while a stale maintainer holds the
 // single-flight flag. It is short because the window it covers is a lost dial half.

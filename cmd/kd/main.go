@@ -944,6 +944,7 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"connection_mode":   kd.ConnectionMode,
 		"quic_lane":         kd.QUICLaneStatus(),
 		"quic_inbound":      kd.QUICInboundAccepted(),
+		"reveals":           kd.RevealHealth(),
 		"relay":             kd.RelayEndoint.String(),
 		"fuse":              kd.IsFUSE,
 		"mount_path":        kd.ToMount,

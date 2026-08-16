@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -442,4 +443,96 @@ func TestTokensAddOfflineStaysOptimistic(t *testing.T) {
 	gb, err = kd2.TokensAdd(encodeTokenCode(testSeed(t), 25600))
 	require.NoError(t, err, "route-miss add must keep working")
 	require.Equal(t, float64(250), gb)
+}
+
+// A payConn must decrement the live-conn count exactly once, however many times it is
+// closed. The reveal loop stops when the count reaches zero, so a double close used to
+// end payment for the rest of the session while the transfer kept consuming bytes. The
+// bridge then saw a chain that consumed and never paid, and demoted it to the free tier.
+func TestPayConn_DoubleCloseDecrementsOnce(t *testing.T) {
+	kd := newTokenTestKD(t, "")
+	seed := testSeed(t)
+	_, err := kd.Wallet().Add(encodeTokenCode(seed, 10))
+	require.NoError(t, err)
+	ts := kd.tokenSessionFor("bridge.keibisoft.com:26600", kd.logger)
+	require.NotNil(t, ts)
+	t.Cleanup(kd.resetTokenSession)
+
+	a, _ := net.Pipe()
+	b, _ := net.Pipe()
+	pcA, pcB := newPayConn(a, ts), newPayConn(b, ts)
+	require.Equal(t, int32(2), ts.conns.Load(), "two live bridge conns")
+
+	require.NoError(t, pcA.Close())
+	_ = pcA.Close() // A second close must be a no-op for the counter.
+	_ = pcA.Close()
+	require.Equal(t, int32(1), ts.conns.Load(),
+		"closing one conn three times must leave the other counted, or reveals stop early")
+
+	require.NoError(t, pcB.Close())
+	require.Equal(t, int32(0), ts.conns.Load())
+}
+
+// A failed reveal must be visible. It used to return silently, so a chain that paid
+// nothing looked exactly like one that was merely behind.
+func TestRevealHealth_ReportsFailures(t *testing.T) {
+	kd := newTokenTestKD(t, "")
+	seed := testSeed(t)
+	_, err := kd.Wallet().Add(encodeTokenCode(seed, 10))
+	require.NoError(t, err)
+	ts := kd.tokenSessionFor("bridge.keibisoft.com:26600", kd.logger)
+	require.NotNil(t, ts)
+	t.Cleanup(kd.resetTokenSession)
+
+	require.Equal(t, int64(0), ts.revealFails.Load())
+	ts.noteRevealResult(errors.New("relay unreachable"))
+	ts.noteRevealResult(errors.New("relay unreachable"))
+
+	h := kd.RevealHealth()
+	require.NotNil(t, h, "a funded session must report reveal health")
+	require.Equal(t, int64(2), h["failing"])
+	require.Equal(t, "relay unreachable", h["last_error"])
+
+	ts.noteRevealResult(nil)
+	h = kd.RevealHealth()
+	require.Equal(t, int64(0), h["failing"], "a success clears the failure streak")
+	require.Equal(t, int64(1), h["accepted"])
+	require.NotContains(t, h, "last_error")
+}
+
+// A chain that has already paid for earlier sessions must keep paying for new ones.
+//
+// The reveal target used to be computed from THIS session's bytes and compared against
+// the chain's LIFETIME revealed count. On a chain with 166 units already revealed, a new
+// session had to move about 3.4 GB on its own before it revealed a single unit, so every
+// later session consumed bandwidth and posted nothing. The bridge saw a chain that
+// consumed and never paid, and demoted it to the free tier: measured on the WAN pair as
+// "delinquent (consumed 102 units, paid 0)".
+func TestReveals_TargetIsRelativeToTheChainPosition(t *testing.T) {
+	kd := newTokenTestKD(t, "")
+	seed := testSeed(t)
+	c, err := kd.Wallet().Add(encodeTokenCode(seed, 1024))
+	require.NoError(t, err)
+
+	// The chain has history, exactly like a wallet that has been used before.
+	kd.Wallet().markRevealed(c, 166, false)
+
+	ts := kd.tokenSessionFor("bridge.keibisoft.com:26600", kd.logger)
+	require.NotNil(t, ts)
+	t.Cleanup(kd.resetTokenSession)
+	require.Equal(t, 166, ts.baseRevealed, "the session must start from the chain's position")
+
+	// A modest session: 200 MB observed, so it owes 100 MB = 10 units.
+	ts.recv.Store(200 << 20)
+	require.Equal(t, 10, ts.sessionUnits())
+
+	target := ts.baseRevealed + ts.sessionUnits() + revealLead
+	require.Equal(t, 178, target)
+	require.Greater(t, target, c.Revealed,
+		"a used chain must still owe reveals for a new session, or the bridge demotes it")
+
+	// The old formula, kept here so the regression is unmistakable.
+	oldTarget := ts.sessionUnits() + revealLead
+	require.Less(t, oldTarget, c.Revealed,
+		"the old target sat below the chain position, which is why nothing was ever revealed")
 }
