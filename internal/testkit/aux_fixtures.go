@@ -21,16 +21,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// DiscardLogger replaces the inline slog.New(slog.NewTextHandler(io.Discard,
-// nil)) construction that appears 72 times across 25 files.
+// Logger returns a text logger that writes to w at the given level.
+// It is the general form. Use it when a test must keep its output, for example
+// an integration test that logs warnings to stdout for a human to read after a
+// failure. Replacing such a logger with DiscardLogger loses that output.
+func Logger(w io.Writer, level slog.Level) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level}))
+}
+
+// DiscardLogger drops all output. It replaces the inline
+// slog.New(slog.NewTextHandler(io.Discard, nil)) construction.
+// slog defaults to LevelInfo when the options are nil, so this is unchanged
+// behaviour for those sites.
 func DiscardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return Logger(io.Discard, slog.LevelInfo)
+}
+
+// StdoutLogger writes to stdout at the given level.
+// The integration tests use this to keep warnings and errors visible.
+func StdoutLogger(level slog.Level) *slog.Logger {
+	return Logger(os.Stdout, level)
 }
 
 // DebugLogger writes to stderr at debug level.
 // Use only while debugging one test. Do not leave it in committed code.
 func DebugLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	return Logger(os.Stderr, slog.LevelDebug)
 }
 
 // RandBytes returns n cryptographically random bytes.

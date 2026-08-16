@@ -10,8 +10,11 @@
 package testkit
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -227,6 +230,53 @@ func TestWithin_LateBodyDoesNotLeak(t *testing.T) {
 		"goroutines leaked: before=%d after=%d", before, runtime.NumGoroutine())
 }
 
+func TestWithinCtx_PassesTheBodyResultThrough(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, WithinCtx(ctx, "quick", func() error { return nil }))
+	require.ErrorIs(t, WithinCtx(ctx, "quick", func() error { return errBoom }), errBoom)
+	require.Error(t, WithinCtx(ctx, "nil body", nil))
+	require.Error(t, WithinCtx(nil, "nil ctx", func() error { return nil })) //nolint:staticcheck // the nil guard is the subject
+}
+
+func TestWithinCtx_ReportsTheContextError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := WithinCtx(ctx, "slow handshake", func() error {
+		time.Sleep(2 * time.Second)
+		return nil
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Contains(t, err.Error(), "slow handshake")
+}
+
+// The point of WithinCtx: one context deadline is shared by every wait under
+// it. Two Within calls of the same duration would give each wait its own
+// budget, so the pair would be allowed twice the total time.
+func TestWithinCtx_SharesOneDeadlineAcrossWaits(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	block := func() error { time.Sleep(5 * time.Second); return nil }
+
+	require.Error(t, WithinCtx(ctx, "first", block)) // spends the whole deadline
+	start := time.Now()
+	require.Error(t, WithinCtx(ctx, "second", block))
+	require.Less(t, time.Since(start), 100*time.Millisecond,
+		"the second wait must see an expired deadline, not restart its own")
+}
+
+func TestWithinCtx_RecoversAMustSoTheBinarySurvives(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := WithinCtx(ctx, "body with a failing Must", func() error {
+		_ = Must(0, errBoom)
+		return nil
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "panic")
+	require.Contains(t, err.Error(), errBoom.Error())
+}
+
 func TestRandFile_WritesExactlyWhatItReturns(t *testing.T) {
 	dir := t.TempDir()
 	path, data := RandFile(t, dir, "blob.bin", 4096)
@@ -250,6 +300,57 @@ func TestSameContent_NamesTheOffset(t *testing.T) {
 func TestDiscardLogger_Works(t *testing.T) {
 	require.NotNil(t, DiscardLogger())
 	DiscardLogger().Info("this must not print")
+}
+
+// Logger keeps the output. A test that logs for a human to read after a failure
+// must not be converted to DiscardLogger.
+func TestLogger_WritesAndHonoursTheLevel(t *testing.T) {
+	var buf bytes.Buffer
+	log := Logger(&buf, slog.LevelWarn)
+
+	log.Info("dropped below the level")
+	require.Empty(t, buf.String())
+
+	log.Warn("kept", "k", "v")
+	out := buf.String()
+	require.Contains(t, out, "kept")
+	require.Contains(t, out, "k=v")
+
+	log.Error("also kept")
+	require.Contains(t, buf.String(), "also kept")
+}
+
+// DiscardLogger must behave exactly like the inline construction it replaced,
+// which passed nil options. slog treats nil options as LevelInfo.
+func TestDiscardLogger_MatchesTheOldNilOptionsForm(t *testing.T) {
+	var oldBuf, newBuf bytes.Buffer
+	oldLog := slog.New(slog.NewTextHandler(&oldBuf, nil))
+	newLog := Logger(&newBuf, slog.LevelInfo)
+
+	for _, l := range []*slog.Logger{oldLog, newLog} {
+		l.Debug("debug is below Info and must be dropped")
+		l.Info("info is kept")
+	}
+	require.NotContains(t, oldBuf.String(), "debug is below")
+	require.Contains(t, oldBuf.String(), "info is kept")
+	require.Equal(t, stripTime(oldBuf.String()), stripTime(newBuf.String()))
+}
+
+func TestStdoutLogger_IsNotNil(t *testing.T) {
+	require.NotNil(t, StdoutLogger(slog.LevelWarn))
+	require.NotNil(t, DebugLogger())
+}
+
+// stripTime removes the leading time= field, which differs per call.
+func stripTime(s string) string {
+	out := make([]string, 0, 4)
+	for _, line := range strings.Split(s, "\n") {
+		if i := strings.Index(line, " level="); i >= 0 {
+			line = line[i:]
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 func TestRunTable_ProducesOneSubtestPerCase(t *testing.T) {

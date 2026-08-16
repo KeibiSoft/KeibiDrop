@@ -10,6 +10,7 @@
 package testkit
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -35,6 +36,30 @@ func Within(d time.Duration, what string, body func() error) error {
 		return err
 	case <-time.After(d):
 		return fmt.Errorf("%s: did not finish in %v", what, d)
+	}
+}
+
+// WithinCtx runs body and reports an error if body does not return before ctx
+// ends. Use it where the deadline is held by a context and is shared by more
+// than one wait. Within starts a new duration at each call, so it gives each
+// wait its own budget, which is a different test.
+//
+// A panic in body becomes an error, the same as Within. The same rule applies
+// after a timeout: body keeps running, so return an error from it, never t.Error.
+func WithinCtx(ctx context.Context, what string, body func() error) error {
+	if ctx == nil {
+		return fmt.Errorf("testkit: WithinCtx got a nil context for %s", what)
+	}
+	if body == nil {
+		return fmt.Errorf("testkit: WithinCtx got a nil body for %s", what)
+	}
+	done := make(chan error, 1)
+	go func() { done <- recovering(body) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("%s: %w", what, ctx.Err())
 	}
 }
 
