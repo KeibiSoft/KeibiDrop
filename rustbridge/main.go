@@ -173,6 +173,10 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	if kd.BridgeAddr == "" && cfg.BridgeAddr != "" {
 		kd.BridgeAddr = cfg.BridgeAddr
 	}
+
+	// Learn reachability now, so the first connect does not pay the direct-accept stall
+	// while discovering that nothing can reach this listener.
+	go kd.ProbeInboundReachability(ctx)
 	if cfg.StrictMode {
 		kd.StrictMode = true
 	}
@@ -779,6 +783,17 @@ func KD_GetConnectionMode() *C.char {
 		return C.CString("")
 	}
 	return C.CString(kd.ConnectionMode)
+}
+
+// KD_GetQUICLane reports the QUIC control lane as "up" or "down (<reason>)". On a bridge
+// session the lane is what keeps seeks interactive, so its state must be readable.
+//
+//export KD_GetQUICLane
+func KD_GetQUICLane() *C.char {
+	if kd == nil {
+		return C.CString("")
+	}
+	return C.CString(kd.QUICLaneStatus())
 }
 
 //export KD_SetStrictMode

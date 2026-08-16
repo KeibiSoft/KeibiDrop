@@ -79,44 +79,9 @@ func (s *Stream[Req, Resp]) SetTrailer(metadata.MD)       {}
 func (s *Stream[Req, Resp]) SendMsg(any) error            { return nil }
 func (s *Stream[Req, Resp]) RecvMsg(any) error            { return nil }
 
-// SendAdapter turns any stream with a Send method into a byte sink.
-// The constraint is an anonymous interface, so the binding is compile-time.
-func SendAdapter[M any](stream interface{ Send(M) error }, wrap func([]byte) M) func([]byte) error {
-	return func(b []byte) error { return stream.Send(wrap(b)) }
-}
-
-// RecvAdapter turns any stream with a Recv method into a byte source.
-func RecvAdapter[M any](stream interface{ Recv() (M, error) }, unwrap func(M) []byte) func() ([]byte, error) {
-	return func() ([]byte, error) {
-		m, err := stream.Recv()
-		if err != nil {
-			return nil, err
-		}
-		return unwrap(m), nil
-	}
-}
-
-// Sink collects bytes. Pass Sink.Send to code that takes send func([]byte) error,
-// so a test needs no stream, no server and no peer pair.
-type Sink struct{ Buf []byte }
-
-func (s *Sink) Send(b []byte) error {
-	s.Buf = append(s.Buf, b...)
-	return nil
-}
-
 // Source returns queued chunks, then io.EOF.
 // Pass Source.Recv to code that takes recv func() ([]byte, error).
 type Source struct {
 	Chunks [][]byte
 	idx    int
-}
-
-func (s *Source) Recv() ([]byte, error) {
-	if s.idx >= len(s.Chunks) {
-		return nil, io.EOF
-	}
-	c := s.Chunks[s.idx]
-	s.idx++
-	return c, nil
 }

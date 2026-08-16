@@ -11,12 +11,10 @@ package testkit
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"runtime"
 	"runtime/debug"
 	"testing"
-
-	"github.com/KeibiSoft/KeibiDrop/internal/fp"
-	"github.com/stretchr/testify/require"
 )
 
 // Must returns v, or aborts the enclosing Run with err.
@@ -91,12 +89,4 @@ func recovering(body func() error) (err error) {
 		}
 	}()
 	return body()
-}
-
-// Exec unpacks a chain and fails the test on error.
-func Exec[T any](t *testing.T, c fp.Chain[T]) T {
-	t.Helper()
-	v, err := c.Result()
-	require.NoError(t, err)
-	return v
 }

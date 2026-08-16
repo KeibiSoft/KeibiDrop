@@ -11,14 +11,11 @@ package testkit
 
 import (
 	"crypto/rand"
+	"github.com/stretchr/testify/require"
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"testing"
-
-	"github.com/KeibiSoft/KeibiDrop/internal/fp"
-	"github.com/stretchr/testify/require"
 )
 
 // Logger returns a text logger that writes to w at the given level.
@@ -43,12 +40,6 @@ func StdoutLogger(level slog.Level) *slog.Logger {
 	return Logger(os.Stdout, level)
 }
 
-// DebugLogger writes to stderr at debug level.
-// Use only while debugging one test. Do not leave it in committed code.
-func DebugLogger() *slog.Logger {
-	return Logger(os.Stderr, slog.LevelDebug)
-}
-
 // RandBytes returns n cryptographically random bytes.
 func RandBytes(t testing.TB, n int) []byte {
 	t.Helper()
@@ -56,31 +47,4 @@ func RandBytes(t testing.TB, n int) []byte {
 	_, err := rand.Read(buf)
 	require.NoError(t, err)
 	return buf
-}
-
-// RandFile writes size random bytes to dir/name.
-// It returns the path and the bytes, so a later read is compared against the
-// original without reading the source file twice.
-func RandFile(t testing.TB, dir, name string, size int) (string, []byte) {
-	t.Helper()
-	data := RandBytes(t, size)
-	path := filepath.Join(dir, name)
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	return path, data
-}
-
-// SameContent compares two byte slices and names the first difference.
-// It replaces the inlined MD5 compare and its repeated nosec annotation.
-// The old sites hashed only to shorten the failure message; fp.BytesEqual
-// already reports lengths and an offset instead of the payload.
-func SameContent(what string, got, want []byte) error {
-	return fp.BytesEqual(what, got, want)
-}
-
-// ReadFile reads path and fails the test on error.
-func ReadFile(t testing.TB, path string) []byte {
-	t.Helper()
-	b, err := os.ReadFile(path) //#nosec G304 -- test-controlled path
-	require.NoError(t, err)
-	return b
 }

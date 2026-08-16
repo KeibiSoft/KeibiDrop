@@ -50,12 +50,3 @@ func RunTable[C any](t *testing.T, cases []C, name func(C) string, body func(*te
 		})
 	}
 }
-
-// RunTableB is RunTable for benchmarks.
-// body runs inside b.Run. It must do its own timer control.
-func RunTableB[C any](b *testing.B, cases []C, name func(C) string, body func(*testing.B, C)) {
-	b.Helper()
-	for _, c := range cases {
-		b.Run(name(c), func(b *testing.B) { body(b, c) })
-	}
-}

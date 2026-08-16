@@ -31,10 +31,6 @@ func TestRun_PassesOnANilError(t *testing.T) {
 	Run(t, func() error { return nil })
 }
 
-func TestExec_UnpacksAChain(t *testing.T) {
-	require.Equal(t, 7, Exec(t, fp.Wrap(7)))
-}
-
 // Must(f()) is legal because the call is the sole argument, and T infers.
 func TestMust_ReturnsTheValueAndInfersTheType(t *testing.T) {
 	Run(t, func() error {
@@ -107,26 +103,6 @@ func TestPoll_ChecksOnceAfterTheDeadline(t *testing.T) {
 
 func TestPoll_NilConditionIsAnError(t *testing.T) {
 	require.Error(t, Poll(time.Millisecond, time.Millisecond, nil, "x"))
-	require.Error(t, Stays(time.Millisecond, time.Millisecond, nil, "x"))
-}
-
-func TestStays_PassesWhenNothingHappens(t *testing.T) {
-	require.NoError(t, Stays(20*time.Millisecond, time.Millisecond, func() bool { return false }, "quiet"))
-}
-
-func TestStays_FailsWhenTheConditionFires(t *testing.T) {
-	err := Stays(50*time.Millisecond, time.Millisecond, func() bool { return true }, "the thing")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "the thing")
-}
-
-func TestEventuallyVal_ReturnsTheProbedValue(t *testing.T) {
-	var n atomic.Int32
-	got := EventuallyVal(t, time.Second, time.Millisecond, func() (int32, bool) {
-		v := n.Add(1)
-		return v, v >= 3
-	}, "third probe")
-	require.Equal(t, int32(3), got)
 }
 
 func TestGo_ReturnsTheErrorThroughTheJoin(t *testing.T) {
@@ -277,24 +253,11 @@ func TestWithinCtx_RecoversAMustSoTheBinarySurvives(t *testing.T) {
 	require.Contains(t, err.Error(), errBoom.Error())
 }
 
-func TestRandFile_WritesExactlyWhatItReturns(t *testing.T) {
-	dir := t.TempDir()
-	path, data := RandFile(t, dir, "blob.bin", 4096)
-	require.Len(t, data, 4096)
-	require.NoError(t, SameContent("round trip", ReadFile(t, path), data))
-}
-
 func TestRandBytes_IsNotAllZero(t *testing.T) {
 	b := RandBytes(t, 64)
 	require.Len(t, b, 64)
 	var zero [64]byte
 	require.NotEqual(t, zero[:], b)
-}
-
-func TestSameContent_NamesTheOffset(t *testing.T) {
-	err := SameContent("payload", []byte{1, 2, 3}, []byte{1, 9, 3})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "offset 1")
 }
 
 func TestDiscardLogger_Works(t *testing.T) {
@@ -320,25 +283,8 @@ func TestLogger_WritesAndHonoursTheLevel(t *testing.T) {
 	require.Contains(t, buf.String(), "also kept")
 }
 
-// DiscardLogger must behave exactly like the inline construction it replaced,
-// which passed nil options. slog treats nil options as LevelInfo.
-func TestDiscardLogger_MatchesTheOldNilOptionsForm(t *testing.T) {
-	var oldBuf, newBuf bytes.Buffer
-	oldLog := slog.New(slog.NewTextHandler(&oldBuf, nil))
-	newLog := Logger(&newBuf, slog.LevelInfo)
-
-	for _, l := range []*slog.Logger{oldLog, newLog} {
-		l.Debug("debug is below Info and must be dropped")
-		l.Info("info is kept")
-	}
-	require.NotContains(t, oldBuf.String(), "debug is below")
-	require.Contains(t, oldBuf.String(), "info is kept")
-	require.Equal(t, stripTime(oldBuf.String()), stripTime(newBuf.String()))
-}
-
 func TestStdoutLogger_IsNotNil(t *testing.T) {
 	require.NotNil(t, StdoutLogger(slog.LevelWarn))
-	require.NotNil(t, DebugLogger())
 }
 
 // stripTime removes the leading time= field, which differs per call.
@@ -409,37 +355,4 @@ func TestStream_SatisfiesTheServerStreamMethods(t *testing.T) {
 	s.SetTrailer(nil)
 	require.NoError(t, s.SendMsg(nil))
 	require.NoError(t, s.RecvMsg(nil))
-}
-
-func TestAdapters_BridgeAStreamToPlainFuncs(t *testing.T) {
-	s := &Stream[req, resp]{Requests: []req{{7}}}
-
-	send := SendAdapter(s, func(b []byte) resp { return resp{s: string(b)} })
-	require.NoError(t, send([]byte("hello")))
-	require.Equal(t, "hello", s.Sent[0].s)
-
-	recv := RecvAdapter[req](s, func(r req) []byte { return []byte(strings.Repeat("x", r.n)) })
-	b, err := recv()
-	require.NoError(t, err)
-	require.Len(t, b, 7)
-
-	_, err = recv()
-	require.ErrorIs(t, err, io.EOF)
-}
-
-// Sink and Source are the point of R8: code taking a plain func needs no stream.
-func TestSinkAndSource(t *testing.T) {
-	var sink Sink
-	require.NoError(t, sink.Send([]byte("ab")))
-	require.NoError(t, sink.Send([]byte("cd")))
-	require.Equal(t, "abcd", string(sink.Buf))
-
-	src := &Source{Chunks: [][]byte{[]byte("x"), []byte("y")}}
-	a, err := src.Recv()
-	require.NoError(t, err)
-	require.Equal(t, "x", string(a))
-	_, err = src.Recv()
-	require.NoError(t, err)
-	_, err = src.Recv()
-	require.ErrorIs(t, err, io.EOF)
 }

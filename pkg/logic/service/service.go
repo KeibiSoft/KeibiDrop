@@ -429,7 +429,11 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			// announced state through the acceptance path (watermark, conflict
 			// preserve, bitmap reset/reconcile, prefetch).
 			if (collision || conflictSkip) && req.Attr != nil {
-				_ = kd.FS().Root().AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
+				if err := kd.FS().Root().AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs); err != nil {
+					logger.Error("Rename acceptance failed; the peer must retry",
+						"path", req.Path, "error", err)
+					return nil, ErrGRPCFailedPrecondition
+				}
 			}
 
 			// Check if the renamed file needs re-downloading.
@@ -451,7 +455,11 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				}
 
 				if needsRedownload {
-					_ = kd.FS().Root().AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
+					if err := kd.FS().Root().AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs); err != nil {
+						logger.Error("Re-download after rename failed; the peer must retry",
+							"path", req.Path, "error", err)
+						return nil, ErrGRPCFailedPrecondition
+					}
 				}
 			}
 
@@ -472,7 +480,13 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				// propagated → peer ".git/objects" empty → "bad object HEAD".
 				logger.Info("Rename of untracked source: materializing destination",
 					"path", req.Path, "size", req.Attr.Size)
-				_ = kd.FS().Root().AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs)
+				if err := kd.FS().Root().AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs); err != nil {
+					// Swallowing this is what left ".git/objects" empty and produced
+					// "bad object HEAD" on the peer.
+					logger.Error("Materializing the rename destination failed; the peer must retry",
+						"path", req.Path, "error", err)
+					return nil, ErrGRPCFailedPrecondition
+				}
 			}
 		}
 
