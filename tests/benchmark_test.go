@@ -23,6 +23,7 @@ import (
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -43,31 +44,23 @@ func TestTransferThroughput(t *testing.T) {
 	tp := SetupFUSEPeerPair(t, 300*time.Second)
 	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
 
-	sizes := []struct {
-		name string
-		size int
-	}{
-		{"1MB", 1 * 1024 * 1024},
-		{"10MB", 10 * 1024 * 1024},
-		{"100MB", 100 * 1024 * 1024},
-		{"1GB", 1024 * 1024 * 1024},
-	}
+	sizes := testkit.StdSizes
 
 	t.Log("\n=== End-to-End Transfer Throughput ===")
 	t.Logf("%-8s | %-12s | %-10s", "Size", "MB/s", "Duration")
 	t.Logf("---------|--------------|----------")
 
 	for _, s := range sizes {
-		t.Run(s.name, func(t *testing.T) {
+		t.Run(s.Name, func(t *testing.T) {
 			require := require.New(t)
 
 			// Generate random payload
-			data := make([]byte, s.size)
+			data := make([]byte, s.Size)
 			_, err := rand.Read(data)
 			require.NoError(err)
 
 			// Bob writes file to his save dir and shares it
-			fileName := fmt.Sprintf("bench_e2e_%s.bin", s.name)
+			fileName := fmt.Sprintf("bench_e2e_%s.bin", s.Name)
 			bobPath := filepath.Join(tp.BobSaveDir, fileName)
 			require.NoError(os.WriteFile(bobPath, data, 0644))
 			require.NoError(tp.Bob.AddFile(bobPath))
@@ -84,12 +77,12 @@ func TestTransferThroughput(t *testing.T) {
 			require.Equal(len(data), len(readData), "size mismatch")
 
 			// Verify content integrity for smallest size (comparing 100MB is slow).
-			if s.size <= 1*1024*1024 {
+			if s.Size <= 1*1024*1024 {
 				require.Equal(data, readData, "content mismatch")
 			}
 
-			mbps := float64(s.size) / elapsed.Seconds() / (1024 * 1024)
-			t.Logf("%-8s | %-12.2f | %s", s.name, mbps, elapsed.Round(time.Millisecond))
+			mbps := float64(s.Size) / elapsed.Seconds() / (1024 * 1024)
+			t.Logf("%-8s | %-12.2f | %s", s.Name, mbps, elapsed.Round(time.Millisecond))
 		})
 	}
 }
@@ -463,15 +456,7 @@ func (s *bareReadServer) Read(stream bindings.KeibiService_ReadServer) error {
 // BenchmarkGRPCBaseline measures raw gRPC bidi-stream throughput over
 // localhost without encryption, using the KeibiService Read RPC.
 func BenchmarkGRPCBaseline(b *testing.B) {
-	sizes := []struct {
-		name string
-		size int
-	}{
-		{"1MB", 1 * 1024 * 1024},
-		{"10MB", 10 * 1024 * 1024},
-		{"100MB", 100 * 1024 * 1024},
-		{"1GB", 1024 * 1024 * 1024},
-	}
+	sizes := testkit.StdSizes
 
 	// Create temp dir with test files
 	tmpDir, err := os.MkdirTemp("", "keibidrop-grpc-bench-*")
@@ -481,9 +466,9 @@ func BenchmarkGRPCBaseline(b *testing.B) {
 	defer os.RemoveAll(tmpDir)
 
 	for _, s := range sizes {
-		data := make([]byte, s.size)
+		data := make([]byte, s.Size)
 		rand.Read(data)
-		os.WriteFile(filepath.Join(tmpDir, s.name+".bin"), data, 0644)
+		os.WriteFile(filepath.Join(tmpDir, s.Name+".bin"), data, 0644)
 	}
 
 	// Start bare gRPC server
@@ -510,8 +495,8 @@ func BenchmarkGRPCBaseline(b *testing.B) {
 	chunkSize := filesystem.ChunkSize
 
 	for _, s := range sizes {
-		b.Run(fmt.Sprintf("Read_%s", s.name), func(b *testing.B) {
-			b.SetBytes(int64(s.size))
+		b.Run(fmt.Sprintf("Read_%s", s.Name), func(b *testing.B) {
+			b.SetBytes(int64(s.Size))
 			for i := 0; i < b.N; i++ {
 				stream, err := cli.Read(context.Background())
 				if err != nil {
@@ -519,13 +504,13 @@ func BenchmarkGRPCBaseline(b *testing.B) {
 				}
 
 				offset := 0
-				for offset < s.size {
+				for offset < s.Size {
 					reqSize := chunkSize
-					if offset+reqSize > s.size {
-						reqSize = s.size - offset
+					if offset+reqSize > s.Size {
+						reqSize = s.Size - offset
 					}
 					if err := stream.Send(&bindings.ReadRequest{
-						Path:   s.name + ".bin",
+						Path:   s.Name + ".bin",
 						Offset: uint64(offset),
 						Size:   uint32(reqSize),
 					}); err != nil {
@@ -555,15 +540,7 @@ func TestEncryptedGRPC(t *testing.T) {
 	// No FUSE needed, just the encrypted gRPC channel between peers.
 	tp := SetupPeerPairWithTimeout(t, false, 300*time.Second)
 
-	sizes := []struct {
-		name string
-		size int
-	}{
-		{"1MB", 1 * 1024 * 1024},
-		{"10MB", 10 * 1024 * 1024},
-		{"100MB", 100 * 1024 * 1024},
-		{"1GB", 1024 * 1024 * 1024},
-	}
+	sizes := testkit.StdSizes
 
 	chunkSize := filesystem.ChunkSize
 
@@ -572,14 +549,14 @@ func TestEncryptedGRPC(t *testing.T) {
 	t.Logf("---------|--------------|----------")
 
 	for _, s := range sizes {
-		t.Run(s.name, func(t *testing.T) {
+		t.Run(s.Name, func(t *testing.T) {
 			require := require.New(t)
 
-			data := make([]byte, s.size)
+			data := make([]byte, s.Size)
 			_, err := rand.Read(data)
 			require.NoError(err)
 
-			fileName := fmt.Sprintf("bench_enc_%s.bin", s.name)
+			fileName := fmt.Sprintf("bench_enc_%s.bin", s.Name)
 			bobPath := filepath.Join(tp.BobSaveDir, fileName)
 			require.NoError(os.WriteFile(bobPath, data, 0644))
 			require.NoError(tp.Bob.AddFile(bobPath))
@@ -590,10 +567,10 @@ func TestEncryptedGRPC(t *testing.T) {
 			require.NoError(err)
 
 			totalRead := 0
-			for totalRead < s.size {
+			for totalRead < s.Size {
 				reqSize := chunkSize
-				if totalRead+reqSize > s.size {
-					reqSize = s.size - totalRead
+				if totalRead+reqSize > s.Size {
+					reqSize = s.Size - totalRead
 				}
 				require.NoError(stream.Send(&bindings.ReadRequest{
 					Path:   fileName,
@@ -607,8 +584,8 @@ func TestEncryptedGRPC(t *testing.T) {
 			stream.CloseSend()
 			elapsed := time.Since(start)
 
-			mbps := float64(s.size) / elapsed.Seconds() / (1024 * 1024)
-			t.Logf("%-8s | %-12.2f | %s", s.name, mbps, elapsed.Round(time.Millisecond))
+			mbps := float64(s.Size) / elapsed.Seconds() / (1024 * 1024)
+			t.Logf("%-8s | %-12.2f | %s", s.Name, mbps, elapsed.Round(time.Millisecond))
 		})
 	}
 }
@@ -627,15 +604,7 @@ func TestBaselineComparison(t *testing.T) {
 	tp := SetupFUSEPeerPair(t, 300*time.Second)
 	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
 
-	sizes := []struct {
-		name string
-		size int
-	}{
-		{"1MB", 1 * 1024 * 1024},
-		{"10MB", 10 * 1024 * 1024},
-		{"100MB", 100 * 1024 * 1024},
-		{"1GB", 1024 * 1024 * 1024},
-	}
+	sizes := testkit.StdSizes
 
 	type result struct {
 		disk time.Duration
@@ -651,12 +620,12 @@ func TestBaselineComparison(t *testing.T) {
 
 	for _, s := range sizes {
 		require := require.New(t)
-		data := make([]byte, s.size)
+		data := make([]byte, s.Size)
 		_, err := rand.Read(data)
 		require.NoError(err)
 
 		// Measure raw disk read
-		diskPath := filepath.Join(tmpDir, fmt.Sprintf("baseline_%s.bin", s.name))
+		diskPath := filepath.Join(tmpDir, fmt.Sprintf("baseline_%s.bin", s.Name))
 		require.NoError(os.WriteFile(diskPath, data, 0644))
 
 		diskStart := time.Now()
@@ -665,7 +634,7 @@ func TestBaselineComparison(t *testing.T) {
 		require.NoError(err)
 
 		// Measure E2E transfer
-		fileName := fmt.Sprintf("bench_cmp_%s.bin", s.name)
+		fileName := fmt.Sprintf("bench_cmp_%s.bin", s.Name)
 		bobPath := filepath.Join(tp.BobSaveDir, fileName)
 		require.NoError(os.WriteFile(bobPath, data, 0644))
 		require.NoError(tp.Bob.AddFile(bobPath))
@@ -677,14 +646,14 @@ func TestBaselineComparison(t *testing.T) {
 		readData, err := os.ReadFile(alicePath)
 		e2eDur := time.Since(e2eStart)
 		require.NoError(err)
-		require.Equal(s.size, len(readData))
+		require.Equal(s.Size, len(readData))
 
 		r := result{disk: diskDur, e2e: e2eDur}
 		ratio := float64(r.e2e) / float64(r.disk)
 		overhead := r.e2e - r.disk
 
 		t.Logf("%-8s | %-12s | %-12s | %-10s | %.1fx",
-			s.name,
+			s.Name,
 			r.disk.Round(time.Millisecond),
 			r.e2e.Round(time.Millisecond),
 			overhead.Round(time.Millisecond),
@@ -854,37 +823,29 @@ func TestFUSEWriteThroughput(t *testing.T) {
 	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
 
 	// Single file write throughput at various sizes.
-	sizes := []struct {
-		name string
-		size int
-	}{
-		{"1MB", 1 * 1024 * 1024},
-		{"10MB", 10 * 1024 * 1024},
-		{"100MB", 100 * 1024 * 1024},
-		{"1GB", 1024 * 1024 * 1024},
-	}
+	sizes := testkit.StdSizes
 
 	t.Log("\n=== FUSE Write Throughput (single file) ===")
 	t.Logf("%-8s | %-12s | %-10s", "Size", "MB/s", "Duration")
 	t.Logf("---------|--------------|----------")
 
 	for _, s := range sizes {
-		t.Run("Single_"+s.name, func(t *testing.T) {
+		t.Run("Single_"+s.Name, func(t *testing.T) {
 			require := require.New(t)
 
-			data := make([]byte, s.size)
+			data := make([]byte, s.Size)
 			_, err := rand.Read(data)
 			require.NoError(err)
 
-			destPath := filepath.Join(tp.AliceMountDir, fmt.Sprintf("write_bench_%s.bin", s.name))
+			destPath := filepath.Join(tp.AliceMountDir, fmt.Sprintf("write_bench_%s.bin", s.Name))
 
 			start := time.Now()
 			err = os.WriteFile(destPath, data, 0644)
 			elapsed := time.Since(start)
 			require.NoError(err)
 
-			mbps := float64(s.size) / elapsed.Seconds() / (1024 * 1024)
-			t.Logf("%-8s | %-12.2f | %s", s.name, mbps, elapsed.Round(time.Millisecond))
+			mbps := float64(s.Size) / elapsed.Seconds() / (1024 * 1024)
+			t.Logf("%-8s | %-12.2f | %s", s.Name, mbps, elapsed.Round(time.Millisecond))
 
 			// Verify
 			readBack, err := os.ReadFile(destPath)
@@ -954,15 +915,7 @@ func TestRoundTripFUSETransfer(t *testing.T) {
 	tp := SetupFUSEPeerPair(t, 300*time.Second)
 	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
 
-	sizes := []struct {
-		name string
-		size int
-	}{
-		{"1MB", 1 * 1024 * 1024},
-		{"10MB", 10 * 1024 * 1024},
-		{"100MB", 100 * 1024 * 1024},
-		{"1GB", 1024 * 1024 * 1024},
-	}
+	sizes := testkit.StdSizes
 
 	t.Log("\n=== Round-Trip FUSE Transfer ===")
 	t.Log("Alice writes to her FUSE mount, file syncs to Bob, Bob reads full file from save dir.")
@@ -970,14 +923,14 @@ func TestRoundTripFUSETransfer(t *testing.T) {
 	t.Logf("---------|--------------|--------------|--------------|----------")
 
 	for _, s := range sizes {
-		t.Run("RoundTrip_"+s.name, func(t *testing.T) {
+		t.Run("RoundTrip_"+s.Name, func(t *testing.T) {
 			require := require.New(t)
 
-			data := make([]byte, s.size)
+			data := make([]byte, s.Size)
 			_, err := rand.Read(data)
 			require.NoError(err)
 
-			fileName := fmt.Sprintf("roundtrip_%s.bin", s.name)
+			fileName := fmt.Sprintf("roundtrip_%s.bin", s.Name)
 			alicePath := filepath.Join(tp.AliceMountDir, fileName)
 
 			totalStart := time.Now()
@@ -1003,15 +956,15 @@ func TestRoundTripFUSETransfer(t *testing.T) {
 			bobData, err := os.ReadFile(bobPath)
 			require.NoError(err)
 			require.Equal(len(data), len(bobData), "size mismatch")
-			if s.size <= 10*1024*1024 {
+			if s.Size <= 10*1024*1024 {
 				require.Equal(data, bobData, "content mismatch")
 			}
 
-			writeMBps := float64(s.size) / writeElapsed.Seconds() / (1024 * 1024)
-			pullMBps := float64(s.size) / pullElapsed.Seconds() / (1024 * 1024)
-			totalMBps := float64(s.size) / totalElapsed.Seconds() / (1024 * 1024)
+			writeMBps := float64(s.Size) / writeElapsed.Seconds() / (1024 * 1024)
+			pullMBps := float64(s.Size) / pullElapsed.Seconds() / (1024 * 1024)
+			totalMBps := float64(s.Size) / totalElapsed.Seconds() / (1024 * 1024)
 			t.Logf("%-8s | %-12.2f | %-12.2f | %-12.2f | %s",
-				s.name, writeMBps, pullMBps, totalMBps, totalElapsed.Round(time.Millisecond))
+				s.Name, writeMBps, pullMBps, totalMBps, totalElapsed.Round(time.Millisecond))
 		})
 	}
 
@@ -1021,14 +974,14 @@ func TestRoundTripFUSETransfer(t *testing.T) {
 	t.Logf("---------|--------------|----------")
 
 	for _, s := range sizes {
-		t.Run("Reverse_"+s.name, func(t *testing.T) {
+		t.Run("Reverse_"+s.Name, func(t *testing.T) {
 			require := require.New(t)
 
-			data := make([]byte, s.size)
+			data := make([]byte, s.Size)
 			_, err := rand.Read(data)
 			require.NoError(err)
 
-			fileName := fmt.Sprintf("reverse_%s.bin", s.name)
+			fileName := fmt.Sprintf("reverse_%s.bin", s.Name)
 			bobPath := filepath.Join(tp.BobSaveDir, fileName)
 			require.NoError(os.WriteFile(bobPath, data, 0644))
 			require.NoError(tp.Bob.AddFile(bobPath))
@@ -1042,8 +995,8 @@ func TestRoundTripFUSETransfer(t *testing.T) {
 			require.NoError(err)
 			require.Equal(len(data), len(readData), "size mismatch")
 
-			mbps := float64(s.size) / elapsed.Seconds() / (1024 * 1024)
-			t.Logf("%-8s | %-12.2f | %s", s.name, mbps, elapsed.Round(time.Millisecond))
+			mbps := float64(s.Size) / elapsed.Seconds() / (1024 * 1024)
+			t.Logf("%-8s | %-12.2f | %s", s.Name, mbps, elapsed.Round(time.Millisecond))
 		})
 	}
 }
