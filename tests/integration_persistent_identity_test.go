@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
@@ -161,8 +162,7 @@ func TestCorruptionReturnsTypedError(t *testing.T) {
 func TestEnablePersistentIdentity_FullStack(t *testing.T) {
 	tmp := t.TempDir()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout,
-		&slog.HandlerOptions{Level: slog.LevelError}))
+	logger := testkit.StdoutLogger(slog.LevelError)
 	relayURL, _ := url.Parse("http://127.0.0.1:54321")
 
 	newKD := func() *common.KeibiDrop {

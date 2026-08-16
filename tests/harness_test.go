@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/stretchr/testify/require"
@@ -102,9 +104,8 @@ func setupPeerPairImpl(t *testing.T, aliceFuse bool, bobFuse bool, timeout time.
 		bobMount = t.TempDir()
 	}
 
-	// Logger — warn level to reduce noise.
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn})
-	logger := slog.New(handler)
+	// Warn level to reduce noise.
+	logger := testkit.StdoutLogger(slog.LevelWarn)
 
 	// Allocate ports in the 26000-27000 range (handshake validates this range)
 	aliceInPort := getFreePortInRange(t, 26100, 26249)
@@ -157,36 +158,22 @@ func setupPeerPairImpl(t *testing.T, aliceFuse bool, bobFuse bool, timeout time.
 	// Connect: CreateRoom (Alice) and JoinRoom (Bob) concurrently.
 	// CreateRoom registers to relay then waits for inbound handshake.
 	// JoinRoom fetches from relay then performs outbound handshake.
-	aliceReady := make(chan error, 1)
-	bobReady := make(chan error, 1)
-
-	go func() {
-		aliceReady <- kdAlice.CreateRoom()
-	}()
+	aliceReady := testkit.Go(func() error { return kdAlice.CreateRoom() })
 
 	// Wait until Alice has registered on the relay (replaces time.Sleep)
 	WaitForCondition(t, 10*time.Second, 50*time.Millisecond, func() bool {
 		return relay.EntryCount() > 0
 	}, "waiting for Alice to register on relay")
 
-	go func() {
-		bobReady <- kdBob.JoinRoom()
-	}()
+	bobReady := testkit.Go(func() error { return kdBob.JoinRoom() })
 
 	// Wait for both to complete or timeout
-	select {
-	case err := <-aliceReady:
-		require.NoError(err, "Alice CreateRoom failed")
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for Alice CreateRoom")
-	}
-
-	select {
-	case err := <-bobReady:
-		require.NoError(err, "Bob JoinRoom failed")
-	case <-ctx.Done():
-		t.Fatal("timeout waiting for Bob JoinRoom")
-	}
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error { return testkit.WithinCtx(ctx, "Alice CreateRoom", aliceReady) },
+			func() error { return testkit.WithinCtx(ctx, "Bob JoinRoom", bobReady) },
+		)
+	})
 
 	// The Run() goroutine sets the running flag after it receives the Start
 	// signal. Wait for both flags: a Stop() before the flag is set is a no-op,
@@ -242,12 +229,8 @@ func (tp *TestPair) Teardown() {
 	// Step 3: Wait for Run() goroutines to fully exit.
 	// This prevents ghost goroutines from re-mounting after teardown.
 	if tp.runWg != nil {
-		done := make(chan struct{})
-		go func() { tp.runWg.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(5 * time.Second):
-		}
+		// A timeout is not a failure here. Teardown proceeds either way.
+		_ = testkit.Within(5*time.Second, "peer Run goroutines", func() error { tp.runWg.Wait(); return nil })
 	}
 
 	// Step 4: Force unmount as fallback.
@@ -345,26 +328,17 @@ func waitForUnmount(dir string, timeout time.Duration) {
 	if runtime.GOOS == "windows" {
 		return
 	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if !isFUSEMounted(dir) {
-			return
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	// A timeout is not a failure here. The caller proceeds either way.
+	_ = testkit.Poll(timeout, 200*time.Millisecond, func() bool {
+		return !isFUSEMounted(dir)
+	}, "unmount of "+dir)
 }
 
-// WaitForCondition polls a condition function until it returns true or the timeout expires.
+// WaitForCondition polls until the condition is true or the timeout expires.
+// The name is kept because 80 call sites use it.
 func WaitForCondition(t *testing.T, timeout time.Duration, interval time.Duration, condition func() bool, description string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(interval)
-	}
-	t.Fatalf("WaitForCondition timed out: %s", description)
+	testkit.Eventually(t, timeout, interval, condition, description)
 }
 
 // WaitForRemoteFile waits until a file name appears in the SyncTracker.RemoteFiles map.

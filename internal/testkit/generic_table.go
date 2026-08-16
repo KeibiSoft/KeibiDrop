@@ -28,6 +28,10 @@ type NamedSize struct {
 //   - a {name, count, size} triple     multi-file write
 //
 // Names must stay exactly as written. Subtest names depend on them.
+//
+// Do not mutate it. A caller that writes `sizes := testkit.StdSizes` shares the
+// backing array with every other test in the binary. Copy it first if a test
+// needs its own ladder.
 var StdSizes = []NamedSize{
 	{"1MB", 1 * 1024 * 1024},
 	{"10MB", 10 * 1024 * 1024},

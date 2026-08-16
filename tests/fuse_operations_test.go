@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/stretchr/testify/require"
 )
@@ -67,10 +68,7 @@ func setupTestEnvironment(t *testing.T) (*TestConfig, *common.KeibiDrop, *common
 	parsedURL, err := url.Parse(cfg.RelayURL)
 	require.NoError(err)
 
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelWarn,
-	})
-	logger := slog.New(handler)
+	logger := testkit.StdoutLogger(slog.LevelWarn)
 
 	// Alice = FUSE, Bob = no-FUSE (cgofuse limitation: one mount per process).
 	kdAlice, err := common.NewKeibiDropWithIP(ctx, logger.With("peer", "alice"),
