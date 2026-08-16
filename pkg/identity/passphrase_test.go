@@ -77,7 +77,7 @@ func TestArgon2idDerive_RejectsEmptyPassphrase(t *testing.T) {
 }
 
 // TestArgon2idDerive_FullKeySpace verifies that keys are non-zero and
-// distinct across different inputs — a cheap sanity check that we are not
+// distinct across different inputs, a cheap sanity check that we are not
 // accidentally returning the zero or empty slice.
 func TestArgon2idDerive_FullKeySpace(t *testing.T) {
 	req := require.New(t)

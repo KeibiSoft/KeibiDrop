@@ -153,7 +153,7 @@ func TestPassphraseSource_FailsOnEmptyPassphrase(t *testing.T) {
 	require.Error(t, err, "expected error for empty passphrase")
 }
 
-// ── GenerateMasterKey and ExternalMaster tests ──────────────────────────────
+// GenerateMasterKey and ExternalMaster tests
 
 func TestGenerateMasterKey_ReturnsRandom32(t *testing.T) {
 	testkit.Run(t, func() error {

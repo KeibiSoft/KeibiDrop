@@ -22,7 +22,7 @@ import (
 // test is skipped by design.
 func TestIsKeychainAvailable_True(t *testing.T) {
 	if !IsKeychainAvailable() {
-		t.Skip("no keychain available — skipping")
+		t.Skip("no keychain available, skipping")
 	}
 	// If IsKeychainAvailable returned true we've already done a roundtrip.
 	// No additional assertion needed; reaching here means the keychain works.
@@ -30,7 +30,7 @@ func TestIsKeychainAvailable_True(t *testing.T) {
 
 func TestKeychainSetGetDelete_Roundtrip(t *testing.T) {
 	if !IsKeychainAvailable() {
-		t.Skip("no keychain available — skipping")
+		t.Skip("no keychain available, skipping")
 	}
 	req := require.New(t)
 
@@ -58,7 +58,7 @@ func TestKeychainSetGetDelete_Roundtrip(t *testing.T) {
 // account surfaces an error rather than returning empty bytes silently.
 func TestKeychainGet_Missing_ReturnsError(t *testing.T) {
 	if !IsKeychainAvailable() {
-		t.Skip("no keychain available — skipping")
+		t.Skip("no keychain available, skipping")
 	}
 	req := require.New(t)
 

@@ -34,7 +34,7 @@ func (s *stubMasterKeySource) Master() ([]byte, error) { return s.key, nil }
 func (s *stubMasterKeySource) Tier() Tier              { return TierFile }
 func (s *stubMasterKeySource) KDFID() uint8            { return KDFFile }
 
-// ── Existing tests (updated to pass MasterKeySource) ────────────────────────
+// Identity create, load, save and key use
 
 func TestCreateAndLoad(t *testing.T) {
 	dir := t.TempDir()
@@ -142,7 +142,7 @@ func TestKeyFunctionality(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// ── Envelope / round-trip tests ───────────────────────────────────────────────
+// Envelope / round-trip tests
 
 func TestRoundTrip_KeychainTierStub(t *testing.T) {
 	dir := t.TempDir()
@@ -247,7 +247,7 @@ func TestKeySubstitution_DifferentMasterKeyFails(t *testing.T) {
 	_, err := LoadOrCreate(dirA, srcA)
 	require.NoError(t, err)
 
-	// Different master key — derive a different source.
+	// Different master key, so derive a different source.
 	srcB := &stubMasterKeySource{
 		key: []byte("other-master-key-32-bytes-exactly"),
 	}

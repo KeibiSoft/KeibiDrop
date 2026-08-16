@@ -160,7 +160,7 @@ func TestEnvelopeAADBindsHeader(t *testing.T) {
 	ct, err := kbc.EncryptWithAAD(key, plaintext, aad)
 	req.NoError(err)
 
-	// Flip a byte in the header — use kdf_id (offset 5) as representative.
+	// Flip a byte in the header. Use kdf_id (offset 5) as representative.
 	tamperedAAD := make([]byte, len(aad))
 	copy(tamperedAAD, aad)
 	tamperedAAD[5] ^= 0xFF

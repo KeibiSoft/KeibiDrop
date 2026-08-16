@@ -83,7 +83,7 @@ func TestWriteFileAtomic_NoPartialWriteVisible(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "big.dat")
 
-	// 4 MiB payload — large enough that a naive write would be non-atomic.
+	// 4 MiB payload, large enough that a naive write would be non-atomic.
 	blob := testkit.RandBytes(t, 4*1024*1024)
 
 	req.NoError(WriteFileAtomic(path, blob, 0o600))
@@ -91,6 +91,6 @@ func TestWriteFileAtomic_NoPartialWriteVisible(t *testing.T) {
 	// After rename completes the file must contain the full payload.
 	got, err := os.ReadFile(path)
 	req.NoError(err)
-	req.Equal(len(blob), len(got), "file size mismatch — possible partial write")
+	req.Equal(len(blob), len(got), "file size mismatch, possible partial write")
 	req.Equal(blob, got, "file content mismatch")
 }

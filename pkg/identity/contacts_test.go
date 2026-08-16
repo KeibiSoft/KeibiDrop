@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ── Existing tests (updated to pass MasterKeySource) ─────────────────────────
+// Address book add, remove, list and persistence
 
 func TestAddAndLookup(t *testing.T) {
 	dir := t.TempDir()
@@ -128,7 +128,7 @@ func TestEmptyAddressBook(t *testing.T) {
 	require.Empty(t, ab.List())
 }
 
-// ── New v2 tests ─────────────────────────────────────────────────────────────
+// Contacts v2 schema round trip
 
 func TestContactsV2RoundTrip(t *testing.T) {
 	dir := t.TempDir()

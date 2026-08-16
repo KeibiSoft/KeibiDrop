@@ -30,9 +30,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// ---------------------------------------------------------------------------
 // Benchmark 1: End-to-End Transfer Throughput
-// ---------------------------------------------------------------------------
 
 // TestTransferThroughput measures the actual peer-to-peer transfer speed that
 // users experience: Bob shares a file, Alice reads it through her FUSE mount.
@@ -78,7 +76,7 @@ func TestTransferThroughput(t *testing.T) {
 			alicePath := filepath.Join(tp.AliceMountDir, fileName)
 			WaitForFileOnMount(t, alicePath, 30*time.Second)
 
-			// Timed read — this is the number users experience
+			// Timed read. This is the number users experience
 			start := time.Now()
 			readData, err := os.ReadFile(alicePath)
 			elapsed := time.Since(start)
@@ -96,9 +94,7 @@ func TestTransferThroughput(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Benchmark 1b: Transfer Throughput With Simulated Network Latency
-// ---------------------------------------------------------------------------
 
 // netemProfile defines a simulated network condition applied via tc netem.
 type netemProfile struct {
@@ -216,9 +212,7 @@ func TestTransferThroughputNetem(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Benchmark 2: Per-Component Latency Breakdown
-// ---------------------------------------------------------------------------
 
 // chunkTiming records the duration of a single ReadAt call.
 type chunkTiming struct {
@@ -317,7 +311,7 @@ func TestChunkLatency(t *testing.T) {
 	require.NoError(os.WriteFile(bobPath, data, 0644))
 	require.NoError(tp.Bob.AddFile(bobPath))
 
-	// Alice reads via FUSE — this triggers the timed ReadAt calls
+	// Alice reads via FUSE. This triggers the timed ReadAt calls
 	alicePath := filepath.Join(tp.AliceMountDir, "bench_latency.bin")
 	WaitForFileOnMount(t, alicePath, 30*time.Second)
 
@@ -330,7 +324,7 @@ func TestChunkLatency(t *testing.T) {
 	// Analyze chunk timings
 	chunks := recorder.results()
 	if len(chunks) == 0 {
-		t.Fatal("no chunk timings recorded — stream provider was not used")
+		t.Fatal("no chunk timings recorded, stream provider was not used")
 	}
 
 	durations := make([]time.Duration, len(chunks))
@@ -366,9 +360,7 @@ func TestChunkLatency(t *testing.T) {
 	t.Logf("%-10s | %s", "Max", durations[n-1].Round(time.Microsecond))
 }
 
-// ---------------------------------------------------------------------------
 // Benchmark 3a: Raw Local Disk I/O Baseline
-// ---------------------------------------------------------------------------
 
 // BenchmarkLocalDisk measures raw local disk throughput for comparison.
 func BenchmarkLocalDisk(b *testing.B) {
@@ -420,9 +412,7 @@ func BenchmarkLocalDisk(b *testing.B) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Benchmark 3b: gRPC Roundtrip Without Encryption
-// ---------------------------------------------------------------------------
 
 // bareReadServer is a minimal KeibiService that serves Read requests from a
 // directory on disk, with no encryption or session management.
@@ -553,9 +543,7 @@ func BenchmarkGRPCBaseline(b *testing.B) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Benchmark 3c: gRPC Over Encrypted SecureConn
-// ---------------------------------------------------------------------------
 
 // TestEncryptedGRPC measures gRPC throughput through the full encrypted
 // peer connection (no FUSE). Bob has the file, Alice reads via KDClient.
@@ -564,7 +552,7 @@ func TestEncryptedGRPC(t *testing.T) {
 		t.Skip("skipping encrypted gRPC throughput in short mode")
 	}
 
-	// No FUSE needed — just the encrypted gRPC channel between peers.
+	// No FUSE needed, just the encrypted gRPC channel between peers.
 	tp := SetupPeerPairWithTimeout(t, false, 300*time.Second)
 
 	sizes := []struct {
@@ -625,9 +613,7 @@ func TestEncryptedGRPC(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Overhead Ratio Comparison
-// ---------------------------------------------------------------------------
 
 // TestBaselineComparison runs a single transfer at each size and prints
 // a ratio table showing how much overhead the full pipeline adds compared
@@ -706,9 +692,7 @@ func TestBaselineComparison(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Benchmark 5: FUSE Read Overhead Breakdown
-// ---------------------------------------------------------------------------
 
 // TestFUSEReadOverhead measures where time is spent in the E2E FUSE read path
 // by comparing layers: raw gRPC, gRPC+copy, gRPC+copy+cachewrite, full FUSE.
@@ -855,9 +839,7 @@ func TestFUSEReadOverhead(t *testing.T) {
 		float64(fuseE2E-encGRPCCopyCache)/float64(fuseE2E)*100)
 }
 
-// ---------------------------------------------------------------------------
 // Benchmark 6: FUSE Write Throughput (copy files INTO the mounted filesystem)
-// ---------------------------------------------------------------------------
 
 // TestFUSEWriteThroughput measures how fast files can be written into the FUSE
 // mount from outside (simulating drag-and-drop or cp). This exercises Create,
@@ -961,9 +943,7 @@ func TestFUSEWriteThroughput(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Benchmark: Full Round-Trip (write on Alice FUSE -> sync to Bob -> verify)
-// ---------------------------------------------------------------------------
 
 func TestRoundTripFUSETransfer(t *testing.T) {
 	skipIfNoFUSE(t)
@@ -1068,9 +1048,7 @@ func TestRoundTripFUSETransfer(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Legacy portable benchmarks (fixed from hardcoded Mac paths)
-// ---------------------------------------------------------------------------
 
 // TestMeasureLatency provides human-readable latency measurements for
 // local FUSE operations (write + read at various sizes).
