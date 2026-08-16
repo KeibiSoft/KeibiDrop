@@ -12,7 +12,12 @@
 // copy. Turn-taking through a real fetch stays copy-free under both rules.
 package model
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/stretchr/testify/require"
+)
 
 type fetchMsg struct{ ver, base int }
 
@@ -146,19 +151,12 @@ func fetchSuccessors(s fetchState, heldBase bool) []fetchState {
 
 func checkFetch(t *testing.T, writesA, writesB int, heldBase bool) (terminals, losses, copies int) {
 	t.Helper()
-	init := fetchState{writesLeft: [2]int{writesA, writesB},
-		blind: map[int]int{}, preserved: map[int]bool{}}
-	frontier := []fetchState{init}
-	visited := map[string]bool{fetchKey(init): true}
-	for len(frontier) > 0 {
-		s := frontier[0]
-		frontier = frontier[1:]
-		succ := fetchSuccessors(s, heldBase)
-		if len(succ) == 0 {
-			terminals++
-			if s.p[0].canon != s.p[1].canon {
-				t.Fatalf("divergence at quiescence: %+v", s)
-			}
+
+	m := Model[fetchState]{
+		Key:        fetchKey,
+		Successors: func(s fetchState) []fetchState { return fetchSuccessors(s, heldBase) },
+		Quiescent:  func(fetchState) bool { return true },
+		CheckTerminal: func(s fetchState) error {
 			// A silent loss: a blindly-replaced version whose bytes survive
 			// nowhere and that no write honestly superseded.
 			for _, victim := range s.blind {
@@ -175,19 +173,18 @@ func checkFetch(t *testing.T, writesA, writesB int, heldBase bool) (terminals, l
 			if len(s.preserved) > 0 {
 				copies++
 			}
-			continue
-		}
-		for _, n := range succ {
-			k := fetchKey(n)
-			if !visited[k] {
-				visited[k] = true
-				frontier = append(frontier, n)
-			}
-		}
+			return fp.Equal("divergence at quiescence", s.p[0].canon, s.p[1].canon)
+		},
 	}
+
+	init := fetchState{writesLeft: [2]int{writesA, writesB},
+		blind: map[int]int{}, preserved: map[int]bool{}}
+	rep, err := Explore(m, init)
+	require.NoError(t, err)
+
 	t.Logf("writes=%d+%d heldBase=%v: terminals=%d lossHistories=%d copyHistories=%d",
-		writesA, writesB, heldBase, terminals, losses, copies)
-	return
+		writesA, writesB, heldBase, rep.Terminals, losses, copies)
+	return rep.Terminals, losses, copies
 }
 
 // The shipped metadata-base rule loses a never-fetched version silently: the

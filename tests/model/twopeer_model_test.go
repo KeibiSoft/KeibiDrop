@@ -7,12 +7,17 @@
 // It enumerates EVERY interleaving of writes and deliveries at a small scope and
 // checks, at each quiescent terminal state: (1) both peers hold identical content,
 // (2) that content is the globally newest write (LWW correctness). It also counts
-// conflict histories — a peer overwrote content it had never observed — which is
+// conflict histories (a peer overwrote content it had never observed), which is
 // the deterministic justification for the conflict-copy policy: convergence holds,
 // but one side's data survives nowhere.
 package model
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/stretchr/testify/require"
+)
 
 type peerState struct {
 	content   int // id of the write this peer currently holds (0 = initial)
@@ -116,43 +121,28 @@ func quiescent(s state) bool {
 // check runs BFS over the full interleaving space and validates every terminal.
 func check(t *testing.T, writesA, writesB int, coalesce bool) (terminals, conflictHistories int) {
 	t.Helper()
-	init := state{writesLeft: [2]int{writesA, writesB}}
-	frontier := []state{init}
-	visited := map[string]bool{init.key(): true}
-	explored := 0
-	for len(frontier) > 0 {
-		s := frontier[0]
-		frontier = frontier[1:]
-		explored++
-		succ := successors(s, coalesce)
-		if len(succ) == 0 {
-			if !quiescent(s) {
-				t.Fatalf("deadlock: non-quiescent state with no actions: %+v", s)
-			}
-			terminals++
-			if s.p[0].content != s.p[1].content {
-				t.Fatalf("CONVERGENCE VIOLATION: peers diverged at quiescence: %+v", s)
-			}
-			if s.p[0].content != s.nextVer {
-				t.Fatalf("LWW VIOLATION: final content %d is not the newest write %d: %+v",
-					s.p[0].content, s.nextVer, s)
-			}
+
+	m := Model[state]{
+		Key:        state.key,
+		Successors: func(s state) []state { return successors(s, coalesce) },
+		Quiescent:  quiescent,
+		CheckTerminal: func(s state) error {
 			if s.conflicts > 0 {
 				conflictHistories++
 			}
-			continue
-		}
-		for _, n := range succ {
-			k := n.key()
-			if !visited[k] {
-				visited[k] = true
-				frontier = append(frontier, n)
-			}
-		}
+			return fp.All(
+				fp.Equal("CONVERGENCE VIOLATION: peers diverged at quiescence", s.p[0].content, s.p[1].content),
+				fp.Equal("LWW VIOLATION: final content is not the newest write", s.p[0].content, s.nextVer),
+			)
+		},
 	}
+
+	rep, err := Explore(m, state{writesLeft: [2]int{writesA, writesB}})
+	require.NoError(t, err)
+
 	t.Logf("writes=%d+%d coalesce=%v: states=%d terminals=%d conflictHistories=%d",
-		writesA, writesB, coalesce, explored, terminals, conflictHistories)
-	return terminals, conflictHistories
+		writesA, writesB, coalesce, rep.Explored, rep.Terminals, conflictHistories)
+	return rep.Terminals, conflictHistories
 }
 
 // Turn-taking (one writer at a time overall) and concurrent scopes, with and

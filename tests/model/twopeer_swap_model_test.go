@@ -6,10 +6,15 @@
 // started from. The receiver compares the base with its current version: an older
 // base is a provable conflict, and the conflict-copy policy preserves the loser.
 // The checked claim (T3b): with the policy on, no interleaving loses a version
-// silently — every overwritten version is causally superseded or preserved.
+// silently: every overwritten version is causally superseded or preserved.
 package model
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/stretchr/testify/require"
+)
 
 type swapMsg struct{ content, ver, base int }
 
@@ -102,7 +107,7 @@ func swapSuccessors(s swapState, policy bool) []swapState {
 			n.q[i] = append([]swapMsg(nil), n.q[i][1:]...)
 			// Strictly-greater: an EXACT version tie rejects on both sides.
 			// Real versions are ns mtimes, so a tie means both peers keep
-			// their own bytes — no loss, but no convergence. The model's
+			// their own bytes: no loss, but no convergence. The model's
 			// versions are unique by construction and cannot express it;
 			// known residual. Fix if ever observed: deterministic tiebreak
 			// by peer fingerprint.
@@ -128,21 +133,12 @@ func swapSuccessors(s swapState, policy bool) []swapState {
 
 func checkSwap(t *testing.T, swapsA, swapsB int, policy bool) (terminals, silentLosses, copies int) {
 	t.Helper()
-	init := swapState{swapsLeft: [2]int{swapsA, swapsB},
-		preserved: map[int]bool{}, overwrites: map[int]int{}}
-	init.p[0].tmpBase = -1
-	init.p[1].tmpBase = -1
-	frontier := []swapState{init}
-	visited := map[string]bool{swapKey(init): true}
-	for len(frontier) > 0 {
-		s := frontier[0]
-		frontier = frontier[1:]
-		succ := swapSuccessors(s, policy)
-		if len(succ) == 0 {
-			terminals++
-			if s.p[0].content != s.p[1].content {
-				t.Fatalf("divergence at quiescence: %+v", s)
-			}
+
+	m := Model[swapState]{
+		Key:        swapKey,
+		Successors: func(s swapState) []swapState { return swapSuccessors(s, policy) },
+		Quiescent:  func(swapState) bool { return true },
+		CheckTerminal: func(s swapState) error {
 			// A silent loss: an overwritten version that is not the base of its
 			// replacement chain and is not preserved.
 			for lost := range s.overwrites {
@@ -154,19 +150,20 @@ func checkSwap(t *testing.T, swapsA, swapsB int, policy bool) (terminals, silent
 			if len(s.preserved) > 0 {
 				copies++
 			}
-			continue
-		}
-		for _, n := range succ {
-			k := swapKey(n)
-			if !visited[k] {
-				visited[k] = true
-				frontier = append(frontier, n)
-			}
-		}
+			return fp.Equal("divergence at quiescence", s.p[0].content, s.p[1].content)
+		},
 	}
+
+	init := swapState{swapsLeft: [2]int{swapsA, swapsB},
+		preserved: map[int]bool{}, overwrites: map[int]int{}}
+	init.p[0].tmpBase = -1
+	init.p[1].tmpBase = -1
+	rep, err := Explore(m, init)
+	require.NoError(t, err)
+
 	t.Logf("swaps=%d+%d policy=%v: terminals=%d silentLossHistories=%d conflictCopyHistories=%d",
-		swapsA, swapsB, policy, terminals, silentLosses, copies)
-	return
+		swapsA, swapsB, policy, rep.Terminals, silentLosses, copies)
+	return rep.Terminals, silentLosses, copies
 }
 
 // Without the policy, concurrent swap saves lose versions silently.
