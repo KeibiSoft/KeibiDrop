@@ -41,13 +41,9 @@ func TestRealRelayInterop(t *testing.T) {
 	defer ln.Close()
 
 	const msg = "payload through the real relay"
-	// NOT testkit.Go: the goroutine's cleanup defer blocks on done, which this
-	// function only closes after reading the result. A return statement waits
-	// for that defer before testkit.Go's channel ever receives it: deadlock.
-	// The plain buffered send below does not wait for that defer, so it stays safe.
-	//
-	// NOTE (kept as found, not fixed here): require.Equal below runs on this
-	// goroutine, not the test goroutine. See task report, STRUCTURAL FINDINGS.
+	// Not testkit.Go. The goroutine's cleanup defer blocks on done, which this
+	// function closes only after it reads the result. A return runs that defer
+	// first, so the join never receives: deadlock. A buffered send does not.
 	accepted := make(chan error, 1)
 	done := make(chan struct{})
 	defer close(done)
