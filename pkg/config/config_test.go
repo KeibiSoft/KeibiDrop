@@ -11,6 +11,10 @@ package config
 
 import (
 	"testing"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/fp"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestApplyEnvOverrides_PassphraseProtect(t *testing.T) {
@@ -19,9 +23,7 @@ func TestApplyEnvOverrides_PassphraseProtect(t *testing.T) {
 	cfg := DefaultConfig()
 	applyEnvOverrides(&cfg)
 
-	if !cfg.PassphraseProtect {
-		t.Error("expected PassphraseProtect=true when KD_PASSPHRASE_PROTECT=1")
-	}
+	require.True(t, cfg.PassphraseProtect, "KD_PASSPHRASE_PROTECT=1 must set PassphraseProtect")
 }
 
 func TestApplyEnvOverrides_PassphraseProtect_LongPrefix(t *testing.T) {
@@ -30,119 +32,100 @@ func TestApplyEnvOverrides_PassphraseProtect_LongPrefix(t *testing.T) {
 	cfg := DefaultConfig()
 	applyEnvOverrides(&cfg)
 
-	if !cfg.PassphraseProtect {
-		t.Error("expected PassphraseProtect=true when KEIBIDROP_PASSPHRASE_PROTECT=1")
-	}
+	require.True(t, cfg.PassphraseProtect, "KEIBIDROP_PASSPHRASE_PROTECT=1 must set PassphraseProtect")
 }
 
 func TestApplyEnvOverrides_DefaultsNotSet(t *testing.T) {
 	cfg := DefaultConfig()
 	applyEnvOverrides(&cfg)
 
-	if cfg.PassphraseProtect {
-		t.Error("expected PassphraseProtect=false when env var not set")
-	}
+	require.False(t, cfg.PassphraseProtect, "PassphraseProtect must be false when env var not set")
 }
 
-// TestSaveLoad_PrefetchOnOpenPersists verifies the on-demand/prefetch toggle
-// survives a Save->Load round-trip. It is read on Load, but Save must also WRITE
-// it — otherwise a UI toggle silently resets to on-demand next session.
+// TestSaveLoad_PrefetchOnOpenPersists verifies on-demand/prefetch toggle
+// survives Save+Load. Save must WRITE it, not just Load read it, else UI toggle
+// silently resets to on-demand next session.
 func TestSaveLoad_PrefetchOnOpenPersists(t *testing.T) {
 	t.Setenv("KEIBIDROP_CONFIG_DIR", t.TempDir())
 
-	// Defaults: pure on-demand — prefetch off and auto-prefetch disabled (0).
-	// Aggressive prefetch saturates constrained/relay links and freezes seeks,
-	// so it is opt-in, not the default.
-	if DefaultConfig().PrefetchOnOpen {
-		t.Fatal("default PrefetchOnOpen should be false (on-demand)")
-	}
-	if DefaultConfig().PrefetchAutoMB != 0 {
-		t.Fatalf("default PrefetchAutoMB should be 0 (on-demand), got %d", DefaultConfig().PrefetchAutoMB)
-	}
+	// Prefetch is opt-in. It saturates constrained and relay links and
+	// freezes seeks, so the default stays on-demand.
+	require.False(t, DefaultConfig().PrefetchOnOpen, "default PrefetchOnOpen must be false")
+	require.Zero(t, DefaultConfig().PrefetchAutoMB, "default PrefetchAutoMB must be 0")
 
-	// Persist the FUSE toggles + a custom auto threshold.
 	cfg := DefaultConfig()
 	cfg.PrefetchOnOpen = true
 	cfg.LiveCollab = true
 	cfg.PrefetchAutoMB = 250
-	if err := Save(cfg); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+	require.NoError(t, Save(cfg))
 
-	// A fresh Load must observe all three (proves Save actually wrote them).
-	got, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !got.PrefetchOnOpen {
-		t.Error("prefetch_on_open did not persist across Save/Load")
-	}
-	if !got.LiveCollab {
-		t.Error("live_collab did not persist across Save/Load")
-	}
-	if got.PrefetchAutoMB != 250 {
-		t.Errorf("prefetch_auto_mb did not persist: got %d want 250", got.PrefetchAutoMB)
-	}
+	// A fresh Load proves Save wrote all three, not just read them.
+	testkit.Run(t, func() error {
+		got := testkit.Must(Load())
+		return fp.All(
+			fp.True("prefetch_on_open persisted", got.PrefetchOnOpen),
+			fp.True("live_collab persisted", got.LiveCollab),
+			fp.Equal("prefetch_auto_mb persisted", got.PrefetchAutoMB, 250),
+		)
+	})
 }
 
-// TestReadAheadWindowMB_DefaultAndOverride verifies the predictive read-ahead
-// window: on by default (so video does not stall over a high-RTT link), overrideable
-// by env (the WAN-benchmark A/B knob), and disableable with 0.
+// TestReadAheadWindowMB_DefaultAndOverride verifies the read-ahead window is on
+// by default, so video does not stall over a high-RTT link. The env override is
+// the WAN-benchmark A/B knob.
 func TestReadAheadWindowMB_DefaultAndOverride(t *testing.T) {
-	if got := DefaultConfig().ReadAheadWindowMB; got != 64 {
-		t.Fatalf("default ReadAheadWindowMB = %d, want 64 (read-ahead on)", got)
-	}
+	require.Equal(t, 64, DefaultConfig().ReadAheadWindowMB, "default ReadAheadWindowMB must be 64")
 
-	// Env override to a larger window (e.g. a fat link).
+	// Env override to a larger window, for example a fat link.
 	t.Run("override", func(t *testing.T) {
 		t.Setenv("KEIBIDROP_READ_AHEAD_WINDOW_MB", "128")
 		cfg := DefaultConfig()
 		applyEnvOverrides(&cfg)
-		if cfg.ReadAheadWindowMB != 128 {
-			t.Fatalf("ReadAheadWindowMB = %d, want 128 from env", cfg.ReadAheadWindowMB)
-		}
+		require.Equal(t, 128, cfg.ReadAheadWindowMB, "ReadAheadWindowMB must be 128 from env")
 	})
 
-	// Env override to 0 disables read-ahead (the benchmark baseline).
+	// Env override to 0 disables read-ahead. This is the benchmark baseline.
 	t.Run("disable", func(t *testing.T) {
 		t.Setenv("KEIBIDROP_READ_AHEAD_WINDOW_MB", "0")
 		cfg := DefaultConfig()
 		applyEnvOverrides(&cfg)
-		if cfg.ReadAheadWindowMB != 0 {
-			t.Fatalf("ReadAheadWindowMB = %d, want 0 (disabled) from env", cfg.ReadAheadWindowMB)
-		}
+		require.Equal(t, 0, cfg.ReadAheadWindowMB, "ReadAheadWindowMB must be 0 from env")
 	})
 }
 
-// TestSaveLoad_ReadAheadWindowPersists verifies the read-ahead window survives a
-// Save->Load round-trip (Save must WRITE it, not just Load read it).
+// TestSaveLoad_ReadAheadWindowPersists verifies read-ahead window survives
+// Save+Load. Save must WRITE it, not just Load read it.
 func TestSaveLoad_ReadAheadWindowPersists(t *testing.T) {
 	t.Setenv("KEIBIDROP_CONFIG_DIR", t.TempDir())
 
 	cfg := DefaultConfig()
 	cfg.ReadAheadWindowMB = 96
-	if err := Save(cfg); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	got, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got.ReadAheadWindowMB != 96 {
-		t.Errorf("read_ahead_window_mb did not persist: got %d want 96", got.ReadAheadWindowMB)
-	}
+	require.NoError(t, Save(cfg))
+
+	testkit.Run(t, func() error {
+		got := testkit.Must(Load())
+		return fp.Equal("read_ahead_window_mb persisted", got.ReadAheadWindowMB, 96)
+	})
 }
 
 func TestDirectoriesToEnsure_SkipsMountPathOnWindows(t *testing.T) {
 	cfg := Config{SavePath: "/save", MountPath: "/mnt", LogFile: "/logs/kd.log"}
 
 	win := directoriesToEnsure(cfg, "windows")
-	for _, d := range win {
-		if d == cfg.MountPath {
-			t.Fatalf("windows must not pre-create mount_path: %v", win)
-		}
-	}
-	if other := directoriesToEnsure(cfg, "linux"); other[len(other)-1] != cfg.MountPath {
-		t.Fatalf("non-windows must create mount_path: %v", other)
-	}
+	other := directoriesToEnsure(cfg, "linux")
+
+	// Steps, not All. Both checks were t.Fatalf, and the second indexes a slice
+	// the first does not prove non-empty.
+	testkit.Run(t, func() error {
+		return fp.Steps(
+			func() error {
+				return fp.Each("windows dirs", win, func(d string) error {
+					return fp.NotEqual("must not pre-create mount_path", d, cfg.MountPath)
+				})
+			},
+			func() error {
+				return fp.Equal("non-windows creates mount_path", other[len(other)-1], cfg.MountPath)
+			},
+		)
+	})
 }
