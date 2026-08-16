@@ -78,10 +78,3 @@ func (s *Stream[Req, Resp]) SendHeader(metadata.MD) error { return nil }
 func (s *Stream[Req, Resp]) SetTrailer(metadata.MD)       {}
 func (s *Stream[Req, Resp]) SendMsg(any) error            { return nil }
 func (s *Stream[Req, Resp]) RecvMsg(any) error            { return nil }
-
-// Source returns queued chunks, then io.EOF.
-// Pass Source.Recv to code that takes recv func() ([]byte, error).
-type Source struct {
-	Chunks [][]byte
-	idx    int
-}

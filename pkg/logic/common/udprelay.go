@@ -137,19 +137,6 @@ func (r *roomSocket) drop() {
 	r.paired = false
 }
 
-// dialUDPRelayDir binds a UDP socket and returns it once the direction's room pairs. It is
-// the one-shot form, for callers with no retry loop of their own.
-func (kd *KeibiDrop) dialUDPRelayDir(ctx context.Context, s *session.Session, direction string, logger *slog.Logger) (*net.UDPConn, *net.UDPAddr, error) {
-	rs := kd.newRoomSocket(direction)
-	udp, relayAddr, err := rs.pair(ctx, s, logger)
-	if err != nil {
-		rs.close()
-		return nil, nil, err
-	}
-	rs.release()
-	return udp, relayAddr, nil
-}
-
 // registerUDPRelay resends until the relay echoes the magic back. The echo means the
 // counterpart registered the same token. The loop drops earlier datagrams: only the
 // peer's QUIC arrives that early, and QUIC retransmits.

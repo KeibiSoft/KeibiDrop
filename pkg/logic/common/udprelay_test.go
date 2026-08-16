@@ -61,28 +61,6 @@ func startFakeRelay(t *testing.T) *fakeRelay {
 	return r
 }
 
-// gc mirrors the bridge's gc: drop waiters past waitTTL and pairs idle past idleTTL.
-func (r *fakeRelay) gc(waitTTL, idleTTL time.Duration) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := time.Now()
-	for tok, w := range r.wait {
-		if now.Sub(w.created) > waitTTL {
-			delete(r.wait, tok)
-		}
-	}
-	for addr, last := range r.seen {
-		if now.Sub(last) > idleTTL {
-			if dst, ok := r.peer[addr]; ok {
-				delete(r.peer, dst.String())
-				delete(r.seen, dst.String())
-			}
-			delete(r.peer, addr)
-			delete(r.seen, addr)
-		}
-	}
-}
-
 // pairCount reports how many pairings the relay has made.
 func (r *fakeRelay) pairCount() int {
 	r.mu.Lock()

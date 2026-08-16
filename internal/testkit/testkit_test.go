@@ -16,7 +16,6 @@ import (
 	"io"
 	"log/slog"
 	"runtime"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -285,18 +284,6 @@ func TestLogger_WritesAndHonoursTheLevel(t *testing.T) {
 
 func TestStdoutLogger_IsNotNil(t *testing.T) {
 	require.NotNil(t, StdoutLogger(slog.LevelWarn))
-}
-
-// stripTime removes the leading time= field, which differs per call.
-func stripTime(s string) string {
-	out := make([]string, 0, 4)
-	for _, line := range strings.Split(s, "\n") {
-		if i := strings.Index(line, " level="); i >= 0 {
-			line = line[i:]
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
 }
 
 func TestRunTable_ProducesOneSubtestPerCase(t *testing.T) {
