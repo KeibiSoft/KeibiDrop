@@ -8,12 +8,12 @@ import (
 	"context"
 	"crypto/rand"
 	"io"
-	"log/slog"
 	"net"
 	"testing"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	cpb "github.com/KeibiSoft/KeibiDrop/pkg/transport/proto/control"
@@ -26,7 +26,7 @@ import (
 // matching independent QUIC keys (outbound.SEKOutboundQUIC == inbound.SEKInboundQUIC).
 func handshakenSessionPair(t *testing.T) (outbound, inbound *session.Session) {
 	t.Helper()
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := testkit.DiscardLogger()
 
 	outbound, err := session.InitSession(logger, 26002, 26001)
 	require.NoError(t, err)
@@ -47,19 +47,18 @@ func handshakenSessionPair(t *testing.T) (outbound, inbound *session.Session) {
 	require.NoError(t, err)
 
 	oEnd, iEnd := net.Pipe()
-	errCh := make(chan error, 1)
-	go func() { errCh <- session.PerformOutboundHandshakeOnConn(outbound, oEnd) }()
+	join := testkit.Go(func() error { return session.PerformOutboundHandshakeOnConn(outbound, oEnd) })
 	require.NoError(t, session.PerformInboundHandshake(inbound, iEnd))
-	require.NoError(t, <-errCh)
+	require.NoError(t, join())
 	_ = oEnd.Close() // the TCP handshake pipe is only needed to derive keys
 	_ = iEnd.Close()
 
 	// Reverse direction, as in the real flow (each peer dials one and accepts one). This also
 	// completes key-update negotiation: a node learns PeerSupportsKeyUpdate only when it accepts.
 	oEnd2, iEnd2 := net.Pipe()
-	go func() { errCh <- session.PerformOutboundHandshakeOnConn(inbound, oEnd2) }()
+	join2 := testkit.Go(func() error { return session.PerformOutboundHandshakeOnConn(inbound, oEnd2) })
 	require.NoError(t, session.PerformInboundHandshake(outbound, iEnd2))
-	require.NoError(t, <-errCh)
+	require.NoError(t, join2())
 	_ = oEnd2.Close()
 	_ = iEnd2.Close()
 
@@ -139,12 +138,15 @@ func TestQUICControlWrongKeyFails(t *testing.T) {
 // TestAnnounceHandler pins the network-change receiver: a NEW-address Announce refreshes every
 // cached coordinate (TCP + UDP targets); a same-address announce is a strict no-op.
 func TestAnnounceHandler(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := testkit.DiscardLogger()
 	s, err := session.InitSession(logger, 26002, 26001)
 	require.NoError(t, err)
 	s.PeerPort = 26400
 
-	kd := &KeibiDrop{logger: logger, session: s, PeerIPv6IP: "fd00::aa", quicPeerAddr: "[fd00::aa]:26400"}
+	kd := newBareKD()
+	kd.session = s
+	kd.PeerIPv6IP = "fd00::aa"
+	kd.quicPeerAddr = "[fd00::aa]:26400"
 
 	svc := quicControlService{kd: kd}
 
@@ -375,7 +377,7 @@ func TestQUICListenerAcceptHookFires(t *testing.T) {
 // TestQUICControlRefusedWithoutKey proves fail-soft: with no negotiated QUIC key (older
 // peer), bring-up returns an error instead of proceeding insecurely.
 func TestQUICControlRefusedWithoutKey(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := testkit.DiscardLogger()
 	s, err := session.InitSession(logger, 26002, 26001)
 	require.NoError(t, err)
 

@@ -11,7 +11,11 @@
 
 package common
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestEnvRekeyUint(t *testing.T) {
 	cases := []struct {
@@ -28,9 +32,7 @@ func TestEnvRekeyUint(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("KD_TEST_REKEY_UINT", tc.val)
-			if got := envRekeyUint("KD_TEST_REKEY_UINT"); got != tc.want {
-				t.Errorf("envRekeyUint(%q) = %d, want %d", tc.val, got, tc.want)
-			}
+			assert.Equal(t, tc.want, envRekeyUint("KD_TEST_REKEY_UINT"))
 		})
 	}
 }

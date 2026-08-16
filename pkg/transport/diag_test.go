@@ -86,12 +86,9 @@ func TestDiagCancelWedge(t *testing.T) {
 		t.Logf("RESULT=WEDGED at sent=%d; closing client connection", sent.Load())
 		tClose := time.Now()
 		_ = cc.Close()
-		for i := 0; i < 160; i++ { // up to 8s
-			time.Sleep(50 * time.Millisecond)
-			if done.Load() {
-				t.Logf(">>> handler RETURNED %v after cc.Close (sent=%d)", time.Since(tClose), sent.Load())
-				return nil
-			}
+		if err := testkit.Poll(8*time.Second, 50*time.Millisecond, done.Load, "handler returns after cc.Close"); err == nil {
+			t.Logf(">>> handler RETURNED %v after cc.Close (sent=%d)", time.Since(tClose), sent.Load())
+			return nil
 		}
 		t.Logf(">>> STILL wedged 8s after cc.Close (sent=%d) — client-close does NOT unblock it", sent.Load())
 		return nil

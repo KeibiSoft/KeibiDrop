@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -21,34 +20,29 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func testSeed(t *testing.T) [32]byte {
 	t.Helper()
 	var s [32]byte
-	if _, err := rand.Read(s[:]); err != nil {
-		t.Fatal(err)
-	}
+	_, err := rand.Read(s[:])
+	require.NoError(t, err)
 	return s
 }
 
 func newTokenTestKD(t *testing.T, relayURL string) *KeibiDrop {
 	t.Helper()
-	kd := &KeibiDrop{
-		logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		relayClient: &http.Client{Timeout: 2 * time.Second},
-	}
+	kd := newBareKD()
+	kd.relayClient = &http.Client{Timeout: 2 * time.Second}
 	if relayURL != "" {
 		u, err := url.Parse(relayURL)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		kd.RelayEndoint = u
 	}
 	w, err := openTokenWallet(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	kd.wallet = w
 	return kd
 }
@@ -57,76 +51,62 @@ func TestTokenCodeRoundtripClient(t *testing.T) {
 	seed := testSeed(t)
 	code := encodeTokenCode(seed, 25600)
 	got, units, err := decodeTokenCode(" " + code + "\n")
-	if err != nil || got != seed || units != 25600 {
-		t.Fatalf("roundtrip: units=%d err=%v", units, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, seed, got)
+	require.Equal(t, 25600, units)
+
 	broken := []byte(code)
 	broken[len(broken)-1] ^= 1
-	if _, _, err := decodeTokenCode(string(broken)); err == nil {
-		t.Fatal("corrupted code accepted")
-	}
-	if _, _, err := decodeTokenCode("KDT2.whatever"); err == nil {
-		t.Fatal("wrong prefix accepted")
-	}
+	_, _, err = decodeTokenCode(string(broken))
+	require.Error(t, err, "corrupted code accepted")
+
+	_, _, err = decodeTokenCode("KDT2.whatever")
+	require.Error(t, err, "wrong prefix accepted")
 }
 
 func TestWalletAddPersistAndPerms(t *testing.T) {
 	dir := t.TempDir()
 	w, err := openTokenWallet(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	seed := testSeed(t)
 	code := encodeTokenCode(seed, 100)
 
 	c, err := w.Add(code)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Units != 100 || c.anchor != chainHashAt(seed, 100) {
-		t.Fatalf("chain wrong: %+v", c)
-	}
-	if dup, err := w.Add(code); err != nil || dup != c {
-		t.Fatal("duplicate paste must merge, not double-add")
-	}
+	require.NoError(t, err)
+	require.Equal(t, 100, c.Units)
+	require.Equal(t, chainHashAt(seed, 100), c.anchor)
+
+	dup, err := w.Add(code)
+	require.NoError(t, err)
+	require.Same(t, c, dup, "duplicate paste must merge, not double-add")
 
 	info, err := os.Stat(filepath.Join(dir, walletFile))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// Windows has no Unix permission bits; Stat reports 0666 there.
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
-		t.Fatalf("wallet mode %o, want 0600", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		require.Equal(t, os.FileMode(0600), info.Mode().Perm())
 	}
 
 	w.markRevealed(c, 40, false)
 	w2, err := openTokenWallet(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	sums := w2.Summaries()
-	if len(sums) != 1 || sums[0].UnitsLeft != 60 || sums[0].Code != code {
-		t.Fatalf("persisted summary wrong: %+v", sums)
-	}
-	if w2.pickFunded() == nil {
-		t.Fatal("60 units left but no funded pick")
-	}
+	require.Len(t, sums, 1)
+	require.Equal(t, 60, sums[0].UnitsLeft)
+	require.Equal(t, code, sums[0].Code)
+	require.NotNil(t, w2.pickFunded(), "60 units left but no funded pick")
+
 	w2.markRevealed(w2.pickFunded(), 100, false)
-	if w2.pickFunded() != nil {
-		t.Fatal("exhausted chain still picked")
-	}
+	require.Nil(t, w2.pickFunded(), "exhausted chain still picked")
 }
 
 func TestPayConnAckStripAndCounting(t *testing.T) {
 	kd := newTokenTestKD(t, "")
 	seed := testSeed(t)
-	if _, err := kd.Wallet().Add(encodeTokenCode(seed, 10)); err != nil {
-		t.Fatal(err)
-	}
+	_, err := kd.Wallet().Add(encodeTokenCode(seed, 10))
+	require.NoError(t, err)
 	ts := kd.tokenSessionFor("bridge.keibisoft.com:26600", kd.logger)
-	if ts == nil {
-		t.Fatal("funded wallet on a keibi bridge must create a token session")
-	}
+	require.NotNil(t, ts, "funded wallet on a keibi bridge must create a token session")
 	t.Cleanup(kd.resetTokenSession) // stop the reveal loop applyAck starts
 
 	client, server := net.Pipe()
@@ -139,26 +119,28 @@ func TestPayConnAckStripAndCounting(t *testing.T) {
 	buf := make([]byte, 16)
 	_ = pc.SetReadDeadline(time.Now().Add(2 * time.Second))
 	n, err := pc.Read(buf)
-	if err != nil || string(buf[:n]) != "peer-bytes" {
-		t.Fatalf("ack byte leaked into the stream: %q err=%v", buf[:n], err)
-	}
-	if !ts.paid.Load() || !ts.contention.Load() {
-		t.Fatal("ack bits not applied")
-	}
-	if ts.recv.Load() != int64(len("peer-bytes")) {
-		t.Fatalf("recv counted %d, want %d (ack must not count)", ts.recv.Load(), len("peer-bytes"))
-	}
+	require.NoError(t, err)
+	require.Equal(t, "peer-bytes", string(buf[:n]), "ack byte leaked into the stream")
+	require.True(t, ts.paid.Load(), "ack bits not applied")
+	require.True(t, ts.contention.Load(), "ack bits not applied")
+	require.Equal(t, int64(len("peer-bytes")), ts.recv.Load(), "ack must not count")
+
 	go func() { _, _ = io.Copy(io.Discard, server) }()
-	if _, err := pc.Write([]byte("up")); err != nil {
-		t.Fatal(err)
-	}
-	if ts.sent.Load() != 2 {
-		t.Fatalf("sent counted %d, want 2", ts.sent.Load())
-	}
+	_, err = pc.Write([]byte("up"))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), ts.sent.Load())
+
 	_ = pc.Close()
-	if ts.conns.Load() != 0 {
-		t.Fatalf("conn count %d after close", ts.conns.Load())
-	}
+	require.Equal(t, int32(0), ts.conns.Load())
+}
+
+// anchorBalanceBody is the /anchor/balance response shape the wallet decodes
+// (TokensAdd and tokenSession.resyncFromLedger).
+type anchorBalanceBody struct {
+	UnitsRemaining int    `json:"units_remaining"`
+	LastHash       string `json:"last_hash"`
+	State          string `json:"state"`
+	Message        string `json:"message"`
 }
 
 // miniLedger implements the relay's public reveal/balance surface for tests.
@@ -203,10 +185,10 @@ func (m *miniLedger) handler() http.Handler {
 		if m.remaining == 0 {
 			state = "spent"
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"units_remaining": m.remaining,
-			"last_hash":       base64.RawURLEncoding.EncodeToString(m.last[:]),
-			"state":           state,
+		_ = json.NewEncoder(w).Encode(anchorBalanceBody{
+			UnitsRemaining: m.remaining,
+			LastHash:       base64.RawURLEncoding.EncodeToString(m.last[:]),
+			State:          state,
 		})
 	})
 	return mux
@@ -220,66 +202,45 @@ func TestRevealLoopCoversHalfAndResyncs(t *testing.T) {
 	defer srv.Close()
 
 	kd := newTokenTestKD(t, srv.URL)
-	if _, err := kd.Wallet().Add(encodeTokenCode(seed, units)); err != nil {
-		t.Fatal(err)
-	}
+	_, err := kd.Wallet().Add(encodeTokenCode(seed, units))
+	require.NoError(t, err)
 	ts := kd.tokenSessionFor("fra1.bridge.keibidrop.com:26600", kd.logger)
-	if ts == nil {
-		t.Fatal("no token session")
-	}
+	require.NotNil(t, ts, "no token session")
 
 	// 6 units of total traffic -> half is 3, plus the lead of 2 -> 5 revealed.
 	ts.sent.Store(3 * 2 * TokenUnitBytes)
-	if exhausted := ts.postReveals(); exhausted {
-		t.Fatal("chain reported exhausted early")
-	}
-	if led.remaining != units-5 {
-		t.Fatalf("ledger remaining %d, want %d", led.remaining, units-5)
-	}
+	require.False(t, ts.postReveals(), "chain reported exhausted early")
+	require.Equal(t, units-5, led.remaining)
 
 	// Local wallet forgets its position (crash / second device): the loop
 	// must resync from the ledger instead of dying on 422.
 	ts.chain.Revealed = 1
-	if exhausted := ts.postReveals(); exhausted {
-		t.Fatal("desync treated as exhaustion")
-	}
-	if ts.chain.Revealed != 5 {
-		t.Fatalf("resync landed on %d, want 5", ts.chain.Revealed)
-	}
+	require.False(t, ts.postReveals(), "desync treated as exhaustion")
+	require.Equal(t, 5, ts.chain.Revealed, "resync landed on the wrong offset")
 
 	// Consumption beyond the chain: reveal everything, report exhausted.
 	ts.sent.Store(int64(units) * 2 * 2 * TokenUnitBytes)
-	if exhausted := ts.postReveals(); !exhausted {
-		t.Fatal("spent chain not reported exhausted")
-	}
-	if led.remaining != 0 {
-		t.Fatalf("ledger remaining %d after exhaustion", led.remaining)
-	}
+	require.True(t, ts.postReveals(), "spent chain not reported exhausted")
+	require.Zero(t, led.remaining, "ledger remaining after exhaustion")
 }
 
 func TestTokenSessionGating(t *testing.T) {
 	kd := newTokenTestKD(t, "")
-	if ts := kd.tokenSessionFor("bridge.keibisoft.com:26600", kd.logger); ts != nil {
-		t.Fatal("empty wallet created a token session")
-	}
+	require.Nil(t, kd.tokenSessionFor("bridge.keibisoft.com:26600", kd.logger), "empty wallet created a token session")
+
 	seed := testSeed(t)
-	if _, err := kd.Wallet().Add(encodeTokenCode(seed, 10)); err != nil {
-		t.Fatal(err)
-	}
-	if ts := kd.tokenSessionFor("my.selfhosted.example:26600", kd.logger); ts != nil {
-		t.Fatal("non-KeibiSoft bridge must never see the paid preamble")
-	}
+	_, err := kd.Wallet().Add(encodeTokenCode(seed, 10))
+	require.NoError(t, err)
+	require.Nil(t, kd.tokenSessionFor("my.selfhosted.example:26600", kd.logger),
+		"non-KeibiSoft bridge must never see the paid preamble")
+
 	ts := kd.tokenSessionFor("bridge.keibisoft.com:26600", kd.logger)
-	if ts == nil {
-		t.Fatal("funded + keibi bridge must fund the session")
-	}
-	if again := kd.tokenSessionFor("bridge.keibisoft.com:26600", kd.logger); again != ts {
-		t.Fatal("token session not sticky within the room session")
-	}
+	require.NotNil(t, ts, "funded + keibi bridge must fund the session")
+	require.Same(t, ts, kd.tokenSessionFor("bridge.keibisoft.com:26600", kd.logger),
+		"token session not sticky within the room session")
+
 	kd.resetTokenSession()
-	if kd.currentTokenSession() != nil {
-		t.Fatal("reset left a stale token session")
-	}
+	require.Nil(t, kd.currentTokenSession(), "reset left a stale token session")
 }
 
 func TestNoteBusySignalThrottleAndFundedMute(t *testing.T) {
@@ -293,22 +254,18 @@ func TestNoteBusySignalThrottleAndFundedMute(t *testing.T) {
 	mu.Lock()
 	n := len(events)
 	mu.Unlock()
-	if n != 1 || events[0] != "relay_busy:custom copy" {
-		t.Fatalf("busy events: %v", events)
-	}
+	require.Equal(t, 1, n)
+	require.Equal(t, "relay_busy:custom copy", events[0])
 
 	// A funded wallet mutes the upsell entirely.
 	kd2 := newTokenTestKD(t, "")
 	kd2.OnEvent = func(e string) { t.Errorf("funded user nagged: %s", e) }
-	if _, err := kd2.Wallet().Add(encodeTokenCode(testSeed(t), 10)); err != nil {
-		t.Fatal(err)
-	}
+	_, err := kd2.Wallet().Add(encodeTokenCode(testSeed(t), 10))
+	require.NoError(t, err)
 	kd2.noteBusySignal(true, "x")
 
 	st := kd2.BridgeInfo()
-	if st.WalletGB == 0 {
-		t.Fatal("BridgeInfo lost the wallet balance")
-	}
+	require.NotZero(t, st.WalletGB, "BridgeInfo lost the wallet balance")
 }
 
 func TestCreditLevelEvents(t *testing.T) {
@@ -325,43 +282,35 @@ func TestCreditLevelEvents(t *testing.T) {
 	}
 
 	c, err := kd.Wallet().Add(encodeTokenCode(testSeed(t), 6000)) // ~58 GB
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	kd.noteCreditLevel()
-	if got := take(); len(got) != 0 {
-		t.Fatalf("above thresholds emitted %v", got)
-	}
+	require.Empty(t, take(), "above thresholds must emit nothing")
 
 	kd.Wallet().markRevealed(c, 1500, false) // 4500 units left, under the 50 GB mark
 	kd.noteCreditLevel()
 	kd.noteCreditLevel()
-	if got := take(); len(got) != 1 || !strings.HasPrefix(got[0], "tokens_low:") {
-		t.Fatalf("want one tokens_low, got %v", got)
-	}
+	got := take()
+	require.Len(t, got, 1)
+	require.True(t, strings.HasPrefix(got[0], "tokens_low:"), "want one tokens_low, got %v", got)
 
 	kd.Wallet().markRevealed(c, 5900, false) // 100 units left, under the 2 GB mark
 	kd.noteCreditLevel()
 	kd.noteCreditLevel()
-	if got := take(); len(got) != 1 || !strings.HasPrefix(got[0], "tokens_critical:") {
-		t.Fatalf("want one tokens_critical, got %v", got)
-	}
+	got = take()
+	require.Len(t, got, 1)
+	require.True(t, strings.HasPrefix(got[0], "tokens_critical:"), "want one tokens_critical, got %v", got)
 
 	big, err := kd.Wallet().Add(encodeTokenCode(testSeed(t), 25600))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	kd.noteCreditLevel() // top-up above the low mark re-arms silently
-	if got := take(); len(got) != 0 {
-		t.Fatalf("top-up emitted %v", got)
-	}
+	require.Empty(t, take(), "top-up must emit nothing")
 
 	kd.Wallet().markRevealed(c, 6000, true)
 	kd.Wallet().markRevealed(big, 21000, false) // 4600 units left again
 	kd.noteCreditLevel()
-	if got := take(); len(got) != 1 || !strings.HasPrefix(got[0], "tokens_low:") {
-		t.Fatalf("re-armed low warning missing, got %v", got)
-	}
+	got = take()
+	require.Len(t, got, 1)
+	require.True(t, strings.HasPrefix(got[0], "tokens_low:"), "re-armed low warning missing, got %v", got)
 }
 
 func TestClaimBuyFlowAddsCode(t *testing.T) {
@@ -396,40 +345,38 @@ func TestClaimBuyFlowAddsCode(t *testing.T) {
 	t.Cleanup(func() { tokensServiceBase, claimPollTick, claimPollWindow = oldBase, oldTick, oldWindow })
 
 	url := kd.TokensBuyStart()
-	if !strings.Contains(url, "/buy?claim=") {
-		t.Fatalf("buy url missing claim: %s", url)
-	}
+	require.Contains(t, url, "/buy?claim=")
+
+	// Hand-rolled poll, not testkit.Poll/Eventually: the interval sleep is one
+	// of the package's timing-sensitive waits, left as-is (see task report).
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) && kd.Wallet().unitsLeft() != 1024 {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if kd.Wallet().unitsLeft() != 1024 {
-		t.Fatal("code never added by the claim poll")
-	}
+	require.Equal(t, 1024, kd.Wallet().unitsLeft(), "code never added by the claim poll")
+
 	mu.Lock()
-	defer mu.Unlock()
+	found := false
 	for _, e := range events {
 		if strings.HasPrefix(e, "tokens_added:") {
-			return
+			found = true
+			break
 		}
 	}
-	t.Fatalf("no tokens_added event, got %v", events)
+	mu.Unlock()
+	require.True(t, found, "no tokens_added event, got %v", events)
 }
 
 func TestExhaustEventHonesty(t *testing.T) {
 	kd := newTokenTestKD(t, "")
-	if e := kd.exhaustEvent(); e != "tokens_exhausted:chain" {
-		t.Fatalf("empty wallet: %s", e)
-	}
-	if _, err := kd.Wallet().Add(encodeTokenCode(testSeed(t), 100)); err != nil {
-		t.Fatal(err)
-	}
-	if e := kd.exhaustEvent(); e != "tokens_chain_done:next" {
-		t.Fatalf("funded wallet must promise the next pack: %s", e)
-	}
+	require.Equal(t, "tokens_exhausted:chain", kd.exhaustEvent(), "empty wallet")
+
+	_, err := kd.Wallet().Add(encodeTokenCode(testSeed(t), 100))
+	require.NoError(t, err)
+	require.Equal(t, "tokens_chain_done:next", kd.exhaustEvent(), "funded wallet must promise the next pack")
 }
 
-func balanceServer(t *testing.T, status int, body map[string]any) *httptest.Server {
+func balanceServer(t *testing.T, status int, body anchorBalanceBody) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/anchor/balance" {
@@ -445,59 +392,54 @@ func balanceServer(t *testing.T, status int, body map[string]any) *httptest.Serv
 }
 
 func TestTokensAddRefusesSpentCode(t *testing.T) {
-	srv := balanceServer(t, http.StatusOK, map[string]any{"units_remaining": 0, "state": "spent"})
+	srv := balanceServer(t, http.StatusOK, anchorBalanceBody{State: "spent"})
 	kd := newTokenTestKD(t, srv.URL)
-	if _, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600)); err == nil || !strings.Contains(err.Error(), "already spent") {
-		t.Fatalf("want already-spent refusal, got %v", err)
-	}
+	_, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already spent")
+
 	// The chain stays as a dead record, same as a balance refresh would
 	// leave it: the code was real once and the wallet history says so.
 	s := kd.TokensSummaries()
-	if len(s) != 1 || !s[0].Dead || s[0].UnitsLeft != 0 {
-		t.Fatalf("want one dead drained chain, got %+v", s)
-	}
+	require.Len(t, s, 1)
+	require.True(t, s[0].Dead)
+	require.Zero(t, s[0].UnitsLeft)
 }
 
 func TestTokensAddAdoptsLedgerRemaining(t *testing.T) {
-	srv := balanceServer(t, http.StatusOK, map[string]any{"units_remaining": 12800, "state": "active"})
+	srv := balanceServer(t, http.StatusOK, anchorBalanceBody{UnitsRemaining: 12800, State: "active"})
 	kd := newTokenTestKD(t, srv.URL)
 	gb, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gb != 125 {
-		t.Fatalf("want the ledger's 125 GB, not the nominal size, got %v", gb)
-	}
+	require.NoError(t, err)
+	require.Equal(t, float64(125), gb, "want the ledger's 125 GB, not the nominal size")
+
 	s := kd.TokensSummaries()
-	if len(s) != 1 || s[0].UnitsLeft != 12800 || s[0].Dead {
-		t.Fatalf("want a live half-used chain, got %+v", s)
-	}
+	require.Len(t, s, 1)
+	require.Equal(t, 12800, s[0].UnitsLeft)
+	require.False(t, s[0].Dead)
 }
 
 func TestTokensAddRefusesUnknownAnchor(t *testing.T) {
-	srv := balanceServer(t, http.StatusNotFound, map[string]any{"message": "unknown anchor"})
+	srv := balanceServer(t, http.StatusNotFound, anchorBalanceBody{Message: "unknown anchor"})
 	kd := newTokenTestKD(t, srv.URL)
-	if _, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600)); err == nil || !strings.Contains(err.Error(), "not on the relay ledger") {
-		t.Fatalf("want unknown-anchor refusal, got %v", err)
-	}
-	if s := kd.TokensSummaries(); len(s) != 0 {
-		t.Fatalf("a never-minted chain must not stay in the wallet: %+v", s)
-	}
+	_, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not on the relay ledger")
+	require.Empty(t, kd.TokensSummaries(), "a never-minted chain must not stay in the wallet")
 }
 
 func TestTokensAddOfflineStaysOptimistic(t *testing.T) {
 	// No relay configured at all.
 	kd := newTokenTestKD(t, "")
 	gb, err := kd.TokensAdd(encodeTokenCode(testSeed(t), 25600))
-	if err != nil || gb != 250 {
-		t.Fatalf("offline add must keep working: gb=%v err=%v", gb, err)
-	}
+	require.NoError(t, err, "offline add must keep working")
+	require.Equal(t, float64(250), gb)
+
 	// An old relay without the ledger route answers a plain 404.
 	srv := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(srv.Close)
 	kd2 := newTokenTestKD(t, srv.URL)
 	gb, err = kd2.TokensAdd(encodeTokenCode(testSeed(t), 25600))
-	if err != nil || gb != 250 {
-		t.Fatalf("route-miss add must keep working: gb=%v err=%v", gb, err)
-	}
+	require.NoError(t, err, "route-miss add must keep working")
+	require.Equal(t, float64(250), gb)
 }

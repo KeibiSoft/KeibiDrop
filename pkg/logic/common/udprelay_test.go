@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/KeibiSoft/KeibiDrop/pkg/transport"
 	"github.com/stretchr/testify/require"
@@ -118,10 +119,9 @@ func TestUDPRelay_RegisterPairsOnMatchingToken(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	errA := make(chan error, 1)
-	go func() { errA <- registerUDPRelay(ctx, a, relayAddr, regDatagram(t, "quic1")) }()
+	join := testkit.Go(func() error { return registerUDPRelay(ctx, a, relayAddr, regDatagram(t, "quic1")) })
 	require.NoError(t, registerUDPRelay(ctx, b, relayAddr, regDatagram(t, "quic1")))
-	require.NoError(t, <-errA)
+	require.NoError(t, join())
 
 	// Paired: a datagram from one side reaches the other through the relay.
 	_, err = a.WriteToUDP([]byte("through the room"), relayAddr)
@@ -170,16 +170,19 @@ func TestUDPRelay_QUICRunsOverPairedSockets(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	errS := make(chan error, 1)
-	go func() { errS <- registerUDPRelay(ctx, server, relayAddr, regDatagram(t, "quic1")) }()
+	join := testkit.Go(func() error { return registerUDPRelay(ctx, server, relayAddr, regDatagram(t, "quic1")) })
 	require.NoError(t, registerUDPRelay(ctx, client, relayAddr, regDatagram(t, "quic1")))
-	require.NoError(t, <-errS)
+	require.NoError(t, join())
 
 	ln, err := transport.ListenOnConn(server)
 	require.NoError(t, err)
 	defer ln.Close()
 
 	const msg = "relayed quic payload"
+	// NOT testkit.Go: the goroutine's cleanup defer blocks on done, which this
+	// function only closes after reading the result. A return statement waits
+	// for that defer before testkit.Go's channel ever receives it: deadlock.
+	// The plain buffered send below does not wait for that defer, so it stays safe.
 	accepted := make(chan error, 1)
 	done := make(chan struct{})
 	defer close(done)

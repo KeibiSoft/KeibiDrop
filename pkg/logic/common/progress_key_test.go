@@ -8,66 +8,50 @@
 
 package common
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestResolveKeyWithFallback(t *testing.T) {
 	t.Run("exact key present", func(t *testing.T) {
 		m := map[string]struct{}{"foo": {}}
 		exists := func(k string) bool { _, ok := m[k]; return ok }
 		got, found := resolveKeyWithFallback("foo", exists)
-		if !found {
-			t.Fatal("expected found=true, got false")
-		}
-		if got != "foo" {
-			t.Errorf("got key %q, want %q", got, "foo")
-		}
+		require.True(t, found)
+		require.Equal(t, "foo", got)
 	})
 
 	t.Run("slash-prefix key, bare query", func(t *testing.T) {
 		m := map[string]struct{}{"/foo": {}}
 		exists := func(k string) bool { _, ok := m[k]; return ok }
 		got, found := resolveKeyWithFallback("foo", exists)
-		if !found {
-			t.Fatal("expected found=true, got false")
-		}
-		if got != "/foo" {
-			t.Errorf("got key %q, want %q", got, "/foo")
-		}
+		require.True(t, found)
+		require.Equal(t, "/foo", got)
 	})
 
 	t.Run("bare key, slash-prefix query", func(t *testing.T) {
 		m := map[string]struct{}{"foo": {}}
 		exists := func(k string) bool { _, ok := m[k]; return ok }
 		got, found := resolveKeyWithFallback("/foo", exists)
-		if !found {
-			t.Fatal("expected found=true, got false")
-		}
-		if got != "foo" {
-			t.Errorf("got key %q, want %q", got, "foo")
-		}
+		require.True(t, found)
+		require.Equal(t, "foo", got)
 	})
 
 	t.Run("both present, exact wins", func(t *testing.T) {
 		m := map[string]struct{}{"foo": {}, "/foo": {}}
 		exists := func(k string) bool { _, ok := m[k]; return ok }
 		got, found := resolveKeyWithFallback("foo", exists)
-		if !found {
-			t.Fatal("expected found=true, got false")
-		}
-		if got != "foo" {
-			t.Errorf("got key %q, want %q (exact-key must win)", got, "foo")
-		}
+		require.True(t, found)
+		require.Equal(t, "foo", got, "exact-key must win")
 	})
 
 	t.Run("unknown key returns not found", func(t *testing.T) {
 		m := map[string]struct{}{}
 		exists := func(k string) bool { _, ok := m[k]; return ok }
 		got, found := resolveKeyWithFallback("bar", exists)
-		if found {
-			t.Fatalf("expected found=false, got true (key=%q)", got)
-		}
-		if got != "" {
-			t.Errorf("expected empty string on miss, got %q", got)
-		}
+		require.False(t, found)
+		require.Empty(t, got, "expected empty string on miss")
 	})
 }

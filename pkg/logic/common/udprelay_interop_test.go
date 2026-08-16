@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/transport"
 	"github.com/stretchr/testify/require"
 )
@@ -30,10 +31,9 @@ func TestRealRelayInterop(t *testing.T) {
 	defer cancel()
 
 	t0 := time.Now()
-	errS := make(chan error, 1)
-	go func() { errS <- registerUDPRelay(ctx, server, relayAddr, regDatagram(t, "realprobe")) }()
+	join := testkit.Go(func() error { return registerUDPRelay(ctx, server, relayAddr, regDatagram(t, "realprobe")) })
 	require.NoError(t, registerUDPRelay(ctx, client, relayAddr, regDatagram(t, "realprobe")))
-	require.NoError(t, <-errS)
+	require.NoError(t, join())
 	t.Logf("REAL RELAY paired both rooms in %v", time.Since(t0))
 
 	ln, err := transport.ListenOnConn(server)
@@ -41,9 +41,16 @@ func TestRealRelayInterop(t *testing.T) {
 	defer ln.Close()
 
 	const msg = "payload through the real relay"
+	// NOT testkit.Go: the goroutine's cleanup defer blocks on done, which this
+	// function only closes after reading the result. A return statement waits
+	// for that defer before testkit.Go's channel ever receives it: deadlock.
+	// The plain buffered send below does not wait for that defer, so it stays safe.
+	//
+	// NOTE (kept as found, not fixed here): require.Equal below runs on this
+	// goroutine, not the test goroutine. See task report, STRUCTURAL FINDINGS.
+	accepted := make(chan error, 1)
 	done := make(chan struct{})
 	defer close(done)
-	accepted := make(chan error, 1)
 	go func() {
 		c, aErr := ln.Accept()
 		if aErr != nil {

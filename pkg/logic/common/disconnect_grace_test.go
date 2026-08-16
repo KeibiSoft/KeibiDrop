@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestHandleNotifyDisconnectHonorsGraceDelay verifies that the post-DISCONNECT
@@ -35,9 +37,7 @@ func TestHandleNotifyDisconnectHonorsGraceDelay(t *testing.T) {
 	defer cancel()
 
 	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, 26720, 26721, "", t.TempDir(), false, false, "::1")
-	if err != nil {
-		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
-	}
+	require.NoError(t, err, "NewKeibiDropWithIP failed")
 
 	var cancelAt atomic.Int64
 	kd.Cancel = func() { cancelAt.Store(time.Now().UnixNano()) }
@@ -46,13 +46,9 @@ func TestHandleNotifyDisconnectHonorsGraceDelay(t *testing.T) {
 	kd.handleNotifyDisconnect()
 
 	got := cancelAt.Load()
-	if got == 0 {
-		t.Fatal("Cancel was never invoked by handleNotifyDisconnect")
-	}
+	require.NotZero(t, got, "Cancel was never invoked by handleNotifyDisconnect")
 
 	elapsed := time.Unix(0, got).Sub(start)
-	if elapsed < grpcDisconnectGraceDelay {
-		t.Fatalf("Cancel fired too early: %v < grace %v (in-flight RPC response would race teardown)",
-			elapsed, grpcDisconnectGraceDelay)
-	}
+	require.GreaterOrEqual(t, elapsed, grpcDisconnectGraceDelay,
+		"Cancel fired too early (in-flight RPC response would race teardown)")
 }

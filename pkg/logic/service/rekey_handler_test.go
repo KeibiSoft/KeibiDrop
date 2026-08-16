@@ -14,12 +14,11 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"io"
-	"log/slog"
 	"net"
 	"testing"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/stretchr/testify/require"
@@ -37,7 +36,7 @@ func randKey(t *testing.T) []byte {
 
 func discardService(sess *session.Session) *KeibidropServiceImpl {
 	return &KeibidropServiceImpl{
-		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:  testkit.DiscardLogger(),
 		Session: sess,
 	}
 }

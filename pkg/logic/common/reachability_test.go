@@ -11,7 +11,6 @@ package common
 import (
 	"context"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,14 +25,13 @@ func probeKD(t *testing.T, endpoint string) *KeibiDrop {
 	t.Helper()
 	u, err := url.Parse(endpoint)
 	require.NoError(t, err)
-	return &KeibiDrop{
-		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		relayClient:  http.DefaultClient,
-		RelayEndoint: u,
-		inboundPort:  26001,
-		ctx:          context.Background(),
-		LocalIPv6IP:  "2001:db8::1",
-	}
+	kd := newBareKD()
+	kd.relayClient = http.DefaultClient
+	kd.RelayEndoint = u
+	kd.inboundPort = 26001
+	kd.ctx = context.Background()
+	kd.LocalIPv6IP = "2001:db8::1"
+	return kd
 }
 
 // The mark must not outlive the network it was observed on: one blocked hotel Wi-Fi must not

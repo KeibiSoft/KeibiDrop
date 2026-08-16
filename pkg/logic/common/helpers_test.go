@@ -10,155 +10,105 @@ package common
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetLinkLocalAddress(t *testing.T) {
 	addr, err := GetLinkLocalAddress(26431)
-	if err != nil {
-		t.Fatalf("GetLinkLocalAddress returned error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Result must contain a zone separator (%) and a port separator (:).
-	if !strings.Contains(addr, ":") {
-		t.Errorf("expected address to contain ':', got %q", addr)
-	}
+	require.True(t, strings.Contains(addr, ":"), "expected address to contain ':', got %q", addr)
 }
 
 func TestGetLinkLocalAddress_PortInResult(t *testing.T) {
 	addr, err := GetLinkLocalAddress(26999)
-	if err != nil {
-		t.Fatalf("GetLinkLocalAddress returned error: %v", err)
-	}
+	require.NoError(t, err)
 
 	// The port must appear at the very end after the last colon.
 	lastColon := strings.LastIndex(addr, ":")
-	if lastColon == -1 {
-		t.Fatalf("no colon in address %q", addr)
-	}
+	require.NotEqual(t, -1, lastColon, "no colon in address %q", addr)
 	portStr := addr[lastColon+1:]
-	if portStr != "26999" {
-		t.Errorf("expected port 26999 at end of address, got %q (full: %q)", portStr, addr)
-	}
+	require.Equal(t, "26999", portStr, "expected port 26999 at end of address (full: %q)", addr)
 }
 
 func TestParsePeerDirectAddress_Valid(t *testing.T) {
 	ip, zone, port, err := ParsePeerDirectAddress("fe80::1%eth0:26431")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ip != "fe80::1" {
-		t.Errorf("ip = %q, want %q", ip, "fe80::1")
-	}
-	if zone != "eth0" {
-		t.Errorf("zone = %q, want %q", zone, "eth0")
-	}
-	if port != 26431 {
-		t.Errorf("port = %d, want %d", port, 26431)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "fe80::1", ip)
+	require.Equal(t, "eth0", zone)
+	require.Equal(t, 26431, port)
 }
 
 func TestParsePeerDirectAddress_ValidLongAddr(t *testing.T) {
 	ip, zone, port, err := ParsePeerDirectAddress("fe80::abcd:ef01:2345:6789%wlan0:26500")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ip != "fe80::abcd:ef01:2345:6789" {
-		t.Errorf("ip = %q, want %q", ip, "fe80::abcd:ef01:2345:6789")
-	}
-	if zone != "wlan0" {
-		t.Errorf("zone = %q, want %q", zone, "wlan0")
-	}
-	if port != 26500 {
-		t.Errorf("port = %d, want %d", port, 26500)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "fe80::abcd:ef01:2345:6789", ip)
+	require.Equal(t, "wlan0", zone)
+	require.Equal(t, 26500, port)
 }
 
 func TestParsePeerDirectAddress_Loopback(t *testing.T) {
 	ip, zone, port, err := ParsePeerDirectAddress("::1:26431")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ip != "::1" {
-		t.Errorf("ip = %q, want %q", ip, "::1")
-	}
-	if zone != "" {
-		t.Errorf("zone = %q, want empty", zone)
-	}
-	if port != 26431 {
-		t.Errorf("port = %d, want %d", port, 26431)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "::1", ip)
+	require.Empty(t, zone)
+	require.Equal(t, 26431, port)
 }
 
 func TestParsePeerDirectAddress_IPv4_PrivateAccepted(t *testing.T) {
 	ip, zone, port, err := ParsePeerDirectAddress("192.168.1.1:26431")
-	if err != nil {
-		t.Fatalf("unexpected error for private IPv4: %v", err)
-	}
-	if ip != "192.168.1.1" || zone != "" || port != 26431 {
-		t.Fatalf("got ip=%q zone=%q port=%d", ip, zone, port)
-	}
+	require.NoError(t, err, "unexpected error for private IPv4")
+	require.Equal(t, "192.168.1.1", ip)
+	require.Empty(t, zone)
+	require.Equal(t, 26431, port)
 }
 
 func TestParsePeerDirectAddress_IPv4_PublicRejected(t *testing.T) {
 	_, _, _, err := ParsePeerDirectAddress("8.8.8.8:26431")
-	if err == nil {
-		t.Fatal("expected error for public IPv4 address, got nil")
-	}
+	require.Error(t, err, "expected error for public IPv4 address")
 }
 
 func TestParsePeerDirectAddress_BadPort_TooHigh(t *testing.T) {
 	_, _, _, err := ParsePeerDirectAddress("fe80::1%eth0:99999")
-	if err == nil {
-		t.Fatal("expected error for port too high, got nil")
-	}
+	require.Error(t, err, "expected error for port too high")
 }
 
 func TestParsePeerDirectAddress_BadPort_TooLow(t *testing.T) {
 	_, _, _, err := ParsePeerDirectAddress("fe80::1%eth0:100")
-	if err == nil {
-		t.Fatal("expected error for port too low, got nil")
-	}
+	require.Error(t, err, "expected error for port too low")
 }
 
 func TestParsePeerDirectAddress_BadPort_NotNumber(t *testing.T) {
 	_, _, _, err := ParsePeerDirectAddress("fe80::1%eth0:abc")
-	if err == nil {
-		t.Fatal("expected error for non-numeric port, got nil")
-	}
+	require.Error(t, err, "expected error for non-numeric port")
 }
 
 func TestParsePeerDirectAddress_MissingZone_LinkLocal(t *testing.T) {
-	// fe80::1:26431 is ambiguous — looks like part of IPv6 address.
+	// fe80::1:26431 is ambiguous, it looks like part of an IPv6 address.
 	// Should return an error because link-local without zone is unusable.
 	_, _, _, err := ParsePeerDirectAddress("fe80::1:26431")
-	if err == nil {
-		t.Fatal("expected error for link-local without zone, got nil")
-	}
+	require.Error(t, err, "expected error for link-local without zone")
 }
 
 func TestParsePeerDirectAddress_EmptyString(t *testing.T) {
 	_, _, _, err := ParsePeerDirectAddress("")
-	if err == nil {
-		t.Fatal("expected error for empty string, got nil")
-	}
+	require.Error(t, err, "expected error for empty string")
 }
 
 func TestParsePeerDirectAddress_JustPort(t *testing.T) {
 	_, _, _, err := ParsePeerDirectAddress(":26431")
-	if err == nil {
-		t.Fatal("expected error for just port, got nil")
-	}
+	require.Error(t, err, "expected error for just port")
 }
 
 func TestParsePeerDirectAddress_NoPort(t *testing.T) {
 	// Port-less zoned form, exactly what SetPeerDirectAddress stores in PeerIPv6IP.
 	ip, zone, port, err := ParsePeerDirectAddress("fe80::1%eth0")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if ip != "fe80::1" || zone != "eth0" || port != 0 {
-		t.Errorf("got ip=%q zone=%q port=%d, want ip=%q zone=%q port=0", ip, zone, port, "fe80::1", "eth0")
-	}
+	require.NoError(t, err)
+	require.Equal(t, "fe80::1", ip)
+	require.Equal(t, "eth0", zone)
+	require.Zero(t, port)
 }
 
 // TestParsePeerDirectAddressForms covers every form the codebase produces:
@@ -202,17 +152,13 @@ func TestParsePeerDirectAddressForms(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			ip, zone, port, err := ParsePeerDirectAddress(c.addr)
 			if c.wantErr {
-				if err == nil {
-					t.Fatalf("ParsePeerDirectAddress(%q): expected error, got ip=%q zone=%q port=%d", c.addr, ip, zone, port)
-				}
+				require.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Fatalf("ParsePeerDirectAddress(%q): unexpected error: %v", c.addr, err)
-			}
-			if ip != c.ip || zone != c.zone || port != c.port {
-				t.Errorf("ParsePeerDirectAddress(%q) = (%q, %q, %d), want (%q, %q, %d)", c.addr, ip, zone, port, c.ip, c.zone, c.port)
-			}
+			require.NoError(t, err)
+			require.Equal(t, c.ip, ip)
+			require.Equal(t, c.zone, zone)
+			require.Equal(t, c.port, port)
 		})
 	}
 }

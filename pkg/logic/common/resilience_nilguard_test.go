@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
+	"github.com/stretchr/testify/require"
 )
 
 func newNilGuardTestKD() *KeibiDrop {
@@ -77,9 +77,7 @@ func TestOpenStreamProvider_NilSession_NoPanic(t *testing.T) {
 
 	// session is nil on a freshly-built test KeibiDrop.
 	fsp := kd.openStreamProvider()
-	if fsp != nil {
-		t.Fatalf("expected nil provider when session is nil, got %T", fsp)
-	}
+	require.Nil(t, fsp, "expected nil provider when session is nil")
 }
 
 // TestOpenStreamProvider_NilGRPCClient_NoPanic: a session present but with no gRPC client
@@ -90,9 +88,7 @@ func TestOpenStreamProvider_NilGRPCClient_NoPanic(t *testing.T) {
 
 	kd.session = &session.Session{} // GRPCClient is nil
 	fsp := kd.openStreamProvider()
-	if fsp != nil {
-		t.Fatalf("expected nil provider when GRPCClient is nil, got %T", fsp)
-	}
+	require.Nil(t, fsp, "expected nil provider when GRPCClient is nil")
 }
 
 // TestNilSessionGuard_SkipsCachedPeerUpdate verifies onReconnected's nil-session guard
@@ -108,9 +104,7 @@ func TestNilSessionGuard_SkipsCachedPeerUpdate(t *testing.T) {
 		kd.ReconnectManager.CachedPeerPort = kd.session.PeerPort
 	}
 
-	if kd.ReconnectManager.CachedPeerPort != 9999 {
-		t.Fatalf("CachedPeerPort should be unchanged, got %d", kd.ReconnectManager.CachedPeerPort)
-	}
+	require.Equal(t, 9999, kd.ReconnectManager.CachedPeerPort, "CachedPeerPort should be unchanged")
 }
 
 // TestNilSessionGuard_RelayLookupReturnsError verifies the RelayLookup closure's nil-session
@@ -128,12 +122,8 @@ func TestNilSessionGuard_RelayLookupReturnsError(t *testing.T) {
 	}
 
 	_, _, err := lookup("abc123")
-	if err == nil {
-		t.Fatal("expected error for nil session")
-	}
-	if !strings.Contains(err.Error(), "session nil") {
-		t.Fatalf("expected session-nil error, got: %v", err)
-	}
+	require.Error(t, err, "expected error for nil session")
+	require.Contains(t, err.Error(), "session nil")
 }
 
 // TestWriterEpoch_NilMonitor_ReturnsZero: before the health monitor exists, the writer-epoch
@@ -142,22 +132,18 @@ func TestWriterEpoch_NilMonitor_ReturnsZero(t *testing.T) {
 	kd := newNilGuardTestKD()
 	defer kd.Cancel()
 
-	if e := kd.WriterEpoch(); e != 0 {
-		t.Fatalf("WriterEpoch with no health monitor = %d, want 0", e)
-	}
+	require.Zero(t, kd.WriterEpoch(), "WriterEpoch with no health monitor")
 }
 
-// TestNewConfiguredHealthMonitor_RekeyEnabledAndWired locks the property whose divergence caused
-// MED-2: the single wiring path must always ship the monitor rekey-enabled with callbacks wired.
+// TestNewConfiguredHealthMonitor_RekeyEnabledAndWired locks the property whose divergence once
+// caused a bug: the single wiring path must always ship the monitor rekey-enabled with callbacks wired.
 func TestNewConfiguredHealthMonitor_RekeyEnabledAndWired(t *testing.T) {
 	kd := newNilGuardTestKD()
 	defer kd.Cancel()
 
 	hm := kd.newConfiguredHealthMonitor(&session.Session{}, nil, kd.logger)
-	if !hm.RekeyEnabled {
-		t.Fatal("the monitor must ship rekey-enabled from the single wiring path both call sites use")
-	}
-	if hm.OnRekeyNeeded == nil || hm.OnDisconnect == nil || hm.OnHealthChange == nil {
-		t.Fatal("the monitor must have all callbacks wired")
-	}
+	require.True(t, hm.RekeyEnabled, "the monitor must ship rekey-enabled from the single wiring path both call sites use")
+	require.NotNil(t, hm.OnRekeyNeeded, "the monitor must have all callbacks wired")
+	require.NotNil(t, hm.OnDisconnect, "the monitor must have all callbacks wired")
+	require.NotNil(t, hm.OnHealthChange, "the monitor must have all callbacks wired")
 }

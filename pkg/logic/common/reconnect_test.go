@@ -20,10 +20,10 @@ func TestFilesystemReadyOnceGuardsDoubleClose(t *testing.T) {
 	ready := make(chan struct{})
 	var once sync.Once
 
-	// First close — normal session teardown
+	// First close: normal session teardown
 	once.Do(func() { close(ready) })
 
-	// Second close — reconnect calling setupFilesystem again with same channel.
+	// Second close: reconnect calling setupFilesystem again with the same channel.
 	// Without the Once guard this would panic: "close of closed channel"
 	once.Do(func() { close(ready) })
 
@@ -52,7 +52,7 @@ func TestFilesystemReadyNewChannelPerSession(t *testing.T) {
 		t.Fatal("session 1 channel should be closed")
 	}
 
-	// Session 2 — fresh channel and Once
+	// Session 2: fresh channel and Once
 	ready2 := make(chan struct{})
 	once2 := sync.Once{}
 	once2.Do(func() { close(ready2) })
@@ -64,5 +64,5 @@ func TestFilesystemReadyNewChannelPerSession(t *testing.T) {
 		t.Fatal("session 2 channel should be closed")
 	}
 
-	// If we reach here, no panic — reconnect is safe
+	// If we reach here, no panic: reconnect is safe
 }

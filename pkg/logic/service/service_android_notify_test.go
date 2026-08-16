@@ -7,12 +7,11 @@ package service
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"testing"
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +19,7 @@ import (
 
 func newTestService() *KeibidropServiceImpl {
 	return &KeibidropServiceImpl{
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
 	}
 }

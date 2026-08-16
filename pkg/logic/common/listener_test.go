@@ -18,6 +18,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // pickFreePortPair returns a base port with base and base+1 free.
@@ -59,22 +61,16 @@ func TestListenerAcceptsIPv4(t *testing.T) {
 
 	port := pickFreePortPair(t)
 	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
-	if err != nil {
-		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
-	}
+	require.NoError(t, err, "NewKeibiDropWithIP failed")
 
 	// Try connecting via IPv4 loopback
 	conn, err := net.Dial("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		t.Fatalf("IPv4 connection to listener failed: %v (listener must be dual-stack 'tcp', not 'tcp6')", err)
-	}
+	require.NoError(t, err, "IPv4 connection to listener failed (listener must be dual-stack 'tcp', not 'tcp6')")
 	conn.Close()
 
 	// Try connecting via IPv6 loopback
 	conn6, err := net.Dial("tcp6", fmt.Sprintf("[::1]:%d", port))
-	if err != nil {
-		t.Fatalf("IPv6 connection to listener failed: %v", err)
-	}
+	require.NoError(t, err, "IPv6 connection to listener failed")
 	conn6.Close()
 
 	_ = kd
@@ -86,7 +82,7 @@ func TestListenerAcceptsIPv4(t *testing.T) {
 // joiner to connect via IPv4 LAN while the creator expected IPv6, leading to
 // stuck connections and fingerprint mismatches on the bridge.
 func TestLANAddressesSkippedInInternetMode(t *testing.T) {
-	// This is a code-level assertion — verify the condition in logic.go
+	// This is a code-level assertion. Verify the condition in logic.go.
 	// The JoinRoom LAN block should be gated by kd.IsLocalMode.
 	//
 	// We can't easily test the full JoinRoom flow here (needs relay + bridge),
@@ -98,14 +94,10 @@ func TestLANAddressesSkippedInInternetMode(t *testing.T) {
 
 	port := pickFreePortPair(t)
 	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
-	if err != nil {
-		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
-	}
+	require.NoError(t, err, "NewKeibiDropWithIP failed")
 
 	// Default should NOT be local mode
-	if kd.IsLocalMode {
-		t.Fatal("IsLocalMode should default to false")
-	}
+	require.False(t, kd.IsLocalMode, "IsLocalMode should default to false")
 
 	// Simulate having LAN addresses from relay registration
 	kd.PeerLocalAddrs = []string{"192.168.1.42", "fe80::1%eth0"}
@@ -113,10 +105,8 @@ func TestLANAddressesSkippedInInternetMode(t *testing.T) {
 	// In internet mode (IsLocalMode=false), these should be ignored.
 	// The actual enforcement is in logic.go JoinRoom:
 	//   if kd.IsLocalMode && len(kd.PeerLocalAddrs) > 0 {
-	// We verify the flag is correct — the logic test is the guard condition.
-	if kd.IsLocalMode {
-		t.Fatal("IsLocalMode should still be false after setting PeerLocalAddrs")
-	}
+	// We verify the flag is correct. The logic test is the guard condition.
+	require.False(t, kd.IsLocalMode, "IsLocalMode should still be false after setting PeerLocalAddrs")
 }
 
 // TestListenerClosedOnBridgeFallback verifies that after closing the listener
@@ -131,18 +121,14 @@ func TestListenerClosedOnBridgeFallback(t *testing.T) {
 
 	port := pickFreePortPair(t)
 	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
-	if err != nil {
-		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
-	}
+	require.NoError(t, err, "NewKeibiDropWithIP failed")
 
 	// Verify the listener works before close.
 	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		t.Fatalf("Dial before close failed: %v", err)
-	}
+	require.NoError(t, err, "Dial before close failed")
 	conn.Close()
 
-	// Close the listener and nil it — simulates CreateRoom bridge fallback.
+	// Close the listener and nil it. Simulates CreateRoom bridge fallback.
 	kd.listener.Close()
 	kd.listener = nil
 
@@ -150,23 +136,17 @@ func TestListenerClosedOnBridgeFallback(t *testing.T) {
 	// before the fix, the listener stayed open and the kernel accepted
 	// phantom connections into the backlog.
 	_, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
-	if dialErr == nil {
-		t.Fatal("Dial after listener close should be refused, but succeeded (phantom accept)")
-	}
+	require.Error(t, dialErr, "Dial after listener close should be refused, but succeeded (phantom accept)")
 
-	// Reopen on the same port — simulates the reopen step.
+	// Reopen on the same port. Simulates the reopen step.
 	addr := net.JoinHostPort("", fmt.Sprintf("%d", port))
 	newLn, err := net.Listen("tcp", addr)
-	if err != nil {
-		t.Fatalf("Reopen listener failed: %v", err)
-	}
+	require.NoError(t, err, "Reopen listener failed")
 	kd.listener = newLn
 
 	// New listener must accept connections.
 	conn2, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		t.Fatalf("Dial after reopen failed: %v", err)
-	}
+	require.NoError(t, err, "Dial after reopen failed")
 	conn2.Close()
 }
 
@@ -182,18 +162,12 @@ func TestAcceptDeadlineExitsOnTimeout(t *testing.T) {
 
 	port := pickFreePortPair(t)
 	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
-	if err != nil {
-		t.Fatalf("NewKeibiDropWithIP failed: %v", err)
-	}
+	require.NoError(t, err, "NewKeibiDropWithIP failed")
 
 	_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(200 * time.Millisecond))
 	_, acceptErr := kd.listener.Accept()
 	_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
 
-	if acceptErr == nil {
-		t.Fatal("Expected deadline error from Accept, got nil")
-	}
-	if !os.IsTimeout(acceptErr) {
-		t.Fatalf("Expected timeout error, got: %v", acceptErr)
-	}
+	require.Error(t, acceptErr, "Expected deadline error from Accept, got nil")
+	require.True(t, os.IsTimeout(acceptErr), "Expected timeout error, got: %v", acceptErr)
 }

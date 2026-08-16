@@ -21,6 +21,7 @@ import (
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
@@ -61,8 +62,8 @@ func newInitiatorRekeyKD(t *testing.T) (kd *KeibiDrop, inRec, outRec *closeRecor
 	return kd, inRec, outRec
 }
 
-// TestOnRekeyNeeded_SessionNilRace_NoPanic reproduces F2: teardown nils kd.session while
-// the health monitor calls onRekeyNeeded; the fix snapshots kd.session once under kd.mu.
+// TestOnRekeyNeeded_SessionNilRace_NoPanic reproduces a nil-deref TOCTOU: teardown nils
+// kd.session while the health monitor calls onRekeyNeeded; the fix snapshots kd.session once under kd.mu.
 func TestOnRekeyNeeded_SessionNilRace_NoPanic(t *testing.T) {
 	kd := newTestKD(t)
 	// Initiator held past the rekey cooldown, so a call surviving the nil race returns
@@ -115,7 +116,7 @@ func TestOnRekeyNeeded_SessionNilRace_NoPanic(t *testing.T) {
 	// Reaching here without a panic (and no -race DATA RACE) is the pass.
 }
 
-// TestOnRekeyNeeded_ActiveTransfer_DefersRekey (F3): an active transfer must not have its
+// TestOnRekeyNeeded_ActiveTransfer_DefersRekey: an active transfer must not have its
 // sockets dropped by a proactive rekey; onRekeyNeeded carries the hasActiveTransfers guard.
 func TestOnRekeyNeeded_ActiveTransfer_DefersRekey(t *testing.T) {
 	kd, inRec, outRec := newInitiatorRekeyKD(t)
@@ -126,38 +127,28 @@ func TestOnRekeyNeeded_ActiveTransfer_DefersRekey(t *testing.T) {
 	kd.activeDownloadsMu.Unlock()
 
 	epochBefore := kd.session.CurrentEpoch
-	if got := kd.onRekeyNeeded(); got {
-		t.Fatalf("onRekeyNeeded during active transfer = true, want false (rekey must defer)")
-	}
-	if kd.session.CurrentEpoch != epochBefore {
-		t.Fatalf("epoch bumped during active transfer: %d -> %d", epochBefore, kd.session.CurrentEpoch)
-	}
-	if inRec.closed.Load() || outRec.closed.Load() {
-		t.Fatalf("sockets closed during active transfer (inbound=%v outbound=%v)",
-			inRec.closed.Load(), outRec.closed.Load())
-	}
+	got := kd.onRekeyNeeded()
+	require.False(t, got, "onRekeyNeeded during active transfer must defer, not rekey")
+	require.Equal(t, epochBefore, kd.session.CurrentEpoch, "epoch bumped during active transfer")
+	require.False(t, inRec.closed.Load(), "inbound socket closed during active transfer")
+	require.False(t, outRec.closed.Load(), "outbound socket closed during active transfer")
 }
 
-// TestOnRekeyNeeded_RatchetOn_DefersRekey (T5): with the in-band ratchet negotiated, the
+// TestOnRekeyNeeded_RatchetOn_DefersRekey: with the in-band ratchet negotiated, the
 // re-handshake rekey must not fire; the UseKeyUpdate guard defers it.
 func TestOnRekeyNeeded_RatchetOn_DefersRekey(t *testing.T) {
 	kd, inRec, outRec := newInitiatorRekeyKD(t)
 	kd.session.PeerSupportsKeyUpdate = true // both peers advertised: ratchet on
 
 	epochBefore := kd.session.CurrentEpoch
-	if got := kd.onRekeyNeeded(); got {
-		t.Fatal("onRekeyNeeded with the ratchet on = true, want false (the ratchet rotates)")
-	}
-	if kd.session.CurrentEpoch != epochBefore {
-		t.Fatalf("epoch bumped with the ratchet on: %d -> %d", epochBefore, kd.session.CurrentEpoch)
-	}
-	if inRec.closed.Load() || outRec.closed.Load() {
-		t.Fatalf("sockets closed with the ratchet on (inbound=%v outbound=%v)",
-			inRec.closed.Load(), outRec.closed.Load())
-	}
+	got := kd.onRekeyNeeded()
+	require.False(t, got, "onRekeyNeeded with the ratchet on must defer (the ratchet rotates)")
+	require.Equal(t, epochBefore, kd.session.CurrentEpoch, "epoch bumped with the ratchet on")
+	require.False(t, inRec.closed.Load(), "inbound socket closed with the ratchet on")
+	require.False(t, outRec.closed.Load(), "outbound socket closed with the ratchet on")
 }
 
-// TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey (#6): a REMOVE notify in flight must
+// TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey: a REMOVE notify in flight must
 // defer the rekey, else the drop loses the delete; the pendingNotifies gate blocks it. The
 // test drives the real notify worker with a client that blocks inside BatchNotify.
 func TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey(t *testing.T) {
@@ -176,9 +167,7 @@ func TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey(t *testing.T) {
 	t.Cleanup(func() { kd.ReconnectManager.Stop() })
 
 	// Start the real notify worker; setupFilesystem creates the FS struct and worker goroutine without mounting.
-	if err := kd.setupFilesystem(kd.logger, nil); err != nil {
-		t.Fatalf("setupFilesystem: %v", err)
-	}
+	require.NoError(t, kd.setupFilesystem(kd.logger, nil), "setupFilesystem")
 	closeChan := func() { closeOnce.Do(func() { close(kd.notifyCh) }) }
 	t.Cleanup(closeChan) // stop the worker (runs after releaseFn below)
 	t.Cleanup(releaseFn) // unblock BatchNotify even if an assertion fails first
@@ -193,16 +182,11 @@ func TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey(t *testing.T) {
 		t.Fatal("notify worker never sent the REMOVE")
 	}
 
-	if n := kd.pendingNotifies.Load(); n == 0 {
-		t.Fatal("pendingNotifies = 0 while a REMOVE is in flight, want > 0")
-	}
+	require.NotZero(t, kd.pendingNotifies.Load(), "pendingNotifies = 0 while a REMOVE is in flight")
 	epochBefore := kd.session.CurrentEpoch
-	if got := kd.onRekeyNeeded(); got {
-		t.Fatal("onRekeyNeeded with a REMOVE in flight = true, want false (would drop the delete)")
-	}
-	if kd.session.CurrentEpoch != epochBefore {
-		t.Fatalf("epoch bumped with a REMOVE in flight: %d -> %d", epochBefore, kd.session.CurrentEpoch)
-	}
+	got := kd.onRekeyNeeded()
+	require.False(t, got, "onRekeyNeeded with a REMOVE in flight must defer (would drop the delete)")
+	require.Equal(t, epochBefore, kd.session.CurrentEpoch, "epoch bumped with a REMOVE in flight")
 
 	// Let the REMOVE finish; the tracker must clear so a later idle rekey can proceed.
 	releaseFn()
@@ -210,7 +194,7 @@ func TestOnRekeyNeeded_InflightRemoveNotify_DefersRekey(t *testing.T) {
 	closeChan()
 }
 
-// TestOnRekeyNeeded_QueuedRemoveNotify_DefersRekey (#6): a REMOVE queued but not yet
+// TestOnRekeyNeeded_QueuedRemoveNotify_DefersRekey: a REMOVE queued but not yet
 // dequeued (pendingNotifies still 0) must defer the rekey; onRekeyNeeded checks channel depth too.
 func TestOnRekeyNeeded_QueuedRemoveNotify_DefersRekey(t *testing.T) {
 	kd, inRec, outRec := newInitiatorRekeyKD(t)
@@ -219,23 +203,16 @@ func TestOnRekeyNeeded_QueuedRemoveNotify_DefersRekey(t *testing.T) {
 	kd.notifyCh = make(chan *bindings.NotifyRequest, 16)
 	kd.notifyCh <- &bindings.NotifyRequest{}
 
-	if n := kd.pendingNotifies.Load(); n != 0 {
-		t.Fatalf("pendingNotifies = %d, want 0 (the point is the queued notify is uncounted)", n)
-	}
+	require.Zero(t, kd.pendingNotifies.Load(), "the queued notify must be uncounted")
 	epochBefore := kd.session.CurrentEpoch
-	if got := kd.onRekeyNeeded(); got {
-		t.Fatal("onRekeyNeeded with a REMOVE queued (undrained) = true, want false (would drop the delete)")
-	}
-	if kd.session.CurrentEpoch != epochBefore {
-		t.Fatalf("epoch bumped with a REMOVE queued: %d -> %d", epochBefore, kd.session.CurrentEpoch)
-	}
-	if inRec.closed.Load() || outRec.closed.Load() {
-		t.Fatalf("sockets closed with a REMOVE queued (inbound=%v outbound=%v)",
-			inRec.closed.Load(), outRec.closed.Load())
-	}
+	got := kd.onRekeyNeeded()
+	require.False(t, got, "onRekeyNeeded with a REMOVE queued (undrained) must defer (would drop the delete)")
+	require.Equal(t, epochBefore, kd.session.CurrentEpoch, "epoch bumped with a REMOVE queued")
+	require.False(t, inRec.closed.Load(), "inbound socket closed with a REMOVE queued")
+	require.False(t, outRec.closed.Load(), "outbound socket closed with a REMOVE queued")
 }
 
-// TestOnRekeyNeeded_KeyUpdateNearEpochWrap_Rekeys (MED-2): near the epoch-wrap guard the
+// TestOnRekeyNeeded_KeyUpdateNearEpochWrap_Rekeys: near the epoch-wrap guard the
 // ratchet stops advancing, so onRekeyNeeded must re-handshake for a fresh epoch-0 key.
 func TestOnRekeyNeeded_KeyUpdateNearEpochWrap_Rekeys(t *testing.T) {
 	kd, inRec, outRec := newInitiatorRekeyKD(t)
@@ -246,16 +223,11 @@ func TestOnRekeyNeeded_KeyUpdateNearEpochWrap_Rekeys(t *testing.T) {
 	kd.session.Session.Outbound.SetWriterEpochForTest(0xFFFF)
 
 	epochBefore := kd.session.CurrentEpoch
-	if got := kd.onRekeyNeeded(); !got {
-		t.Fatal("onRekeyNeeded near the epoch-wrap guard = false, want true (must re-handshake)")
-	}
-	if kd.session.CurrentEpoch == epochBefore {
-		t.Fatalf("epoch not bumped near the wrap guard: stayed at %d", epochBefore)
-	}
-	if !inRec.closed.Load() || !outRec.closed.Load() {
-		t.Fatalf("sockets not dropped by the near-wrap re-handshake (inbound=%v outbound=%v)",
-			inRec.closed.Load(), outRec.closed.Load())
-	}
+	got := kd.onRekeyNeeded()
+	require.True(t, got, "onRekeyNeeded near the epoch-wrap guard must re-handshake")
+	require.NotEqual(t, epochBefore, kd.session.CurrentEpoch, "epoch not bumped near the wrap guard")
+	require.True(t, inRec.closed.Load(), "inbound socket not dropped by the near-wrap re-handshake")
+	require.True(t, outRec.closed.Load(), "outbound socket not dropped by the near-wrap re-handshake")
 }
 
 func waitForNotifiesDrained(t *testing.T, kd *KeibiDrop, timeout time.Duration) {

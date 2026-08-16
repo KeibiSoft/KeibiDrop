@@ -9,8 +9,6 @@ package service
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,6 +16,7 @@ import (
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/stretchr/testify/require"
@@ -42,7 +41,7 @@ func newReadOnlyFixture(t *testing.T) (*KeibidropServiceImpl, string) {
 	root.Root = root
 
 	svc := &KeibidropServiceImpl{
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:        testkit.DiscardLogger(),
 		SyncTracker:   synctracker.NewSyncTracker(),
 		ShareReadOnly: true,
 	}

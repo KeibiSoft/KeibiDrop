@@ -9,11 +9,10 @@
 package common
 
 import (
-	"io"
-	"log/slog"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +22,7 @@ import (
 // other side; too fast and we lean on the relay's rate limits for no gain, since the drop is the
 // feature. A failed refresh is not retried before the next tick, so one miss has to fit as well.
 func TestRelayKeepalive_CadenceFitsTheRelayTTL(t *testing.T) {
-	rk := NewRelayKeepalive(&KeibiDrop{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	rk := NewRelayKeepalive(&KeibiDrop{}, testkit.DiscardLogger())
 
 	require.Less(t, rk.Interval, relayEntryTTL,
 		"a live peer must never be absent from the relay between refreshes")
