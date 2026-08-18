@@ -199,10 +199,19 @@ Built by [KeibiSoft SRL](https://keibisoft.com).
 
 ---
 
+## By trade
+
+- [Remote DFIR triage](https://keibidrop.com/for/dfir.html) - mount an evidence share read only across NAT, extract the artifact set you need. No inbound port, native on Windows, no kernel driver on the evidence machine.
+- [Post-production handoff](https://keibidrop.com/for/post-production.html) - mount the camera originals. No proxy transcode before the handoff, no relink after it.
+- [Datasets on a rented GPU box](https://keibidrop.com/for/ml.html) - mount the workstation that holds the data. No bucket, no upload before the first batch.
+
 ## Links
 
 - [Website](https://keibidrop.com)
+- [Documentation](https://keibidrop.com/docs/)
+- [Compared with sshfs](https://keibidrop.com/compare/sshfs.html) - measured on a 200 ms link
 - [Technical deep dive](https://keibisoft.com/tools/keibidrop.html)
-- [Blog posts](https://keibisoft.com/blog.html) (22 posts on FUSE, crypto, performance)
+- [Blog posts](https://keibisoft.com/blog.html) (53 posts on FUSE, crypto, performance)
 - [FAQ](https://keibisoft.com/tools/keibidrop-faq.html)
 - [Comparison with alternatives](https://keibisoft.com/tools/keibidrop-vs-alternatives.html)
+- [About and credentials](https://keibidrop.com/about.html)
