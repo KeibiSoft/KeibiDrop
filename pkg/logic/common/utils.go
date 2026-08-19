@@ -31,7 +31,9 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // deriveRelayAuth derives the relay lookup token (sent as the Bearer header)
@@ -446,6 +448,27 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 			})
 			cancel()
 			if err != nil {
+				// A read-only share refuses the whole batch, so the per-item
+				// retry cannot succeed. These bytes stay local and hide the peer's.
+				if status.Code(err) == codes.PermissionDenied {
+					// Count only paths a user made. OS sidecar files inflate it.
+					refused := make([]string, 0, len(batch))
+					for _, req := range batch {
+						if !service.IsInternalPath(req.Path) {
+							refused = append(refused, req.Path)
+						}
+					}
+					if len(refused) == 0 {
+						return
+					}
+					kd.peerRefusedWrites.Add(uint64(len(refused)))
+					logger.Warn("Peer refused local changes: its share is read-only",
+						"count", len(refused), "first-path", refused[0])
+					if kd.OnEvent != nil {
+						kd.OnEvent("peer_refused_write:" + refused[0])
+					}
+					return
+				}
 				logger.Error("BatchNotify failed, falling back to individual", "count", len(batch), "error", err)
 				for _, req := range batch {
 					ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)

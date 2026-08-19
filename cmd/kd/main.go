@@ -962,6 +962,18 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 	data["remote_files"] = len(kd.SyncTracker.RemoteFiles)
 	kd.SyncTracker.RemoteFilesMu.RUnlock()
 
+	// Non-zero means the peer refused local changes, so this mount shows bytes
+	// the peer does not hold.
+	data["peer_refused_writes"] = kd.PeerRefusedWrites()
+
+	// Wire counters reset on rekey, so they are not a session total.
+	sent, recv := kd.WireStats()
+	data["wire"] = map[string]any{
+		"bytes_sent": sent,
+		"bytes_recv": recv,
+		"since":      "last rekey",
+	}
+
 	return okResponse(data)
 }
 

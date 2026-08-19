@@ -74,6 +74,9 @@ func TestShareReadOnly_RefusesEveryMutation(t *testing.T) {
 		require.ErrorIs(t, err, ErrGRPCReadOnlyShare, "type %v must be refused", req.Type)
 	}
 
+	require.Equal(t, uint64(len(mutations)), svc.ReadOnlyRefusals(),
+		"every refusal must be counted, so a test can prove the mutation arrived")
+
 	svc.SyncTracker.RemoteFilesMu.RLock()
 	defer svc.SyncTracker.RemoteFilesMu.RUnlock()
 	require.Empty(t, svc.SyncTracker.RemoteFiles, "refused notifies must not touch the tracker")
@@ -139,6 +142,7 @@ func TestShareReadOnly_BatchRefused(t *testing.T) {
 		Seq: 1,
 	})
 	require.ErrorIs(t, err, ErrGRPCReadOnlyShare)
+	require.Equal(t, uint64(1), svc.ReadOnlyRefusals(), "a refused batch counts every notification in it")
 }
 
 // TestShareReadOnly_OffAllowsMutations: flag off keeps today's behavior.

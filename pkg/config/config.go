@@ -39,7 +39,7 @@ type Config struct {
 	ScanSharedOnStart bool   `toml:"scan_shared_on_start"` // Announce files already in save_path when a session starts.
 	AutoConnectPeer   string `toml:"auto_connect_peer"`    // Saved contact (name or fingerprint) to connect to on startup, with retry.
 	ShareReadOnly     bool   `toml:"share_read_only"`      // Refuse every peer mutation of this node's data (origin-enforced).
-	MountReadOnly     bool   `toml:"mount_read_only"`      // Local FUSE mount returns EROFS on write ops (receiver courtesy).
+	MountReadOnly     bool   `toml:"mount_read_only"`      // Local FUSE mount returns EROFS on write ops. Keeps the local view equal to the origin.
 	PreserveMetadata  bool   `toml:"preserve_metadata"`    // Apply the origin's mode and timestamps to files saved on disk.
 }
 
@@ -208,8 +208,9 @@ no_fuse = %v
 # Windows handle sentinel), so evidence atime stays the original.
 # share_read_only = false
 #
-# mount_read_only: local FUSE mount returns EROFS on write ops. Courtesy on
-# the reading side; share_read_only on the origin is the enforced guarantee.
+# mount_read_only: local FUSE mount returns EROFS on write ops. Without it a
+# local write is kept in save_path and hides the origin's copy in the mount,
+# with no error. Keep it on to read the origin and nothing else.
 # mount_read_only = false
 #
 # preserve_metadata: when a received file completes on disk, apply the
@@ -309,8 +310,9 @@ auto_connect_peer = %q
 share_read_only = %v
 
 # Present the local FUSE mount read-only: local write ops return EROFS.
-# Courtesy only; the origin's share_read_only is the enforced guarantee.
-# No effect with no_fuse (there is no mount).
+# The mount shows save_path over the peer's files, so without this a local
+# write hides the origin's copy with no error. share_read_only protects the
+# origin; this protects what you see. No effect with no_fuse.
 mount_read_only = %v
 
 # Apply the origin's permission bits and timestamps (mtime, atime) to files
