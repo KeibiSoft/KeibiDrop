@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -74,6 +75,16 @@ func getNameFromPath(path string) string {
 	}
 
 	return aux[len(aux)-1]
+}
+
+// isInsideRoot reports whether cleanPath stays under root. A peer path can
+// hold "..", and only a contained path may create a directory chain.
+func isInsideRoot(root, cleanPath string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), cleanPath)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // remoteChildrenForDir returns the direct file and directory children of dirPath

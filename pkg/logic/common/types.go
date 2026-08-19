@@ -158,6 +158,10 @@ type KeibiDrop struct {
 	// lose the delete or rename. onRekeyNeeded defers while it is > 0.
 	pendingNotifies atomic.Int64
 
+	// peerRefusedWrites counts local changes the peer refused because its share
+	// is read-only. Those bytes stay local and shadow the origin in the mount.
+	peerRefusedWrites atomic.Uint64
+
 	// tearingDown gates the reconnect goroutine: Run's teardown sets it first, so
 	// onReconnected stops instead of rebuilding the stack that teardown nils.
 	tearingDown atomic.Bool
@@ -441,9 +445,14 @@ type ErrorMapperFunc func(statusCode int, err error) error
 // InboundPort returns the port this instance listens on for incoming connections.
 func (kd *KeibiDrop) InboundPort() int { return kd.inboundPort }
 
+// PeerRefusedWrites returns how many local changes the peer refused because
+// its share is read-only. Non-zero means the mount shows bytes the peer does
+// not hold.
+func (kd *KeibiDrop) PeerRefusedWrites() uint64 { return kd.peerRefusedWrites.Load() }
+
 // WireStats sums bytes over the session's two TCP conns plus the QUIC control
 // lanes (on-demand reads ride there when the lane is up). Counters reset on
-// rekey. For tests and benchmarks.
+// rekey, so the result is bytes since the last rekey, not a session total.
 func (kd *KeibiDrop) WireStats() (bytesSent, bytesRecv uint64) {
 	kd.mu.Lock()
 	sess := kd.session

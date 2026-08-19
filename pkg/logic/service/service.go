@@ -57,6 +57,10 @@ type KeibidropServiceImpl struct {
 	// readOnlyRefusalLogged keeps the refusal log to one line per session.
 	readOnlyRefusalLogged atomic.Bool
 
+	// readOnlyRefusals counts refused peer mutations. A test reads it to prove
+	// the mutation reached this origin, not only that the disk is unchanged.
+	readOnlyRefusals atomic.Uint64
+
 	// fs is published while the server is already serving: Run() backfills it
 	// after the first mount, and mount/unmount swap it mid-session. Handlers
 	// load it atomically through FS() instead of reading a bare field.
@@ -123,6 +127,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	// Read-only share: refuse every peer mutation before it reaches disk or
 	// the tracker. Log once per session, not once per refused notify.
 	if kd.ShareReadOnly {
+		kd.readOnlyRefusals.Add(1)
 		if kd.readOnlyRefusalLogged.CompareAndSwap(false, true) {
 			logger.Warn("Refusing peer mutation: share is read-only", "first-path", req.Path)
 		}
@@ -544,6 +549,7 @@ func (kd *KeibidropServiceImpl) BatchNotify(ctx context.Context, req *bindings.B
 	logger.Info("Processing batch")
 
 	if kd.ShareReadOnly {
+		kd.readOnlyRefusals.Add(uint64(len(req.Notifications)))
 		if kd.readOnlyRefusalLogged.CompareAndSwap(false, true) {
 			logger.Warn("Refusing peer mutation batch: share is read-only")
 		}
@@ -563,6 +569,10 @@ func (kd *KeibidropServiceImpl) BatchNotify(ctx context.Context, req *bindings.B
 	logger.Info("Batch complete", "processed", processed)
 	return &bindings.BatchNotifyResponse{Status: "ok", Processed: processed}, nil
 }
+
+// ReadOnlyRefusals returns how many peer mutations this origin refused
+// because the share is read-only.
+func (kd *KeibidropServiceImpl) ReadOnlyRefusals() uint64 { return kd.readOnlyRefusals.Load() }
 
 // bufferRemove delays a REMOVE_FILE by 1000ms. If cancelPendingRemove is called
 // for the same path before the timer fires, the remove is discarded.

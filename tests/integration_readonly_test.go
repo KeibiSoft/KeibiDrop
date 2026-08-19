@@ -58,6 +58,15 @@ func TestShareReadOnly_WriterCannotAlterOrigin(t *testing.T) {
 	// Outlive the watcher debounce (200ms) plus the notify round trip.
 	time.Sleep(3 * time.Second)
 
+	// The mutation must REACH Bob and be refused there. Without this the test
+	// also passes when nothing leaves Alice, which is what the 2026-08-19
+	// pretest could not tell apart.
+	require.NotNil(tp.Bob.KDSvc, "origin service must be up")
+	require.Greater(tp.Bob.KDSvc.ReadOnlyRefusals(), uint64(0),
+		"origin must have refused at least one mutation, not merely never seen one")
+	require.Greater(tp.Alice.PeerRefusedWrites(), uint64(0),
+		"writer must record that the peer refused its changes")
+
 	after, err := os.Stat(bobPath)
 	require.NoError(err, "origin file must still exist")
 	bobBytes, err := os.ReadFile(bobPath)

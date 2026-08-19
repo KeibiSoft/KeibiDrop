@@ -1140,6 +1140,13 @@ func (d *Dir) mkdirInternal(path string, mode uint32, notifyPeer bool) (errCode 
 	logger := d.logger.With("method", "mkdir", "path", path, "mode", mode)
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := platMkdir(cleanPath, mode)
+	if err != nil && errors.Is(err, os.ErrNotExist) && isInsideRoot(d.LocalDownloadFolder, cleanPath) {
+		// An announce for a deep file can arrive before the announce that makes
+		// its parent. Make the chain, then do the mkdir again.
+		if os.MkdirAll(filepath.Dir(cleanPath), 0o755) == nil {
+			err = platMkdir(cleanPath, mode)
+		}
+	}
 	if err != nil {
 		// On Windows, FUSE can call Mkdir for directories that already exist
 		// (e.g. during git clone when peer notifications race with local ops).
