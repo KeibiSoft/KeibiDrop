@@ -30,6 +30,11 @@ service KeibiService {
   // Per-chunk xxh3-64 fingerprints for partial re-fetch on edit.
   rpc GetChunkHashes (GetChunkHashesRequest) returns (stream GetChunkHashesResponse);
 
+  // Batched small-file read: the client sends an ordered path list, the
+  // server streams each file fully, in that order, within a byte budget.
+  // One request replaces a per-file round trip for each small file.
+  rpc ReadBatch (ReadBatchRequest) returns (stream ReadBatchResponse);
+
   rpc Debug (DebugRequest) returns (DebugResponse);
 
   // Re-keying for forward secrecy during long sessions.
@@ -105,6 +110,20 @@ message GetChunkHashesRequest {
 message GetChunkHashesResponse {
   uint64 chunk_index = 1;
   uint64 hash        = 2; // xxh3-64 of bytes [chunk_index*chunk_size, min((chunk_index+1)*chunk_size, fileSize))
+}
+
+message ReadBatchRequest {
+  repeated string paths = 1;  // Ordered; the server streams in this order.
+  uint64 max_bytes = 2;       // Soft budget: the current file finishes, no new file starts past it.
+}
+
+message ReadBatchResponse {
+  string path = 1;
+  uint64 offset = 2;      // Byte offset where this frame belongs.
+  bytes data = 3;
+  uint64 total_size = 4;  // Size of this file, sent with every frame.
+  bool file_done = 5;     // Last frame for this path.
+  uint32 err_code = 6;    // Nonzero: skip this file (1 = not found, 2 = read error).
 }
 
 message FsyncRequest {

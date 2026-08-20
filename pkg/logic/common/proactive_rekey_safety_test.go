@@ -290,6 +290,10 @@ func (c *blockingNotifyClient) GetChunkHashes(_ context.Context, _ *bindings.Get
 	return nil, nil
 }
 
+func (c *blockingNotifyClient) ReadBatch(_ context.Context, _ *bindings.ReadBatchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[bindings.ReadBatchResponse], error) {
+	return nil, nil
+}
+
 func (c *blockingNotifyClient) Debug(_ context.Context, _ *bindings.DebugRequest, _ ...grpc.CallOption) (*bindings.DebugResponse, error) {
 	return nil, nil
 }

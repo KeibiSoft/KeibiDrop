@@ -966,12 +966,17 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 	// the peer does not hold.
 	data["peer_refused_writes"] = kd.PeerRefusedWrites()
 
-	// Wire counters reset on rekey, so they are not a session total.
+	// Per-conn counters die when a reconnect or lane change replaces the
+	// connection. The totals survive replacement; quote those for a session.
 	sent, recv := kd.WireStats()
+	totalSent, totalRecv := kd.WireStatsTotal()
 	data["wire"] = map[string]any{
-		"bytes_sent": sent,
-		"bytes_recv": recv,
-		"since":      "last rekey",
+		"bytes_sent":       sent,
+		"bytes_recv":       recv,
+		"since":            "current connections",
+		"total_bytes_sent": totalSent,
+		"total_bytes_recv": totalRecv,
+		"total_since":      "daemon start",
 	}
 
 	return okResponse(data)

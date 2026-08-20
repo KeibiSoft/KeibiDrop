@@ -207,6 +207,18 @@ type Dir struct {
 	// overwhelms the connection.
 	PrefetchSem chan struct{}
 
+	// Sibling warming state, on the ROOT dir. warmMu guards warmDirs: a key is
+	// present with a zero time while a warm batch for that directory is in
+	// flight, and with a future time while in cooldown after a failure.
+	// batchUnsupported latches when the peer lacks ReadBatch. warmDisabled is
+	// the KEIBIDROP_WARM_SIBLINGS=0 kill switch, read once at Mount.
+	warmMu           sync.Mutex
+	warmDirs         map[string]time.Time
+	batchUnsupported atomic.Bool
+	warmDisabled     bool
+	warmBatches      atomic.Int64
+	warmFiles        atomic.Int64
+
 	// fsCtx is the live FUSE context, on the ROOT dir. Disconnect swaps it via
 	// SetCtx while FUSE threads read it, so access is atomic. FS.Unmount()
 	// cancels it to unblock FUSE handlers stuck on gRPC.

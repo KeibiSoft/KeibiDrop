@@ -17,6 +17,11 @@ import (
 // On-demand reads map it to EOF and map stalls to EIO. It lives here so the filesystem package avoids a gRPC import.
 var ErrRemoteFileNotFound = errors.New("remote file not found")
 
+// ErrBatchUnsupported reports that the peer does not implement ReadBatch (gRPC
+// Unimplemented). The sibling warmer then stops batching for the session; every
+// read uses the per-file path. It lives here for the same no-gRPC-import reason.
+var ErrBatchUnsupported = errors.New("peer does not support batched reads")
+
 // FileAction identifies the type of a local filesystem event.
 type FileAction int
 
@@ -78,4 +83,26 @@ type ChunkHashReceiver interface {
 // Callers type-assert and fall back when a provider (older peer, test fake) lacks it.
 type ChunkHasher interface {
 	GetChunkHashes(ctx context.Context, path string, chunkSize, fromChunk, count uint64) (ChunkHashReceiver, error)
+}
+
+// BatchFrame is one ReadBatch frame: a piece of one file in the batch.
+type BatchFrame struct {
+	Path      string
+	Offset    uint64
+	Data      []byte
+	TotalSize uint64
+	FileDone  bool
+	ErrCode   uint32
+}
+
+// BatchFrameReceiver streams ReadBatch frames. Recv returns io.EOF at the end.
+type BatchFrameReceiver interface {
+	Recv() (BatchFrame, error)
+}
+
+// BatchReader marks providers that support the ReadBatch RPC.
+// Callers type-assert and fall back when a provider (older peer, test fake) lacks it.
+// An older peer surfaces ErrBatchUnsupported at the first Recv, not at open.
+type BatchReader interface {
+	ReadBatch(ctx context.Context, paths []string, maxBytes uint64) (BatchFrameReceiver, error)
 }

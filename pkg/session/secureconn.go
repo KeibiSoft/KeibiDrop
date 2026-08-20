@@ -757,7 +757,10 @@ func (s *SecureConn) UpdateKey(newKek []byte) {
 	s.currentEpoch.Add(1)
 }
 
-// ResetStats resets the byte/message counters after a rekey.
+// ResetStats resets the byte/message counters after a rekey. Production
+// never calls it (the in-band ratchet moves marks instead); Session and
+// KeibiDrop wire totals assume per-conn counters stay monotonic, so wiring
+// this into a live path would silently corrupt them.
 func (s *SecureConn) ResetStats() {
 	s.bytesSent.Store(0)
 	s.bytesRecv.Store(0)

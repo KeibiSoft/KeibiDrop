@@ -733,7 +733,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		fsp := d.OpenStreamProvider()
 		streamCtx, cancel := context.WithCancel(d.Ctx())
 		streamCancel = cancel
-		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, StreamPoolSize) // On-demand jumps. Prefetch uses StreamFile separately.
+		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, poolSizeForFile(int64(remoteTotalSize))) // On-demand jumps. Prefetch uses StreamFile separately.
 		if err != nil {
 			cancel()
 			_ = platClose(fd)
@@ -942,6 +942,15 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 			auxStat := &stgo
 
 			if isModificationTimeNewer(auxStat, remFile.stat) {
+				// A remote file with no genuine local edit keeps the announced
+				// origin view. The local cache file is a download target: its
+				// fresh mtime is a write artifact, not content truth. Adopting
+				// it here poisoned the served times and copy tools stamped
+				// extracted files with the cache time instead of the origin's.
+				if !remFile.LocalNewer && !remFile.HadEdits {
+					copyFusestatFromFusestat(stat, remFile.stat)
+					return 0
+				}
 				if auxStat.Size > 0 {
 					savedUid := remFile.stat.Uid
 					savedGid := remFile.stat.Gid
@@ -2707,7 +2716,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && f.StreamProvider != nil {
 		// logger.Info("Creating on-demand stream pool for incomplete remote file")
 		streamCtx, streamCancel := context.WithCancel(d.Ctx())
-		newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, StreamPoolSize)
+		newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, poolSizeForFile(remoteFileSize))
 		if openErr != nil {
 			streamCancel()
 			logger.Warn("Failed to create on-demand stream pool", "error", openErr)
@@ -2819,6 +2828,12 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 				// Leader failed or returned a short block; fetch it ourselves.
 			} else {
 				isLeader = true
+				// A cold read of a small file is the extraction-walk signature:
+				// warm the announced small siblings of its directory in one
+				// batched request, in parallel with this read's own fetch.
+				if blockStart == 0 && remoteFileSize > 0 && remoteFileSize <= SmallFileWarmThreshold {
+					d.maybeWarmSiblings(path)
+				}
 			}
 		}
 
@@ -2864,7 +2879,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			if f.StreamProvider != nil {
 				// logger.Info("Attempting to re-establish stream pool", "path", path, "attempt", attempt+1)
 				streamCtx, streamCancel := context.WithCancel(d.Ctx())
-				newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, StreamPoolSize)
+				newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, poolSizeForFile(remoteFileSize))
 				if openErr != nil {
 					streamCancel()
 					logger.Error("Failed to re-establish stream pool", "error", openErr)

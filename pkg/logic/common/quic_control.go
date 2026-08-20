@@ -697,6 +697,7 @@ func (kd *KeibiDrop) StopQUICControlChannel() {
 	kd.quicControlServer = nil
 	kd.quicControlLn = nil
 	kd.quicControlMig = nil
+	kd.rollQUICWireLocked()
 	kd.quicControlSC = nil
 	kd.quicPeerAddr = "" // A later demote redial has nowhere to dial.
 	kd.mu.Unlock()
@@ -822,6 +823,17 @@ func (kd *KeibiDrop) QUICWriterEpoch() uint16 {
 // stall, then demoteQUICControl routes everything to TCP.
 const quicMetaTimeout = 2 * time.Second
 
+// rollQUICWireLocked folds the dial-side QUIC lane's byte counters into the
+// daemon wire base before the lane is dropped. Caller holds kd.mu.
+func (kd *KeibiDrop) rollQUICWireLocked() {
+	if kd.quicControlSC == nil {
+		return
+	}
+	bs, br, _, _ := kd.quicControlSC.GetStats()
+	kd.wireBaseSent.Add(bs)
+	kd.wireBaseRecv.Add(br)
+}
+
 // demoteQUICControl drops the outbound QUIC client, so later RPCs skip the
 // quicMetaTimeout cost and go straight to TCP. A single-flight background redial
 // heals transient failures. The inbound server stays up throughout.
@@ -833,6 +845,7 @@ func (kd *KeibiDrop) demoteQUICControl(err error) {
 	kd.quicHBCancel = nil
 	kd.quicControlClient = nil
 	kd.quicControlMig = nil
+	kd.rollQUICWireLocked()
 	kd.quicControlSC = nil
 	peerAddr := kd.quicPeerAddr
 	ctx := kd.ctx

@@ -158,6 +158,11 @@ type KeibiDrop struct {
 	// lose the delete or rename. onRekeyNeeded defers while it is > 0.
 	pendingNotifies atomic.Int64
 
+	// wireBase folds the totals of retired sessions and demoted QUIC lanes,
+	// so WireStatsTotal survives session rebuilds and lane changes.
+	wireBaseSent atomic.Uint64
+	wireBaseRecv atomic.Uint64
+
 	// peerRefusedWrites counts local changes the peer refused because its share
 	// is read-only. Those bytes stay local and shadow the origin in the mount.
 	peerRefusedWrites atomic.Uint64
@@ -336,8 +341,10 @@ func (kd *KeibiDrop) EnablePersistentIdentity(configDir string, opts EnableOpts)
 	kd.AddressBook = ab
 	sess.ExtraFoldConns = kd.quicFoldConns // Fold rounds cover the QUIC lane too.
 	kd.mu.Lock()
+	oldSess := kd.session
 	kd.session = sess
 	kd.mu.Unlock()
+	kd.rollSessionWire(oldSess)
 	kd.identityOpts = opts
 	kd.identityConfig = configDir
 	regKey := opts.ExternalMaster
@@ -382,8 +389,10 @@ func (kd *KeibiDrop) ToggleIncognito(incognito bool, configDir string) (string, 
 		}
 		sess.ExtraFoldConns = kd.quicFoldConns // Fold rounds cover the QUIC lane too.
 		kd.mu.Lock()
+		oldSess := kd.session
 		kd.session = sess
 		kd.mu.Unlock()
+		kd.rollSessionWire(oldSess)
 		kd.refreshSession = func() *session.Session {
 			s, err := session.InitSession(kd.logger, outPort, inPort)
 			if err != nil {
@@ -450,9 +459,11 @@ func (kd *KeibiDrop) InboundPort() int { return kd.inboundPort }
 // not hold.
 func (kd *KeibiDrop) PeerRefusedWrites() uint64 { return kd.peerRefusedWrites.Load() }
 
-// WireStats sums bytes over the session's two TCP conns plus the QUIC control
-// lanes (on-demand reads ride there when the lane is up). Counters reset on
-// rekey, so the result is bytes since the last rekey, not a session total.
+// WireStats sums bytes over the CURRENT conns: the session's two TCP conns
+// plus the live QUIC control lanes. A reconnect, re-handshake, or lane change
+// replaces conns and their counters vanish with them, so this is bytes since
+// the current connections were installed, not a session total. WireStatsTotal
+// is the figure that survives replacement.
 func (kd *KeibiDrop) WireStats() (bytesSent, bytesRecv uint64) {
 	kd.mu.Lock()
 	sess := kd.session
@@ -471,6 +482,42 @@ func (kd *KeibiDrop) WireStats() (bytesSent, bytesRecv uint64) {
 		bytesRecv += br
 	}
 	return bytesSent, bytesRecv
+}
+
+// WireStatsTotal returns bytes moved this daemon run: retired sessions and
+// demoted lanes plus everything the live conns carry. Unlike WireStats it
+// survives reconnects, re-handshakes, and QUIC lane changes. Known gap: an
+// accepted-side QUIC conn replaced by a newer accept is not rolled up.
+func (kd *KeibiDrop) WireStatsTotal() (bytesSent, bytesRecv uint64) {
+	kd.mu.Lock()
+	sess := kd.session
+	kd.mu.Unlock()
+	bytesSent, bytesRecv = kd.wireBaseSent.Load(), kd.wireBaseRecv.Load()
+	if sess != nil {
+		bs, br := sess.WireTotals()
+		bytesSent += bs
+		bytesRecv += br
+	}
+	for _, c := range kd.quicFoldConns() {
+		if c == nil {
+			continue
+		}
+		bs, br, _, _ := c.GetStats()
+		bytesSent += bs
+		bytesRecv += br
+	}
+	return bytesSent, bytesRecv
+}
+
+// rollSessionWire folds a retiring session's wire totals into the daemon
+// base before the session pointer is dropped.
+func (kd *KeibiDrop) rollSessionWire(sess *session.Session) {
+	if sess == nil {
+		return
+	}
+	bs, br := sess.WireTotals()
+	kd.wireBaseSent.Add(bs)
+	kd.wireBaseRecv.Add(br)
 }
 
 // UpgradeListenerDualStack replaces the IPv6-only listener with a dual-stack one.
@@ -647,8 +694,10 @@ func (kd *KeibiDrop) Run() {
 			// the lock, so background readers snapshot a consistent pointer.
 			newSess := kd.refreshSession()
 			kd.mu.Lock()
+			oldSess := kd.session
 			kd.session = newSess
 			kd.mu.Unlock()
+			kd.rollSessionWire(oldSess)
 			kd.SyncTracker = synctracker.NewSyncTracker()
 			kd.lastSharedPeerFP = prevPeerFP
 			kd.lastSharedFiles = prevLocal

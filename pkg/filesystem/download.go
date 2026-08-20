@@ -49,11 +49,33 @@ const ChunkSize = 512 * 1024 // 512 KiB
 // Matches typical FUSE readahead parallelism on Linux.
 const StreamPoolSize = 4
 
+// poolSizeForFile bounds the pool to the blocks the file spans. ReadAt
+// shards by 16 MiB block, so a file under 16 MiB only uses stream 0 and
+// extra streams are setup and teardown cost. Unknown size keeps the full
+// pool.
+func poolSizeForFile(size int64) int {
+	if size <= 0 {
+		return StreamPoolSize
+	}
+	n := int((size + ReadAheadBlock - 1) / ReadAheadBlock)
+	return min(max(n, 1), StreamPoolSize)
+}
+
 // ReadAheadBlock is the amount one on-demand read miss fetches per round trip.
 // The gRPC frame size caps it, so the block lands in a single message. The
 // whole block is cached, so later reads inside it are local. This turns ~32
 // round trips per 16 MiB into one.
 const ReadAheadBlock = config.GRPCStreamBuffer // 16 MiB
+
+// SmallFileWarmThreshold marks files the sibling warmer batches. It stays
+// below the ReadBatch frame cap, so a warmed file arrives as one frame.
+const SmallFileWarmThreshold = 256 * 1024
+
+// WarmBatchBudget bounds the bytes one warm batch requests.
+const WarmBatchBudget = 4 * 1024 * 1024
+
+// WarmBatchMaxFiles matches the server's ReadBatch path cap.
+const WarmBatchMaxFiles = 512
 
 // readAheadWindowBlocks converts a read-ahead window in MB (config
 // read_ahead_window_mb) to a count of ReadAheadBlock-sized blocks. A positive

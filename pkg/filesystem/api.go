@@ -167,9 +167,12 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		RemoteFiles:     make(map[string]*File),
 
 		PrefetchSem: make(chan struct{}, 8), // Maximum 8 concurrent prefetches.
+
+		warmDirs: make(map[string]time.Time),
 	}
 
 	root.Root = root
+	root.warmDisabled = os.Getenv("KEIBIDROP_WARM_SIBLINGS") == "0"
 	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
 	fs.ctxMu.Lock()
 	ctx := fs.ctx
