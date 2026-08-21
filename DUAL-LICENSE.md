@@ -12,6 +12,10 @@ The Rust UI (`rust/`) and FFI bridge (`rustbridge/`) are **proprietary software*
 
 The [Slint](https://slint.dev) UI framework is used under the **Slint Royalty-Free Desktop, Mobile, and Web Applications License** - not GPLv3. Attribution to Slint is provided in the application.
 
+## Android and iOS Apps - Proprietary
+
+The **KEIBI**DROP mobile apps are **proprietary software** owned by **KEIBI**SOFT SRL, distributed as binaries through our F-Droid repository and the app stores. They embed the MPL-2.0 Go engine through the mobile bindings above; that does not place the apps themselves under MPL-2.0.
+
 ## Brand Assets - Proprietary, All Rights Reserved
 
 **The following are the exclusive property of **KEIBI**SOFT SRL and are NOT covered by any open source license:**
