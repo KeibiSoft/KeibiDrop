@@ -68,10 +68,10 @@ func TestReadBatch_FrameReassembly(t *testing.T) {
 	require := require.New(t)
 
 	sizes := map[string]int{
-		"small_a.bin": 15 * 1024,
-		"small_b.bin": 700,
+		"small_a.bin":  15 * 1024,
+		"small_b.bin":  700,
 		"twoframe.bin": 600 * 1024, // Above the 512 KiB frame cap.
-		"small_c.bin": 4096,
+		"small_c.bin":  4096,
 	}
 	content := make(map[string][]byte)
 	for name, size := range sizes {
