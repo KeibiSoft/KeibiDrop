@@ -81,16 +81,21 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		}
 	}
 	kd.ReconnectManager.AcceptConn = func(timeout time.Duration) (net.Conn, error) {
-		// A prior bridge fallback can close and nil the listener before it reopens.
-		// Accept on a nil interface panics.
-		if kd.listener == nil {
+		// Snapshot under kd.mu: a prior bridge fallback can close and nil the listener
+		// before it reopens, and this closure runs on the reconnectLoop goroutine, which
+		// Stop()'s 2s join does not guarantee has exited before Run's kd.mu-guarded
+		// teardown write. Accept on a nil interface panics.
+		kd.mu.Lock()
+		ln := kd.listener
+		kd.mu.Unlock()
+		if ln == nil {
 			return nil, fmt.Errorf("accept-conn: inbound listener not open")
 		}
-		if tcpL, ok := kd.listener.(*net.TCPListener); ok {
+		if tcpL, ok := ln.(*net.TCPListener); ok {
 			_ = tcpL.SetDeadline(time.Now().Add(timeout))
 			return tcpL.Accept()
 		}
-		return kd.listener.Accept()
+		return ln.Accept()
 	}
 	// Order reconnect transports from the session mode and the reachability hints.
 	// A direct retry against a blocked inbound only burns its timeout.
@@ -432,9 +437,11 @@ func (kd *KeibiDrop) onReconnected() {
 // notifyRestoredFiles sends ADD_FILE for each restored LocalFile, so the peer sees
 // them. It runs only after a same-peer reconnect with confirmed files.
 func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
-	// Snapshot under kd.mu. This runs as a goroutine, and teardown can nil kd.KDClient.
+	// Snapshot under kd.mu. This runs as a goroutine, and teardown can nil kd.KDClient and
+	// swap kd.ctx on reconnect.
 	kd.mu.Lock()
 	client := kd.KDClient
+	ctx := kd.ctx
 	kd.mu.Unlock()
 	if client == nil {
 		return
@@ -447,7 +454,7 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 	kd.SyncTracker.LocalFilesMu.RUnlock()
 
 	for _, file := range files {
-		if kd.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return
 		}
 		info, err := os.Stat(filepath.Clean(file.RealPathOfFile))
@@ -455,7 +462,7 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 			continue
 		}
 		atime, btime := statTimes(info)
-		_, _ = client.Notify(kd.ctx, &bindings.NotifyRequest{
+		_, _ = client.Notify(ctx, &bindings.NotifyRequest{
 			Type: bindings.NotifyType(types.AddFile),
 			Path: file.RelativePath,
 			Attr: &bindings.Attr{

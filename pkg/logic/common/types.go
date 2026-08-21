@@ -70,7 +70,7 @@ type KeibiDrop struct {
 
 	LocalIPv6IP string
 	inboundPort int
-	listener    net.Listener
+	listener    net.Listener // Guarded by kd.mu.
 
 	// Filesystem.
 	FS             *filesystem.FS
@@ -623,9 +623,16 @@ func (kd *KeibiDrop) Run() {
 				if kd.FS != nil {
 					kd.FS.Unmount()
 				}
-				if kd.listener != nil {
-					kd.listener.Close()
-					kd.listener = nil
+				// Close+nil under kd.mu: CreateRoom/JoinRoom's local-mode accept snapshots
+				// the listener under the same lock, so this write pairs with those reads.
+				// Bare assignment inside the lock, Close() outside, so kd.mu never spans
+				// a blocking call.
+				kd.mu.Lock()
+				ln := kd.listener
+				kd.listener = nil
+				kd.mu.Unlock()
+				if ln != nil {
+					ln.Close()
 				}
 				kd.running.Store(false)
 				kd.mu.Lock()

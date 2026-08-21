@@ -182,3 +182,38 @@ func TestServiceBeaconCarriesInstanceID(t *testing.T) {
 		)
 	})
 }
+
+// TestCleanup_ExpiresStalePeerAfterTimeout exercises the background cleanup()
+// goroutine (started by Start(), ticks every 5s) rather than ClearPeers(), which
+// every other test in this file drives directly. The peer's LastSeen is pre-dated
+// past peerTimeout so the very next tick evicts it, keeping the test to about one
+// tick instead of the full timeout.
+//
+// Start() joins the real multicast group, no mock transport, so on a LAN with
+// another live peer the map can pick up a second, genuine entry (confirmed while
+// developing this test: a real peer showed up mid-run). The assertion checks for
+// the specific synthetic peer's address rather than an empty map, so it stays
+// correct regardless of ambient network traffic.
+func TestCleanup_ExpiresStalePeerAfterTimeout(t *testing.T) {
+	s := New(26001, slog.Default())
+	require.NoError(t, s.Start())
+	defer s.Stop()
+
+	const staleAddr = "192.168.1.10:26003"
+	s.mu.Lock()
+	s.peers[staleAddr] = &Peer{
+		Name:     "Old Peer",
+		Addr:     staleAddr,
+		LastSeen: time.Now().Add(-(peerTimeout + time.Second)), // already past TTL
+	}
+	s.mu.Unlock()
+
+	require.Eventually(t, func() bool {
+		for _, p := range s.Peers() {
+			if p.Addr == staleAddr {
+				return false
+			}
+		}
+		return true
+	}, 8*time.Second, 200*time.Millisecond, "cleanup() should evict the pre-expired peer on its next tick")
+}

@@ -67,9 +67,11 @@ func (kd *KeibiDrop) relayURL(sub string) (*url.URL, error) {
 func (kd *KeibiDrop) registerRoomToRelay() error {
 	logger := kd.logger.With("method", "register-room-to-relay")
 	// Snapshot under kd.mu: the keepalive goroutine calls this while teardown may nil
-	// kd.session. Lock only for the read to keep the rk.mu -> kd.mu order intact.
+	// kd.session and Run's reconnect branch swaps kd.ctx. Lock only for the read to keep
+	// the rk.mu -> kd.mu order intact.
 	kd.mu.Lock()
 	s := kd.session
+	ctx := kd.ctx
 	kd.mu.Unlock()
 	if kd.relayClient == nil || s == nil || s.OwnKeys == nil {
 		logger.Warn("Nil pointer deference")
@@ -78,7 +80,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 
 	// Learn our reachability before publishing, so the hint is right on the first connect.
 	// Cached, so the keepalive's re-registrations do not re-probe.
-	kd.ProbeInboundReachability(kd.ctx)
+	kd.ProbeInboundReachability(ctx)
 
 	ownFp := s.OwnFingerprint
 

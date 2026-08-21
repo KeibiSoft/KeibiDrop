@@ -16,9 +16,11 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/stretchr/testify/require"
 )
 
@@ -170,4 +172,186 @@ func TestAcceptDeadlineExitsOnTimeout(t *testing.T) {
 
 	require.Error(t, acceptErr, "Expected deadline error from Accept, got nil")
 	require.True(t, os.IsTimeout(acceptErr), "Expected timeout error, got: %v", acceptErr)
+}
+
+// TestCreateRoom_LocalModeNilListener_NoPanic reproduces the reconnect panic: a prior
+// bridge-fallback timeout (createRendezvousRound) or a concurrent Shutdown (Run's
+// permanent-shutdown branch) can leave kd.listener nil across a CreateRoom re-entry, and
+// Accept on a nil interface panics.
+func TestCreateRoom_LocalModeNilListener_NoPanic(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	relayURL, _ := url.Parse("https://localhost:9999")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	port := pickFreePortPair(t)
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
+	require.NoError(t, err, "NewKeibiDropWithIP failed")
+
+	kd.IsLocalMode = true
+	// Simulates a prior connect's bridge-fallback timeout (createRendezvousRound,
+	// logic.go:1175-1176) or a concurrent Shutdown (types.go Run loop) leaving the
+	// listener nil across a CreateRoom re-entry.
+	kd.listener.Close()
+	kd.listener = nil
+	kd.session.ExpectedPeerFingerprint = "test-peer-fingerprint" // skip the wait-for-fingerprint poll
+
+	require.NotPanics(t, func() {
+		err = kd.CreateRoom()
+	}, "CreateRoom must not panic when the listener is nil")
+	require.ErrorIs(t, err, ErrListenerNotOpen)
+}
+
+// TestCreateRoom_ConcurrentTeardownNilsListener_RaceClean covers the -race requirement: a
+// real concurrent writer (modeling Run's permanent-shutdown teardown) nils kd.listener under
+// kd.mu while CreateRoom repeatedly snapshots it under the same lock. Before the fix, the
+// read at the local-mode Accept site was bare and the write at Run's teardown was bare, so
+// -race flagged this pair directly.
+func TestCreateRoom_ConcurrentTeardownNilsListener_RaceClean(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	relayURL, _ := url.Parse("https://localhost:9999")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	port := pickFreePortPair(t)
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
+	require.NoError(t, err, "NewKeibiDropWithIP failed")
+	kd.IsLocalMode = true
+	kd.session.ExpectedPeerFingerprint = "test-peer-fingerprint"
+	kd.listener.Close()
+	kd.listener = nil // starts nil, like a prior bridge-fallback timeout left it
+
+	const iters = 500
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for i := 0; i < iters; i++ {
+			kd.mu.Lock()
+			kd.listener = nil // models Run's permanent-shutdown teardown, types.go:626-628
+			kd.mu.Unlock()
+		}
+	}()
+
+	for i := 0; i < iters; i++ {
+		var callErr error
+		require.NotPanics(t, func() { callErr = kd.CreateRoom() },
+			"CreateRoom must not panic while a concurrent teardown nils the listener")
+		require.ErrorIs(t, callErr, ErrListenerNotOpen)
+	}
+	<-writerDone
+}
+
+// TestJoinRoom_LocalModeNilListener_NoPanic mirrors the CreateRoom repro for JoinRoom's LAN
+// inbound accept (logic.go, "Connection priority" LAN branch, the JoinRoom twin of the
+// CreateRoom local-mode Accept). Same bug, same field, same fix shape. The LAN branch is
+// picked over the direct-IPv6 branch because it needs the least fake-peer scaffolding to
+// drive for real: one plaintext local-mode key exchange plus one PQC handshake, versus the
+// direct-IPv6 branch's extra InboundBlocked/bridge-fallback state machine.
+//
+// The fake peer plays the "creator" role for exactly the two legs JoinRoom's LAN path runs
+// before it ever touches the joiner's own listener: the plaintext local key exchange, then
+// the PQC handshake the joiner dials out for. It never dials back into kd.listener, so the
+// guard is what has to stop the joiner from reaching a nil Accept, not a real peer accept.
+func TestJoinRoom_LocalModeNilListener_NoPanic(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	relayURL, _ := url.Parse("https://localhost:9999")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	port := pickFreePortPair(t)
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
+	require.NoError(t, err, "NewKeibiDropWithIP failed")
+
+	peerPort := pickFreePortPair(t)
+	peerSession, err := session.InitSession(logger, peerPort+1, peerPort)
+	require.NoError(t, err, "InitSession for the fake LAN peer failed")
+	peerSession.ExpectedPeerFingerprint = "TOFU" // accept the joiner's real fingerprint, as local mode does
+
+	peerLn, err := net.Listen("tcp", net.JoinHostPort("", strconv.Itoa(peerPort)))
+	require.NoError(t, err, "fake LAN peer listen failed")
+	defer peerLn.Close()
+
+	peerDone := make(chan error, 1)
+	go func() {
+		keyConn, err := peerLn.Accept()
+		if err != nil {
+			peerDone <- fmt.Errorf("fake peer key-exchange accept: %w", err)
+			return
+		}
+		defer keyConn.Close()
+		if err := session.ExchangePublicKeysLocal(peerSession, keyConn, false); err != nil {
+			peerDone <- fmt.Errorf("fake peer key exchange: %w", err)
+			return
+		}
+
+		hsConn, err := peerLn.Accept()
+		if err != nil {
+			peerDone <- fmt.Errorf("fake peer handshake accept: %w", err)
+			return
+		}
+		defer hsConn.Close()
+		peerDone <- session.PerformInboundHandshake(peerSession, hsConn)
+	}()
+
+	kd.IsLocalMode = true
+	kd.session.ExpectedPeerFingerprint = "TOFU"
+	kd.PeerIPv6IP = "127.0.0.1"               // dial target for the local-mode key exchange
+	kd.PeerLocalAddrs = []string{"127.0.0.1"} // dial target for the LAN accept branch
+	kd.session.PeerPort = peerPort
+
+	// Simulates a prior bridge-fallback timeout or a concurrent Shutdown leaving the
+	// listener nil across a JoinRoom re-entry, same as the CreateRoom repro.
+	kd.listener.Close()
+	kd.listener = nil
+
+	require.NotPanics(t, func() {
+		err = kd.JoinRoom()
+	}, "JoinRoom must not panic when the listener is nil")
+	require.ErrorIs(t, err, ErrListenerNotOpen)
+	require.Nil(t, kd.session.OutboundConn(),
+		"outbound conn must be closed and cleared on this bail-out, mirroring the accept-failure cleanup, not stranded")
+
+	require.NoError(t, <-peerDone, "fake LAN peer side failed")
+}
+
+// TestAcceptConn_ConcurrentTeardownNilsListener_RaceClean covers the same bug class as
+// TestCreateRoom_ConcurrentTeardownNilsListener_RaceClean, found by concurrency review just
+// outside 393e11f: the ReconnectManager.AcceptConn closure InitConnectionResilience installs
+// (resilience.go) reads kd.listener bare. reconnectAsInitiator/reconnectDirectResponder call
+// AcceptConn(30s) from the reconnectLoop goroutine (pkg/session/reconnect.go), and
+// ReconnectManager.Stop() only waits 2s for that goroutine to exit, so it can provably outlive
+// StopConnectionResilience() and race Run's kd.mu-guarded teardown write. This drives the real
+// closure through InitConnectionResilience, not a hand-copied duplicate, so a future edit to the
+// real closure cannot silently drift away from what this test exercises.
+func TestAcceptConn_ConcurrentTeardownNilsListener_RaceClean(t *testing.T) {
+	kd := newTestKD(t)
+	kd.IsLocalMode = true // skip relay keepalive/lookup wiring, irrelevant to this closure
+
+	rel := make(chan struct{})
+	close(rel)
+	kd.KDClient = &blockingNotifyClient{entered: make(chan struct{}, 1), release: rel}
+
+	require.NoError(t, kd.InitConnectionResilience())
+	t.Cleanup(kd.StopConnectionResilience)
+
+	kd.listener.Close()
+	kd.listener = nil // starts nil, like a prior bridge-fallback timeout left it
+
+	const iters = 500
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		for i := 0; i < iters; i++ {
+			kd.mu.Lock()
+			kd.listener = nil // models Run's permanent-shutdown teardown, types.go
+			kd.mu.Unlock()
+		}
+	}()
+
+	for i := 0; i < iters; i++ {
+		require.NotPanics(t, func() {
+			_, _ = kd.ReconnectManager.AcceptConn(10 * time.Millisecond)
+		}, "AcceptConn must not panic while a concurrent teardown nils the listener")
+	}
+	<-writerDone
 }

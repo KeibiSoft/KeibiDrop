@@ -255,9 +255,12 @@ MOBILE_GOTOOLCHAIN ?= go$(GO_MOD_VERSION)
 MOBILE_PREP = cp go.mod go.mod.bak && cp go.sum go.sum.bak && trap '[ -f go.mod.bak ] && mv -f go.mod.bak go.mod; [ -f go.sum.bak ] && mv -f go.sum.bak go.sum; :' EXIT INT TERM && GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go mod edit -tool=golang.org/x/mobile/cmd/gobind
 
 # Install gomobile + gobind (run once, or when 'gomobile version' says it's out of date).
+# x/mobile has no semver tags, so @latest drifts; pin the pseudo-version instead.
+MOBILE_PKG_VERSION := v0.0.0-20260803200217-62cee1672c8e
+
 mobile-tools:
-	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go install golang.org/x/mobile/cmd/gomobile@latest
-	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go install golang.org/x/mobile/cmd/gobind@latest
+	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go install golang.org/x/mobile/cmd/gomobile@$(MOBILE_PKG_VERSION)
+	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go install golang.org/x/mobile/cmd/gobind@$(MOBILE_PKG_VERSION)
 
 build-ios:
 	@$(MOBILE_PREP) && \
@@ -280,7 +283,9 @@ build-android:
 	ANDROID_HOME=$(ANDROID_HOME) ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) \
 	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) GOFLAGS="-mod=mod" \
 	PATH="$$PATH:$$(go env GOPATH)/bin" \
-	gomobile bind -target=android -androidapi 28 -o keibidrop.aar ./mobile
+	gomobile bind -target=android -androidapi 28 \
+	  -ldflags "-X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.Version=$(VERSION) -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.CommitHash=$(COMMIT) -extldflags '-Wl,-z,max-page-size=16384'" \
+	  -o keibidrop.aar ./mobile
 
 # Sync mobile app source + frameworks to the private KeibiDropMobile repo.
 # Edit in KeibiDrop/ios and KeibiDrop/android, run this, commit in KeibiDropMobile.
