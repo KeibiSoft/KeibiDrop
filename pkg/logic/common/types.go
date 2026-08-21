@@ -750,10 +750,21 @@ func (kd *KeibiDrop) Run() {
 				kd.running.Store(true)
 
 				// Snapshot KDSvc under kd.mu: startGRPCServer publishes it under
-				// the same lock on another goroutine.
+				// the same lock on another goroutine. filesystemReady does not
+				// order that publish (the client dial it gates on goes to the
+				// PEER's server), so a one-shot nil read here skipped the mount
+				// for the whole session. Wait for the publish, bounded; on
+				// timeout fall through to the no-FS park as before.
 				kd.mu.Lock()
 				svc := kd.KDSvc
 				kd.mu.Unlock()
+				svcDeadline := time.Now().Add(10 * time.Second)
+				for svc == nil && kd.ctx.Err() == nil && time.Now().Before(svcDeadline) {
+					time.Sleep(5 * time.Millisecond)
+					kd.mu.Lock()
+					svc = kd.KDSvc
+					kd.mu.Unlock()
+				}
 				if kd.FS != nil && svc != nil {
 					svc.SetFS(kd.FS)
 					// ADD_FILE notifies that raced this publish landed only in

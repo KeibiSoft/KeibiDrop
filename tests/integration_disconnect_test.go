@@ -412,6 +412,11 @@ func TestDisconnect_FUSE_StopAndReconnect(t *testing.T) {
 	tp := SetupFUSEPeerPair(t, 120*time.Second) // Alice=FUSE, Bob=no-FUSE
 	require := require.New(t)
 
+	// The announce lands in the FUSE tree either way; the stat below needs the
+	// kernel mount live. Gate on it like every other FUSE test (CI runners can
+	// take seconds to mount).
+	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
+
 	// Phase 1: verify initial connection.
 	content1 := []byte("fuse before disconnect")
 	path1 := filepath.Join(tp.BobSaveDir, "fuse_pre.txt")
@@ -458,7 +463,10 @@ func TestDisconnect_FUSE_StopAndReconnect(t *testing.T) {
 		)
 	})
 
-	// Phase 4: verify FUSE works again.
+	// Phase 4: verify FUSE works again. Same mount gate as phase 1: the
+	// reconnect remounts asynchronously in Run().
+	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
+
 	content2 := []byte("fuse after reconnect!")
 	path2 := filepath.Join(tp.BobSaveDir, "fuse_post.txt")
 	require.NoError(os.WriteFile(path2, content2, 0644))
