@@ -205,12 +205,6 @@ Built by [KeibiSoft SRL](https://keibisoft.com).
 
 [![Remote triage without a VPN: 20 GB mounted, 606 MB moved](https://keibidrop.com/media/dfir-remote-triage-video.jpg)](https://youtu.be/Y_4PZcqr4U4)
 
-A recorded run from start to finish. A Mac holds 2,683 files that come to 19.9 GB, a Windows laptop mounts that folder read only, and the link is relayed 410 km away so both machines are sharing the same 50 Mbps uplink. The video walks the tree, greps every log in it, pulls out the artifact set with robocopy, and hashes the same two registry hives on both sides.
-
-Over the whole session 606 MB crossed the link against the 19.9 GB sitting on the Mac, which works out at 34 times less data. That figure comes off the network card, so it includes the grep. The artifacts written to disk came to 382 MB, nothing on the evidence machine changed, and the access times stayed where they were.
-
-Do not read the clock in the video as a speed you would get. The extract took just over seven minutes because there were 2,174 separate files in it and every one waited for its own round trip, and that part has been rewritten since. The evidence tree was generated for the demo.
-
 Mount an evidence share read only across NAT and extract the artifact set you need, with no inbound port, native on Windows, and no kernel driver on the evidence machine. There is a [write-up](https://keibidrop.com/blog/triage-a-remote-machine-without-a-vpn.html) and a [DFIR page](https://keibidrop.com/for/dfir.html).
 
 ### Post-production handoff
