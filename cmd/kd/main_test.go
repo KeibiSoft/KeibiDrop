@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -220,4 +221,73 @@ func TestDispatch_Status(t *testing.T) {
 	require.True(t, hasFingerprint, "status missing fingerprint")
 	_, hasMode := data["connection_mode"]
 	require.True(t, hasMode, "status missing connection_mode")
+}
+
+// TestDispatch_DiscoverDisconnectConcurrent races "discover" against "disconnect" dispatches.
+// cmdDiscover sleeps for seconds between checking daemonDisc and calling methods on it; a
+// concurrent "disconnect" nils daemonDisc in that window. Pre-fix this is a plain unguarded
+// package global: -race reports a DATA RACE, and/or a goroutine hits the nil-deref and its
+// recover() surfaces the panic via t.Errorf instead of crashing the whole test binary.
+// "stop" shares disconnect's exact daemonDisc-nilling code, so it is not raced separately here.
+// Only one discoverer: cmdDiscover also unconditionally writes kd.IsLocalMode (a plain bool on
+// common.KeibiDrop, out of scope for this task), so two concurrent "discover" calls on the
+// same kd race on that unrelated field regardless of discMu.
+// One discoverer against several disconnectors still fully covers the daemonDisc racing pair.
+func TestDispatch_DiscoverDisconnectConcurrent(t *testing.T) {
+	kd := newTestKD(t)
+
+	const discoverers = 1
+	const disconnectors = 4
+
+	var start sync.WaitGroup
+	start.Add(1)
+	var discoverWG sync.WaitGroup
+	var disconnectWG sync.WaitGroup
+	stop := make(chan struct{})
+
+	for i := 0; i < discoverers; i++ {
+		discoverWG.Add(1)
+		go func() {
+			defer discoverWG.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("discover panicked: %v", r)
+				}
+			}()
+			start.Wait()
+			dispatchTest(kd, "discover")
+		}()
+	}
+
+	// Disconnect keeps racing for as long as any discover call is still in flight, so the
+	// multi-second sleep window inside cmdDiscover is covered without a guessed duration.
+	go func() {
+		discoverWG.Wait()
+		close(stop)
+	}()
+
+	for i := 0; i < disconnectors; i++ {
+		disconnectWG.Add(1)
+		go func() {
+			defer disconnectWG.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("disconnect panicked: %v", r)
+				}
+			}()
+			start.Wait()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					dispatchTest(kd, "disconnect")
+				}
+			}
+		}()
+	}
+
+	start.Done()
+	discoverWG.Wait()
+	disconnectWG.Wait()
 }

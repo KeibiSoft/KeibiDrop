@@ -300,7 +300,11 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	}
 
 	if bitmap != nil && bitmap.Total() > 0 {
-		dlCtx, dlCancel := context.WithCancel(kd.ctx)
+		// Snapshot kd.ctx under kd.mu: Run's reconnect branch swaps it under the same lock.
+		kd.mu.Lock()
+		ctx := kd.ctx
+		kd.mu.Unlock()
+		dlCtx, dlCancel := context.WithCancel(ctx)
 		defer dlCancel()
 		kd.registerDownload(remoteName, dlCancel)
 		kd.activeDownloadsMu.Lock()
@@ -409,7 +413,11 @@ func (kd *KeibiDrop) PullFileWithParams(remoteName, localPath string, blockSize,
 			nWorkers = totalChunks
 		}
 
-		dlCtx, dlCancel := context.WithCancel(kd.ctx)
+		// Snapshot kd.ctx under kd.mu: Run's reconnect branch swaps it under the same lock.
+		kd.mu.Lock()
+		ctx := kd.ctx
+		kd.mu.Unlock()
+		dlCtx, dlCancel := context.WithCancel(ctx)
 		defer dlCancel()
 		kd.registerDownload(remoteName, dlCancel)
 		defer kd.unregisterDownload(remoteName)
@@ -750,6 +758,10 @@ func (kd *KeibiDrop) JoinRoom() error {
 		const relayPhase1 = 15
 		const relayPhase2 = 45
 		relayMaxRetries := relayPhase1 + relayPhase2
+		// Snapshot kd.ctx under kd.mu: Run's reconnect branch swaps it under the same lock.
+		kd.mu.Lock()
+		ctx := kd.ctx
+		kd.mu.Unlock()
 		var relayErr error
 		for attempt := 0; attempt <= relayMaxRetries; attempt++ {
 			relayErr = kd.getRoomFromRelay(kd.session.ExpectedPeerFingerprint)
@@ -765,8 +777,8 @@ func (kd *KeibiDrop) JoinRoom() error {
 			if attempt < relayMaxRetries {
 				select {
 				case <-time.After(relayRetryDelay):
-				case <-kd.ctx.Done():
-					return kd.ctx.Err()
+				case <-ctx.Done():
+					return ctx.Err()
 				}
 			}
 		}
@@ -799,10 +811,27 @@ func (kd *KeibiDrop) JoinRoom() error {
 				kd.PeerIPv6IP = localAddr
 				lanConnected = true
 
+				// Snapshot under kd.mu: a prior bridge-fallback timeout or a concurrent
+				// Shutdown can leave the listener nil here. Accept on a nil interface panics.
+				kd.mu.Lock()
+				ln := kd.listener
+				kd.mu.Unlock()
+				if ln == nil {
+					logger.Warn("Listener not open for LAN inbound accept")
+					// Outbound handshake already succeeded; close it so we don't
+					// strand the conn and stale crypto state on this bail-out.
+					if c := kd.session.OutboundConn(); c != nil {
+						c.Close()
+						kd.session.SetOutboundConn(nil)
+					}
+					kd.session.ResetOutboundCrypto()
+					return ErrListenerNotOpen
+				}
+
 				// Accept inbound from peer (LAN, should be fast, 5s timeout).
-				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
-				inConn, err := kd.listener.Accept()
-				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
+				_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
+				inConn, err := ln.Accept()
+				_ = ln.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
 				if err != nil {
 					logger.Warn("LAN inbound accept failed", "error", err)
 					// Close outbound, fall through to direct/bridge.
@@ -857,13 +886,30 @@ func (kd *KeibiDrop) JoinRoom() error {
 			} else {
 				logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
 
-				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+				// Snapshot under kd.mu: a prior bridge-fallback timeout or a concurrent
+				// Shutdown can leave the listener nil here. Accept on a nil interface panics.
+				kd.mu.Lock()
+				ln := kd.listener
+				kd.mu.Unlock()
+				if ln == nil {
+					logger.Warn("Listener not open for direct P2P inbound accept")
+					// Outbound handshake already succeeded; close it so we don't
+					// strand the conn and stale crypto state on this bail-out.
+					if c := kd.session.OutboundConn(); c != nil {
+						c.Close()
+						kd.session.SetOutboundConn(nil)
+					}
+					kd.session.ResetOutboundCrypto()
+					return ErrListenerNotOpen
+				}
+
+				_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
 				// Same junk-connection tolerance as the create side: a relay
 				// probe or a scanner must not kill the return leg.
 				var inConn net.Conn
 				var acceptErr error
 				for {
-					inConn, acceptErr = kd.listener.Accept()
+					inConn, acceptErr = ln.Accept()
 					if acceptErr != nil {
 						break
 					}
@@ -879,7 +925,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 					_ = inConn.SetDeadline(time.Time{})
 					break
 				}
-				_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
+				_ = ln.(*net.TCPListener).SetDeadline(time.Time{})
 
 				if acceptErr != nil {
 					logger.Warn("Inbound accept failed", "error", acceptErr)
@@ -1031,7 +1077,16 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 	// In local mode, exchange public keys before the PQC handshake.
 	if kd.IsLocalMode {
-		keyConn, err := kd.listener.Accept()
+		// Snapshot under kd.mu: a prior bridge-fallback timeout or a concurrent Shutdown
+		// can leave the listener nil here. Accept on a nil interface panics.
+		kd.mu.Lock()
+		ln := kd.listener
+		kd.mu.Unlock()
+		if ln == nil {
+			logger.Warn("Listener not open for local key exchange")
+			return ErrListenerNotOpen
+		}
+		keyConn, err := ln.Accept()
 		if err != nil {
 			logger.Error("Failed to accept key exchange connection", "error", err)
 			return err

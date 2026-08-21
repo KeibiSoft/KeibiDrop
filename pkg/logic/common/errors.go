@@ -38,6 +38,7 @@ var (
 	ErrServerAtCapacity              = errors.New("relay server at capacity, please try again in 5 minutes")
 	ErrIdenticalFingerprints         = errors.New("own and peer fingerprints are identical")
 	ErrDownloadPaused                = errors.New("download paused")
+	ErrListenerNotOpen               = errors.New("can't accept a peer connection right now, please try again")
 )
 
 func RegisterErrorMapper(statusCode int, err error) error {

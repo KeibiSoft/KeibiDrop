@@ -42,6 +42,12 @@ var (
 	daemonDisc        *discovery.Service
 )
 
+// discMu guards localMyName, localPeerName, discoveredPeerMap, daemonDisc. Every kd command
+// runs dispatch in its own goroutine (see runDaemon's accept loop), so these package globals
+// are concurrently accessed. Hold discMu only around the variable touches themselves, never
+// across a sleep or a discovery.Service call that can block: see cmdDiscover.
+var discMu sync.Mutex
+
 // socketPath returns the Unix socket path for daemon<->client communication.
 func socketPath() string {
 	if s := os.Getenv("KD_SOCKET"); s != "" {
@@ -298,11 +304,13 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 				return errResponse(err.Error())
 			}
 			// Look up the peer name from discovery results for the role tiebreak.
+			discMu.Lock()
 			if name, ok := discoveredPeerMap[req.Args[0]]; ok {
 				localPeerName = name
 			} else if len(req.Args) >= 2 {
 				localPeerName = req.Args[1]
 			}
+			discMu.Unlock()
 			return okResponse(map[string]string{"registered_address": req.Args[0]})
 		}
 		err := kd.AddPeerFingerprint(req.Args[0])
@@ -329,13 +337,16 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		}
 		// Tiebreak on the advertised daemonDisc name, not a throwaway instance.
 		// A name the peer never saw lets both sides pick the same role and deadlock.
+		discMu.Lock()
+		disc := daemonDisc
+		discMu.Unlock()
 		myName := ""
-		if daemonDisc != nil {
-			myName = daemonDisc.Name()
-		} else {
-			disc := discovery.New(kd.InboundPort(), slog.Default())
+		if disc != nil {
 			myName = disc.Name()
-			disc.Stop()
+		} else {
+			tmp := discovery.New(kd.InboundPort(), slog.Default())
+			myName = tmp.Name()
+			tmp.Stop()
 		}
 		if common.DecideLocalRole(myName, peerName, peerAddr) {
 			return cmdCreateOrJoin(kd, "create")
@@ -429,9 +440,12 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		return cmdStatus(kd)
 
 	case "disconnect":
-		if daemonDisc != nil {
-			daemonDisc.Stop()
-			daemonDisc = nil
+		discMu.Lock()
+		disc := daemonDisc
+		daemonDisc = nil
+		discMu.Unlock()
+		if disc != nil {
+			disc.Stop()
 		}
 		kd.NotifyDisconnect()
 		_ = kd.UnmountFilesystem()
@@ -702,9 +716,12 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		return okResponse(map[string]string{"name": name, "path": f.RealPathOfFile})
 
 	case "stop", "quit":
-		if daemonDisc != nil {
-			daemonDisc.Stop()
-			daemonDisc = nil
+		discMu.Lock()
+		disc := daemonDisc
+		daemonDisc = nil
+		discMu.Unlock()
+		if disc != nil {
+			disc.Stop()
 		}
 		kd.NotifyDisconnect()
 		_ = kd.UnmountFilesystem()
@@ -797,9 +814,16 @@ func cmdDiscover(kd *common.KeibiDrop) Response {
 	kd.IsLocalMode = true
 
 	// Start discovery once and keep it running. Rustbridge and mobile do the same.
-	if daemonDisc == nil {
+	discMu.Lock()
+	firstRun := daemonDisc == nil
+	if firstRun {
 		daemonDisc = discovery.New(kd.InboundPort(), slog.Default())
 		_ = daemonDisc.Start()
+	}
+	disc := daemonDisc
+	discMu.Unlock()
+
+	if firstRun {
 		// The first call waits for beacons.
 		time.Sleep(6 * time.Second)
 	} else {
@@ -807,25 +831,30 @@ func cmdDiscover(kd *common.KeibiDrop) Response {
 		time.Sleep(2 * time.Second)
 	}
 
-	peers := daemonDisc.Peers()
+	peers := disc.Peers()
 	if len(peers) == 0 {
 		time.Sleep(4 * time.Second)
-		peers = daemonDisc.Peers()
+		peers = disc.Peers()
 	}
 
-	localMyName = daemonDisc.Name()
-	discoveredPeerMap = make(map[string]string, len(peers))
-
+	myName := disc.Name()
+	newMap := make(map[string]string, len(peers))
 	result := make([]map[string]string, 0, len(peers))
 	for _, p := range peers {
-		discoveredPeerMap[p.Addr] = p.Name
+		newMap[p.Addr] = p.Name
 		result = append(result, map[string]string{
 			"name": p.Name,
 			"addr": p.Addr,
 		})
 	}
+
+	discMu.Lock()
+	localMyName = myName
+	discoveredPeerMap = newMap
+	discMu.Unlock()
+
 	return okResponse(map[string]any{
-		"my_name": localMyName,
+		"my_name": myName,
 		"peers":   result,
 	})
 }
@@ -862,8 +891,11 @@ func cmdConnect(kd *common.KeibiDrop) Response {
 
 	// In local mode, use the name tiebreak. Mobile and the Rust UI use the same rule.
 	// The fingerprint tiebreak in Connect() does not work with TOFU.
-	if kd.IsLocalMode && localMyName != "" && localPeerName != "" {
-		if common.DecideLocalRole(localMyName, localPeerName, kd.PeerIPv6IP) {
+	discMu.Lock()
+	myName, peerName := localMyName, localPeerName
+	discMu.Unlock()
+	if kd.IsLocalMode && myName != "" && peerName != "" {
+		if common.DecideLocalRole(myName, peerName, kd.PeerIPv6IP) {
 			if err := kd.CreateRoom(); err != nil {
 				return errResponse(err.Error())
 			}
