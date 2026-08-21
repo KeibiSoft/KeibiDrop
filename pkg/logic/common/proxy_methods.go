@@ -162,6 +162,51 @@ func (r *implStreamFileReceiver) Recv() (data []byte, offset uint64, totalSize u
 	return resp.Data, resp.Offset, resp.TotalSize, nil
 }
 
+// mapBatchErr maps Unimplemented to the typed sentinel, so the filesystem layer
+// can disable warming for the session without importing gRPC.
+func mapBatchErr(err error) error {
+	if status.Code(err) == codes.Unimplemented {
+		return types.ErrBatchUnsupported
+	}
+	return err
+}
+
+// ReadBatch starts a batched small-file download via the server-streaming
+// ReadBatch RPC. It uses preferBulk routing so warming never queues ahead of
+// latency-sensitive on-demand reads. An older peer surfaces
+// ErrBatchUnsupported at the first Recv, not at open.
+func (sp *ImplFileStreamProvider) ReadBatch(ctx context.Context, paths []string, maxBytes uint64) (types.BatchFrameReceiver, error) {
+	stream, err := preferBulk(sp, func(c bindings.KeibiServiceClient) (bindings.KeibiService_ReadBatchClient, error) {
+		return c.ReadBatch(ctx, &bindings.ReadBatchRequest{Paths: paths, MaxBytes: maxBytes})
+	})
+	if err != nil {
+		return nil, mapBatchErr(err)
+	}
+	return &implBatchFrameReceiver{stream: stream}, nil
+}
+
+type implBatchFrameReceiver struct {
+	stream bindings.KeibiService_ReadBatchClient
+}
+
+func (r *implBatchFrameReceiver) Recv() (types.BatchFrame, error) {
+	resp, err := r.stream.Recv()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return types.BatchFrame{}, io.EOF
+		}
+		return types.BatchFrame{}, mapBatchErr(err)
+	}
+	return types.BatchFrame{
+		Path:      resp.Path,
+		Offset:    resp.Offset,
+		Data:      resp.Data,
+		TotalSize: resp.TotalSize,
+		FileDone:  resp.FileDone,
+		ErrCode:   resp.ErrCode,
+	}, nil
+}
+
 // GetChunkHashes requests per-chunk xxh3-64 fingerprints from the peer. An older
 // peer returns codes.Unimplemented. The caller decides the fallback.
 func (sp *ImplFileStreamProvider) GetChunkHashes(ctx context.Context, path string, chunkSize, fromChunk, count uint64) (types.ChunkHashReceiver, error) {
@@ -196,3 +241,6 @@ func (r *implChunkHashReceiver) Recv() (chunkIndex uint64, hash uint64, err erro
 
 // Compile-time assertion: ImplFileStreamProvider implements ChunkHasher.
 var _ types.ChunkHasher = (*ImplFileStreamProvider)(nil)
+
+// Compile-time assertion: ImplFileStreamProvider implements BatchReader.
+var _ types.BatchReader = (*ImplFileStreamProvider)(nil)

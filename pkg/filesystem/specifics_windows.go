@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// On Windows, `copy` works with 1 MiB file block size.
+// st_blksize hint for Windows tools. 2 << 18 = 512 KiB.
 const FilesystemBlockSize = 2 << 18
 
 func GetFreeDiskSpace(path string) (freeBytesAvail, totalNumberOfBytes, totalNumberFreeBytes uint64, err error) {

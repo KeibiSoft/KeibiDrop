@@ -110,6 +110,12 @@ type Session struct {
 	// the accessors below.
 	socketsMu sync.RWMutex
 
+	// Wire totals of conns this session already replaced or tore down. The
+	// setters roll a retiring conn's counters in here, so WireTotals survives
+	// reconnect conn churn.
+	wireBaseSent atomic.Uint64
+	wireBaseRecv atomic.Uint64
+
 	logger *slog.Logger
 }
 
@@ -250,13 +256,15 @@ func (s *Session) BothConns() (inbound, outbound *SecureConn) {
 }
 
 // SetInboundConn assigns the inbound conn under socketsMu (nil on teardown). Creates the
-// SessionSockets holder on first use.
+// SessionSockets holder on first use. A replaced conn's wire counters roll
+// into the session base first, so they are not lost with the pointer.
 func (s *Session) SetInboundConn(c *SecureConn) {
 	s.socketsMu.Lock()
 	defer s.socketsMu.Unlock()
 	if s.Session == nil {
 		s.Session = &SessionSockets{}
 	}
+	s.rollConnWireLocked(s.Session.Inbound, c)
 	s.Session.Inbound = c
 }
 
@@ -267,7 +275,35 @@ func (s *Session) SetOutboundConn(c *SecureConn) {
 	if s.Session == nil {
 		s.Session = &SessionSockets{}
 	}
+	s.rollConnWireLocked(s.Session.Outbound, c)
 	s.Session.Outbound = c
+}
+
+// rollConnWireLocked folds a retiring conn's byte counters into the session
+// base. Caller holds socketsMu.
+func (s *Session) rollConnWireLocked(old, replacement *SecureConn) {
+	if old == nil || old == replacement {
+		return
+	}
+	bs, br, _, _ := old.GetStats()
+	s.wireBaseSent.Add(bs)
+	s.wireBaseRecv.Add(br)
+}
+
+// WireTotals returns bytes moved over this session's TCP conns for the whole
+// session, replaced conns included. WireStats-style per-conn reads die with
+// the conn; this does not.
+func (s *Session) WireTotals() (bytesSent, bytesRecv uint64) {
+	bytesSent, bytesRecv = s.wireBaseSent.Load(), s.wireBaseRecv.Load()
+	for _, c := range []*SecureConn{s.InboundConn(), s.OutboundConn()} {
+		if c == nil {
+			continue
+		}
+		bs, br, _, _ := c.GetStats()
+		bytesSent += bs
+		bytesRecv += br
+	}
+	return bytesSent, bytesRecv
 }
 
 // NewSession initializes a new session with a timeout deadline.

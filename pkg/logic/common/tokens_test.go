@@ -356,16 +356,26 @@ func TestClaimBuyFlowAddsCode(t *testing.T) {
 	}
 	require.Equal(t, 1024, kd.Wallet().unitsLeft(), "code never added by the claim poll")
 
-	mu.Lock()
+	// TokensAdd lands before the emit; wait for the event separately.
+	// Snapshot under the lock: the failure message must not read the live slice.
 	found := false
-	for _, e := range events {
-		if strings.HasPrefix(e, "tokens_added:") {
-			found = true
-			break
+	var got []string
+	evDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(evDeadline) && !found {
+		mu.Lock()
+		got = append(got[:0], events...)
+		mu.Unlock()
+		for _, e := range got {
+			if strings.HasPrefix(e, "tokens_added:") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	mu.Unlock()
-	require.True(t, found, "no tokens_added event, got %v", events)
+	require.True(t, found, "no tokens_added event, got %v", got)
 }
 
 func TestExhaustEventHonesty(t *testing.T) {

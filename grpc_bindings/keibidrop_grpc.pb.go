@@ -34,6 +34,7 @@ const (
 	KeibiService_BatchNotify_FullMethodName    = "/keibidrop.KeibiService/BatchNotify"
 	KeibiService_StreamFile_FullMethodName     = "/keibidrop.KeibiService/StreamFile"
 	KeibiService_GetChunkHashes_FullMethodName = "/keibidrop.KeibiService/GetChunkHashes"
+	KeibiService_ReadBatch_FullMethodName      = "/keibidrop.KeibiService/ReadBatch"
 	KeibiService_Debug_FullMethodName          = "/keibidrop.KeibiService/Debug"
 	KeibiService_Rekey_FullMethodName          = "/keibidrop.KeibiService/Rekey"
 	KeibiService_Heartbeat_FullMethodName      = "/keibidrop.KeibiService/Heartbeat"
@@ -55,6 +56,10 @@ type KeibiServiceClient interface {
 	StreamFile(ctx context.Context, in *StreamFileRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamFileResponse], error)
 	// Per-chunk xxh3-64 fingerprints for partial re-fetch on edit.
 	GetChunkHashes(ctx context.Context, in *GetChunkHashesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GetChunkHashesResponse], error)
+	// Batched small-file read: the client sends an ordered path list, the
+	// server streams each file fully, in that order, within a byte budget.
+	// One request replaces a per-file round trip for each small file.
+	ReadBatch(ctx context.Context, in *ReadBatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadBatchResponse], error)
 	Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error)
 	// Re-keying for forward secrecy during long sessions.
 	Rekey(ctx context.Context, in *RekeyRequest, opts ...grpc.CallOption) (*RekeyResponse, error)
@@ -184,6 +189,25 @@ func (c *keibiServiceClient) GetChunkHashes(ctx context.Context, in *GetChunkHas
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type KeibiService_GetChunkHashesClient = grpc.ServerStreamingClient[GetChunkHashesResponse]
 
+func (c *keibiServiceClient) ReadBatch(ctx context.Context, in *ReadBatchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadBatchResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &KeibiService_ServiceDesc.Streams[4], KeibiService_ReadBatch_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReadBatchRequest, ReadBatchResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeibiService_ReadBatchClient = grpc.ServerStreamingClient[ReadBatchResponse]
+
 func (c *keibiServiceClient) Debug(ctx context.Context, in *DebugRequest, opts ...grpc.CallOption) (*DebugResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DebugResponse)
@@ -230,6 +254,10 @@ type KeibiServiceServer interface {
 	StreamFile(*StreamFileRequest, grpc.ServerStreamingServer[StreamFileResponse]) error
 	// Per-chunk xxh3-64 fingerprints for partial re-fetch on edit.
 	GetChunkHashes(*GetChunkHashesRequest, grpc.ServerStreamingServer[GetChunkHashesResponse]) error
+	// Batched small-file read: the client sends an ordered path list, the
+	// server streams each file fully, in that order, within a byte budget.
+	// One request replaces a per-file round trip for each small file.
+	ReadBatch(*ReadBatchRequest, grpc.ServerStreamingServer[ReadBatchResponse]) error
 	Debug(context.Context, *DebugRequest) (*DebugResponse, error)
 	// Re-keying for forward secrecy during long sessions.
 	Rekey(context.Context, *RekeyRequest) (*RekeyResponse, error)
@@ -271,6 +299,9 @@ func (UnimplementedKeibiServiceServer) StreamFile(*StreamFileRequest, grpc.Serve
 }
 func (UnimplementedKeibiServiceServer) GetChunkHashes(*GetChunkHashesRequest, grpc.ServerStreamingServer[GetChunkHashesResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method GetChunkHashes not implemented")
+}
+func (UnimplementedKeibiServiceServer) ReadBatch(*ReadBatchRequest, grpc.ServerStreamingServer[ReadBatchResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ReadBatch not implemented")
 }
 func (UnimplementedKeibiServiceServer) Debug(context.Context, *DebugRequest) (*DebugResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Debug not implemented")
@@ -428,6 +459,17 @@ func _KeibiService_GetChunkHashes_Handler(srv interface{}, stream grpc.ServerStr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type KeibiService_GetChunkHashesServer = grpc.ServerStreamingServer[GetChunkHashesResponse]
 
+func _KeibiService_ReadBatch_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ReadBatchRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(KeibiServiceServer).ReadBatch(m, &grpc.GenericServerStream[ReadBatchRequest, ReadBatchResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type KeibiService_ReadBatchServer = grpc.ServerStreamingServer[ReadBatchResponse]
+
 func _KeibiService_Debug_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DebugRequest)
 	if err := dec(in); err != nil {
@@ -542,6 +584,11 @@ var KeibiService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "GetChunkHashes",
 			Handler:       _KeibiService_GetChunkHashes_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ReadBatch",
+			Handler:       _KeibiService_ReadBatch_Handler,
 			ServerStreams: true,
 		},
 	},

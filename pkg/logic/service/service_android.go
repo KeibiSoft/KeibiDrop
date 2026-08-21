@@ -323,7 +323,8 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 
 	var fh *os.File
 	var openedPath string
-	buf := make([]byte, config.GRPCStreamBuffer)
+	// Allocated on the first request. A stream that never reads costs no buffer.
+	var buf []byte
 
 	for {
 		rec, err := stream.Recv()
@@ -372,6 +373,9 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			return status.Error(codes.InvalidArgument, "stream can only read a single file")
 		}
 
+		if buf == nil {
+			buf = make([]byte, config.GRPCStreamBuffer)
+		}
 		size := int(rec.Size)
 		offset := int64(rec.Offset)
 		if size > len(buf) {
@@ -404,6 +408,109 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 			return status.Error(codes.Internal, "failed to send data")
 		}
 	}
+}
+
+// readBatchMaxPaths bounds one ReadBatch request.
+const readBatchMaxPaths = 512
+
+// readBatchFrameSize is the payload cap per ReadBatch frame.
+const readBatchFrameSize = 512 * 1024
+
+// ReadBatch streams a set of files in requested order. Android serves from
+// the SyncTracker only. The budget is soft: the current file finishes, no
+// new file starts past it. A per-file failure sends an err_code frame and
+// the batch continues.
+func (kd *KeibidropServiceImpl) ReadBatch(req *bindings.ReadBatchRequest, stream bindings.KeibiService_ReadBatchServer) error {
+	logger := kd.Logger.With("method", "read-batch", "files", len(req.Paths))
+	if kd.SyncTracker == nil {
+		return ErrGRPCFailedPrecondition
+	}
+	if len(req.Paths) == 0 {
+		return nil
+	}
+	if len(req.Paths) > readBatchMaxPaths {
+		return status.Error(codes.InvalidArgument, "too many paths in one batch")
+	}
+	budget := req.MaxBytes
+	if budget == 0 || budget > config.GRPCStreamBuffer {
+		budget = config.GRPCStreamBuffer
+	}
+	buf := make([]byte, readBatchFrameSize)
+	var sent uint64
+	served := 0
+	for _, p := range req.Paths {
+		if sent >= budget {
+			break
+		}
+		lookupPath := strings.TrimPrefix(p, "/")
+		kd.SyncTracker.LocalFilesMu.RLock()
+		f, ok := kd.SyncTracker.LocalFiles[lookupPath]
+		if !ok {
+			f, ok = kd.SyncTracker.LocalFiles[p]
+		}
+		var realPath string
+		if ok {
+			realPath = f.RealPathOfFile
+		}
+		kd.SyncTracker.LocalFilesMu.RUnlock()
+		if realPath == "" {
+			if err := stream.Send(&bindings.ReadBatchResponse{Path: p, ErrCode: 1, FileDone: true}); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := kd.streamBatchFile(stream, p, realPath, buf, &sent); err != nil {
+			return err
+		}
+		served++
+	}
+	logger.Info("Batch served", "served", served, "bytes", sent)
+	return nil
+}
+
+// streamBatchFile sends one file as frames. A read failure sends an err_code
+// frame and returns nil so the batch continues; a Send failure returns the
+// error and kills the batch.
+func (kd *KeibidropServiceImpl) streamBatchFile(stream bindings.KeibiService_ReadBatchServer, path, realPath string, buf []byte, sent *uint64) error {
+	fh, err := kd.openServeRead(realPath)
+	if err != nil {
+		return stream.Send(&bindings.ReadBatchResponse{Path: path, ErrCode: 2, FileDone: true})
+	}
+	defer fh.Close()
+	finfo, err := fh.Stat()
+	if err != nil {
+		return stream.Send(&bindings.ReadBatchResponse{Path: path, ErrCode: 2, FileDone: true})
+	}
+	total := uint64(finfo.Size())
+	if total == 0 {
+		return stream.Send(&bindings.ReadBatchResponse{Path: path, FileDone: true})
+	}
+	var offset uint64
+	for offset < total {
+		want := min(total-offset, uint64(len(buf)))
+		n, rerr := fh.ReadAt(buf[:want], int64(offset))
+		if n > 0 {
+			end := offset + uint64(n)
+			if serr := stream.Send(&bindings.ReadBatchResponse{
+				Path:      path,
+				Offset:    offset,
+				Data:      buf[:n],
+				TotalSize: total,
+				FileDone:  end >= total,
+			}); serr != nil {
+				return serr
+			}
+			offset = end
+			*sent += uint64(n)
+		}
+		if rerr != nil {
+			if errors.Is(rerr, io.EOF) && offset >= total {
+				return nil
+			}
+			return stream.Send(&bindings.ReadBatchResponse{Path: path, ErrCode: 2, FileDone: true})
+		}
+	}
+	return nil
 }
 
 // StreamFile pushes an entire file's contents to the client in sequential
@@ -444,7 +551,8 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 	}
 	fileSize := uint64(finfo.Size())
 
-	buf := make([]byte, config.GRPCStreamBuffer)
+	// StreamFile sends at most BlockSize per frame; a larger buffer is waste.
+	buf := make([]byte, config.BlockSize)
 	chunkSize := uint64(config.BlockSize)
 	offset := req.StartOffset
 
