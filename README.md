@@ -25,7 +25,7 @@ Another computer's files show up as a folder on yours. Open and edit them in you
 - End-to-end encrypted (post-quantum). No cloud, and the relay never reads your files.
 - Same network: one click. Over the internet: swap a code once, then save the contact.
 - Their files become a real folder on your machine. Open, edit, `git clone`, anything.
-- macOS, Linux, Windows, Android. iOS coming soon. Open source (MPL-2.0).
+- macOS, Linux, Windows. iOS and Android coming soon. Open source (MPL-2.0).
 
 <p align="center">
   <img src="demo-photos/initial-screen.png" alt="KeibiDrop connection screen" width="700">
@@ -64,14 +64,6 @@ sudo apt install ./keibidrop.deb
 
 ```bash
 choco install keibidrop
-```
-
-### Android (F-Droid)
-
-Add our repo in the [F-Droid](https://f-droid.org/) app, then install KeibiDrop:
-
-```
-https://fdroid.keibisoft.com/fdroid/repo/
 ```
 
 Or download from [GitHub Releases](https://github.com/KeibiSoft/KeibiDrop/releases).
