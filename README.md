@@ -25,7 +25,7 @@ Another computer's files show up as a folder on yours. Open and edit them in you
 - End-to-end encrypted (post-quantum). No cloud, and the relay never reads your files.
 - Same network: one click. Over the internet: swap a code once, then save the contact.
 - Their files become a real folder on your machine. Open, edit, `git clone`, anything.
-- macOS, Linux, Windows. iOS and Android coming soon. Open source (MPL-2.0).
+- macOS, Linux, Windows, Android. iOS coming soon. Open source engine (MPL-2.0).
 
 <p align="center">
   <img src="demo-photos/initial-screen.png" alt="KeibiDrop connection screen" width="700">
@@ -67,6 +67,12 @@ choco install keibidrop
 ```
 
 Or download from [GitHub Releases](https://github.com/KeibiSoft/KeibiDrop/releases).
+
+### Android
+
+We host our own F-Droid repository. Open [fdroid.keibisoft.com](https://fdroid.keibisoft.com) on your phone, scan the code, and check the fingerprint before you add it.
+
+To add it by hand, use `https://fdroid.keibisoft.com/fdroid/repo` in F-Droid under Settings, Repositories. The fingerprint to check is on the same page.
 
 ### Build from source
 
@@ -191,7 +197,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 Go engine, CLI, and mobile bindings: [Mozilla Public License 2.0](./LICENSE) (per-file copyleft)
 
-Rust UI and brand assets: Proprietary - see [DUAL-LICENSE.md](./DUAL-LICENSE.md)
+Rust UI, mobile apps, and brand assets: Proprietary - see [DUAL-LICENSE.md](./DUAL-LICENSE.md)
 
 Desktop UI built with [Slint](https://slint.dev)
 
