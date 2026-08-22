@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Version    = "0.3.1"
+	Version    = "0.4.2"
 	CommitHash = "dev" // Build ldflags overwrite this value.
 )
 

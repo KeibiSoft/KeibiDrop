@@ -913,6 +913,72 @@ func KD_SetAutoConnectPeer(peer *C.char) C.int {
 	return 0
 }
 
+// KD_SetNoFUSE persists the FUSE-off preference. No live mirror:
+// KD_SetFUSEMode owns the running mode.
+//
+//export KD_SetNoFUSE
+func KD_SetNoFUSE(v C.int) C.int {
+	cfg, _ := config.Load()
+	cfg.NoFUSE = v != 0
+	if err := config.Save(cfg); err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
+}
+
+// KD_SetShareReadOnly persists share_read_only and applies it to the
+// running instance. The gRPC service snapshots it per connect.
+//
+//export KD_SetShareReadOnly
+func KD_SetShareReadOnly(v C.int) C.int {
+	cfg, _ := config.Load()
+	cfg.ShareReadOnly = v != 0
+	if err := config.Save(cfg); err != nil {
+		setLastError(err)
+		return -1
+	}
+	if kd != nil {
+		kd.ShareReadOnly = cfg.ShareReadOnly
+	}
+	return 0
+}
+
+// KD_SetMountReadOnly persists mount_read_only and applies it to the
+// running instance. The FUSE root reads it at the next mount.
+//
+//export KD_SetMountReadOnly
+func KD_SetMountReadOnly(v C.int) C.int {
+	cfg, _ := config.Load()
+	cfg.MountReadOnly = v != 0
+	if err := config.Save(cfg); err != nil {
+		setLastError(err)
+		return -1
+	}
+	if kd != nil {
+		kd.MountReadOnly = cfg.MountReadOnly
+	}
+	return 0
+}
+
+// KD_SetPreserveMetadata persists preserve_metadata and applies it to
+// the running instance. Files that finish saving after the change use
+// the new value.
+//
+//export KD_SetPreserveMetadata
+func KD_SetPreserveMetadata(v C.int) C.int {
+	cfg, _ := config.Load()
+	cfg.PreserveMetadata = v != 0
+	if err := config.Save(cfg); err != nil {
+		setLastError(err)
+		return -1
+	}
+	if kd != nil {
+		kd.PreserveMetadata = cfg.PreserveMetadata
+	}
+	return 0
+}
+
 //export KD_SanitizeLogs
 func KD_SanitizeLogs(destPath *C.char) C.int {
 	cfg, _ := config.Load()

@@ -11,6 +11,7 @@ export struct ContactInfo {
     name: string,
     fingerprint: string,
     online: bool,
+    auto_connect: bool,
 }
 
 // File info model for dynamic file list
@@ -83,12 +84,12 @@ component InputArea inherits Rectangle {
         y: 0px;
         width: 142px;
         height: parent.height;
-        background: btn-touch.pressed ? #777777 : btn-touch.has-hover ? #999999 : #888888;
+        background: btn-touch.pressed ? #2563eb : btn-touch.has-hover ? #60a5fa : #3b82f6;
         animate background { duration: 150ms; }
 
         Text {
             text: root.buttonText;
-            color: black;
+            color: white;
             font-size: 14px;
             font-weight: 600;
             horizontal-alignment: center;
@@ -814,10 +815,26 @@ export component MainWindow inherits Window {
     callback connect_to_contact(int);
     callback save_peer_as_contact(string);
     callback remove_contact(int);
+    callback toggle_auto_connect(int);
+
+    // Post-first-save FUSE offer
+    in-out property<bool> fuse_offer_visible: false;
+    in property<string> fuse_offer_body: "";
+    in property<string> fuse_offer_action: "";
+    callback fuse_offer_accepted();
+    callback fuse_offer_declined();
 
     // Identity hardening (passphrase protect)
     in property<bool> passphrase_protect_enabled: false;
     callback passphrase_protect_toggled(bool);
+
+    // Sharing toggles, persisted to config
+    in-out property<bool> cfg_share_read_only: false;
+    in-out property<bool> cfg_mount_read_only: false;
+    in-out property<bool> cfg_preserve_metadata: false;
+    callback share_read_only_toggled(bool);
+    callback mount_read_only_toggled(bool);
+    callback preserve_metadata_toggled(bool);
 
     in-out property<bool> help_visible: false;
     in-out property<bool> settings_visible: false;
@@ -937,7 +954,7 @@ export component MainWindow inherits Window {
                 ? (root.local_address != "" ? root.local_address : "No link-local address")
                 : (root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY");
             readOnly: true;
-            buttonText: "Copy";
+            buttonText: "Copy my code";
             helperText: root.local_mode ? "" : "Send this code to your peer via Telegram, Signal, Email or Carrier Pigeon.";
             process_code => { root.copy_my_code() }
             sectionNumber: 2;
@@ -984,7 +1001,7 @@ export component MainWindow inherits Window {
         // FUSE toggle
         Rectangle {
             x: 868px;
-            y: 525px;
+            y: 573px;
             width: 260px;
             height: root.fuse_available ? 24px : 40px;
             visible: root.room_action == 0;
@@ -1031,10 +1048,10 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Local mode toggle
+        // Local mode toggle (first: the LAN path needs no code at all)
         Rectangle {
             x: 868px;
-            y: 557px;  // 525+32 = same 32px gap as original
+            y: 525px;
             width: 260px;
             height: 24px;
             visible: root.room_action == 0;
@@ -1067,8 +1084,8 @@ export component MainWindow inherits Window {
                 x: 44px;
                 y: 28px;
                 width: 210px;
-                text: "Same WiFi? Toggle to find your peer automatically.";
-                color: #444;
+                text: "Same network? Turn this on to find your peer. No code is needed.";
+                color: #888;
                 font-size: 10px;
                 wrap: word-wrap;
             }
@@ -1131,10 +1148,10 @@ export component MainWindow inherits Window {
             font-size: 12px;
         }
 
-        // Incognito toggle (below local mode toggle)
+        // Incognito toggle (below the FUSE toggle)
         Rectangle {
             x: 868px;
-            y: 605px;
+            y: 613px;
             width: 260px;
             height: 24px;
             visible: root.room_action == 0 && !root.local_mode;
@@ -1230,6 +1247,27 @@ export component MainWindow inherits Window {
                         font-family: "monospace";
                         vertical-alignment: center;
                         overflow: elide;
+                    }
+
+                    // Auto link (connect to this contact at startup)
+                    Rectangle {
+                        x: parent.width - 160px;
+                        y: 0;
+                        width: 50px;
+                        height: parent.height;
+                        Text {
+                            text: "Auto";
+                            color: contact.auto_connect
+                                ? #3b82f6
+                                : (auto-touch.has-hover ? #999 : #666);
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        auto-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.toggle_auto_connect(idx); }
+                        }
                     }
 
                     // Connect link
@@ -1860,9 +1898,9 @@ export component MainWindow inherits Window {
     // Settings panel overlay
     if root.settings_visible: Rectangle {
         x: (parent.width - 500px) / 2;
-        y: (parent.height - 610px) / 2;
+        y: (parent.height - 700px) / 2;
         width: 500px;
-        height: 610px;
+        height: 700px;
         border-radius: 10px;
         background: #2a2a2a;
         border-width: 1px;
@@ -1936,16 +1974,121 @@ export component MainWindow inherits Window {
             }
         }
 
+        // Share read only
+        Rectangle {
+            x: 20px;
+            y: 372px;
+            width: parent.width - 40px;
+            height: 44px;
+
+            ToggleSwitch {
+                x: 0;
+                y: 2px;
+                checked <=> root.cfg_share_read_only;
+                toggled(val) => { root.share_read_only_toggled(val); }
+            }
+
+            Text {
+                x: 44px;
+                y: 0;
+                height: 20px;
+                text: "Share is read only";
+                color: #ccc;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: 44px;
+                y: 20px;
+                width: parent.width - 60px;
+                text: "Peers can read your files. Changes and new files from peers are refused. Takes effect at the next connection.";
+                color: #777;
+                font-size: 10px;
+                wrap: word-wrap;
+            }
+        }
+
+        // Mount read only
+        Rectangle {
+            x: 20px;
+            y: 424px;
+            width: parent.width - 40px;
+            height: 44px;
+
+            ToggleSwitch {
+                x: 0;
+                y: 2px;
+                checked <=> root.cfg_mount_read_only;
+                toggled(val) => { root.mount_read_only_toggled(val); }
+            }
+
+            Text {
+                x: 44px;
+                y: 0;
+                height: 20px;
+                text: "Virtual folder is read only";
+                color: #ccc;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: 44px;
+                y: 20px;
+                width: parent.width - 60px;
+                text: "Programs on this computer cannot write in the virtual folder. Takes effect at the next connection.";
+                color: #777;
+                font-size: 10px;
+                wrap: word-wrap;
+            }
+        }
+
+        // Preserve metadata
+        Rectangle {
+            x: 20px;
+            y: 476px;
+            width: parent.width - 40px;
+            height: 44px;
+
+            ToggleSwitch {
+                x: 0;
+                y: 2px;
+                checked <=> root.cfg_preserve_metadata;
+                toggled(val) => { root.preserve_metadata_toggled(val); }
+            }
+
+            Text {
+                x: 44px;
+                y: 0;
+                height: 20px;
+                text: "Keep original timestamps";
+                color: #ccc;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+
+            Text {
+                x: 44px;
+                y: 20px;
+                width: parent.width - 60px;
+                text: "Received files keep the sender's file times and permissions. Applies to files that finish saving after you turn this on.";
+                color: #777;
+                font-size: 10px;
+                wrap: word-wrap;
+            }
+        }
+
         // Relay credit (prepaid priority tokens)
-        Text { x: 20px; y: 372px; text: "Relay credit"; color: #888; font-size: 12px; }
+        Text { x: 20px; y: 528px; text: "Relay credit"; color: #888; font-size: 12px; }
         Text {
-            x: 20px; y: 388px;
+            x: 20px; y: 544px;
             text: root.tokens_status_text;
             color: #ccc; font-size: 13px; overflow: elide; width: 460px;
         }
         tokens-input := InputArea {
             x: 20px;
-            y: 412px;
+            y: 568px;
             inText: "";
             buttonText: "Add";
             process_code => {
@@ -1954,13 +2097,13 @@ export component MainWindow inherits Window {
             }
         }
         Text {
-            x: 20px; y: 452px;
+            x: 20px; y: 608px;
             text: root.tokens_add_result;
             color: #aca; font-size: 12px; overflow: elide; width: 460px;
         }
         Rectangle {
             x: 20px;
-            y: 476px;
+            y: 632px;
             width: parent.width - 40px;
             height: 26px;
             SmallOutlineButton {
@@ -1985,7 +2128,7 @@ export component MainWindow inherits Window {
         Text {
             x: 20px;
             y: parent.height - 32px;
-            text: "Edit ~/.config/keibidrop/config.toml to change settings. Restart to apply.";
+            text: "Other settings: edit config.toml and restart to apply.";
             color: #555;
             font-size: 11px;
         }
@@ -2121,6 +2264,61 @@ export component MainWindow inherits Window {
                     root.save_contact_name = "";
                 }
             }
+        }
+    }
+
+    // FUSE offer overlay (after the first received file)
+    if root.fuse_offer_visible: Rectangle {
+        x: (parent.width - 380px) / 2;
+        y: (parent.height - 190px) / 2;
+        width: 380px;
+        height: 190px;
+        border-radius: 10px;
+        background: #2a2a2a;
+        border-width: 1px;
+        border-color: rgba(255,255,255,0.12);
+
+        SmallOutlineButton {
+            x: parent.width - 36px;
+            y: 8px;
+            width: 24px;
+            text: "X";
+            clicked => { root.fuse_offer_declined(); }
+        }
+
+        Text {
+            x: 20px;
+            y: 16px;
+            text: "Files as a folder";
+            color: white;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        Text {
+            x: 20px;
+            y: 50px;
+            width: parent.width - 40px;
+            text: root.fuse_offer_body;
+            color: #ccc;
+            font-size: 13px;
+            wrap: word-wrap;
+        }
+
+        PillButton {
+            x: 20px;
+            y: 138px;
+            width: 200px;
+            text: root.fuse_offer_action;
+            clicked => { root.fuse_offer_accepted(); }
+        }
+
+        SmallOutlineButton {
+            x: 240px;
+            y: 143px;
+            width: 90px;
+            text: "Not now";
+            clicked => { root.fuse_offer_declined(); }
         }
     }
 

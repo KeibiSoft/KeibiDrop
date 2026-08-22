@@ -420,7 +420,26 @@ fn get_last_error() -> String {
     }
 }
 
+// The persisted connect-at-startup target: a contact name or a full
+// fingerprint, empty when off.
+unsafe fn config_auto_connect_peer() -> String {
+    let ptr = bindings::KD_GetConfig();
+    if ptr.is_null() {
+        return String::new();
+    }
+    let blob = CStr::from_ptr(ptr).to_string_lossy().to_string();
+    for line in blob.lines() {
+        if let Some((key, val)) = line.split_once('=') {
+            if key.trim() == "auto_connect_peer" {
+                return val.trim().to_string();
+            }
+        }
+    }
+    String::new()
+}
+
 unsafe fn load_contacts_model() -> std::rc::Rc<slint::VecModel<ContactInfo>> {
+    let auto_peer = config_auto_connect_peer();
     let count = bindings::KD_GetContactCount();
     let mut contacts = Vec::new();
     for i in 0..count {
@@ -429,11 +448,15 @@ unsafe fn load_contacts_model() -> std::rc::Rc<slint::VecModel<ContactInfo>> {
         let name = if name_ptr.is_null() { String::new() } else { CStr::from_ptr(name_ptr).to_string_lossy().to_string() };
         let fp = if fp_ptr.is_null() { String::new() } else { CStr::from_ptr(fp_ptr).to_string_lossy().to_string() };
         if !name.is_empty() {
+            // Match the FULL fingerprint or the name, like ResolveContact.
+            let auto = !auto_peer.is_empty()
+                && (auto_peer == fp || auto_peer.eq_ignore_ascii_case(&name));
             let truncated_fp = if fp.len() > 16 { format!("{}...", &fp[..16]) } else { fp.clone() };
             contacts.push(ContactInfo {
                 name: slint::SharedString::from(name),
                 fingerprint: slint::SharedString::from(truncated_fp),
                 online: false,
+                auto_connect: auto,
             });
         }
     }
@@ -718,13 +741,30 @@ fn connect_room_auto(
     });
 }
 
+// Queue the one-time FUSE offer after a first successful save.
+fn maybe_offer_fuse(weak: &slint::Weak<MainWindow>, pending: &Arc<AtomicBool>) {
+    if !pending.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let weak = weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = weak.upgrade() {
+            if app.get_current_screen() == 1 && !app.get_fuse_mode() {
+                app.set_fuse_offer_visible(true);
+            }
+        }
+    });
+}
+
 fn main() {
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
 
-    let mut ctx = ClipboardContext::new().unwrap();
+    // None when no clipboard is available (headless, some Wayland setups);
+    // the copy button then shows an error toast instead of panicking.
+    let mut ctx = ClipboardContext::new().ok();
 
     let _log_file = env::var("LOG_FILE").unwrap_or_default();
     let mut to_save = env::var("TO_SAVE_PATH").unwrap_or_default();
@@ -748,11 +788,61 @@ fn main() {
     // ON by default if FUSE is present, OFF if NO_FUSE env is set.
     let no_fuse_env = env::var("NO_FUSE").map(|v| !v.is_empty()).unwrap_or(false);
     let fuse_present = is_fuse_present();
-    let use_fuse = fuse_present && !no_fuse_env;
+    // First run = no config file and no persisted identity. Start in
+    // direct transfer, which needs no driver, and persist that choice.
+    // Once a config file exists its no_fuse is honored, same as kd/cli.
+    let (first_run, cfg_no_fuse, cfg_dir) = unsafe {
+        let cfg_path = {
+            let ptr = bindings::KD_GetConfigPath();
+            if ptr.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(ptr).to_string_lossy().to_string()
+            }
+        };
+        let config_exists = !cfg_path.is_empty() && std::path::Path::new(&cfg_path).exists();
+        let cfg_dir = std::path::Path::new(&cfg_path)
+            .parent()
+            .map(|d| d.to_path_buf());
+        let identity_exists = cfg_dir
+            .as_ref()
+            .map(|d| d.join("identity.enc").exists())
+            .unwrap_or(false);
+        let mut cfg_no_fuse = false;
+        if config_exists {
+            let ptr = bindings::KD_GetConfig();
+            if !ptr.is_null() {
+                let blob = CStr::from_ptr(ptr).to_string_lossy().to_string();
+                for line in blob.lines() {
+                    if let Some((key, val)) = line.split_once('=') {
+                        if key.trim() == "no_fuse" {
+                            cfg_no_fuse = val.trim() == "true";
+                        }
+                    }
+                }
+            }
+        }
+        (!config_exists && !identity_exists, cfg_no_fuse, cfg_dir)
+    };
+    let use_fuse = if first_run {
+        unsafe {
+            bindings::KD_SetNoFUSE(1);
+        }
+        false
+    } else {
+        fuse_present && !no_fuse_env && !cfg_no_fuse
+    };
     println!(
-        "FUSE present: {}, NO_FUSE env: {}, using FUSE: {}",
-        fuse_present, no_fuse_env, use_fuse
+        "FUSE present: {}, NO_FUSE env: {}, config no_fuse: {}, first run: {}, using FUSE: {}",
+        fuse_present, no_fuse_env, cfg_no_fuse, first_run, use_fuse
     );
+
+    // The FUSE offer shows once ever: after the first successful save,
+    // never again once the marker file exists.
+    let fuse_offer_marker = cfg_dir.map(|d| d.join(".fuse_offer_done"));
+    let fuse_offer_pending = Arc::new(AtomicBool::new(
+        fuse_offer_marker.as_ref().map(|m| !m.exists()).unwrap_or(false),
+    ));
 
     // Local mode: direct LAN connection, skip relay
     let local_mode_env = env::var("KEIBIDROP_LOCAL")
@@ -846,6 +936,9 @@ fn main() {
                         "save_path" => app.set_cfg_save_path(slint::SharedString::from(val.trim())),
                         "mount_path" => app.set_cfg_mount_path(slint::SharedString::from(val.trim())),
                         "log_file" => app.set_cfg_log_file(slint::SharedString::from(val.trim())),
+                        "share_read_only" => app.set_cfg_share_read_only(val.trim() == "true"),
+                        "mount_read_only" => app.set_cfg_mount_read_only(val.trim() == "true"),
+                        "preserve_metadata" => app.set_cfg_preserve_metadata(val.trim() == "true"),
                         _ => {}
                     }
                 }
@@ -886,6 +979,8 @@ fn main() {
         app.on_fuse_mode_toggled(move |enabled| {
             println!("FUSE mode toggled: {}", enabled);
             bindings::KD_SetFUSEMode(if enabled { 1 } else { 0 });
+            // Persist, so kd/cli and the next launch agree with the toggle.
+            bindings::KD_SetNoFUSE(if enabled { 0 } else { 1 });
         });
 
         // Local mode toggle
@@ -1037,9 +1132,13 @@ fn main() {
             } else {
                 my_fp.clone()
             };
-            ctx.set_contents(text)
-                .expect("My operating system hates me");
-            show_toast(&weak_toast_copy, "Copied to clipboard");
+            match ctx.as_mut().map(|c| c.set_contents(text)) {
+                Some(Ok(())) => show_toast(&weak_toast_copy, "Copied to clipboard"),
+                _ => show_toast(
+                    &weak_toast_copy,
+                    "Could not copy. Select the code and copy it manually.",
+                ),
+            }
         });
 
         // Create/Join Room setup
@@ -1314,10 +1413,14 @@ fn main() {
         // Handle Save File: download file by name to save path
         let downloads_save = downloads.clone();
         let save_path_save = to_save.clone();
+        let weak_save_offer = app.as_weak();
+        let offer_save = fuse_offer_pending.clone();
         app.on_save_file(move |filename| {
             let name = filename.to_string();
             let downloads = downloads_save.clone();
             let save_path = save_path_save.clone();
+            let weak_offer = weak_save_offer.clone();
+            let offer = offer_save.clone();
 
             let local_path = format!("{}/{}", save_path, name);
             // Create parent directories (handles nested paths like screenshots/foo.png)
@@ -1357,6 +1460,7 @@ fn main() {
                     info.downloading = false;
                     if res == 0 {
                         info.saved = true;
+                        maybe_offer_fuse(&weak_offer, &offer);
                     } else {
                         let err = get_last_error();
                         eprintln!("Download failed for {}: {}", name, err);
@@ -1368,6 +1472,8 @@ fn main() {
         // Handle Pause/Resume: cancel active download or re-trigger save
         let downloads_pause = downloads.clone();
         let save_path_pause = to_save.clone();
+        let weak_pause_offer = app.as_weak();
+        let offer_pause = fuse_offer_pending.clone();
         app.on_pause_file(move |filename| {
             let name = filename.to_string();
             let mut dl = downloads_pause.lock().unwrap();
@@ -1386,6 +1492,8 @@ fn main() {
                     let local_path = format!("{}/{}", save_path_pause, name);
                     let dl_clone = downloads_pause.clone();
                     let name_clone = name.clone();
+                    let weak_offer = weak_pause_offer.clone();
+                    let offer = offer_pause.clone();
                     std::thread::spawn(move || {
                         let c_name = CString::new(name_clone.clone()).unwrap();
                         let c_path = CString::new(local_path).unwrap();
@@ -1399,7 +1507,7 @@ fn main() {
                             info.paused = false;
                             if res == 0 {
                                 info.saved = true;
-                                
+                                maybe_offer_fuse(&weak_offer, &offer);
                             } else {
                                 let err = get_last_error();
                                 eprintln!("Download failed for {}: {}", name_clone, err);
@@ -1450,6 +1558,8 @@ fn main() {
         let downloads_all = downloads.clone();
         let save_path_all = to_save.clone();
         let weak_toast_all = app.as_weak();
+        let weak_offer_all = app.as_weak();
+        let offer_all = fuse_offer_pending.clone();
         app.on_save_all_pressed(move || {
             let file_count = bindings::KD_GetFileCount();
             let mut to_save_names: Vec<String> = Vec::new();
@@ -1498,6 +1608,8 @@ fn main() {
                 }
                 let dl_clone = downloads.clone();
                 let n = name.clone();
+                let weak_offer = weak_offer_all.clone();
+                let offer = offer_all.clone();
                 std::thread::spawn(move || {
                     let c_n = CString::new(n.clone()).unwrap();
                     let c_p = CString::new(local_path.clone()).unwrap();
@@ -1507,7 +1619,7 @@ fn main() {
                         info.downloading = false;
                         if res == 0 {
                             info.saved = true;
-                            
+                            maybe_offer_fuse(&weak_offer, &offer);
                         } else {
                             let err = get_last_error();
                             eprintln!("Download failed for {}: {}", n, err);
@@ -1571,6 +1683,109 @@ fn main() {
             let _ = bindings::KD_SetPassphraseProtect(if enabled { 1 } else { 0 });
             if let Some(app) = weak_passphrase.upgrade() {
                 app.set_passphrase_protect_enabled(enabled);
+            }
+        });
+
+        // ---- Sharing toggles (persisted to config) ----
+
+        let weak_sro = app.as_weak();
+        app.on_share_read_only_toggled(move |val| {
+            if bindings::KD_SetShareReadOnly(if val { 1 } else { 0 }) != 0 {
+                if let Some(app) = weak_sro.upgrade() {
+                    app.set_cfg_share_read_only(!val);
+                }
+                show_toast(&weak_sro, "Could not save the setting.");
+            }
+        });
+
+        let weak_mro = app.as_weak();
+        app.on_mount_read_only_toggled(move |val| {
+            if bindings::KD_SetMountReadOnly(if val { 1 } else { 0 }) != 0 {
+                if let Some(app) = weak_mro.upgrade() {
+                    app.set_cfg_mount_read_only(!val);
+                }
+                show_toast(&weak_mro, "Could not save the setting.");
+            }
+        });
+
+        let weak_pm = app.as_weak();
+        app.on_preserve_metadata_toggled(move |val| {
+            if bindings::KD_SetPreserveMetadata(if val { 1 } else { 0 }) != 0 {
+                if let Some(app) = weak_pm.upgrade() {
+                    app.set_cfg_preserve_metadata(!val);
+                }
+                show_toast(&weak_pm, "Could not save the setting.");
+            }
+        });
+
+        // ---- FUSE offer after the first received file ----
+
+        {
+            let body_tail = if fuse_present {
+                "Turn on the virtual folder."
+            } else if cfg!(target_os = "macos") {
+                "Install macFUSE."
+            } else if cfg!(target_os = "windows") {
+                "Install WinFsp."
+            } else {
+                "Install fuse3."
+            };
+            app.set_fuse_offer_body(
+                format!(
+                    "Want their files as a folder you can open in any app? {}",
+                    body_tail
+                )
+                .into(),
+            );
+            let action = if fuse_present {
+                "Turn on"
+            } else if cfg!(target_os = "macos") {
+                "Get macFUSE"
+            } else if cfg!(target_os = "windows") {
+                "Get WinFsp"
+            } else {
+                "Get fuse3"
+            };
+            app.set_fuse_offer_action(action.into());
+        }
+
+        let write_offer_marker = {
+            let marker = fuse_offer_marker.clone();
+            move || {
+                if let Some(m) = &marker {
+                    let _ = std::fs::write(m, b"done\n");
+                }
+            }
+        };
+
+        let weak_offer_ok = app.as_weak();
+        let marker_ok = write_offer_marker.clone();
+        app.on_fuse_offer_accepted(move || {
+            marker_ok();
+            if let Some(app) = weak_offer_ok.upgrade() {
+                app.set_fuse_offer_visible(false);
+                if app.get_fuse_available() {
+                    app.set_fuse_mode(true);
+                    bindings::KD_SetFUSEMode(1);
+                    bindings::KD_SetNoFUSE(0);
+                    show_toast(
+                        &weak_offer_ok,
+                        "The virtual folder starts at the next connection.",
+                    );
+                } else {
+                    // Next launch mounts once the driver is installed.
+                    bindings::KD_SetNoFUSE(0);
+                    app.invoke_open_fuse_install();
+                }
+            }
+        });
+
+        let weak_offer_no = app.as_weak();
+        let marker_no = write_offer_marker;
+        app.on_fuse_offer_declined(move || {
+            marker_no();
+            if let Some(app) = weak_offer_no.upgrade() {
+                app.set_fuse_offer_visible(false);
             }
         });
 
@@ -1654,6 +1869,46 @@ fn main() {
             bindings::KD_RemoveContact(c_fp.as_ptr() as *mut i8);
             if let Some(app) = weak_remove_contact.upgrade() {
                 app.set_contacts(slint::ModelRc::from(load_contacts_model()));
+            }
+        });
+
+        // Connect-on-startup: one contact at most, persisted as
+        // auto_connect_peer. The watchdog arms on the next app start.
+        let weak_auto = app.as_weak();
+        app.on_toggle_auto_connect(move |idx| {
+            let fp_ptr = bindings::KD_GetContactFingerprint(idx);
+            if fp_ptr.is_null() {
+                return;
+            }
+            let fp = CStr::from_ptr(fp_ptr).to_string_lossy().to_string();
+            if fp.is_empty() {
+                return;
+            }
+            let name_ptr = bindings::KD_GetContactName(idx);
+            let name = if name_ptr.is_null() {
+                String::new()
+            } else {
+                CStr::from_ptr(name_ptr).to_string_lossy().to_string()
+            };
+            let current = config_auto_connect_peer();
+            let clearing = current == fp
+                || (!name.is_empty() && current.eq_ignore_ascii_case(&name));
+            let target = if clearing { String::new() } else { fp.clone() };
+            let c_target = CString::new(target).unwrap();
+            if bindings::KD_SetAutoConnectPeer(c_target.as_ptr() as *mut i8) != 0 {
+                show_toast(&weak_auto, "Could not save the setting.");
+                return;
+            }
+            if let Some(app) = weak_auto.upgrade() {
+                app.set_contacts(slint::ModelRc::from(load_contacts_model()));
+            }
+            if clearing {
+                show_toast(&weak_auto, "Auto connect is off.");
+            } else {
+                show_toast(
+                    &weak_auto,
+                    &format!("Connects to '{}' when the app starts.", name),
+                );
             }
         });
 
@@ -1923,6 +2178,7 @@ fn main() {
                         if count == 0 {
                             return;
                         }
+                        let auto_peer = config_auto_connect_peer();
                         let mut contacts = Vec::new();
                         for i in 0..count {
                             let name_ptr = bindings::KD_GetContactName(i);
@@ -1931,11 +2187,14 @@ fn main() {
                             let name = if name_ptr.is_null() { String::new() } else { CStr::from_ptr(name_ptr).to_string_lossy().to_string() };
                             let fp = if fp_ptr.is_null() { String::new() } else { CStr::from_ptr(fp_ptr).to_string_lossy().to_string() };
                             if !name.is_empty() {
+                                let auto = !auto_peer.is_empty()
+                                    && (auto_peer == fp || auto_peer.eq_ignore_ascii_case(&name));
                                 let truncated_fp = if fp.len() > 16 { format!("{}...", &fp[..16]) } else { fp.clone() };
                                 contacts.push(ContactInfo {
                                     name: slint::SharedString::from(name),
                                     fingerprint: slint::SharedString::from(truncated_fp),
                                     online,
+                                    auto_connect: auto,
                                 });
                             }
                         }
@@ -1976,6 +2235,11 @@ fn main() {
                             if let Some(app) = weak_evt.upgrade() {
                                 app.set_error_message(slint::SharedString::from(msg));
                             }
+                        }
+
+                        // Connect-on-startup failed (was silent before)
+                        if let Some(msg) = evt.strip_prefix("auto_connect_error:") {
+                            show_toast(&weak_evt, &format!("Auto connect is off: {}", msg));
                         }
 
                         // Connection mode events

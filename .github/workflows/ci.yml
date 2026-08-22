@@ -37,6 +37,9 @@ jobs:
       - name: Concurrency tests under -race
         run: make test-race
 
+      - name: Package unit suites outside ./tests
+        run: make test-pkgs
+
       - name: Bench-tagged transport harness
         run: make test-bench
 

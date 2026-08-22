@@ -24,9 +24,10 @@ import (
 // the embedded nil interface and panic if called.
 type fakeNotifyCli struct {
 	bindings.KeibiServiceClient
-	mu      sync.Mutex
-	reqs    []*bindings.NotifyRequest
-	batches int
+	mu       sync.Mutex
+	reqs     []*bindings.NotifyRequest
+	batches  int
+	failNext int // BatchNotify calls to fail before succeeding again
 }
 
 func (f *fakeNotifyCli) Notify(_ context.Context, req *bindings.NotifyRequest, _ ...grpc.CallOption) (*bindings.NotifyResponse, error) {
@@ -40,6 +41,10 @@ func (f *fakeNotifyCli) BatchNotify(_ context.Context, req *bindings.BatchNotify
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.batches++
+	if f.failNext > 0 {
+		f.failNext--
+		return nil, fmt.Errorf("simulated send failure")
+	}
 	f.reqs = append(f.reqs, req.Notifications...)
 	return &bindings.BatchNotifyResponse{Status: "ok", Processed: uint32(len(req.Notifications))}, nil
 }
@@ -190,6 +195,52 @@ func TestScanAndShareSaveDir_PersistsRelPaths(t *testing.T) {
 	require.Len(t, entries, 2)
 	rels := []string{entries[0].Rel, entries[1].Rel}
 	require.ElementsMatch(t, []string{"a.txt", "sub/c.txt"}, rels)
+}
+
+// One failed BatchNotify send must not silence the rest of the scan.
+func TestScanAndShareSaveDir_RetriesFailedBatch(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), []byte("alpha"))
+	writeFile(t, filepath.Join(dir, "b.txt"), []byte("beta"))
+
+	kd, cli := newScanTestKD(t, dir)
+	cli.mu.Lock()
+	cli.failNext = 1
+	cli.mu.Unlock()
+
+	n, err := kd.ScanAndShareSaveDir(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.ElementsMatch(t, []string{"a.txt", "b.txt"}, cli.paths())
+}
+
+// When every retry fails, the batch's files are untracked again, so a later
+// scan announces them instead of skipping them as already tracked.
+func TestScanAndShareSaveDir_FailedBatchLeftUntracked(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), []byte("alpha"))
+
+	kd, cli := newScanTestKD(t, dir)
+	cli.mu.Lock()
+	cli.failNext = 1 << 30
+	cli.mu.Unlock()
+
+	n, err := kd.ScanAndShareSaveDir(context.Background())
+	require.Error(t, err)
+	require.Zero(t, n)
+
+	kd.SyncTracker.LocalFilesMu.RLock()
+	require.Empty(t, kd.SyncTracker.LocalFiles)
+	kd.SyncTracker.LocalFilesMu.RUnlock()
+
+	// The connection heals: the same scan now announces everything.
+	cli.mu.Lock()
+	cli.failNext = 0
+	cli.mu.Unlock()
+	n, err = kd.ScanAndShareSaveDir(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.ElementsMatch(t, []string{"a.txt"}, cli.paths())
 }
 
 func TestScanAndShareSaveDir_CancelledContext(t *testing.T) {

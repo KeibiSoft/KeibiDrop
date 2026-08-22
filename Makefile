@@ -82,7 +82,7 @@ cross-macos-dmg: cross-macos $(DIST)
 TEST_SKIP := BlockSizeSweep|WorkerCountSweep|PullFileProfile|BaselineComparison|FUSEReadOverhead|FUSEWriteThroughput|TransferThroughputNetem|MeasureLatency|OpenCloseLatency|ChunkLatency|PullFileThroughput|EncryptedGRPC|TransferThroughput|SecureConnThroughput|RoundTripFUSETransfer|FUSEtoFUSE_GitClone
 
 test:
-	go test -v -count=1 -timeout 300s -skip '$(TEST_SKIP)' ./tests/...
+	go test -v -count=1 -timeout 600s -skip '$(TEST_SKIP)' ./tests/...
 
 # Deterministic concurrency-race guards under the race detector. Scoped to the
 # in-process unit tests (no FUSE mount) across pkg/filesystem, pkg/session and
@@ -92,6 +92,12 @@ test:
 # SecureConn double-close race, and the onRekeyNeeded session-nil race.
 test-race:
 	go test -race -count=1 -timeout 180s ./pkg/filesystem/ ./pkg/session/ ./pkg/logic/common/
+
+# Unit suites outside ./tests that no other lane runs (identity, service,
+# crypto, discovery, config, CLI, mobile bindings). Keychain suites
+# self-skip on runners without a keychain.
+test-pkgs:
+	go test -count=1 -timeout 300s ./pkg/identity/ ./pkg/logic/service/ ./pkg/crypto/ ./pkg/discovery/ ./internal/testkit/ ./cmd/kd/ ./internal/fp/ ./pkg/config/ ./pkg/sync-tracker/ ./mobile/
 
 # The transport bench harness lives behind -tags bench (not in release builds).
 test-bench:

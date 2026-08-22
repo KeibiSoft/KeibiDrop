@@ -8431,6 +8431,18 @@ extern "C" {
     pub fn KD_SetAutoConnectPeer(peer: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn KD_SetNoFUSE(v: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SetShareReadOnly(v: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SetMountReadOnly(v: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_SetPreserveMetadata(v: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn KD_SanitizeLogs(destPath: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
 extern "C" {
