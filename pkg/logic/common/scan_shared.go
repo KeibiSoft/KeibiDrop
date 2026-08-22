@@ -30,14 +30,23 @@ const persistFlushBatch = 512
 // batch bounds both, and bounds scan memory.
 const announceBatchSize = 256
 
+// announceRetries and announceRetryDelay bound the in-session retry of one
+// announce batch. A conn replacement mid-scan heals within seconds; past
+// that the scan stops and the reconnect re-scan finishes the job.
+const (
+	announceRetries    = 3
+	announceRetryDelay = 500 * time.Millisecond
+)
+
 // ScanAndShareSaveDir walks the save folder breadth-first and announces every
 // regular file that is not yet tracked, over the same announce path AddFile
 // uses: upsert LocalFiles, send ADD_FILE (in capped batches), persist to the
 // shared store. Breadth-first, so the peer sees the top of the tree before
 // deep subtrees. Nested files keep their save-root-relative path. Idempotent:
 // tracked files are skipped, so restore, watcher events, and repeated scans
-// compose. Returns the number of files announced. On a send error the walk
-// stops; the next session's scan announces the rest.
+// compose. Returns the number of files announced. A send error retries
+// briefly; on final failure the walk stops and the failed batch is untracked
+// again, so the reconnect re-scan or the next session announces the rest.
 func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 	logger := kd.logger.With("method", "scan-shared-on-start")
 	kd.mu.Lock()
@@ -69,17 +78,42 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 	// flushAnnounce sends the accumulated batch. Files count as announced only
 	// after their batch is accepted; a per-item shortfall on the peer is logged
 	// and self-heals on the next session (the files stay tracked locally).
+	// A send error retries briefly: one transient failure must not silence
+	// the rest of the scan for the whole session. On final failure the
+	// batch's files are untracked again; they were upserted before the send
+	// and a tracked file is skipped by every later scan.
 	flushAnnounce := func() error {
 		if len(batchReqs) == 0 {
 			return nil
 		}
 		batchSeq++
-		resp, err := kd.sendBatchNotify(ctx, &bindings.BatchNotifyRequest{
+		req := &bindings.BatchNotifyRequest{
 			Notifications: batchReqs,
 			Seq:           batchSeq,
 			Timestamp:     uint64(time.Now().UnixNano()),
-		})
+		}
+		var resp *bindings.BatchNotifyResponse
+		var err error
+		for attempt := 1; ; attempt++ {
+			resp, err = kd.sendBatchNotify(ctx, req)
+			if err == nil || attempt >= announceRetries || ctx.Err() != nil {
+				break
+			}
+			logger.Warn("Announce batch send failed, retrying",
+				"attempt", attempt, "of", announceRetries, "error", err)
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Duration(attempt) * announceRetryDelay):
+			}
+		}
 		if err != nil {
+			kd.SyncTracker.LocalFilesMu.Lock()
+			for _, f := range batchFiles {
+				if cur, ok := kd.SyncTracker.LocalFiles[f.RelativePath]; ok && cur == f {
+					delete(kd.SyncTracker.LocalFiles, f.RelativePath)
+				}
+			}
+			kd.SyncTracker.LocalFilesMu.Unlock()
 			return err
 		}
 		if resp != nil && int(resp.Processed) < len(batchReqs) {

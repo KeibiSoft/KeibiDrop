@@ -430,6 +430,25 @@ func (kd *KeibiDrop) onReconnected() {
 	// Auto-resume this peer's partial downloads. The receiver initiates.
 	go kd.resumePartialDownloads(logger)
 
+	// Re-announce save folder files whose announce died with the old
+	// connection. The scan skips tracked files, so this is idempotent;
+	// without it a failed announce stays silent until the next session.
+	if kd.ScanSharedOnStart {
+		kd.mu.Lock()
+		scanCtx := kd.ctx
+		kd.mu.Unlock()
+		go func() {
+			n, err := kd.ScanAndShareSaveDir(scanCtx)
+			if err != nil {
+				logger.Warn("Reconnect save folder scan stopped early", "announced", n, "error", err)
+				return
+			}
+			if n > 0 {
+				logger.Info("Announced save folder files after reconnect", "count", n)
+			}
+		}()
+	}
+
 	// Re-fold on the fresh session key to restore forward secrecy after the reconnect.
 	kd.maybeStartEagerFold()
 }

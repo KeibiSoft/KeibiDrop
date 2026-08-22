@@ -81,7 +81,14 @@ func waitForFUSEMount(t *testing.T, dir string, timeout time.Duration) {
 		return
 	}
 	WaitForCondition(t, timeout, 200*time.Millisecond, func() bool {
-		return isFUSEMounted(dir)
+		if !isFUSEMounted(dir) {
+			return false
+		}
+		// Mount listed is not mount serving: on a loaded runner the mount
+		// table entry can precede the FUSE loop answering requests. A stat
+		// through the mount proves it serves (ENOTCONN while not ready).
+		_, err := os.Stat(dir)
+		return err == nil
 	}, "waiting for FUSE mount at: "+dir)
 }
 
