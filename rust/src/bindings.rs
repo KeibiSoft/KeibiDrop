@@ -8403,6 +8403,15 @@ extern "C" {
     pub fn KD_GetVersion() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {
+    pub fn KD_CheckUpdate() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SendFeedback(
+        message: *mut ::std::os::raw::c_char,
+        contact: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn KD_GetLogPath() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {

@@ -12,6 +12,9 @@ rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["png"] }
 notify-rust = "4"
 
+[dev-dependencies]
+i-slint-backend-testing = "=1.14.1"  # headless UI tests; version must match slint
+
 [build-dependencies]
 slint-build = "1.14.1"
 bindgen = "0.69"  # generates Rust bindings from the C header

@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use slint::winit_030::WinitWindowAccessor;
 #[allow(deprecated)]
 use slint::winit_030::WinitWindowEventResult;
-slint::include_modules!(); // this loads ui.slint as MainWindow
+use keibidrop_rust::*; // ui.slint components (MainWindow), compiled in lib.rs
 
 fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
@@ -788,8 +788,9 @@ fn main() {
     // ON by default if FUSE is present, OFF if NO_FUSE env is set.
     let no_fuse_env = env::var("NO_FUSE").map(|v| !v.is_empty()).unwrap_or(false);
     let fuse_present = is_fuse_present();
-    // First run = no config file and no persisted identity. Start in
-    // direct transfer, which needs no driver, and persist that choice.
+    // First run = no config file and no persisted identity. Use FUSE when
+    // the driver is already installed, direct transfer when it is not, and
+    // persist the choice. The saved file also pins the default relay.
     // Once a config file exists its no_fuse is honored, same as kd/cli.
     let (first_run, cfg_no_fuse, cfg_dir) = unsafe {
         let cfg_path = {
@@ -825,10 +826,11 @@ fn main() {
         (!config_exists && !identity_exists, cfg_no_fuse, cfg_dir)
     };
     let use_fuse = if first_run {
+        let fuse = fuse_present && !no_fuse_env;
         unsafe {
-            bindings::KD_SetNoFUSE(1);
+            bindings::KD_SetNoFUSE(if fuse { 0 } else { 1 });
         }
-        false
+        fuse
     } else {
         fuse_present && !no_fuse_env && !cfg_no_fuse
     };
@@ -1718,6 +1720,107 @@ fn main() {
             }
         });
 
+        let weak_oc = app.as_weak();
+        app.on_open_config(move || {
+            let path = {
+                let ptr = bindings::KD_GetConfigPath();
+                if ptr.is_null() {
+                    return;
+                }
+                CStr::from_ptr(ptr).to_string_lossy().to_string()
+            };
+            if path.is_empty() {
+                return;
+            }
+            // Legacy identity-only installs have no config file yet. Persist
+            // the current FUSE choice once; Save writes the full template
+            // with every key and its default.
+            if !std::path::Path::new(&path).exists() {
+                let fuse_on = weak_oc
+                    .upgrade()
+                    .map(|app| app.get_fuse_mode())
+                    .unwrap_or(false);
+                bindings::KD_SetNoFUSE(if fuse_on { 0 } else { 1 });
+            }
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").args(["-t", &path]).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(&path).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("notepad").arg(&path).spawn();
+        });
+
+        // ---- Update notice ----
+
+        app.on_open_update_page(|| {
+            let url = "https://keibidrop.com/install.html";
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg(url).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(url).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("explorer").arg(url).spawn();
+        });
+
+        // ---- Feedback ----
+
+        let weak_fb = app.as_weak();
+        app.on_send_feedback(move |message, contact| {
+            if let Some(app) = weak_fb.upgrade() {
+                app.set_feedback_sending(true);
+            }
+            let weak = weak_fb.clone();
+            let msg = message.to_string().replace('\0', "");
+            let contact = contact.to_string().replace('\0', "");
+            std::thread::spawn(move || {
+                let ok = {
+                    let m = CString::new(msg).unwrap_or_default();
+                    let c = CString::new(contact).unwrap_or_default();
+                    bindings::KD_SendFeedback(m.as_ptr() as *mut i8, c.as_ptr() as *mut i8) == 0
+                };
+                if ok {
+                    show_toast(&weak, "Thanks. Your message was sent.");
+                } else {
+                    show_toast(
+                        &weak,
+                        "Could not send. Try again, or email marius@keibisoft.com.",
+                    );
+                }
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(app) = weak.upgrade() {
+                        app.set_feedback_sending(false);
+                        if ok {
+                            app.set_feedback_visible(false);
+                            app.set_feedback_message("".into());
+                            app.set_feedback_contact("".into());
+                        }
+                    }
+                });
+            });
+        });
+
+        // Ask keibidrop.com for the newest version off the UI thread. The
+        // engine returns empty when current, disabled, or offline.
+        {
+            let weak_upd = app.as_weak();
+            std::thread::spawn(move || {
+                let ptr = bindings::KD_CheckUpdate();
+                if ptr.is_null() {
+                    return;
+                }
+                let latest = CStr::from_ptr(ptr).to_string_lossy().to_string();
+                if latest.is_empty() {
+                    return;
+                }
+                println!("Update available: {}", latest);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(app) = weak_upd.upgrade() {
+                        app.set_update_available(slint::SharedString::from(latest.as_str()));
+                    }
+                });
+            });
+        }
+
         // ---- FUSE offer after the first received file ----
 
         {
@@ -2163,44 +2266,59 @@ fn main() {
         });
 
         // Contact presence polling timer: refreshes online dots every 10s.
+        // KD_GetContactOnline is one relay HTTP round trip per contact
+        // (10s client timeout), so the checks run OFF the UI thread. On
+        // the UI thread they froze every click for seconds per tick.
+        let presence_in_flight = Arc::new(AtomicBool::new(false));
         let _contact_timer = {
             let timer = slint::Timer::default();
             let weak_ct = app.as_weak();
+            let in_flight = presence_in_flight.clone();
             timer.start(
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_secs(10),
                 move || {
-                    if let Some(app) = weak_ct.upgrade() {
-                        if app.get_incognito_mode() || app.get_current_screen() != 0 {
-                            return;
-                        }
-                        let count = bindings::KD_GetContactCount();
-                        if count == 0 {
-                            return;
-                        }
-                        let auto_peer = config_auto_connect_peer();
-                        let mut contacts = Vec::new();
-                        for i in 0..count {
-                            let name_ptr = bindings::KD_GetContactName(i);
-                            let fp_ptr = bindings::KD_GetContactFingerprint(i);
-                            let online = bindings::KD_GetContactOnline(i) != 0;
-                            let name = if name_ptr.is_null() { String::new() } else { CStr::from_ptr(name_ptr).to_string_lossy().to_string() };
-                            let fp = if fp_ptr.is_null() { String::new() } else { CStr::from_ptr(fp_ptr).to_string_lossy().to_string() };
-                            if !name.is_empty() {
-                                let auto = !auto_peer.is_empty()
-                                    && (auto_peer == fp || auto_peer.eq_ignore_ascii_case(&name));
-                                let truncated_fp = if fp.len() > 16 { format!("{}...", &fp[..16]) } else { fp.clone() };
-                                contacts.push(ContactInfo {
-                                    name: slint::SharedString::from(name),
-                                    fingerprint: slint::SharedString::from(truncated_fp),
-                                    online,
-                                    auto_connect: auto,
-                                });
-                            }
-                        }
-                        let model = std::rc::Rc::new(slint::VecModel::from(contacts));
-                        app.set_contacts(slint::ModelRc::from(model));
+                    let Some(app) = weak_ct.upgrade() else { return };
+                    if app.get_incognito_mode() || app.get_current_screen() != 0 {
+                        return;
                     }
+                    if in_flight.swap(true, Ordering::SeqCst) {
+                        return;
+                    }
+                    let weak_bg = weak_ct.clone();
+                    let in_flight_bg = in_flight.clone();
+                    std::thread::spawn(move || {
+                        let count = bindings::KD_GetContactCount();
+                        if count > 0 {
+                            let auto_peer = config_auto_connect_peer();
+                            let mut contacts = Vec::new();
+                            for i in 0..count {
+                                let name_ptr = bindings::KD_GetContactName(i);
+                                let fp_ptr = bindings::KD_GetContactFingerprint(i);
+                                let online = bindings::KD_GetContactOnline(i) != 0;
+                                let name = if name_ptr.is_null() { String::new() } else { CStr::from_ptr(name_ptr).to_string_lossy().to_string() };
+                                let fp = if fp_ptr.is_null() { String::new() } else { CStr::from_ptr(fp_ptr).to_string_lossy().to_string() };
+                                if !name.is_empty() {
+                                    let auto = !auto_peer.is_empty()
+                                        && (auto_peer == fp || auto_peer.eq_ignore_ascii_case(&name));
+                                    let truncated_fp = if fp.len() > 16 { format!("{}...", &fp[..16]) } else { fp.clone() };
+                                    contacts.push(ContactInfo {
+                                        name: slint::SharedString::from(name),
+                                        fingerprint: slint::SharedString::from(truncated_fp),
+                                        online,
+                                        auto_connect: auto,
+                                    });
+                                }
+                            }
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(app) = weak_bg.upgrade() {
+                                    let model = std::rc::Rc::new(slint::VecModel::from(contacts));
+                                    app.set_contacts(slint::ModelRc::from(model));
+                                }
+                            });
+                        }
+                        in_flight_bg.store(false, Ordering::SeqCst);
+                    });
                 },
             );
             timer

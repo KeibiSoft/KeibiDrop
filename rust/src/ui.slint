@@ -1,4 +1,4 @@
-import { Button, VerticalBox, ScrollView } from "std-widgets.slint";
+import { Button, VerticalBox, ScrollView, TextEdit, LineEdit } from "std-widgets.slint";
 
 // Discovered LAN peer
 export struct DiscoveredPeer {
@@ -228,6 +228,15 @@ component ToggleSwitch inherits Rectangle {
     in property <bool> enabled: true;
     callback toggled(bool);
 
+    accessible-role: checkbox;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+
     width: 36px;
     height: 20px;
     border-radius: 7px;
@@ -260,6 +269,14 @@ component PillButton inherits Rectangle {
     in property <bool> active: false;
     callback clicked;
 
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+
     width: 161px;
     height: 34px;
     border-radius: 7px;
@@ -271,6 +288,7 @@ component PillButton inherits Rectangle {
                : #177DF5;
 
     Text {
+        accessible-role: none;
         text: root.text;
         color: root.active ? white
              : !root.enabled ? #555
@@ -296,6 +314,10 @@ component SmallOutlineButton inherits Rectangle {
     in-out property <string> text: "?";
     callback clicked;
 
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+
     width: self.preferred-width;
     preferred-width: btn-label.preferred-width + 28px;
     height: 24px;
@@ -305,6 +327,7 @@ component SmallOutlineButton inherits Rectangle {
     background: transparent;
 
     btn-label := Text {
+        accessible-role: none;
         text: root.text;
         color: small-touch.pressed ? #bbb : small-touch.has-hover ? #aaa : #888888;
         font-size: 12px;
@@ -763,6 +786,9 @@ export component MainWindow inherits Window {
     in property<string> connect_status: "";
     // Version string from Go (set by Rust at init)
     in property<string> version_text: "";
+    // Newer released version, set by Rust when the update check finds one
+    in property<string> update_available: "";
+    callback open_update_page();
     // FUSE mode toggle (can be changed before connecting)
     in-out property<bool> fuse_mode: false;
     in property<bool> fuse_available: false;
@@ -838,11 +864,19 @@ export component MainWindow inherits Window {
 
     in-out property<bool> help_visible: false;
     in-out property<bool> settings_visible: false;
+
+    // Feedback overlay: sends a problem report to the KeibiDrop inbox
+    in-out property<bool> feedback_visible: false;
+    in-out property<bool> feedback_sending: false;
+    in-out property<string> feedback_message: "";
+    in-out property<string> feedback_contact: "";
+    callback send_feedback(string, string);
     in property<string> cfg_relay: "";
     in property<string> cfg_save_path: "";
     in property<string> cfg_mount_path: "";
     in property<string> cfg_log_file: "";
     in property<string> cfg_config_path: "";
+    callback open_config();      // open config.toml in the system text editor
 
     // Saved files browser (Screen 3)
     in-out property<[FileInfo]> saved_file_list: [];
@@ -1877,6 +1911,9 @@ export component MainWindow inherits Window {
             y: 4.5px;
         }
         gear-touch := TouchArea {
+            accessible-role: button;
+            accessible-label: "Open settings";
+            accessible-action-default => { root.settings_visible = !root.settings_visible; }
             clicked => { root.settings_visible = !root.settings_visible; }
         }
     }
@@ -1895,24 +1932,23 @@ export component MainWindow inherits Window {
         clicked => { root.exit_pressed() }
     }
 
-    // Settings panel overlay
+    // Settings panel overlay. Fits the window and scrolls when short.
     if root.settings_visible: Rectangle {
         x: (parent.width - 500px) / 2;
-        y: (parent.height - 700px) / 2;
+        y: (parent.height - self.height) / 2;
         width: 500px;
-        height: 700px;
+        height: min(700px, parent.height - 24px);
         border-radius: 10px;
         background: #2a2a2a;
         border-width: 1px;
         border-color: rgba(255,255,255,0.12);
 
-        SmallOutlineButton {
-            x: parent.width - 36px;
-            y: 8px;
-            width: 24px;
-            text: "X";
-            clicked => { root.settings_visible = false; }
-        }
+        ScrollView {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            viewport-height: 700px;
 
         Text {
             x: 20px;
@@ -1984,6 +2020,7 @@ export component MainWindow inherits Window {
             ToggleSwitch {
                 x: 0;
                 y: 2px;
+                accessible-label: "Share is read only";
                 checked <=> root.cfg_share_read_only;
                 toggled(val) => { root.share_read_only_toggled(val); }
             }
@@ -2019,6 +2056,7 @@ export component MainWindow inherits Window {
             ToggleSwitch {
                 x: 0;
                 y: 2px;
+                accessible-label: "Virtual folder is read only";
                 checked <=> root.cfg_mount_read_only;
                 toggled(val) => { root.mount_read_only_toggled(val); }
             }
@@ -2054,6 +2092,7 @@ export component MainWindow inherits Window {
             ToggleSwitch {
                 x: 0;
                 y: 2px;
+                accessible-label: "Keep original timestamps";
                 checked <=> root.cfg_preserve_metadata;
                 toggled(val) => { root.preserve_metadata_toggled(val); }
             }
@@ -2124,13 +2163,37 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Hint
-        Text {
+        // Config file editing
+        Rectangle {
             x: 20px;
-            y: parent.height - 32px;
-            text: "Other settings: edit config.toml and restart to apply.";
-            color: #555;
-            font-size: 11px;
+            y: 664px;
+            width: parent.width - 40px;
+            height: 26px;
+            SmallOutlineButton {
+                x: 0;
+                y: 0;
+                width: 150px;
+                text: "Edit config file";
+                clicked => { root.open_config(); }
+            }
+            Text {
+                x: 160px;
+                y: 0;
+                height: 26px;
+                text: "All settings, with defaults. Changes apply at the next start.";
+                color: #777;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+        }
+
+        SmallOutlineButton {
+            x: parent.width - 36px;
+            y: 8px;
+            width: 24px;
+            text: "X";
+            clicked => { root.settings_visible = false; }
         }
     }
 
@@ -2183,6 +2246,99 @@ export component MainWindow inherits Window {
             text: "keibidrop.com";
             color: #555;
             font-size: 11px;
+        }
+
+        SmallOutlineButton {
+            x: parent.width - 150px;
+            y: parent.height - 34px;
+            text: "Report a problem";
+            clicked => {
+                root.help_visible = false;
+                root.feedback_visible = true;
+            }
+        }
+    }
+
+    // Feedback overlay: message to the KeibiDrop inbox, no mail app needed
+    if root.feedback_visible: Rectangle {
+        x: (parent.width - 460px) / 2;
+        y: (parent.height - 370px) / 2;
+        width: 460px;
+        height: 370px;
+        border-radius: 10px;
+        background: #2a2a2a;
+        border-width: 1px;
+        border-color: rgba(255,255,255,0.12);
+
+        SmallOutlineButton {
+            x: parent.width - 36px;
+            y: 8px;
+            width: 24px;
+            text: "X";
+            clicked => { root.feedback_visible = false; }
+        }
+
+        Text {
+            x: 20px;
+            y: 16px;
+            text: "Report a problem";
+            color: white;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        Text {
+            x: 20px;
+            y: 46px;
+            text: "What happened? What did you expect instead?";
+            color: #bbb;
+            font-size: 12px;
+        }
+
+        TextEdit {
+            x: 20px;
+            y: 68px;
+            width: parent.width - 40px;
+            height: 148px;
+            font-size: 13px;
+            wrap: word-wrap;
+            text <=> root.feedback_message;
+        }
+
+        LineEdit {
+            x: 20px;
+            y: 226px;
+            width: parent.width - 40px;
+            height: 30px;
+            font-size: 13px;
+            placeholder-text: "Email for a reply (optional)";
+            text <=> root.feedback_contact;
+        }
+
+        Text {
+            x: 20px;
+            y: 264px;
+            width: parent.width - 40px;
+            text: "Sends your message, the reply address, the app version and the platform. Nothing else.";
+            color: #777;
+            font-size: 10px;
+            wrap: word-wrap;
+        }
+
+        PillButton {
+            x: 20px;
+            y: 306px;
+            width: 120px;
+            text: root.feedback_sending ? "Sending..." : "Send";
+            enabled: !root.feedback_sending && root.feedback_message != "";
+            clicked => { root.send_feedback(root.feedback_message, root.feedback_contact); }
+        }
+
+        SmallOutlineButton {
+            x: 152px;
+            y: 311px;
+            text: "Cancel";
+            clicked => { root.feedback_visible = false; }
         }
     }
 
@@ -2352,5 +2508,26 @@ export component MainWindow inherits Window {
         color: #666666;
         font-size: 11px;
         font-family: "Inter";
+    }
+
+    // Update notice bottom-left (all screens), set when a newer release exists
+    if root.update_available != "": upd-touch := TouchArea {
+        x: 16px;
+        y: parent.height - 34px;
+        width: upd-note.width;
+        height: 22px;
+        mouse-cursor: pointer;
+        accessible-role: button;
+        accessible-label: "Update notice";
+        accessible-action-default => { root.open_update_page(); }
+        clicked => { root.open_update_page(); }
+        upd-note := Text {
+            height: 22px;
+            text: "Version " + root.update_available + " is out. Click to get it.";
+            color: upd-touch.has-hover ? #60a5fa : #3b82f6;
+            font-size: 11px;
+            font-family: "Inter";
+            vertical-alignment: center;
+        }
     }
 }
