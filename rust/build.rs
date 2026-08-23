@@ -7,7 +7,11 @@ include!("build_platform_windows.rs");
 include!("build_platform_other.rs");
 
 fn main() {
-    slint_build::compile("src/ui.slint").unwrap();
+    // Debug builds emit slint element info so the headless UI tests
+    // (tests/ui.rs) can query elements. Release output is unchanged.
+    let debug = std::env::var("DEBUG").as_deref() == Ok("true");
+    let config = slint_build::CompilerConfiguration::new().with_debug_info(debug);
+    slint_build::compile_with_config("src/ui.slint", config).unwrap();
 
     // Embed app icon in Windows executable
     #[cfg(target_os = "windows")]

@@ -228,6 +228,15 @@ component ToggleSwitch inherits Rectangle {
     in property <bool> enabled: true;
     callback toggled(bool);
 
+    accessible-role: checkbox;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+
     width: 36px;
     height: 20px;
     border-radius: 7px;
@@ -260,6 +269,14 @@ component PillButton inherits Rectangle {
     in property <bool> active: false;
     callback clicked;
 
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+
     width: 161px;
     height: 34px;
     border-radius: 7px;
@@ -271,6 +288,7 @@ component PillButton inherits Rectangle {
                : #177DF5;
 
     Text {
+        accessible-role: none;
         text: root.text;
         color: root.active ? white
              : !root.enabled ? #555
@@ -296,6 +314,10 @@ component SmallOutlineButton inherits Rectangle {
     in-out property <string> text: "?";
     callback clicked;
 
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+
     width: self.preferred-width;
     preferred-width: btn-label.preferred-width + 28px;
     height: 24px;
@@ -305,6 +327,7 @@ component SmallOutlineButton inherits Rectangle {
     background: transparent;
 
     btn-label := Text {
+        accessible-role: none;
         text: root.text;
         color: small-touch.pressed ? #bbb : small-touch.has-hover ? #aaa : #888888;
         font-size: 12px;
@@ -1881,6 +1904,9 @@ export component MainWindow inherits Window {
             y: 4.5px;
         }
         gear-touch := TouchArea {
+            accessible-role: button;
+            accessible-label: "Open settings";
+            accessible-action-default => { root.settings_visible = !root.settings_visible; }
             clicked => { root.settings_visible = !root.settings_visible; }
         }
     }
@@ -1899,24 +1925,23 @@ export component MainWindow inherits Window {
         clicked => { root.exit_pressed() }
     }
 
-    // Settings panel overlay
+    // Settings panel overlay. Fits the window and scrolls when short.
     if root.settings_visible: Rectangle {
         x: (parent.width - 500px) / 2;
-        y: (parent.height - 700px) / 2;
+        y: (parent.height - self.height) / 2;
         width: 500px;
-        height: 700px;
+        height: min(700px, parent.height - 24px);
         border-radius: 10px;
         background: #2a2a2a;
         border-width: 1px;
         border-color: rgba(255,255,255,0.12);
 
-        SmallOutlineButton {
-            x: parent.width - 36px;
-            y: 8px;
-            width: 24px;
-            text: "X";
-            clicked => { root.settings_visible = false; }
-        }
+        ScrollView {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            viewport-height: 700px;
 
         Text {
             x: 20px;
@@ -1988,6 +2013,7 @@ export component MainWindow inherits Window {
             ToggleSwitch {
                 x: 0;
                 y: 2px;
+                accessible-label: "Share is read only";
                 checked <=> root.cfg_share_read_only;
                 toggled(val) => { root.share_read_only_toggled(val); }
             }
@@ -2023,6 +2049,7 @@ export component MainWindow inherits Window {
             ToggleSwitch {
                 x: 0;
                 y: 2px;
+                accessible-label: "Virtual folder is read only";
                 checked <=> root.cfg_mount_read_only;
                 toggled(val) => { root.mount_read_only_toggled(val); }
             }
@@ -2058,6 +2085,7 @@ export component MainWindow inherits Window {
             ToggleSwitch {
                 x: 0;
                 y: 2px;
+                accessible-label: "Keep original timestamps";
                 checked <=> root.cfg_preserve_metadata;
                 toggled(val) => { root.preserve_metadata_toggled(val); }
             }
@@ -2131,7 +2159,7 @@ export component MainWindow inherits Window {
         // Config file editing
         Rectangle {
             x: 20px;
-            y: parent.height - 36px;
+            y: 664px;
             width: parent.width - 40px;
             height: 26px;
             SmallOutlineButton {
@@ -2150,6 +2178,15 @@ export component MainWindow inherits Window {
                 font-size: 11px;
                 vertical-alignment: center;
             }
+        }
+        }
+
+        SmallOutlineButton {
+            x: parent.width - 36px;
+            y: 8px;
+            width: 24px;
+            text: "X";
+            clicked => { root.settings_visible = false; }
         }
     }
 
@@ -2380,6 +2417,9 @@ export component MainWindow inherits Window {
         width: upd-note.width;
         height: 22px;
         mouse-cursor: pointer;
+        accessible-role: button;
+        accessible-label: "Update notice";
+        accessible-action-default => { root.open_update_page(); }
         clicked => { root.open_update_page(); }
         upd-note := Text {
             height: 22px;

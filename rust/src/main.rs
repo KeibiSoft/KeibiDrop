@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use slint::winit_030::WinitWindowAccessor;
 #[allow(deprecated)]
 use slint::winit_030::WinitWindowEventResult;
-slint::include_modules!(); // this loads ui.slint as MainWindow
+use keibidrop_rust::*; // ui.slint components (MainWindow), compiled in lib.rs
 
 fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
