@@ -788,8 +788,9 @@ fn main() {
     // ON by default if FUSE is present, OFF if NO_FUSE env is set.
     let no_fuse_env = env::var("NO_FUSE").map(|v| !v.is_empty()).unwrap_or(false);
     let fuse_present = is_fuse_present();
-    // First run = no config file and no persisted identity. Start in
-    // direct transfer, which needs no driver, and persist that choice.
+    // First run = no config file and no persisted identity. Use FUSE when
+    // the driver is already installed, direct transfer when it is not, and
+    // persist the choice. The saved file also pins the default relay.
     // Once a config file exists its no_fuse is honored, same as kd/cli.
     let (first_run, cfg_no_fuse, cfg_dir) = unsafe {
         let cfg_path = {
@@ -825,10 +826,11 @@ fn main() {
         (!config_exists && !identity_exists, cfg_no_fuse, cfg_dir)
     };
     let use_fuse = if first_run {
+        let fuse = fuse_present && !no_fuse_env;
         unsafe {
-            bindings::KD_SetNoFUSE(1);
+            bindings::KD_SetNoFUSE(if fuse { 0 } else { 1 });
         }
-        false
+        fuse
     } else {
         fuse_present && !no_fuse_env && !cfg_no_fuse
     };
@@ -1717,6 +1719,70 @@ fn main() {
                 show_toast(&weak_pm, "Could not save the setting.");
             }
         });
+
+        let weak_oc = app.as_weak();
+        app.on_open_config(move || {
+            let path = {
+                let ptr = bindings::KD_GetConfigPath();
+                if ptr.is_null() {
+                    return;
+                }
+                CStr::from_ptr(ptr).to_string_lossy().to_string()
+            };
+            if path.is_empty() {
+                return;
+            }
+            // Legacy identity-only installs have no config file yet. Persist
+            // the current FUSE choice once; Save writes the full template
+            // with every key and its default.
+            if !std::path::Path::new(&path).exists() {
+                let fuse_on = weak_oc
+                    .upgrade()
+                    .map(|app| app.get_fuse_mode())
+                    .unwrap_or(false);
+                bindings::KD_SetNoFUSE(if fuse_on { 0 } else { 1 });
+            }
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").args(["-t", &path]).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(&path).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("notepad").arg(&path).spawn();
+        });
+
+        // ---- Update notice ----
+
+        app.on_open_update_page(|| {
+            let url = "https://keibidrop.com/install.html";
+            #[cfg(target_os = "macos")]
+            let _ = Command::new("open").arg(url).spawn();
+            #[cfg(target_os = "linux")]
+            let _ = Command::new("xdg-open").arg(url).spawn();
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("explorer").arg(url).spawn();
+        });
+
+        // Ask keibidrop.com for the newest version off the UI thread. The
+        // engine returns empty when current, disabled, or offline.
+        {
+            let weak_upd = app.as_weak();
+            std::thread::spawn(move || {
+                let ptr = bindings::KD_CheckUpdate();
+                if ptr.is_null() {
+                    return;
+                }
+                let latest = CStr::from_ptr(ptr).to_string_lossy().to_string();
+                if latest.is_empty() {
+                    return;
+                }
+                println!("Update available: {}", latest);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(app) = weak_upd.upgrade() {
+                        app.set_update_available(slint::SharedString::from(latest.as_str()));
+                    }
+                });
+            });
+        }
 
         // ---- FUSE offer after the first received file ----
 

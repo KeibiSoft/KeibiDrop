@@ -763,6 +763,9 @@ export component MainWindow inherits Window {
     in property<string> connect_status: "";
     // Version string from Go (set by Rust at init)
     in property<string> version_text: "";
+    // Newer released version, set by Rust when the update check finds one
+    in property<string> update_available: "";
+    callback open_update_page();
     // FUSE mode toggle (can be changed before connecting)
     in-out property<bool> fuse_mode: false;
     in property<bool> fuse_available: false;
@@ -843,6 +846,7 @@ export component MainWindow inherits Window {
     in property<string> cfg_mount_path: "";
     in property<string> cfg_log_file: "";
     in property<string> cfg_config_path: "";
+    callback open_config();      // open config.toml in the system text editor
 
     // Saved files browser (Screen 3)
     in-out property<[FileInfo]> saved_file_list: [];
@@ -2124,13 +2128,28 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Hint
-        Text {
+        // Config file editing
+        Rectangle {
             x: 20px;
-            y: parent.height - 32px;
-            text: "Other settings: edit config.toml and restart to apply.";
-            color: #555;
-            font-size: 11px;
+            y: parent.height - 36px;
+            width: parent.width - 40px;
+            height: 26px;
+            SmallOutlineButton {
+                x: 0;
+                y: 0;
+                width: 150px;
+                text: "Edit config file";
+                clicked => { root.open_config(); }
+            }
+            Text {
+                x: 160px;
+                y: 0;
+                height: 26px;
+                text: "All settings, with defaults. Changes apply at the next start.";
+                color: #777;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
         }
     }
 
@@ -2352,5 +2371,23 @@ export component MainWindow inherits Window {
         color: #666666;
         font-size: 11px;
         font-family: "Inter";
+    }
+
+    // Update notice bottom-left (all screens), set when a newer release exists
+    if root.update_available != "": upd-touch := TouchArea {
+        x: 16px;
+        y: parent.height - 34px;
+        width: upd-note.width;
+        height: 22px;
+        mouse-cursor: pointer;
+        clicked => { root.open_update_page(); }
+        upd-note := Text {
+            height: 22px;
+            text: "Version " + root.update_available + " is out. Click to get it.";
+            color: upd-touch.has-hover ? #60a5fa : #3b82f6;
+            font-size: 11px;
+            font-family: "Inter";
+            vertical-alignment: center;
+        }
     }
 }

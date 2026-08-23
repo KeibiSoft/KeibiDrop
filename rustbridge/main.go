@@ -25,11 +25,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
@@ -806,6 +809,74 @@ func KD_SetStrictMode(enabled C.int) {
 //export KD_GetVersion
 func KD_GetVersion() *C.char {
 	return C.CString(common.Version + " (" + common.CommitHash + ")")
+}
+
+// KD_CheckUpdate fetches the newest released version from keibidrop.com
+// and returns it when this build is older. Empty string = current build,
+// check disabled in config, or site unreachable. The request carries
+// nothing about this install. Blocks up to 5s: call off the UI thread.
+//
+//export KD_CheckUpdate
+func KD_CheckUpdate() *C.char {
+	cfg, _ := config.Load()
+	if !cfg.UpdateCheck {
+		return C.CString("")
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get("https://keibidrop.com/latest-version.txt")
+	if err != nil {
+		return C.CString("")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return C.CString("")
+	}
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return C.CString("")
+	}
+	latest := strings.TrimSpace(string(buf))
+	if versionNewer(common.Version, latest) {
+		return C.CString(latest)
+	}
+	return C.CString("")
+}
+
+// versionNewer reports whether latest is strictly newer than current.
+// Versions are x.y.z with an optional v prefix; git-describe suffixes
+// (-N-gHASH) are cut. Anything unparsable compares as not newer.
+func versionNewer(current, latest string) bool {
+	cur := versionParts(current)
+	lat := versionParts(latest)
+	if cur == nil || lat == nil {
+		return false
+	}
+	for i := range 3 {
+		if lat[i] != cur[i] {
+			return lat[i] > cur[i]
+		}
+	}
+	return false
+}
+
+func versionParts(v string) []int {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexAny(v, "-+ ("); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	out := make([]int, 3)
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil
+		}
+		out[i] = n
+	}
+	return out
 }
 
 //export KD_GetLogPath

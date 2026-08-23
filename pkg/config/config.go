@@ -41,6 +41,7 @@ type Config struct {
 	ShareReadOnly     bool   `toml:"share_read_only"`      // Refuse every peer mutation of this node's data (origin-enforced).
 	MountReadOnly     bool   `toml:"mount_read_only"`      // Local FUSE mount returns EROFS on write ops. Keeps the local view equal to the origin.
 	PreserveMetadata  bool   `toml:"preserve_metadata"`    // Apply the origin's mode and timestamps to files saved on disk.
+	UpdateCheck       bool   `toml:"update_check"`         // Fetch the newest version number from keibidrop.com at start and show a notice when this build is older.
 }
 
 const DefaultRelay = "https://keibidroprelay.keibisoft.com/"
@@ -58,6 +59,7 @@ func DefaultConfig() Config {
 		BridgeAddr:        DefaultBridge,
 		PrefetchAutoMB:    0,  // Off by default: prefetch saturates slow links and freezes seeks.
 		ReadAheadWindowMB: 64, // On by default: prevents sequential-read stalls on high-RTT links.
+		UpdateCheck:       true,
 	}
 	switch runtime.GOOS {
 	case "darwin":
@@ -325,10 +327,15 @@ mount_read_only = %v
 # analysis. The announced origin times also stay recorded in the sync
 # tracker, independent of disk.
 preserve_metadata = %v
+
+# Fetch the newest version number from keibidrop.com at start and show a
+# notice when this build is older. The request carries nothing about this
+# install. Set false to disable.
+update_check = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
 		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.PrefetchAutoMB, cfg.PrefetchOnOpen, cfg.ReadAheadWindowMB, cfg.LiveCollab, cfg.ScanSharedOnStart, cfg.AutoConnectPeer,
-		cfg.ShareReadOnly, cfg.MountReadOnly, cfg.PreserveMetadata)
+		cfg.ShareReadOnly, cfg.MountReadOnly, cfg.PreserveMetadata, cfg.UpdateCheck)
 
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
 }
