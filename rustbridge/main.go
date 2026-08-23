@@ -36,6 +36,7 @@ import (
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
+	"github.com/KeibiSoft/KeibiDrop/pkg/feedback"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
@@ -840,6 +841,25 @@ func KD_CheckUpdate() *C.char {
 		return C.CString(latest)
 	}
 	return C.CString("")
+}
+
+// KD_SendFeedback posts a user-written problem report with an optional
+// reply contact. Sent: message, contact, version, platform, surface.
+// Blocks up to 10s: call off the UI thread.
+//
+//export KD_SendFeedback
+func KD_SendFeedback(message, contact *C.char) C.int {
+	err := feedback.Send(feedback.Report{
+		Message: C.GoString(message),
+		Contact: C.GoString(contact),
+		Version: common.Version,
+		Surface: "desktop",
+	})
+	if err != nil {
+		setLastError(err)
+		return -1
+	}
+	return 0
 }
 
 // versionNewer reports whether latest is strictly newer than current.

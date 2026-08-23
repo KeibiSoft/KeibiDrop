@@ -20,6 +20,7 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
+	"github.com/KeibiSoft/KeibiDrop/pkg/feedback"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/fatih/color"
@@ -91,6 +92,24 @@ func (c *cliContext) executor(in string) {
 
 	case "version":
 		common.PrintBanner()
+
+	case "feedback":
+		msg := strings.TrimSpace(strings.Join(args[1:], " "))
+		if msg == "" {
+			fmt.Println("Usage: feedback <message>")
+			fmt.Println("Include an email address in the message if you want a reply.")
+			return
+		}
+		if err := feedback.Send(feedback.Report{
+			Message: msg,
+			Version: common.Version,
+			Surface: "cli",
+		}); err != nil {
+			fmt.Println("Could not send:", err)
+			fmt.Println("You can email marius@keibisoft.com instead.")
+			return
+		}
+		fmt.Println("Sent. Thanks.")
 
 	case "show":
 		if len(args) < 2 {
@@ -535,6 +554,7 @@ func printHelp() {
 	fmt.Println(`
 help                         Show this help message
 version                      Show banner and version
+feedback <message>           Send a problem report to the developers
 status                       Full connection and session status
 show fingerprint             Show your fingerprint
 show ip                      Show your IP

@@ -28,6 +28,7 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
+	"github.com/KeibiSoft/KeibiDrop/pkg/feedback"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 	"golang.org/x/term"
 )
@@ -1093,6 +1094,7 @@ USAGE:
   kd tokens [list]               Relay credit chains and balance (JSON).
   kd tokens add <code>           Paste a prepaid relay token code.
   kd tokens balance              Refresh balances from the relay.
+  kd feedback <message>          Send a problem report to the developers.
   kd version                     Show version and commit hash.
   kd export-logs [dest]          Export sanitized logs.
   kd sanitize-logs [dest]        Alias for export-logs.
@@ -1151,9 +1153,32 @@ func main() {
 	switch cmd {
 	case "start":
 		runDaemon()
+	case "feedback":
+		runFeedback(os.Args[2:])
 	case "help", "--help", "-h":
 		printHelp()
 	default:
 		runClient(cmd, os.Args[2:])
 	}
+}
+
+// runFeedback needs no daemon: it posts straight to the endpoint.
+func runFeedback(args []string) {
+	msg := strings.TrimSpace(strings.Join(args, " "))
+	if msg == "" {
+		fmt.Println("Usage: kd feedback <message>")
+		fmt.Println("Include an email address in the message if you want a reply.")
+		os.Exit(1)
+	}
+	err := feedback.Send(feedback.Report{
+		Message: msg,
+		Version: common.Version,
+		Surface: "kd",
+	})
+	if err != nil {
+		fmt.Println("Could not send:", err)
+		fmt.Println("You can email marius@keibisoft.com instead.")
+		os.Exit(1)
+	}
+	fmt.Println("Sent. Thanks.")
 }

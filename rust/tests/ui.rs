@@ -6,7 +6,7 @@
 use i_slint_backend_testing::ElementHandle;
 use keibidrop_rust::MainWindow;
 use slint::ComponentHandle;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 const WIN_W: u32 = 1144;
@@ -135,6 +135,53 @@ fn update_notice_only_when_a_version_is_set() {
     assert_on_screen(&notice, "update notice");
     notice.invoke_accessible_default_action();
     assert!(fired.get(), "notice click did not fire open_update_page");
+}
+
+#[test]
+fn help_report_button_opens_feedback() {
+    let app = app();
+    app.set_help_visible(true);
+    one(&app, "Report a problem").invoke_accessible_default_action();
+    assert!(app.get_feedback_visible(), "feedback overlay did not open");
+    assert!(!app.get_help_visible(), "help panel stayed open");
+}
+
+#[test]
+fn feedback_send_passes_message_and_contact() {
+    let app = app();
+    app.set_feedback_visible(true);
+    app.set_feedback_message("the mount hangs".into());
+    app.set_feedback_contact("a@b.co".into());
+    let got = Rc::new(RefCell::new(None::<(String, String)>));
+    let g = got.clone();
+    app.on_send_feedback(move |m, c| {
+        *g.borrow_mut() = Some((m.to_string(), c.to_string()));
+    });
+    one(&app, "Send").invoke_accessible_default_action();
+    assert_eq!(
+        got.borrow().clone(),
+        Some(("the mount hangs".to_string(), "a@b.co".to_string())),
+        "send callback did not get the typed values"
+    );
+}
+
+#[test]
+fn feedback_send_disabled_on_empty_message() {
+    let app = app();
+    app.set_feedback_visible(true);
+    let fired = Rc::new(Cell::new(false));
+    let f = fired.clone();
+    app.on_send_feedback(move |_, _| f.set(true));
+    one(&app, "Send").invoke_accessible_default_action();
+    assert!(!fired.get(), "send fired with an empty message");
+}
+
+#[test]
+fn feedback_cancel_closes() {
+    let app = app();
+    app.set_feedback_visible(true);
+    one(&app, "Cancel").invoke_accessible_default_action();
+    assert!(!app.get_feedback_visible(), "cancel did not close feedback");
 }
 
 #[test]
