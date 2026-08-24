@@ -313,7 +313,9 @@ func (r *ReconnectManager) reconnectBridge(logger *slog.Logger, initiator bool) 
 	if err != nil {
 		return fmt.Errorf("bridge dial (inbound): %w", err)
 	}
-	if err := PerformInboundHandshake(r.session, inConn); err != nil {
+	// Bridge leg: the peer arrives on its own reconnect cadence, so give the
+	// first byte the full handshake bound instead of the accept-site default.
+	if err := PerformInboundHandshakeWait(r.session, inConn, inboundHandshakeTimeout); err != nil {
 		_ = inConn.Close()
 		return fmt.Errorf("bridge inbound handshake: %w", err)
 	}

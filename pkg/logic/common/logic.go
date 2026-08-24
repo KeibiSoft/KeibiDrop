@@ -37,6 +37,17 @@ const Timeout = 10*60 - 5
 // direct accept window, so a round is the same length whichever path it takes.
 const bridgeRoundWait = 15 * time.Second
 
+// dropOutboundConn closes a completed outbound conn and forgets it. Every LAN bail-out
+// needs this: the outbound handshake has already succeeded by then, and ResetOutboundCrypto
+// only wipes the keys, so without it the conn is stranded when we fall through to
+// direct or bridge.
+func (kd *KeibiDrop) dropOutboundConn() {
+	if c := kd.session.OutboundConn(); c != nil {
+		c.Close()
+		kd.session.SetOutboundConn(nil)
+	}
+}
+
 // Add a file to be tracked.
 func (kd *KeibiDrop) AddFile(path string) error {
 	logger := kd.logger.With("method", "add-file")
@@ -820,10 +831,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 					logger.Warn("Listener not open for LAN inbound accept")
 					// Outbound handshake already succeeded; close it so we don't
 					// strand the conn and stale crypto state on this bail-out.
-					if c := kd.session.OutboundConn(); c != nil {
-						c.Close()
-						kd.session.SetOutboundConn(nil)
-					}
+					kd.dropOutboundConn()
 					kd.session.ResetOutboundCrypto()
 					return ErrListenerNotOpen
 				}
@@ -835,16 +843,16 @@ func (kd *KeibiDrop) JoinRoom() error {
 				if err != nil {
 					logger.Warn("LAN inbound accept failed", "error", err)
 					// Close outbound, fall through to direct/bridge.
-					if c := kd.session.OutboundConn(); c != nil {
-						c.Close()
-						kd.session.SetOutboundConn(nil)
-					}
+					kd.dropOutboundConn()
 					kd.session.ResetOutboundCrypto()
 					lanConnected = false
 					break
 				}
-				if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+				if err := handshakeOrClose(kd.session, inConn); err != nil {
 					logger.Warn("LAN inbound handshake failed", "error", err)
+					// The outbound leg already handshaked, so drop it too rather than
+					// strand it when we fall through to direct or bridge.
+					kd.dropOutboundConn()
 					lanConnected = false
 				}
 				break
@@ -895,10 +903,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 					logger.Warn("Listener not open for direct P2P inbound accept")
 					// Outbound handshake already succeeded; close it so we don't
 					// strand the conn and stale crypto state on this bail-out.
-					if c := kd.session.OutboundConn(); c != nil {
-						c.Close()
-						kd.session.SetOutboundConn(nil)
-					}
+					kd.dropOutboundConn()
 					kd.session.ResetOutboundCrypto()
 					return ErrListenerNotOpen
 				}
@@ -913,16 +918,10 @@ func (kd *KeibiDrop) JoinRoom() error {
 					if acceptErr != nil {
 						break
 					}
-					// A connect-and-hold must not pin the accept slot past
-					// the window: bound the handshake read, then clear the
-					// deadline because this conn becomes the session transport.
-					_ = inConn.SetDeadline(time.Now().Add(15 * time.Second))
-					if hsErr := session.PerformInboundHandshake(kd.session, inConn); hsErr != nil {
+					if hsErr := handshakeOrClose(kd.session, inConn); hsErr != nil {
 						logger.Warn("Inbound handshake failed, accepting again", "error", hsErr)
-						inConn.Close()
 						continue
 					}
-					_ = inConn.SetDeadline(time.Time{})
 					break
 				}
 				_ = ln.(*net.TCPListener).SetDeadline(time.Time{})
@@ -981,8 +980,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 			if err != nil {
 				return fmt.Errorf("bridge dial (inbound): %w", err)
 			}
-			if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
-				inConn.Close()
+			if err := handshakeOrClose(kd.session, inConn); err != nil {
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
 			kd.ConnectionMode = "bridge"
@@ -1209,16 +1207,10 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 				if acceptErr != nil {
 					break
 				}
-				// A connect-and-hold must not pin the accept slot past the
-				// window: bound the handshake read, then clear the deadline
-				// because this conn becomes the session transport.
-				_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
-				if hsErr := session.PerformInboundHandshake(kd.session, conn); hsErr != nil {
+				if hsErr := handshakeOrClose(kd.session, conn); hsErr != nil {
 					logger.Warn("Inbound handshake failed, accepting again", "error", hsErr)
-					conn.Close()
 					continue
 				}
-				_ = conn.SetDeadline(time.Time{})
 				break
 			}
 			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
@@ -1303,17 +1295,16 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 				logger.Warn("Bridge dial (inbound) failed this round", "error", err)
 				return false, nil
 			}
-			// Bound the wait for the joiner. Without a deadline this blocks until the
-			// REMOTE bridge closes the unpaired room, which is what produced the +38s
-			// EOF and made the round length a property of the bridge, not of us.
-			_ = inConn.SetReadDeadline(time.Now().Add(bridgeRoundWait))
-			if err := session.PerformInboundHandshake(kd.session, inConn); err != nil {
+			// Bound the wait for the joiner to the round. Without a deadline this blocks
+			// until the REMOTE bridge closes the unpaired room, which is what produced the
+			// +38s EOF and made the round length a property of the bridge, not of us. The
+			// handshake clears the deadline itself once the conn becomes the transport.
+			if err := session.PerformInboundHandshakeWait(kd.session, inConn, bridgeRoundWait); err != nil {
 				inConn.Close()
 				kd.session.ResetInboundCrypto()
 				logger.Info("No joiner on the bridge this round", "error", err)
 				return false, nil
 			}
-			_ = inConn.SetReadDeadline(time.Time{}) // This conn is now the session transport.
 
 			outConn, err := kd.dialBridgeDir("pair2", logger)
 			if err != nil {

@@ -12,12 +12,14 @@
 package service
 
 import (
+	"math"
 	"os"
 	"sync"
 	"testing"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/stretchr/testify/assert"
@@ -131,4 +133,94 @@ func TestRead_FUSEMode_FileNotFoundAnywhere(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st.Code())
+}
+
+// TestRead_HostileSizeNeverExceedsBuffer verifies the real Read call site
+// (T4: clampReadSize) does not panic when a peer requests a Size far larger
+// than the serve buffer, and that the response never exceeds the buffer.
+// ReadRequest.Size is uint32, so int(rec.Size) cannot go negative on this
+// amd64 host; only the size>bufLen bound is reachable here. The negative-wrap
+// case (32-bit builds) is covered by TestClampReadSize in readsize_test.go.
+func TestRead_HostileSizeNeverExceedsBuffer(t *testing.T) {
+	tmpFile, err := os.CreateTemp(t.TempDir(), "hostile-*.txt")
+	require.NoError(t, err)
+	content := []byte("small file, huge requested size")
+	_, err = tmpFile.Write(content)
+	require.NoError(t, err)
+	tmpFile.Close()
+
+	svc := &KeibidropServiceImpl{
+		Logger:      testkit.DiscardLogger(),
+		SyncTracker: synctracker.NewSyncTracker(),
+	}
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock:    sync.RWMutex{},
+		AllFileMap: make(map[string]*filesystem.File),
+	})
+	svc.SetFS(fsForSvc)
+
+	svc.SyncTracker.LocalFiles["hostile.txt"] = &synctracker.File{
+		Name:           "hostile.txt",
+		RelativePath:   "hostile.txt",
+		RealPathOfFile: tmpFile.Name(),
+		Size:           uint64(len(content)),
+	}
+
+	stream := &testkit.Stream[*bindings.ReadRequest, *bindings.ReadResponse]{
+		Requests: []*bindings.ReadRequest{
+			{Handle: 0, Path: "hostile.txt", Offset: 0, Size: math.MaxUint32},
+		},
+	}
+
+	require.NotPanics(t, func() {
+		err = svc.Read(stream)
+	})
+	require.NoError(t, err)
+	require.Len(t, stream.Sent, 1)
+	assert.LessOrEqual(t, len(stream.Sent[0].Data), config.GRPCStreamBuffer,
+		"response must never exceed the serve buffer")
+	assert.Equal(t, content, stream.Sent[0].Data,
+		"small file must still be served in full despite the hostile size")
+}
+
+// TestRead_HostileOffsetRejected verifies the real Read call site refuses an offset
+// that cannot be represented as int64. rec.Offset is uint64, so 1<<63 wraps negative
+// and would otherwise reach ReadAt and leave the open handle behind.
+func TestRead_HostileOffsetRejected(t *testing.T) {
+	tmpFile, err := os.CreateTemp(t.TempDir(), "offset-*.txt")
+	require.NoError(t, err)
+	_, err = tmpFile.Write([]byte("payload"))
+	require.NoError(t, err)
+	tmpFile.Close()
+
+	svc := &KeibidropServiceImpl{
+		Logger:      testkit.DiscardLogger(),
+		SyncTracker: synctracker.NewSyncTracker(),
+	}
+	fsForSvc := &filesystem.FS{}
+	fsForSvc.SetRoot(&filesystem.Dir{
+		AfmLock:    sync.RWMutex{},
+		AllFileMap: make(map[string]*filesystem.File),
+	})
+	svc.SetFS(fsForSvc)
+	svc.SyncTracker.LocalFiles["offset.txt"] = &synctracker.File{
+		Name:           "offset.txt",
+		RelativePath:   "offset.txt",
+		RealPathOfFile: tmpFile.Name(),
+		Size:           7,
+	}
+
+	stream := &testkit.Stream[*bindings.ReadRequest, *bindings.ReadResponse]{
+		Requests: []*bindings.ReadRequest{
+			{Handle: 0, Path: "offset.txt", Offset: 1 << 63, Size: 1},
+		},
+	}
+
+	require.NotPanics(t, func() { err = svc.Read(stream) })
+	require.Error(t, err, "an unrepresentable offset must be refused")
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code(), "must be InvalidArgument, not Internal")
+	assert.Empty(t, stream.Sent, "nothing may be served for a rejected offset")
 }

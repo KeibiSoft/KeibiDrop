@@ -85,13 +85,14 @@ test:
 	go test -v -count=1 -timeout 600s -skip '$(TEST_SKIP)' ./tests/...
 
 # Deterministic concurrency-race guards under the race detector. Scoped to the
-# in-process unit tests (no FUSE mount) across pkg/filesystem, pkg/session and
-# pkg/logic/common so it stays fast and cannot trip the unrelated cgofuse
-# mount-teardown race that end-to-end FUSE tests hit under -race. Covers the
-# Release async-notify race, the handle-reuse and prefetch-rename guards, the
-# SecureConn double-close race, and the onRekeyNeeded session-nil race.
+# in-process unit tests (no FUSE mount) across pkg/filesystem, pkg/session,
+# pkg/logic/common and pkg/logic/service so it stays fast and cannot trip the
+# unrelated cgofuse mount-teardown race that end-to-end FUSE tests hit under
+# -race. Covers the Release async-notify race, the handle-reuse and
+# prefetch-rename guards, the SecureConn double-close race, the
+# onRekeyNeeded session-nil race, and the peer-path/read-size input guards.
 test-race:
-	go test -race -count=1 -timeout 180s ./pkg/filesystem/ ./pkg/session/ ./pkg/logic/common/
+	go test -race -count=1 -timeout 180s ./pkg/filesystem/ ./pkg/session/ ./pkg/logic/common/ ./pkg/logic/service/
 
 # Unit suites outside ./tests that no other lane runs (identity, service,
 # crypto, discovery, config, CLI, mobile bindings). Keychain suites
@@ -263,7 +264,7 @@ MOBILE_REPO ?= ../KeibiDropMobile
 # go.mod transiently (restored after) so the committed go.mod stays in sync with origin.
 GO_MOD_VERSION := $(shell awk '/^go /{print $$2; exit}' go.mod)
 MOBILE_GOTOOLCHAIN ?= go$(GO_MOD_VERSION)
-MOBILE_PREP = cp go.mod go.mod.bak && cp go.sum go.sum.bak && trap '[ -f go.mod.bak ] && mv -f go.mod.bak go.mod; [ -f go.sum.bak ] && mv -f go.sum.bak go.sum; :' EXIT INT TERM && GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go mod edit -tool=golang.org/x/mobile/cmd/gobind
+MOBILE_PREP = cp go.mod go.mod.bak && cp go.sum go.sum.bak && trap '[ -f go.mod.bak ] && mv -f go.mod.bak go.mod; [ -f go.sum.bak ] && mv -f go.sum.bak go.sum; :' EXIT INT TERM && GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go get -tool golang.org/x/mobile/cmd/gobind@$(MOBILE_PKG_VERSION)
 
 # Install gomobile + gobind (run once, or when 'gomobile version' says it's out of date).
 # x/mobile has no semver tags, so @latest drifts; pin the pseudo-version instead.
@@ -294,8 +295,8 @@ build-android:
 	ANDROID_HOME=$(ANDROID_HOME) ANDROID_NDK_HOME=$(ANDROID_NDK_HOME) \
 	GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) GOFLAGS="-mod=mod" \
 	PATH="$$PATH:$$(go env GOPATH)/bin" \
-	gomobile bind -target=android -androidapi 28 \
-	  -ldflags "-X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.Version=$(VERSION) -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.CommitHash=$(COMMIT) -extldflags '-Wl,-z,max-page-size=16384'" \
+	gomobile bind -target=android -androidapi 28 -trimpath \
+	  -ldflags "-s -w -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.Version=$(VERSION) -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.CommitHash=$(COMMIT) -extldflags '-Wl,-z,max-page-size=16384'" \
 	  -o keibidrop.aar ./mobile
 
 # Sync mobile app source + frameworks to the private KeibiDropMobile repo.
@@ -308,7 +309,7 @@ sync-mobile:
 		rsync -av --delete KeibiDrop.xcframework/ $(MOBILE_REPO)/ios/KeibiDrop/KeibiDrop.xcframework/; \
 	fi
 	@if [ -f keibidrop.aar ]; then \
-		cp keibidrop.aar $(MOBILE_REPO)/android/keibidrop.aar; \
+		cp keibidrop.aar $(MOBILE_REPO)/keibidrop.aar; \
 	fi
 	@echo "Done. cd $(MOBILE_REPO) && git add -A && git commit"
 

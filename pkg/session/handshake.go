@@ -21,6 +21,15 @@ import (
 	kbc "github.com/KeibiSoft/KeibiDrop/pkg/crypto"
 )
 
+// Inbound handshake bounds. Two phases, because a silent peer and a slow peer deserve
+// different budgets: a connect-and-hold never speaks, so rejecting it fast keeps an accept
+// window usable for real peers, while a peer that is already talking gets room to finish.
+// Vars, not consts, so tests can shrink them.
+var (
+	firstByteTimeout        = 3 * time.Second
+	inboundHandshakeTimeout = 30 * time.Second
+)
+
 // PeerHandshakeMessage defines the JSON payload sent during handshake.
 type PeerHandshakeMessage struct {
 	Fingerprint      string            `json:"fingerprint"`
@@ -46,12 +55,25 @@ func keyUpdateBinding(on bool) []byte {
 }
 
 // PerformInboundHandshake handles the first plaintext connection from Bob to Alice.
+// The peer dialed us, so its first byte is due within a round trip: accept sites
+// get the short default budget.
 func PerformInboundHandshake(session *Session, conn net.Conn) error {
+	return PerformInboundHandshakeWait(session, conn, firstByteTimeout)
+}
+
+// PerformInboundHandshakeWait is the wait-for-peer variant for the bridge legs, where
+// the peer can legitimately arrive well after our dial: the caller owns the first-byte
+// budget. The full-handshake bound still applies once the peer speaks.
+func PerformInboundHandshakeWait(session *Session, conn net.Conn, firstByte time.Duration) error {
 	if session == nil || conn == nil {
 		return fmt.Errorf("nil pointer deference")
 	}
 
 	logger := session.logger.With("phase", "inbound-handshake")
+
+	// Bound the wait for the first byte: a peer that connects and holds without
+	// speaking is cheap to reject, so an accept loop keeps its window for real peers.
+	_ = conn.SetReadDeadline(time.Now().Add(firstByte))
 
 	// Read handshake: 4-byte big-endian length prefix, then JSON payload. Must NOT use
 	// json.Decoder: it buffers ahead and would consume bytes meant for the SecureConn that
@@ -61,6 +83,10 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		logger.Error("Failed to read handshake length", "error", err)
 		return fmt.Errorf("read handshake length: %w", err)
 	}
+	// The peer is talking, so give the rest of the exchange room to finish. Cleared
+	// on success below, because the conn then becomes the long-lived transport.
+	_ = conn.SetDeadline(time.Now().Add(inboundHandshakeTimeout))
+
 	msgLen := binary.BigEndian.Uint32(lenBuf[:])
 	if msgLen > 64*1024 { // sanity limit: 64 KiB
 		return fmt.Errorf("handshake message too large: %d bytes", msgLen)
@@ -206,6 +232,10 @@ func PerformInboundHandshake(session *Session, conn net.Conn) error {
 		session.Session = &SessionSockets{}
 	}
 	session.installInbound(secure)
+
+	// The handshake is done and this conn is now the session transport, so it must not
+	// inherit the bound: leaving it armed would kill every long-lived connection.
+	_ = conn.SetDeadline(time.Time{})
 
 	return nil
 }
