@@ -314,6 +314,13 @@ func (s *SecureReader) Read() ([]byte, error) {
 	nonce := encrypted[:kbc.NonceSize]
 	ciphertext := encrypted[kbc.NonceSize:]
 
+	// Reject a frame whose nonce carries the wrong direction prefix. Reader and writer on
+	// one socket share a key, separated only by this prefix, so without the check an on-path
+	// attacker could reflect a frame the peer wrote back at the same key and it would open.
+	if got := binary.BigEndian.Uint32(nonce[:4]); got != s.prefix {
+		return nil, fmt.Errorf("nonce direction prefix %#x does not match expected %#x", got, s.prefix)
+	}
+
 	if !s.keyUpdate.Load() {
 		// Old-peer / epoch-0 path: decrypt with the current key, no epoch tracking, so
 		// the wire behaviour is exactly as before the ratchet existed.

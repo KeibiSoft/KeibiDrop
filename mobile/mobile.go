@@ -402,6 +402,13 @@ func (api *API) SaveFile(remoteName string) (string, error) {
 	}
 	localPath := filepath.Join(api.savePath, remoteName)
 
+	// Defense in depth: refuse a name that escapes the save folder. Ingest already
+	// rejects "..", this guards any other caller into this download sink.
+	if rel, relErr := filepath.Rel(api.savePath, localPath); relErr != nil ||
+		rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("refusing path outside the save folder: %q", remoteName)
+	}
+
 	// Check if already downloaded at correct size.
 	api.kd.SyncTracker.RemoteFilesMu.RLock()
 	rf, ok := api.kd.SyncTracker.RemoteFiles[remoteName]

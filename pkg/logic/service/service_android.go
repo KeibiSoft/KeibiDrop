@@ -40,6 +40,7 @@ var (
 	ErrGRPCAlreadyExists      = status.Error(codes.AlreadyExists, "already exists")
 	ErrGRPCNotFound           = status.Error(codes.NotFound, "notFound")
 	ErrGRPCReadOnlyShare      = status.Error(codes.PermissionDenied, "share is read-only")
+	ErrGRPCUnsafePath         = status.Error(codes.InvalidArgument, "path escapes the save root")
 )
 
 type KeibidropServiceImpl struct {
@@ -99,6 +100,11 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			logger.Warn("Refusing peer mutation: share is read-only", "first-path", req.Path)
 		}
 		return nil, ErrGRPCReadOnlyShare
+	}
+	// Reject a peer path that could escape the save root, before it reaches the tracker.
+	if isUnsafeNotify(req.Type, req.Path, req.OldPath) {
+		logger.Warn("Refusing peer path outside the save root", "path", req.Path, "oldPath", req.OldPath)
+		return nil, ErrGRPCUnsafePath
 	}
 
 	if kd.SyncTracker == nil {
@@ -376,11 +382,16 @@ func (kd *KeibidropServiceImpl) Read(stream bindings.KeibiService_ReadServer) er
 		if buf == nil {
 			buf = make([]byte, config.GRPCStreamBuffer)
 		}
-		size := int(rec.Size)
-		offset := int64(rec.Offset)
-		if size > len(buf) {
-			logger.Warn("Requested size too large, truncating to buffer size", "requested", size, "buffer", len(buf))
-			size = len(buf)
+		requested := int(rec.Size)
+		size := clampReadSize(requested, len(buf))
+		offset, offsetOK := safeReadOffset(rec.Offset)
+		if !offsetOK {
+			fh.Close()
+			logger.Warn("Peer requested an out-of-range read offset", "offset", rec.Offset)
+			return status.Error(codes.InvalidArgument, "read offset out of range")
+		}
+		if size != requested {
+			logger.Warn("Requested size out of range, clamped to buffer", "requested", requested, "buffer", len(buf))
 		}
 
 		n, err := fh.ReadAt(buf[:size], offset)

@@ -76,3 +76,9 @@ libkeibidrop-*.a
 libkeibidrop-*.h
 mount-fuse
 *sanitized*
+
+# SDD subagent workspace + local build outputs (scratch, never committed)
+.superpowers/
+/task-*/
+/keibidrop.aar
+kd_bridge.log
