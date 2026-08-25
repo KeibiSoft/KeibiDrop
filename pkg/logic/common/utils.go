@@ -366,6 +366,23 @@ func countImmediateNotifies(batch []*bindings.NotifyRequest) int64 {
 	return n
 }
 
+// cancelRemoveOnLocalContent cancels a buffered peer REMOVE when a local
+// event lands new content at path (add/edit/rename destination). Without
+// this, the 1000ms remove window deletes the fresh local bytes.
+func (kd *KeibiDrop) cancelRemoveOnLocalContent(action types.FileAction, path string) {
+	switch action {
+	case types.AddFile, types.EditFile, types.RenameFile:
+	default:
+		return
+	}
+	kd.mu.Lock()
+	svc := kd.KDSvc
+	kd.mu.Unlock()
+	if svc != nil {
+		svc.CancelPendingRemove(path)
+	}
+}
+
 func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) error {
 	if kd.session == nil || kd.session.GRPCClient == nil {
 		logger.Warn("Session or gRPC client not initialized")
@@ -606,6 +623,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	}()
 
 	fs.OnLocalChange = func(event types.FileEvent) {
+		// A local write/rename supersedes any buffered peer REMOVE for the path.
+		kd.cancelRemoveOnLocalContent(event.Action, event.Path)
+
 		// Snapshot under kd.mu; teardown rewrites kd.session on another goroutine.
 		kd.mu.Lock()
 		s := kd.session
