@@ -12,15 +12,19 @@ on:
       - 'LICENSE*'
       - '.github/ISSUE_TEMPLATE/**'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Install FUSE dev headers
@@ -46,18 +50,18 @@ jobs:
   lint:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: 'go.mod'
           cache: true
 
       - name: Install FUSE dev headers
         run: sudo apt-get install -y libfuse-dev libfuse3-dev
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.11.4
           args: --timeout=3m
@@ -84,17 +88,17 @@ jobs:
     name: Build (${{ matrix.name }})
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: 'go.mod'
           cache: true
 
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             rust/target
@@ -159,7 +163,7 @@ jobs:
         run: GOARCH=${{ matrix.goarch }} make build-kd
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: keibidrop-${{ matrix.name }}
           path: |
