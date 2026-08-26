@@ -11,6 +11,7 @@ package filesystem
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -39,6 +40,10 @@ type FS struct {
 	MountReadOnly     bool // If true, every mutating FUSE op returns EROFS. Peer updates still apply.
 	PreserveMetadata  bool // If true, apply the origin's mode and times to files saved on disk when their content completes.
 
+	// TieBreakPeerWins: on an exact stamp tie with a dirty local write the
+	// peer wins. Set from the fingerprint order at each handshake.
+	TieBreakPeerWins atomic.Bool
+
 	// host and root are published by Mount and cleared by Unmount while other
 	// goroutines (Run, teardown, gRPC handlers) read them, so access is atomic.
 	host atomic.Pointer[winfuse.FileSystemHost]
@@ -59,6 +64,29 @@ type FS struct {
 	// or resume keeps the cache: no re-fetch, files still there.
 	cacheOwnerFP string
 	cacheOwnerMu sync.Mutex
+}
+
+// NewBareRoot builds a minimal root over saveDir: the one unit-test scaffold
+// for every package. testkit cannot host it (import cycle via its users).
+func NewBareRoot(saveDir string) *Dir {
+	d := &Dir{
+		RelativePath:        "/",
+		RealPathOfFile:      saveDir,
+		LocalDownloadFolder: saveDir,
+		IsLocalPresent:      true,
+		OpenMapLock:         sync.RWMutex{},
+		OpenFileHandlers:    make(map[uint64]*HandleEntry),
+		Adm:                 sync.RWMutex{},
+		AllDirMap:           make(map[string]*Dir),
+		AfmLock:             sync.RWMutex{},
+		AllFileMap:          make(map[string]*File),
+		RemoteFilesLock:     sync.RWMutex{},
+		RemoteFiles:         make(map[string]*File),
+		PrefetchSem:         make(chan struct{}, 8),
+		logger:              slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError})),
+	}
+	d.Root = d
+	return d
 }
 
 func NewFS(logger *slog.Logger) *FS {
@@ -172,6 +200,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	}
 
 	root.Root = root
+	root.TieBreakPeerWins.Store(fs.TieBreakPeerWins.Load())
 	root.warmDisabled = os.Getenv("KEIBIDROP_WARM_SIBLINGS") == "0"
 	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
 	fs.ctxMu.Lock()
@@ -343,6 +372,15 @@ func (fs *FS) EnsurePeerScope(fp string) {
 		fs.ClearFiles() // Different peer: drop the previous peer's view.
 	}
 	fs.cacheOwnerFP = fp
+}
+
+// SetTieBreakPeerWins records the tie rank: a later root inherits it, a
+// mounted root updates in place.
+func (fs *FS) SetTieBreakPeerWins(peerWins bool) {
+	fs.TieBreakPeerWins.Store(peerWins)
+	if root := fs.root.Load(); root != nil {
+		root.TieBreakPeerWins.Store(peerWins)
+	}
 }
 
 func (fs *FS) forceUnmount() {

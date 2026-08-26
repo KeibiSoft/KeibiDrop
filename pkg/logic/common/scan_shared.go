@@ -194,9 +194,12 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 			kd.SyncTracker.LocalFilesMu.Unlock()
 
 			batchFiles = append(batchFiles, file)
+			// Base -1 = fresh create: a dirty same-name receiver preserves.
+			// Base 0 would mean unknown and disable preservation.
 			batchReqs = append(batchReqs, &bindings.NotifyRequest{
-				Type: bindings.NotifyType(types.AddFile),
-				Path: rel,
+				Type:        bindings.NotifyType(types.AddFile),
+				Path:        rel,
+				BaseMtimeNs: -1,
 				Attr: &bindings.Attr{
 					Mode:             file.Mode,
 					Size:             finfo.Size(),

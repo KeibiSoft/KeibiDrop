@@ -71,7 +71,7 @@ type KeibidropServiceImpl struct {
 	// RENAME_FILE arrives for the same path within that window, the REMOVE is
 	// cancelled (it was part of git's atomic .lock→rename dance, not a real deletion).
 	pendingRemovesMu sync.Mutex
-	pendingRemoves   map[string]*time.Timer
+	pendingRemoves   map[string]*pendingRemove
 }
 
 // FS returns the current FUSE tree, or nil before the first publish or after
@@ -149,7 +149,9 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			strings.Contains(req.Path, ".fuse_hidden") &&
 			req.OldPath != "" && !strings.Contains(req.OldPath, ".fuse_hidden") {
 			logger.Info("Rename to FUSE hidden name, buffering remove of source", "path", req.OldPath)
-			kd.bufferRemove(req.OldPath, logger)
+			// Base 0: the rename base describes the hidden target, not
+			// the source leaving the folder.
+			kd.bufferRemove(req.OldPath, 0, logger)
 		}
 		return &bindings.NotifyResponse{}, nil
 	}
@@ -196,7 +198,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	case bindings.NotifyType_ADD_FILE:
 		// Cancel any pending buffered REMOVE for this path — the file wasn't
 		// really deleted, git just did REMOVE→CREATE as part of atomic write.
-		kd.cancelPendingRemove(req.Path)
+		kd.CancelPendingRemove(req.Path)
 
 		if req.Attr == nil {
 			logger.Error("Failed to add file, invalid attr", "error", ErrGRPCInvalidArgument)
@@ -271,7 +273,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			kd.OnEvent(fmt.Sprintf("file_arrived:%s:%d", name, req.Attr.Size))
 		}
 	case bindings.NotifyType_EDIT_FILE:
-		kd.cancelPendingRemove(req.Path)
+		kd.CancelPendingRemove(req.Path)
 
 		if req.Attr == nil {
 			logger.Error("Failed to add file, invalid attr", "error", ErrGRPCInvalidArgument)
@@ -342,19 +344,38 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		// window, the REMOVE is cancelled — it was part of an atomic write,
 		// not a real user deletion.
 		logger.Info("Buffering remove (1000ms)", "path", req.Path)
-		kd.bufferRemove(req.Path, logger)
+		kd.bufferRemove(req.Path, req.BaseMtimeNs, logger)
 	case bindings.NotifyType_RENAME_FILE:
 		// Cancel pending removes for both old and new path.
 		// Git renames .lock→final: the final path may have a pending REMOVE.
-		kd.cancelPendingRemove(req.Path)
-		kd.cancelPendingRemove(req.OldPath)
+		kd.CancelPendingRemove(req.Path)
+		kd.CancelPendingRemove(req.OldPath)
 
 		// Peer renamed/moved a file. OldPath -> Path.
 		logger.Info("Rename file", "oldPath", req.OldPath, "newPath", req.Path)
 
+		isDirRename := false
 		if kd.FS() != nil && kd.FS().Root() != nil {
 			oldDiskPath := filepath.Clean(filepath.Join(kd.FS().Root().RealPathOfFile, req.OldPath))
 			newDiskPath := filepath.Clean(filepath.Join(kd.FS().Root().RealPathOfFile, req.Path))
+
+			// Crossing directory moves: applying the peer's move over ours
+			// nests the trees. The rank keeps ONE move; the loser undoes.
+			if crossed, ourNew, ourOld := kd.FS().Root().CrossingDirMove(req.OldPath, req.Path); crossed {
+				if kd.FS().Root().TieBreakPeerWins.Load() {
+					if undoErr := kd.FS().Root().UndoLocalDirMove(ourNew, ourOld); undoErr != nil {
+						logger.Error("Crossing-move undo failed, applying the peer move on top",
+							"ourMove", ourOld+" -> "+ourNew, "error", undoErr)
+					} else {
+						logger.Info("Crossing directory moves: peer outranks, local move undone",
+							"ourMove", ourOld+" -> "+ourNew)
+					}
+				} else {
+					logger.Info("Crossing directory moves: local move outranks, peer move skipped",
+						"peerMove", req.OldPath+" -> "+req.Path)
+					return &bindings.NotifyResponse{}, nil
+				}
+			}
 
 			// A swap whose declared base is older than LOCAL authority must not
 			// clobber the disk before the acceptance verdict (which preserves
@@ -436,10 +457,26 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			}
 			kd.FS().Root().AfmLock.Unlock()
 
+			// A directory travels as RENAME_FILE: re-key its entry and
+			// children, and skip the file-shaped branches below.
+			if st, statErr := os.Stat(newDiskPath); statErr == nil && st.IsDir() {
+				isDirRename = true
+				root := kd.FS().Root()
+				root.Adm.Lock()
+				if sub, dok := root.AllDirMap[req.OldPath]; dok {
+					delete(root.AllDirMap, req.OldPath)
+					sub.RelativePath = req.Path
+					sub.LocalDownloadFolder = newDiskPath
+					root.AllDirMap[req.Path] = sub
+				}
+				root.Adm.Unlock()
+				root.RekeyChildren(req.OldPath, req.Path)
+			}
+
 			// Collision or conflict: the target object is canonical; run the
 			// announced state through the acceptance path (watermark, conflict
 			// preserve, bitmap reset/reconcile, prefetch).
-			if (collision || conflictSkip) && req.Attr != nil {
+			if !isDirRename && (collision || conflictSkip) && req.Attr != nil {
 				if err := kd.FS().Root().AddRemoteFileWithBase(logger, req.Path, filepath.Base(req.Path), statFromAttr(req.Attr), req.BaseMtimeNs); err != nil {
 					logger.Error("Rename acceptance failed; the peer must retry",
 						"path", req.Path, "error", err)
@@ -452,7 +489,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			// in progress on the old path and got cancelled above),
 			// (b) file exists but has wrong size (git index-pack appends
 			// 20-byte SHA-1 checksum between the initial write and rename).
-			if exists && !collision && !conflictSkip && req.Attr != nil && req.Attr.Size > 0 {
+			if exists && !isDirRename && !collision && !conflictSkip && req.Attr != nil && req.Attr.Size > 0 {
 				needsRedownload := false
 				localInfo, statErr := os.Stat(newDiskPath)
 				if statErr != nil {
@@ -479,7 +516,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			// RENAME arrives immediately. If the target already exists in
 			// RemoteFiles (e.g., .git/HEAD), trigger re-download now so the
 			// peer doesn't read stale content during the debounce window.
-			if !exists && !collision && !conflictSkip && req.Attr != nil && req.Attr.Size > 0 {
+			if !exists && !isDirRename && !collision && !conflictSkip && req.Attr != nil && req.Attr.Size > 0 {
 				// The rename's SOURCE was a transient temp the peer never received
 				// (git writes tmp_pack_XXX / *.lock then renames to the FINAL name),
 				// so neither map had it and the disk rename above failed with
@@ -504,7 +541,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		// Handle non-FUSE mode.
 		if kd.SyncTracker != nil {
 			kd.SyncTracker.RemoteFilesMu.Lock()
-			if f, ok := kd.SyncTracker.RemoteFiles[req.OldPath]; ok {
+			f, exactHit := kd.SyncTracker.RemoteFiles[req.OldPath]
+			if exactHit {
 				delete(kd.SyncTracker.RemoteFiles, req.OldPath)
 				f.RelativePath = req.Path
 				f.Name = filepath.Base(req.Path)
@@ -513,7 +551,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				}
 				kd.SyncTracker.RemoteFiles[req.Path] = f
 				logger.Info("Renamed file in sync tracker", "oldPath", req.OldPath, "newPath", req.Path, "size", f.Size)
-			} else if req.Attr != nil && req.Attr.Size > 0 {
+			} else if !isDirRename && req.Attr != nil && req.Attr.Size > 0 {
 				// Old path wasn't tracked (temp file notification was debounced away).
 				// Create entry with the correct size from the RENAME attr.
 				kd.SyncTracker.RemoteFiles[req.Path] = &synctracker.File{
@@ -523,6 +561,33 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 					LastEditTime: req.Attr.ModificationTime,
 				}
 				logger.Info("Created file from RENAME (old path not tracked)", "path", req.Path, "size", req.Attr.Size)
+			}
+			// Children of a renamed directory, both key shapes. File
+			// renames take the exact hit above and never pay the walk.
+			if isDirRename || !exactHit {
+				rekeyPrefix := func(oldP, newP string) {
+					oldPre := oldP + "/"
+					var stale []string
+					for k := range kd.SyncTracker.RemoteFiles {
+						if strings.HasPrefix(k, oldPre) {
+							stale = append(stale, k)
+						}
+					}
+					for _, k := range stale {
+						cf := kd.SyncTracker.RemoteFiles[k]
+						delete(kd.SyncTracker.RemoteFiles, k)
+						nk := newP + k[len(oldP):]
+						cf.RelativePath = nk
+						cf.Name = filepath.Base(nk)
+						kd.SyncTracker.RemoteFiles[nk] = cf
+					}
+				}
+				rekeyPrefix(req.OldPath, req.Path)
+				if strings.HasPrefix(req.OldPath, "/") {
+					rekeyPrefix(strings.TrimPrefix(req.OldPath, "/"), strings.TrimPrefix(req.Path, "/"))
+				} else {
+					rekeyPrefix("/"+req.OldPath, "/"+req.Path)
+				}
 			}
 			kd.SyncTracker.RemoteFilesMu.Unlock()
 		}
@@ -580,45 +645,56 @@ func (kd *KeibidropServiceImpl) BatchNotify(ctx context.Context, req *bindings.B
 // because the share is read-only.
 func (kd *KeibidropServiceImpl) ReadOnlyRefusals() uint64 { return kd.readOnlyRefusals.Load() }
 
-// bufferRemove delays a REMOVE_FILE by 1000ms. If cancelPendingRemove is called
-// for the same path before the timer fires, the remove is discarded.
-func (kd *KeibidropServiceImpl) bufferRemove(path string, logger *slog.Logger) {
+// pendingRemove is one buffered REMOVE_FILE: its timer plus when it was
+// armed, so executeRemove can skip the delete if a local write is newer.
+type pendingRemove struct {
+	timer   *time.Timer
+	armedAt time.Time
+}
+
+// bufferRemove delays a REMOVE_FILE by 1000ms; CancelPendingRemove discards
+// it. The declared base rides along for the edit-race check.
+func (kd *KeibidropServiceImpl) bufferRemove(path string, baseMtimeNs int64, logger *slog.Logger) {
 	kd.pendingRemovesMu.Lock()
 	defer kd.pendingRemovesMu.Unlock()
 
 	if kd.pendingRemoves == nil {
-		kd.pendingRemoves = make(map[string]*time.Timer)
+		kd.pendingRemoves = make(map[string]*pendingRemove)
 	}
 
 	// Cancel any existing pending remove for this path.
-	if t, ok := kd.pendingRemoves[path]; ok {
-		t.Stop()
+	if pr, ok := kd.pendingRemoves[path]; ok {
+		pr.timer.Stop()
 	}
 
-	kd.pendingRemoves[path] = time.AfterFunc(1000*time.Millisecond, func() {
+	armedAt := time.Now()
+	pr := &pendingRemove{armedAt: armedAt}
+	pr.timer = time.AfterFunc(1000*time.Millisecond, func() {
 		kd.pendingRemovesMu.Lock()
 		delete(kd.pendingRemoves, path)
 		kd.pendingRemovesMu.Unlock()
 
 		logger.Info("Executing buffered remove (no ADD/RENAME arrived)", "path", path)
-		kd.executeRemove(path, logger)
+		kd.executeRemove(path, baseMtimeNs, logger, armedAt)
 	})
+	kd.pendingRemoves[path] = pr
 }
 
-// cancelPendingRemove cancels a buffered REMOVE_FILE if one exists.
-// Called when ADD_FILE, EDIT_FILE, or RENAME_FILE arrives for the same path,
-// indicating the REMOVE was part of git's atomic .lock→rename dance.
-func (kd *KeibidropServiceImpl) cancelPendingRemove(path string) {
+// CancelPendingRemove cancels a buffered REMOVE_FILE if one exists. Called
+// when a peer ADD_FILE/EDIT_FILE/RENAME_FILE arrives for the same path (git's
+// atomic .lock→rename dance) and when a LOCAL event lands new content at the
+// path: the buffered remove would otherwise delete the fresh local bytes.
+func (kd *KeibidropServiceImpl) CancelPendingRemove(path string) {
 	kd.pendingRemovesMu.Lock()
 	defer kd.pendingRemovesMu.Unlock()
 
 	if kd.pendingRemoves == nil {
 		return
 	}
-	if t, ok := kd.pendingRemoves[path]; ok {
-		t.Stop()
+	if pr, ok := kd.pendingRemoves[path]; ok {
+		pr.timer.Stop()
 		delete(kd.pendingRemoves, path)
-		kd.Logger.Info("Cancelled buffered remove (ADD/RENAME arrived)", "path", path)
+		kd.Logger.Info("Cancelled buffered remove", "path", path)
 	}
 }
 
@@ -628,18 +704,43 @@ func (kd *KeibidropServiceImpl) cancelPendingRemove(path string) {
 func (kd *KeibidropServiceImpl) cancelAllPendingRemoves() {
 	kd.pendingRemovesMu.Lock()
 	defer kd.pendingRemovesMu.Unlock()
-	for _, t := range kd.pendingRemoves {
-		t.Stop()
+	for _, pr := range kd.pendingRemoves {
+		pr.timer.Stop()
 	}
 	kd.pendingRemoves = nil
 }
 
-// executeRemove performs the actual REMOVE_FILE logic (previously inline in Notify).
-func (kd *KeibidropServiceImpl) executeRemove(path string, logger *slog.Logger) {
-	if kd.FS() != nil && kd.FS().Root() != nil {
+// executeRemove runs the buffered REMOVE_FILE. armedAt: a cache file written
+// after it survives. baseMtimeNs: a dirty file above it is preserved first.
+func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, logger *slog.Logger, armedAt time.Time) {
+	// Snapshot FS/root once: teardown may SetFS(nil) while this timer
+	// goroutine runs, and repeated loads would race it (nil-receiver panic).
+	var root *filesystem.Dir
+	if fs := kd.FS(); fs != nil {
+		root = fs.Root()
+	}
+	if root != nil {
+		cachePath := filepath.Clean(filepath.Join(root.LocalDownloadFolder, path))
+		if st, err := os.Stat(cachePath); err == nil && !armedAt.IsZero() && st.ModTime().After(armedAt) {
+			logger.Info("Skipping buffered remove, local write is newer", "path", path)
+			return
+		}
+		// A delete below local authority raced an unseen edit: preserve as
+		// a sibling first. Base 0 keeps the plain delete. Maps key by "/".
+		fusePath := path
+		if !strings.HasPrefix(fusePath, "/") {
+			fusePath = "/" + fusePath
+		}
+		if baseMtimeNs != 0 && root.SwapWouldConflict(fusePath, baseMtimeNs) {
+			if _, pErr := root.PreserveConflictSiblingForDelete(logger, fusePath); pErr != nil {
+				logger.Error("Delete raced a local edit and preservation failed, refusing the delete",
+					"path", path, "error", pErr)
+				return
+			}
+		}
 		hasOpenHandles := false
-		kd.FS().Root().AfmLock.Lock()
-		file, exists := kd.FS().Root().AllFileMap[path]
+		root.AfmLock.Lock()
+		file, exists := root.AllFileMap[path]
 		if exists && file != nil {
 			openCount := file.CountOpenDescriptors()
 			if openCount > 0 {
@@ -647,23 +748,22 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, logger *slog.Logger) 
 				hasOpenHandles = true
 				logger.Info("File has open handles, marking for removal after download", "path", path, "openHandles", openCount)
 			} else {
-				delete(kd.FS().Root().AllFileMap, path)
+				delete(root.AllFileMap, path)
 			}
 		}
-		kd.FS().Root().AfmLock.Unlock()
+		root.AfmLock.Unlock()
 
-		kd.FS().Root().RemoteFilesLock.Lock()
-		if rf, rfOk := kd.FS().Root().RemoteFiles[path]; rfOk {
+		root.RemoteFilesLock.Lock()
+		if rf, rfOk := root.RemoteFiles[path]; rfOk {
 			if rf.PrefetchCancel != nil {
 				rf.PrefetchCancel()
 				rf.PrefetchCancel = nil
 			}
-			delete(kd.FS().Root().RemoteFiles, path)
+			delete(root.RemoteFiles, path)
 		}
-		kd.FS().Root().RemoteFilesLock.Unlock()
+		root.RemoteFilesLock.Unlock()
 
 		if !hasOpenHandles {
-			cachePath := filepath.Clean(filepath.Join(kd.FS().Root().LocalDownloadFolder, path))
 			if rmErr := os.Remove(cachePath); rmErr != nil && !os.IsNotExist(rmErr) {
 				logger.Warn("Failed to remove cache file", "path", cachePath, "error", rmErr)
 			}

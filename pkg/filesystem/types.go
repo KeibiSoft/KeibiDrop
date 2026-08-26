@@ -185,6 +185,14 @@ type Dir struct {
 	// PreserveMetadata is set on the ROOT dir: when a remote file's content
 	// completes on disk, apply the origin's mode and times to the saved file.
 	PreserveMetadata bool
+	// TieBreakPeerWins, ROOT only: on an exact stamp tie with a dirty local
+	// write the peer wins. Atomic: reconnects update it under readers.
+	TieBreakPeerWins atomic.Bool
+
+	// Recent local directory renames, ROOT only, for the crossing check
+	// (mv A B/ against mv B A/).
+	dirMovesMu     sync.Mutex
+	recentDirMoves []localDirMove
 
 	// ReadAheadWindowBlocks caps predictive sequential read-ahead. Sequential
 	// reads fetch up to this many ReadAheadBlock-sized blocks ahead of the read

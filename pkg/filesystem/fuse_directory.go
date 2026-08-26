@@ -17,10 +17,11 @@ package filesystem
 import (
 	"context"
 	"errors"
-	// "fmt"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -1695,6 +1696,16 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		return int(convertOsErrToSyscallErrno("rename", err))
 	}
 
+	// One stat serves the dir check and the announce attr: no extra
+	// syscall on the file-rename hot path.
+	var renStat winfuse.Stat_t
+	renStatOK := false
+	if stgo, statErr := platLstat(cleanNewPath); statErr == nil {
+		renStat = stgo
+		renStatOK = true
+	}
+	isDirRename := renStatOK && renStat.Mode&winfuse.S_IFMT == winfuse.S_IFDIR
+
 	// Remove the destination entry from AllFileMap (rename-over-existing).
 	// Do not remove it from RemoteFiles: the peer still tracks this file.
 	d.AfmLock.Lock()
@@ -1723,6 +1734,13 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		d.AllDirMap[newpath] = dir
 	}
 	d.Adm.Unlock()
+
+	// A directory move carries its subtree: re-key the children and
+	// record the move for the crossing check.
+	if isDirRename {
+		d.RekeyChildren(oldpath, newpath)
+		d.RecordLocalDirMove(oldpath, newpath)
+	}
 
 	// Refresh stats after the map update.
 	oldParent := filepath.Dir(oldpath)
@@ -1766,13 +1784,13 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	// adopted own file. Peer-driven renames do not pass through this op, so
 	// there is no echo.
 	if d.hasOnLocalChange() {
-		// Get stat of the renamed file.
+		// Stat of the renamed file, taken once right after the disk rename.
 		var attr *keibidrop.Attr
-		if stgo, statErr := platLstat(cleanNewPath); statErr == nil {
-			attr = types.StatToAttr(&stgo)
+		if renStatOK {
+			attr = types.StatToAttr(&renStat)
 			if movedLocal != nil {
 				movedLocal.metaMu.Lock()
-				movedLocal.LastAnnouncedMtimeNs = stgo.Mtim.Sec*1e9 + stgo.Mtim.Nsec
+				movedLocal.LastAnnouncedMtimeNs = renStat.Mtim.Sec*1e9 + renStat.Mtim.Nsec
 				movedLocal.metaMu.Unlock()
 			}
 		}
@@ -1992,6 +2010,13 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	// d.logger.Info("FUSE unlink", "path", path, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "unlink", "path", path)
 
+	// Capture the delete's base before the maps are cleaned: a dirty
+	// receiver above it proves the delete raced an edit and preserves.
+	var removeBase int64
+	if notifyPeer {
+		removeBase = d.targetIdentity(path)
+	}
+
 	// Check if this is a remote-only file (not downloaded locally).
 	d.RemoteFilesLock.Lock()
 	_, isRemote := d.RemoteFiles[path]
@@ -2049,9 +2074,10 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	// Notify peer about the removed file.
 	if notifyPeer && d.hasOnLocalChange() && (!isRemote || err == nil) {
 		d.OnLocalChange(types.FileEvent{
-			Path:   path,
-			Action: types.RemoveFile,
-			Attr:   nil,
+			Path:        path,
+			Action:      types.RemoveFile,
+			Attr:        nil,
+			BaseMtimeNs: removeBase,
 		})
 	}
 
@@ -3214,6 +3240,284 @@ func conflictNames(relPath, realPath string) (string, string) {
 	}
 }
 
+// pathIsUnder reports whether p equals base or lies inside base's subtree.
+// Rel paths are slash-only on all platforms: use path.*, never filepath.
+func pathIsUnder(p, base string) bool {
+	p = path.Clean(p)
+	base = path.Clean(base)
+	return p == base || strings.HasPrefix(p, base+"/")
+}
+
+// RekeyChildren re-keys all entries below oldpath after a directory rename.
+// Without it the old child keys serve forever. File renames never call it.
+func (d *Dir) RekeyChildren(oldpath, newpath string) {
+	oldPrefix := oldpath + "/"
+	reroot := func(k string) string { return newpath + k[len(oldpath):] }
+	realOf := func(nk string) string { return filepath.Clean(filepath.Join(d.LocalDownloadFolder, nk)) }
+
+	d.AfmLock.Lock()
+	var fileKeys []string
+	for k := range d.AllFileMap {
+		if strings.HasPrefix(k, oldPrefix) {
+			fileKeys = append(fileKeys, k)
+		}
+	}
+	for _, k := range fileKeys {
+		f := d.AllFileMap[k]
+		delete(d.AllFileMap, k)
+		nk := reroot(k)
+		f.RelativePath = nk
+		f.Name = getNameFromPath(nk)
+		f.RealPathOfFile = realOf(nk)
+		d.AllFileMap[nk] = f
+	}
+	d.AfmLock.Unlock()
+
+	d.RemoteFilesLock.Lock()
+	var remoteKeys []string
+	for k := range d.RemoteFiles {
+		if strings.HasPrefix(k, oldPrefix) {
+			remoteKeys = append(remoteKeys, k)
+		}
+	}
+	for _, k := range remoteKeys {
+		f := d.RemoteFiles[k]
+		delete(d.RemoteFiles, k)
+		nk := reroot(k)
+		f.RelativePath = nk
+		f.Name = getNameFromPath(nk)
+		f.RealPathOfFile = realOf(nk)
+		d.RemoteFiles[nk] = f
+	}
+	d.RemoteFilesLock.Unlock()
+
+	d.Adm.Lock()
+	var dirKeys []string
+	for k := range d.AllDirMap {
+		if strings.HasPrefix(k, oldPrefix) {
+			dirKeys = append(dirKeys, k)
+		}
+	}
+	for _, k := range dirKeys {
+		sub := d.AllDirMap[k]
+		delete(d.AllDirMap, k)
+		nk := reroot(k)
+		sub.RelativePath = nk
+		sub.LocalDownloadFolder = realOf(nk)
+		d.AllDirMap[nk] = sub
+	}
+	d.Adm.Unlock()
+}
+
+// localDirMove is one local directory rename, kept for the crossing check.
+type localDirMove struct {
+	oldPath string
+	newPath string
+	at      time.Time
+}
+
+// dirMoveWindow bounds how long a local move counts as concurrent with an
+// incoming one. Crossing moves meet within network latency.
+const dirMoveWindow = time.Minute
+
+// RecordLocalDirMove notes a kernel-originated directory rename for the
+// crossing check. Applied peer moves are never recorded.
+func (d *Dir) RecordLocalDirMove(oldpath, newpath string) {
+	r := d.Root
+	if r == nil {
+		return
+	}
+	r.dirMovesMu.Lock()
+	now := time.Now()
+	for i := 0; i < len(r.recentDirMoves); {
+		if now.Sub(r.recentDirMoves[i].at) > dirMoveWindow {
+			r.recentDirMoves = append(r.recentDirMoves[:i], r.recentDirMoves[i+1:]...)
+		} else {
+			i++
+		}
+	}
+	r.recentDirMoves = append(r.recentDirMoves, localDirMove{oldPath: oldpath, newPath: newpath, at: now})
+	r.dirMovesMu.Unlock()
+}
+
+// CrossingDirMove reports whether the incoming rename crosses a recent local
+// one: mutual nesting or same source. Returns our move for the undo.
+func (d *Dir) CrossingDirMove(inOld, inNew string) (bool, string, string) {
+	r := d.Root
+	if r == nil {
+		return false, "", ""
+	}
+	r.dirMovesMu.Lock()
+	defer r.dirMovesMu.Unlock()
+	now := time.Now()
+	for _, m := range r.recentDirMoves {
+		if now.Sub(m.at) > dirMoveWindow {
+			continue
+		}
+		if inOld == m.oldPath && inNew != m.newPath {
+			return true, m.newPath, m.oldPath
+		}
+		if pathIsUnder(path.Dir(inNew), m.oldPath) && pathIsUnder(m.newPath, inOld) {
+			return true, m.newPath, m.oldPath
+		}
+	}
+	return false, "", ""
+}
+
+// ForgetLocalDirMove drops one recorded move after an undo.
+func (d *Dir) ForgetLocalDirMove(newpath string) {
+	r := d.Root
+	if r == nil {
+		return
+	}
+	r.dirMovesMu.Lock()
+	for i := 0; i < len(r.recentDirMoves); i++ {
+		if r.recentDirMoves[i].newPath == newpath {
+			r.recentDirMoves = append(r.recentDirMoves[:i], r.recentDirMoves[i+1:]...)
+			break
+		}
+	}
+	r.dirMovesMu.Unlock()
+}
+
+// UndoLocalDirMove reverses a local directory move without an announce: the
+// winner skipped our move, so there is nothing to undo on their side.
+func (d *Dir) UndoLocalDirMove(movedTo, movedFrom string) error {
+	realNew := filepath.Clean(filepath.Join(d.LocalDownloadFolder, movedTo))
+	realOld := filepath.Clean(filepath.Join(d.LocalDownloadFolder, movedFrom))
+	if err := os.MkdirAll(filepath.Dir(realOld), 0o755); err != nil {
+		return err
+	}
+	if err := platRename(realNew, realOld); err != nil {
+		return err
+	}
+	d.AfmLock.Lock()
+	if f, ok := d.AllFileMap[movedTo]; ok {
+		delete(d.AllFileMap, movedTo)
+		f.RelativePath = movedFrom
+		f.Name = getNameFromPath(movedFrom)
+		f.RealPathOfFile = realOld
+		d.AllFileMap[movedFrom] = f
+	}
+	d.AfmLock.Unlock()
+	d.Adm.Lock()
+	if sub, ok := d.AllDirMap[movedTo]; ok {
+		delete(d.AllDirMap, movedTo)
+		sub.RelativePath = movedFrom
+		sub.LocalDownloadFolder = realOld
+		d.AllDirMap[movedFrom] = sub
+	}
+	d.Adm.Unlock()
+	d.RemoteFilesLock.Lock()
+	if f, ok := d.RemoteFiles[movedTo]; ok {
+		delete(d.RemoteFiles, movedTo)
+		f.RelativePath = movedFrom
+		f.Name = getNameFromPath(movedFrom)
+		f.RealPathOfFile = realOld
+		d.RemoteFiles[movedFrom] = f
+	}
+	d.RemoteFilesLock.Unlock()
+	d.RekeyChildren(movedTo, movedFrom)
+	d.ForgetLocalDirMove(movedTo)
+	d.refreshDirStat(path.Dir(movedFrom))
+	d.refreshDirStat(path.Dir(movedTo))
+	return nil
+}
+
+// copyFileContents copies src to dst. Fallback for a failed preserve rename;
+// O_EXCL because conflictNames guarantees a free name.
+func copyFileContents(src, dst string) error {
+	in, err := os.Open(src) // #nosec G304 -- both paths are cache-internal
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) // #nosec G304
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	return out.Close()
+}
+
+// preserveLoserBytes moves the losing version to the conflict name: rename,
+// on failure close handles and retry, then copy. On error the caller refuses.
+func (d *Dir) preserveLoserBytes(logger *slog.Logger, relPath, realPath string) (string, string, error) {
+	conflictRel, conflictReal := conflictNames(relPath, realPath)
+	renErr := os.Rename(realPath, conflictReal)
+	if renErr != nil && runtime.GOOS == "windows" {
+		clean := filepath.Clean(realPath)
+		d.OpenMapLock.Lock()
+		for fh, entry := range d.OpenFileHandlers {
+			entryPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, entry.File.RelativePath))
+			if entryPath == clean {
+				_ = platClose(entry.FD)
+				delete(d.OpenFileHandlers, fh)
+			}
+		}
+		d.OpenMapLock.Unlock()
+		renErr = os.Rename(realPath, conflictReal)
+	}
+	if renErr != nil {
+		if cpErr := copyFileContents(realPath, conflictReal); cpErr != nil {
+			logger.Error("Conflict preserve failed on every route, refusing the acceptance",
+				"path", relPath, "renameError", renErr, "copyError", cpErr)
+			return "", "", fmt.Errorf("conflict preserve for %s: %w", relPath, renErr)
+		}
+		logger.Warn("Conflict preserve fell back to a byte copy", "path", relPath, "renameError", renErr)
+	}
+	return conflictRel, conflictReal, nil
+}
+
+// PreserveConflictSiblingForDelete preserves the local version before a peer
+// delete that raced a local edit. On error the caller must refuse the delete.
+func (d *Dir) PreserveConflictSiblingForDelete(logger *slog.Logger, path string) (string, error) {
+	// Same lookup order as SwapWouldConflict.
+	d.RemoteFilesLock.RLock()
+	f := d.RemoteFiles[path]
+	d.RemoteFilesLock.RUnlock()
+	if f == nil {
+		d.AfmLock.RLock()
+		f = d.AllFileMap[path]
+		d.AfmLock.RUnlock()
+	}
+	if f == nil || f.RealPathOfFile == "" {
+		return "", nil
+	}
+	conflictRel, conflictReal, err := d.preserveLoserBytes(logger, path, f.RealPathOfFile)
+	if err != nil {
+		return "", err
+	}
+	_ = os.Remove(BitmapPath(f.RealPathOfFile))
+	d.registerConflictCopy(logger, conflictRel, conflictReal)
+	logger.Info("Peer delete raced a local edit: version preserved", "path", path, "conflict", conflictRel)
+	return conflictRel, nil
+}
+
+// UnsyncedConflictSiblings returns the siblings this peer minted and still
+// owns (LocalNewer): the set the connect path re-announces. {rel, real} pairs.
+func (d *Dir) UnsyncedConflictSiblings() [][2]string {
+	var out [][2]string
+	d.AfmLock.RLock()
+	for k, f := range d.AllFileMap {
+		if f == nil || !strings.Contains(getNameFromPath(k), ".conflict-") {
+			continue
+		}
+		f.metaMu.Lock()
+		mine := f.LocalNewer && f.IsLocalPresent
+		f.metaMu.Unlock()
+		if mine {
+			out = append(out, [2]string{k, f.RealPathOfFile})
+		}
+	}
+	d.AfmLock.RUnlock()
+	return out
+}
+
 // registerConflictCopy makes a preserved version a normal local file: visible
 // in the tree and announced, so both peers end with both versions.
 func (d *Dir) registerConflictCopy(logger *slog.Logger, relPath, realPath string) {
@@ -3305,6 +3609,12 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			existingMtime = existingStatMtime
 		}
 		accepted := incomingMtime > existingMtime
+		// Exact tie with our own write: the fingerprint rank picks the same
+		// winner on both peers. A tie with the watermark is a redelivery.
+		if !accepted && wasLocalNewer && incomingMtime > 0 && incomingMtime == existingMtime &&
+			d.Root != nil && d.Root.TieBreakPeerWins.Load() {
+			accepted = true
+		}
 		// The edit is concurrent when its declared base is older than the
 		// version we hold: it provably never saw our bytes.
 		// Turn-taking edits carry base == our version and never trip this.
@@ -3324,11 +3634,12 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			existing.LocalNewer = false // Remote has newer content.
 			existing.metaMu.Unlock()
 		}
+		existing.metaMu.Lock()
+		prevRemoteMtime := existing.RemoteMtimeNs
 		if incomingMtime > existing.RemoteMtimeNs {
-			existing.metaMu.Lock()
 			existing.RemoteMtimeNs = incomingMtime
-			existing.metaMu.Unlock()
 		}
+		existing.metaMu.Unlock()
 		if fuseOpLog {
 			d.logger.Debug("oplog AddRemoteFile existing", "path", path, "sizeChanged", sizeChanged,
 				"incomingMtime", incomingMtime, "existingMtime", existingMtime)
@@ -3346,22 +3657,28 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			return nil
 		}
 
-		// Preserve the losing local version before the acceptance clobbers it.
-		// A rename is O(1); the canonical name re-fetches the winner in full.
+		// Preserve the loser before the winner clobbers it. A failed preserve
+		// refuses the acceptance and rolls back, never silent last-writer-wins.
 		var conflictRel, conflictReal string
 		if conflict && existing.RealPathOfFile != "" {
-			conflictRel, conflictReal = conflictNames(path, existing.RealPathOfFile)
-			if renErr := os.Rename(existing.RealPathOfFile, conflictReal); renErr != nil {
-				logger.Warn("Conflict preserve failed, last-writer-wins", "path", path, "error", renErr)
-				conflictRel, conflictReal = "", ""
-			} else {
-				_ = os.Remove(BitmapPath(existing.RealPathOfFile))
-				if cf, cErr := os.OpenFile(existing.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
-					_ = cf.Truncate(newSize)
-					_ = cf.Close()
+			var pErr error
+			conflictRel, conflictReal, pErr = d.preserveLoserBytes(logger, path, existing.RealPathOfFile)
+			if pErr != nil {
+				existing.metaMu.Lock()
+				if existing.RemoteMtimeNs == incomingMtime {
+					existing.RemoteMtimeNs = prevRemoteMtime
 				}
-				logger.Info("Concurrent edit: local version preserved", "path", path, "conflict", conflictRel)
+				existing.LocalNewer = wasLocalNewer
+				existing.metaMu.Unlock()
+				d.RemoteFilesLock.Unlock()
+				return pErr
 			}
+			_ = os.Remove(BitmapPath(existing.RealPathOfFile))
+			if cf, cErr := os.OpenFile(existing.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
+				_ = cf.Truncate(newSize)
+				_ = cf.Close()
+			}
+			logger.Info("Concurrent edit: local version preserved", "path", path, "conflict", conflictRel)
 		}
 
 		existing.metaMu.Lock()
@@ -3804,6 +4121,13 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 		d.RemoteFilesLock.Unlock()
 		return syscall.ECANCELED
 	}
+	// Exact tie with a dirty local write: the rank picks one winner; the
+	// loser accepts and preserves. An equal stamp when clean stays accepted.
+	if incomingEditMtime == editRef && editLocalNewer &&
+		(d.Root == nil || !d.Root.TieBreakPeerWins.Load()) {
+		d.RemoteFilesLock.Unlock()
+		return syscall.ECANCELED
+	}
 	// The edit is concurrent when its declared base is older than the version
 	// we hold: it provably never saw our bytes (same predicate as ADD).
 	conflict := editLocalNewer && baseMtimeNs != 0 && baseMtimeNs < editRef
@@ -3818,6 +4142,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 		d.OnLocalChange(types.FileEvent{Path: path, Action: types.CancelPendingNotify})
 	}
 	f.metaMu.Lock()
+	prevRemoteMtime := f.RemoteMtimeNs
 	if incomingEditMtime > f.RemoteMtimeNs {
 		f.RemoteMtimeNs = incomingEditMtime
 	}
@@ -3827,22 +4152,27 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	// the same struct Getattr may mutate, so reading it post-unlock would race.
 	newSize := stat.Size
 
-	// Preserve the losing local version before the acceptance clobbers it.
-	// A rename is O(1); the canonical name re-fetches the winner in full.
+	// Preserve the loser before the winner clobbers it. A failed preserve
+	// refuses the acceptance and rolls back, never silent last-writer-wins.
 	var conflictRel, conflictReal string
 	if conflict && f.RealPathOfFile != "" {
-		conflictRel, conflictReal = conflictNames(path, f.RealPathOfFile)
-		if renErr := os.Rename(f.RealPathOfFile, conflictReal); renErr != nil {
-			logger.Warn("Conflict preserve failed, last-writer-wins", "path", path, "error", renErr)
-			conflictRel, conflictReal = "", ""
-		} else {
-			_ = os.Remove(BitmapPath(f.RealPathOfFile))
-			if cf, cErr := os.OpenFile(f.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
-				_ = cf.Truncate(newSize)
-				_ = cf.Close()
+		var pErr error
+		conflictRel, conflictReal, pErr = d.preserveLoserBytes(logger, path, f.RealPathOfFile)
+		if pErr != nil {
+			f.metaMu.Lock()
+			if f.RemoteMtimeNs == incomingEditMtime {
+				f.RemoteMtimeNs = prevRemoteMtime
 			}
-			logger.Info("Concurrent edit: local version preserved", "path", path, "conflict", conflictRel)
+			f.metaMu.Unlock()
+			d.RemoteFilesLock.Unlock()
+			return pErr
 		}
+		_ = os.Remove(BitmapPath(f.RealPathOfFile))
+		if cf, cErr := os.OpenFile(f.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
+			_ = cf.Truncate(newSize)
+			_ = cf.Close()
+		}
+		logger.Info("Concurrent edit: local version preserved", "path", path, "conflict", conflictRel)
 	}
 
 	// logger.Info("Remote file edited", "path", path, "mtime", stat.Mtim.Time())
