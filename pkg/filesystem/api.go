@@ -11,6 +11,7 @@ package filesystem
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -65,6 +66,33 @@ type FS struct {
 	// or resume keeps the cache: no re-fetch, files still there.
 	cacheOwnerFP string
 	cacheOwnerMu sync.Mutex
+}
+
+// NewBareRoot builds a minimal root Dir over saveDir. Unit-test and bench
+// scaffolding shared across packages (service, logic, and this package's
+// own tests): one definition instead of a hand-rolled Dir literal per file.
+// It cannot live in internal/testkit: testkit must stay an import leaf, and
+// importing this package from there cycles through the packages whose tests
+// use testkit.
+func NewBareRoot(saveDir string) *Dir {
+	d := &Dir{
+		RelativePath:        "/",
+		RealPathOfFile:      saveDir,
+		LocalDownloadFolder: saveDir,
+		IsLocalPresent:      true,
+		OpenMapLock:         sync.RWMutex{},
+		OpenFileHandlers:    make(map[uint64]*HandleEntry),
+		Adm:                 sync.RWMutex{},
+		AllDirMap:           make(map[string]*Dir),
+		AfmLock:             sync.RWMutex{},
+		AllFileMap:          make(map[string]*File),
+		RemoteFilesLock:     sync.RWMutex{},
+		RemoteFiles:         make(map[string]*File),
+		PrefetchSem:         make(chan struct{}, 8),
+		logger:              slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError})),
+	}
+	d.Root = d
+	return d
 }
 
 func NewFS(logger *slog.Logger) *FS {

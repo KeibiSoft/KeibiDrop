@@ -123,7 +123,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Directory notification ignored in SyncTracker mode", "type", req.Type)
 
 	case bindings.NotifyType_ADD_FILE:
-		kd.cancelPendingRemove(req.Path)
+		kd.CancelPendingRemove(req.Path)
 		if req.Attr == nil {
 			logger.Error("Failed to add file, invalid attr", "error", ErrGRPCInvalidArgument)
 			return nil, ErrGRPCInvalidArgument
@@ -168,7 +168,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		logger.Info("Success")
 
 	case bindings.NotifyType_EDIT_FILE:
-		kd.cancelPendingRemove(req.Path)
+		kd.CancelPendingRemove(req.Path)
 		if req.Attr == nil {
 			logger.Error("Failed to edit file, invalid attr", "error", ErrGRPCInvalidArgument)
 			return nil, ErrGRPCFailedPrecondition
@@ -217,8 +217,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		kd.bufferRemove(req.Path, logger)
 
 	case bindings.NotifyType_RENAME_FILE:
-		kd.cancelPendingRemove(req.Path)
-		kd.cancelPendingRemove(req.OldPath)
+		kd.CancelPendingRemove(req.Path)
+		kd.CancelPendingRemove(req.OldPath)
 		logger.Info("Rename file", "oldPath", req.OldPath, "newPath", req.Path)
 		kd.SyncTracker.RemoteFilesMu.Lock()
 		if f, ok := kd.SyncTracker.RemoteFiles[req.OldPath]; ok {
@@ -246,7 +246,7 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	return &bindings.NotifyResponse{}, nil
 }
 
-// bufferRemove delays a REMOVE_FILE by 1000ms; cancelPendingRemove for the same
+// bufferRemove delays a REMOVE_FILE by 1000ms; CancelPendingRemove for the same
 // path before it fires discards it.
 func (kd *KeibidropServiceImpl) bufferRemove(path string, logger *slog.Logger) {
 	kd.pendingRemovesMu.Lock()
@@ -268,9 +268,9 @@ func (kd *KeibidropServiceImpl) bufferRemove(path string, logger *slog.Logger) {
 	})
 }
 
-// cancelPendingRemove discards a buffered REMOVE when an ADD/EDIT/RENAME for the
+// CancelPendingRemove discards a buffered REMOVE when an ADD/EDIT/RENAME for the
 // same path arrives (the remove was part of git's atomic .lock->rename dance).
-func (kd *KeibidropServiceImpl) cancelPendingRemove(path string) {
+func (kd *KeibidropServiceImpl) CancelPendingRemove(path string) {
 	kd.pendingRemovesMu.Lock()
 	defer kd.pendingRemovesMu.Unlock()
 	if t, ok := kd.pendingRemoves[path]; ok {
