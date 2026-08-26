@@ -47,9 +47,11 @@ func FuzzIsUnsafeRemotePath(f *testing.F) {
 	}
 
 	// Synthetic root: the oracle is pure string math (filepath.Join/Clean),
-	// so this never needs to exist on disk.
-	const root = "/save/root"
+	// so this never needs to exist on disk. Native separator on purpose: a
+	// unix-literal root never prefix-matches the joined paths on Windows,
+	// which failed every accepted seed there.
 	sep := string(filepath.Separator)
+	root := filepath.Clean(sep + "save" + sep + "root")
 
 	f.Fuzz(func(t *testing.T, p string) {
 		if isUnsafeRemotePath(p) {

@@ -9,6 +9,7 @@ package filesystem
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -235,6 +236,75 @@ func TestBlindOverwrite_BaseIsHeldVersion(t *testing.T) {
 	require.Equal(t, 0, d.Release("/doc.txt", fi2.Fh))
 	require.Equal(t, remote.UnixNano(), lastBase(),
 		"post-fetch overwrite must announce the accepted version as its base")
+}
+
+// A preserve that fails on every route (rename and the byte-copy fallback)
+// must REFUSE the acceptance: local authority intact, no silent last-writer-
+// wins, watermark rolled back so the retried announce is not compared-equal
+// into a wedge. Once the blocker clears, the same announce accepts and
+// preserves. The ADD path shares the same helper and rollback shape.
+func TestPreserveFailure_RefusesAcceptanceThenRetries(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("read-only parent does not block rename the same way on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the read-only parent, the rename cannot be made to fail")
+	}
+	d, _ := newConflictTestDir(t)
+	f := seedLocalFile(t, d, "/doc.txt", "only-copy-of-these-bytes")
+	identity := localIdentity(f)
+
+	// A read-only parent fails both the rename and the copy fallback: no new
+	// name can be created next to the file.
+	require.NoError(t, os.Chmod(d.LocalDownloadFolder, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(d.LocalDownloadFolder, 0o755) })
+
+	st := remoteStat(9, time.Now().Add(2*time.Second))
+	incoming := st.Mtim.Sec*1e9 + st.Mtim.Nsec
+	err := d.EditRemoteFileWithBase(nopLogger(), "/doc.txt", "doc.txt", st, identity-1)
+	require.Error(t, err, "acceptance must be refused when the loser cannot be preserved")
+
+	require.NoError(t, os.Chmod(d.LocalDownloadFolder, 0o755))
+	require.Empty(t, conflictSiblings(t, d.LocalDownloadFolder))
+	got, rerr := os.ReadFile(filepath.Join(d.LocalDownloadFolder, "doc.txt"))
+	require.NoError(t, rerr)
+	require.Equal(t, "only-copy-of-these-bytes", string(got))
+	f.metaMu.Lock()
+	localNewer := f.LocalNewer
+	watermark := f.RemoteMtimeNs
+	f.metaMu.Unlock()
+	require.True(t, localNewer, "refused acceptance must keep local authority")
+	require.Less(t, watermark, incoming, "watermark must roll back so a retry can accept")
+
+	// The blocker is gone: the SAME announce now accepts and preserves.
+	require.NoError(t, d.EditRemoteFileWithBase(nopLogger(), "/doc.txt", "doc.txt", st, identity-1))
+	conflicts := conflictSiblings(t, d.LocalDownloadFolder)
+	require.Len(t, conflicts, 1)
+	got2, rerr2 := os.ReadFile(filepath.Join(d.LocalDownloadFolder, conflicts[0]))
+	require.NoError(t, rerr2)
+	require.Equal(t, "only-copy-of-these-bytes", string(got2))
+}
+
+// Unlink must announce the newest version this peer holds as the delete's
+// base, so the receiver can prove a delete-vs-edit race. Captured before the
+// maps are cleaned; a fresh local file's base is its own write stamp.
+func TestUnlink_AnnounceCarriesBase(t *testing.T) {
+	d, snapshot := newConflictTestDir(t)
+	f := seedLocalFile(t, d, "/doc.txt", "bytes-to-delete")
+	identity := localIdentity(f)
+
+	require.Equal(t, 0, d.Unlink("/doc.txt"))
+
+	var removeBase int64
+	var sawRemove bool
+	for _, ev := range snapshot() {
+		if ev.Action == types.RemoveFile && ev.Path == "/doc.txt" {
+			sawRemove = true
+			removeBase = ev.BaseMtimeNs
+		}
+	}
+	require.True(t, sawRemove, "Unlink must announce the removal")
+	require.Equal(t, identity, removeBase, "the delete must declare the held version as its base")
 }
 
 // A stale EDIT (older than the local write) keeps local authority: rejected
