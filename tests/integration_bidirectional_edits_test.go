@@ -465,6 +465,62 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		t.Logf("swap-save refetch: %d bytes for a 1 MiB change in a 24 MiB file (c1=%d c2=%d)", delta, c1, c2)
 		require.Less(delta, uint64(24*1048576), "reader refetched the full file: reconcile never fired")
 	})
+
+	// Both sides swap-save the SAME file concurrently: each takes a working
+	// copy of v1, edits it, and renames it over the target, the two renames
+	// crossing on the wire. This is the double-app-save case (both machines
+	// autosaving the same document). A rename base can only overstate the
+	// session base (fuse_directory targetIdentity), so this crossing is where
+	// a conflict copy could be suppressed. Measured 2026-08-26 on loopback:
+	// the crossing preserves both versions (canonical plus one sibling on
+	// both peers), so this stands as a hard regression guard.
+	t.Run("ConcurrentSwapSaveCrossing", func(t *testing.T) {
+		listConflicts := func(p *testPeer) []string {
+			var out []string
+			for _, name := range listNames(t, p) {
+				if strings.Contains(name, "swapx.conflict-") {
+					out = append(out, strings.TrimSpace(name))
+				}
+			}
+			return out
+		}
+		require.Equal("OK", bob.send(t, "write_file swapx.txt both-see-this-v1", 10*time.Second))
+		WaitForFileOnMount(t, filepath.Join(aliceMount, "swapx.txt"), 60*time.Second)
+		waitConverged(t, alice, bob, "swapx.txt", 60*time.Second)
+
+		// Both take working copies of v1 and edit them.
+		copyFile(t, bob, "swapx.txt", "swapx.txt.bwork")
+		copyFile(t, alice, "swapx.txt", "swapx.txt.awork")
+		require.Equal("OK", bob.send(t, "write_file swapx.txt.bwork owner-swap-version", 10*time.Second))
+		require.Equal("OK", alice.send(t, "write_file swapx.txt.awork reader-swap-version", 10*time.Second))
+
+		// The crossing swaps, as simultaneous as the protocol allows.
+		renameOver(t, bob, "swapx.txt.bwork", "swapx.txt")
+		renameOver(t, alice, "swapx.txt.awork", "swapx.txt")
+
+		waitConverged(t, alice, bob, "swapx.txt", 90*time.Second)
+
+		// Give the sibling announce time to land, then take stock.
+		time.Sleep(5 * time.Second)
+		canonical := readFile(t, bob, "swapx.txt")
+		aliceConflicts := listConflicts(alice)
+		bobConflicts := listConflicts(bob)
+		t.Logf("canonical=%q aliceConflicts=%v bobConflicts=%v", canonical, aliceConflicts, bobConflicts)
+
+		survived := []string{canonical}
+		for _, c := range bobConflicts {
+			survived = append(survived, readFile(t, bob, c))
+		}
+		both := map[string]bool{}
+		for _, s := range survived {
+			both[s] = true
+		}
+		lost := !both["owner-swap-version"] || !both["reader-swap-version"]
+		require.False(lost, "both crossing swap versions must survive (canonical + conflict), got %v", survived)
+		WaitForCondition(t, 60*time.Second, 500*time.Millisecond, func() bool {
+			return len(listConflicts(alice)) >= 1 && len(listConflicts(bob)) >= 1
+		}, "waiting for the crossing-swap conflict copy on both peers")
+	})
 }
 
 // Editor/tool tier, structured like the git and pijul tests: cold first-contact reads,

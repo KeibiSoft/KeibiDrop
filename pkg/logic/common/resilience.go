@@ -152,12 +152,16 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 			if rel == "" {
 				rel = name // entry from an older build: flat announce
 			}
+			// LastEditTime is the announce-time watermark from the store, not
+			// the current disk mtime: it becomes the base of the reconnect
+			// re-announce. The disk mtime here would erase the base and turn
+			// an offline conflict into a silent overwrite.
 			kd.SyncTracker.LocalFiles[rel] = &synctracker.File{
 				Name:           name,
 				RelativePath:   rel,
 				RealPathOfFile: cleanPath,
 				Size:           uint64(info.Size()),
-				LastEditTime:   uint64(info.ModTime().UnixNano()),
+				LastEditTime:   e.ModTime,
 			}
 			restored++
 		}
@@ -172,6 +176,13 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	}
 	kd.lastSharedFiles = nil
 	kd.lastSharedPeerFP = ""
+
+	// Conflict siblings this peer minted live in the FUSE tree, not in the
+	// tracker, so a session drop between the preserve and its delivery
+	// strands them here. Re-announce them on every connect: idempotent, the
+	// peer rejects an equal stamp. The model checker proves this rule closes
+	// every stranded interleaving (twopeer_conflictcopy_model_test.go).
+	go kd.announceLocalConflictSiblings(logger)
 
 	// Announce files already in the save folder. Runs after the restore block,
 	// so restored files are already tracked and the scan skips them.
@@ -453,6 +464,48 @@ func (kd *KeibiDrop) onReconnected() {
 	kd.maybeStartEagerFold()
 }
 
+// announceLocalConflictSiblings re-announces the conflict siblings this peer
+// minted and still holds authority for. A session drop between the preserve
+// and its delivery strands the sibling on this side; announcing on every
+// connect closes that. Idempotent: the peer rejects an equal stamp, and base
+// -1 is the fresh-create class, so a dirty same-name receiver preserves.
+func (kd *KeibiDrop) announceLocalConflictSiblings(logger *slog.Logger) {
+	if kd.FS == nil || kd.FS.Root() == nil {
+		return
+	}
+	kd.mu.Lock()
+	client := kd.KDClient
+	ctx := kd.ctx
+	kd.mu.Unlock()
+	if client == nil || ctx == nil {
+		return
+	}
+	for _, s := range kd.FS.Root().UnsyncedConflictSiblings() {
+		if ctx.Err() != nil {
+			return
+		}
+		info, err := os.Stat(filepath.Clean(s[1]))
+		if err != nil {
+			continue
+		}
+		atime, btime := statTimes(info)
+		_, _ = client.Notify(ctx, &bindings.NotifyRequest{
+			Type:        bindings.NotifyType(types.AddFile),
+			Path:        s[0],
+			BaseMtimeNs: -1,
+			Attr: &bindings.Attr{
+				Mode:             uint32(info.Mode().Perm()) | 0100000,
+				Size:             info.Size(),
+				AccessTime:       atime,
+				ModificationTime: uint64(info.ModTime().UnixNano()),
+				ChangeTime:       uint64(info.ModTime().UnixNano()),
+				BirthTime:        btime,
+			},
+		})
+		logger.Info("Re-announced conflict sibling", "path", s[0])
+	}
+}
+
 // notifyRestoredFiles sends ADD_FILE for each restored LocalFile, so the peer sees
 // them. It runs only after a same-peer reconnect with confirmed files.
 func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
@@ -481,9 +534,14 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 			continue
 		}
 		atime, btime := statTimes(info)
+		// The base is the watermark of our last announce, not the current
+		// disk mtime. An offline edit raises the disk mtime above it, so the
+		// receiver can prove concurrency and preserve instead of overwrite.
+		// Understating the base can only over-preserve, never lose bytes.
 		_, _ = client.Notify(ctx, &bindings.NotifyRequest{
-			Type: bindings.NotifyType(types.AddFile),
-			Path: file.RelativePath,
+			Type:        bindings.NotifyType(types.AddFile),
+			Path:        file.RelativePath,
+			BaseMtimeNs: int64(file.LastEditTime),
 			Attr: &bindings.Attr{
 				Mode:             uint32(info.Mode().Perm()) | 0100000,
 				Size:             info.Size(),

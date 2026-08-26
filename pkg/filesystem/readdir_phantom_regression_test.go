@@ -10,7 +10,6 @@ package filesystem
 
 import (
 	"os"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,24 +18,9 @@ import (
 )
 
 // newTestDir builds a minimal Dir rooted at saveDir suitable for unit tests.
+// One definition for every package: NewBareRoot in api.go.
 func newTestDir(saveDir string) *Dir {
-	d := &Dir{
-		Inode:               0,
-		Name:                "",
-		RelativePath:        "/",
-		RealPathOfFile:      saveDir,
-		LocalDownloadFolder: saveDir,
-		IsLocalPresent:      true,
-		OpenMapLock:         sync.RWMutex{},
-		OpenFileHandlers:    make(map[uint64]*HandleEntry),
-		Adm:                 sync.RWMutex{},
-		AllDirMap:           make(map[string]*Dir),
-		AfmLock:             sync.RWMutex{},
-		AllFileMap:          make(map[string]*File),
-		RemoteFilesLock:     sync.RWMutex{},
-		RemoteFiles:         make(map[string]*File),
-	}
-	d.Root = d
+	d := NewBareRoot(saveDir)
 	d.logger = nopLogger()
 	return d
 }

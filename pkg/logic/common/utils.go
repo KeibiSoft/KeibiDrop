@@ -404,6 +404,18 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs.MountReadOnly = kd.MountReadOnly
 	fs.PreserveMetadata = kd.PreserveMetadata
 
+	// Version tie-break rank: the higher fingerprint wins an exact stamp
+	// tie. setupFilesystem runs on BOTH sides after their handshake verified
+	// the peer (finishConnect), so the rank is set for every session; the
+	// per-side verifiers alone covered only the joiner's path. Swapped
+	// operands on the two machines: exactly one side yields.
+	kd.mu.Lock()
+	sess := kd.session
+	kd.mu.Unlock()
+	if sess != nil && sess.OwnFingerprint != "" && sess.ExpectedPeerFingerprint != "" {
+		fs.SetTieBreakPeerWins(sess.ExpectedPeerFingerprint > sess.OwnFingerprint)
+	}
+
 	// The handshake emits OnPeerVerified; the FUSE cache reacts by scoping to that peer. A
 	// different peer drops the prior cache (no cross-peer leak); the same peer reconnecting or
 	// resuming keeps it (no re-fetch).

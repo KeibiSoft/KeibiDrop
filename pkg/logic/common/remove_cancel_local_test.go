@@ -15,7 +15,6 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,7 +53,7 @@ func TestCancelRemoveOnLocalContent_EditCancels(t *testing.T) {
 	kd.cancelRemoveOnLocalContent(types.EditFile, filePath)
 
 	time.Sleep(1300 * time.Millisecond)
-	assert.True(t, trackedIn(svc, filePath), "local edit must cancel the buffered remove")
+	require.True(t, trackedIn(svc, filePath), "local edit must cancel the buffered remove")
 }
 
 // TestCancelRemoveOnLocalContent_NonContentActionsDoNot: a local REMOVE event
@@ -67,15 +66,15 @@ func TestCancelRemoveOnLocalContent_NonContentActionsDoNot(t *testing.T) {
 	kd.cancelRemoveOnLocalContent(types.RemoveFile, filePath)
 	kd.cancelRemoveOnLocalContent(types.CancelPendingNotify, filePath)
 
-	require.Eventually(t, func() bool {
+	testkit.Eventually(t, 5*time.Second, 25*time.Millisecond, func() bool {
 		return !trackedIn(svc, filePath)
-	}, 5*time.Second, 25*time.Millisecond, "non-content local actions must not cancel the remove")
+	}, "non-content local actions must not cancel the remove")
 }
 
 // TestCancelRemoveOnLocalContent_NilSvcSafe: no service wired yet must not panic.
 func TestCancelRemoveOnLocalContent_NilSvcSafe(t *testing.T) {
 	kd := &KeibiDrop{}
-	assert.NotPanics(t, func() {
+	require.NotPanics(t, func() {
 		kd.cancelRemoveOnLocalContent(types.AddFile, "x.txt")
 	})
 }

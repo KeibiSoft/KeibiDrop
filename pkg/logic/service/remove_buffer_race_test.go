@@ -11,7 +11,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -19,27 +18,13 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func newFuseServiceForRemoveTests(t *testing.T) (*KeibidropServiceImpl, *filesystem.Dir, string) {
 	t.Helper()
 	tmpDir := t.TempDir()
-	root := &filesystem.Dir{
-		RemoteFilesLock:     sync.RWMutex{},
-		RemoteFiles:         make(map[string]*filesystem.File),
-		AfmLock:             sync.RWMutex{},
-		AllFileMap:          make(map[string]*filesystem.File),
-		OpenMapLock:         sync.RWMutex{},
-		OpenFileHandlers:    make(map[uint64]*filesystem.HandleEntry),
-		Adm:                 sync.RWMutex{},
-		AllDirMap:           make(map[string]*filesystem.Dir),
-		RealPathOfFile:      tmpDir,
-		LocalDownloadFolder: tmpDir,
-		PrefetchSem:         make(chan struct{}, 8),
-	}
-	root.Root = root
+	root := filesystem.NewBareRoot(tmpDir)
 	svc := &KeibidropServiceImpl{
 		Logger:      testkit.DiscardLogger(),
 		SyncTracker: synctracker.NewSyncTracker(),
@@ -78,7 +63,7 @@ func TestRemoveFile_FuseMode_LocalWriteDuringWindowSurvives(t *testing.T) {
 	time.Sleep(1300 * time.Millisecond)
 	got, err := os.ReadFile(cachePath)
 	require.NoError(t, err, "local write inside the remove window must survive")
-	assert.Equal(t, "fresh local bytes", string(got))
+	require.Equal(t, "fresh local bytes", string(got))
 }
 
 // TestRemoveFile_FuseMode_GenuineRemoveStillExecutes: with no local activity
@@ -102,11 +87,11 @@ func TestRemoveFile_FuseMode_GenuineRemoveStillExecutes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.Eventually(t, func() bool {
+	testkit.Eventually(t, 5*time.Second, 25*time.Millisecond, func() bool {
 		root.AfmLock.RLock()
 		_, inAfm := root.AllFileMap[filePath]
 		root.AfmLock.RUnlock()
 		_, statErr := os.Stat(cachePath)
 		return !inAfm && os.IsNotExist(statErr)
-	}, 5*time.Second, 25*time.Millisecond, "genuine buffered remove must still execute")
+	}, "genuine buffered remove must still execute")
 }
