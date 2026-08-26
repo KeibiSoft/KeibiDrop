@@ -4166,7 +4166,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	// metadata refresh or a redelivery, and rejecting it would break
 	// mode-only propagation.
 	if incomingEditMtime == editRef && editLocalNewer &&
-		!(d.Root != nil && d.Root.TieBreakPeerWins.Load()) {
+		(d.Root == nil || !d.Root.TieBreakPeerWins.Load()) {
 		d.RemoteFilesLock.Unlock()
 		return syscall.ECANCELED
 	}

@@ -26,11 +26,11 @@ const (
 )
 
 type ccMsg struct {
-	kind      int
-	content   int // edit: content id (equals its version)
-	ver       int
-	base      int // version the writer held when it wrote
-	sib       int // sibling id (the preserved version)
+	kind    int
+	content int // edit: content id (equals its version)
+	ver     int
+	base    int // version the writer held when it wrote
+	sib     int // sibling id (the preserved version)
 }
 
 type ccPeer struct {
