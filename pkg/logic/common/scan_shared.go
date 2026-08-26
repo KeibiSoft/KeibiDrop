@@ -194,11 +194,8 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 			kd.SyncTracker.LocalFilesMu.Unlock()
 
 			batchFiles = append(batchFiles, file)
-			// Base -1 is the fresh-create class: no prior version was held.
-			// A scan announce only covers untracked files, and on a receiver
-			// that holds dirty local bytes for the same name -1 proves the
-			// concurrency, so the local version is preserved as a sibling.
-			// Base 0 (the old value) means unknown and disables preservation.
+			// Base -1 = fresh create: a dirty same-name receiver preserves.
+			// Base 0 would mean unknown and disable preservation.
 			batchReqs = append(batchReqs, &bindings.NotifyRequest{
 				Type:        bindings.NotifyType(types.AddFile),
 				Path:        rel,

@@ -23,9 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// logContentPresence reports where the given content currently exists under
-// the listed roots. Forensics for the loss case, printed before the failing
-// assertion so the red run documents what happened to the bytes.
+// logContentPresence reports where content exists under roots. Forensics for
+// the loss case.
 func logContentPresence(t *testing.T, label string, content []byte, roots ...string) {
 	t.Helper()
 	found := []string{}
@@ -48,18 +47,9 @@ func logContentPresence(t *testing.T, label string, content []byte, roots ...str
 	}
 }
 
-// TestReconnectConflict_OfflineEditsBothSides drives the canonical CRDT
-// motivating scenario through the shipped stack: seed a file, sever the
-// session without a goodbye (the mount survives, matching the resilience
-// park path), edit on BOTH sides while disconnected, reconnect, and require
-// that the older side's bytes survive as a conflict sibling.
-//
-// Today this fails at the sibling wait: the reconnect re-announce carries no
-// base (notifyRestoredFiles and ScanAndShareSaveDir both omit BaseMtimeNs),
-// base 0 means plain LWW by design, and Alice's offline edit is truncated
-// away with no copy. The tie/conflict machinery itself is proven live by
-// TestFUSEtoFUSE_BidirectionalEditPatterns/ConcurrentEditConflictCopy; the
-// missing ingredient here is only the base on the reconnect path.
+// TestReconnectConflict_OfflineEditsBothSides: sever the session without a
+// goodbye (the mount survives), edit on both sides, reconnect. The older
+// side's bytes must survive as a conflict sibling on both peers.
 func TestReconnectConflict_OfflineEditsBothSides(t *testing.T) {
 	skipIfNoFUSE(t)
 	if testing.Short() {
@@ -83,10 +73,8 @@ func TestReconnectConflict_OfflineEditsBothSides(t *testing.T) {
 	require.NoError(err)
 	require.Equal(seedContent, string(got))
 
-	// Sever the session without a goodbye. Cancel() is what the health
-	// monitor does on a dead connection: the Run loop takes the temporary
-	// disconnect branch and the FUSE mount stays up with its in-memory
-	// state. No NotifyDisconnect: the peer just vanishes.
+	// Sever without a goodbye: Cancel() is what the health monitor does on
+	// a dead connection. The mount stays up; the peer just vanishes.
 	tp.Alice.StopConnectionResilience()
 	tp.Bob.StopConnectionResilience()
 	tp.Alice.Cancel()
@@ -102,15 +90,13 @@ func TestReconnectConflict_OfflineEditsBothSides(t *testing.T) {
 	_, err = os.Stat(aliceDoc)
 	require.NoError(err, "Alice's mount must survive a session drop")
 
-	// Offline edit on Alice, THROUGH the live mount: the FUSE write path
-	// sets LocalNewer and snapshots the edit base from the held version.
+	// Offline edit through the live mount: sets LocalNewer and the base.
 	const aliceOffline = "alice-offline-edit"
 	require.NoError(os.WriteFile(aliceDoc, []byte(aliceOffline), 0o644))
 	// Let the debounced announce fire into the dead session and drop.
 	time.Sleep(700 * time.Millisecond)
 
-	// Offline edit on Bob, in his save dir (the no-FUSE surface), stamped
-	// strictly newest so the LWW direction is deterministic.
+	// Offline edit on Bob's save dir, stamped newest: LWW direction fixed.
 	const bobOffline = "bob-offline-edit-newest"
 	bobDoc := filepath.Join(tp.BobSaveDir, "doc.txt")
 	require.NoError(os.WriteFile(bobDoc, []byte(bobOffline), 0o644))
@@ -149,8 +135,7 @@ func TestReconnectConflict_OfflineEditsBothSides(t *testing.T) {
 	logContentPresence(t, "alice offline bytes", []byte(aliceOffline),
 		tp.AliceSaveDir, tp.BobSaveDir)
 
-	// THE gap assertion. Alice was provably concurrent (she never saw Bob's
-	// offline write), so her bytes must survive as a conflict sibling.
+	// Alice was provably concurrent: her bytes must survive as a sibling.
 	var sibling string
 	WaitForCondition(t, 45*time.Second, 500*time.Millisecond, func() bool {
 		entries, err := os.ReadDir(tp.AliceMountDir)
@@ -170,9 +155,7 @@ func TestReconnectConflict_OfflineEditsBothSides(t *testing.T) {
 	require.NoError(err)
 	require.Equal(aliceOffline, string(preserved), "the sibling must hold Alice's offline bytes")
 
-	// The sibling is an ordinary new file and must reach Bob too. FUSE-origin
-	// announces carry a leading slash in the path, so a no-FUSE receiver may
-	// key the tracker entry either way.
+	// The sibling must reach Bob. Tracker keys may carry a leading slash.
 	WaitForCondition(t, 30*time.Second, 200*time.Millisecond, func() bool {
 		tp.Bob.SyncTracker.RemoteFilesMu.RLock()
 		defer tp.Bob.SyncTracker.RemoteFilesMu.RUnlock()

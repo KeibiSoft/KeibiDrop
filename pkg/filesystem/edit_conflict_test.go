@@ -238,11 +238,8 @@ func TestBlindOverwrite_BaseIsHeldVersion(t *testing.T) {
 		"post-fetch overwrite must announce the accepted version as its base")
 }
 
-// A preserve that fails on every route (rename and the byte-copy fallback)
-// must REFUSE the acceptance: local authority intact, no silent last-writer-
-// wins, watermark rolled back so the retried announce is not compared-equal
-// into a wedge. Once the blocker clears, the same announce accepts and
-// preserves. The ADD path shares the same helper and rollback shape.
+// A preserve that fails on every route refuses the acceptance and rolls the
+// watermark back. Once the blocker clears the same announce preserves.
 func TestPreserveFailure_RefusesAcceptanceThenRetries(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("read-only parent does not block rename the same way on Windows")
@@ -254,8 +251,7 @@ func TestPreserveFailure_RefusesAcceptanceThenRetries(t *testing.T) {
 	f := seedLocalFile(t, d, "/doc.txt", "only-copy-of-these-bytes")
 	identity := localIdentity(f)
 
-	// A read-only parent fails both the rename and the copy fallback: no new
-	// name can be created next to the file.
+	// A read-only parent fails the rename and the copy fallback.
 	require.NoError(t, os.Chmod(d.LocalDownloadFolder, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(d.LocalDownloadFolder, 0o755) })
 
@@ -285,9 +281,8 @@ func TestPreserveFailure_RefusesAcceptanceThenRetries(t *testing.T) {
 	require.Equal(t, "only-copy-of-these-bytes", string(got2))
 }
 
-// Unlink must announce the newest version this peer holds as the delete's
-// base, so the receiver can prove a delete-vs-edit race. Captured before the
-// maps are cleaned; a fresh local file's base is its own write stamp.
+// Unlink announces the held version as the delete's base, captured before
+// the maps are cleaned.
 func TestUnlink_AnnounceCarriesBase(t *testing.T) {
 	d, snapshot := newConflictTestDir(t)
 	f := seedLocalFile(t, d, "/doc.txt", "bytes-to-delete")

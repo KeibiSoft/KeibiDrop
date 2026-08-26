@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 
-// Models the exact version tie: both peers write concurrently and the two
-// writes carry the same nanosecond stamp. Observed once in CI (see
-// research_artefacts/bidirectional-edit-matrix.md, iter-7, same-kernel coarse
-// stamps), and named a known residual in twopeer_swap_model_test.go. The two
-// shipped acceptance shapes both diverge on a tie: the ADD predicate is
-// strictly-greater, so both peers reject and each keeps its own bytes; the
-// EDIT predicate rejects only strictly-older, so both peers accept and the
-// contents swap. The checked fix rule breaks the tie by a fixed peer rank
-// (fingerprint order): exactly one side accepts, both converge on one winner,
-// and the loser's version is preserved, never silently dropped.
+// Models the exact version tie (observed once in CI). Both shipped acceptance
+// shapes diverge on a tie: ADD rejects on both sides, EDIT swaps contents.
+// The checked fix rule breaks the tie by peer rank: one winner on both sides,
+// the loser preserved.
 package model
 
 import (
@@ -23,16 +17,11 @@ import (
 type tieMode int
 
 const (
-	// tieModeAddStrict is the shipped ADD predicate: accept only strictly
-	// newer (fuse_directory.go AddRemoteFileWithBase). A tie rejects on both
-	// sides.
+	// tieModeAddStrict: shipped ADD predicate, a tie rejects on both sides.
 	tieModeAddStrict tieMode = iota
-	// tieModeEditGE is the shipped EDIT predicate: reject only strictly
-	// older (fuse_directory.go EditRemoteFileWithBase). A tie passes on both
-	// sides.
+	// tieModeEditGE: shipped EDIT predicate, a tie passes on both sides.
 	tieModeEditGE
-	// tieModeRanked is the fix rule: on an exact tie the higher-ranked
-	// peer's write wins on both sides. Peer 1 holds the higher rank here.
+	// tieModeRanked: the fix rule, peer 1 wins an exact tie on both sides.
 	tieModeRanked
 )
 
@@ -87,8 +76,7 @@ func cloneTie(s tieState) tieState {
 	return n
 }
 
-// tieAccept is the acceptance predicate under the chosen mode. i is the
-// receiving peer; the sender is the other peer.
+// tieAccept is the acceptance predicate under the chosen mode.
 func tieAccept(mode tieMode, i int, p tiePeer, m tieMsg) bool {
 	switch mode {
 	case tieModeAddStrict:
@@ -106,10 +94,8 @@ func tieAccept(mode tieMode, i int, p tiePeer, m tieMsg) bool {
 	return false
 }
 
-// Actions: a unique-stamp write on either peer, the paired tie write (both
-// peers write with one shared stamp; the interesting case is exactly both
-// writing before seeing each other, so the pairing is atomic), or delivery
-// of the head announcement.
+// Actions: a unique-stamp write, the paired tie write (one shared stamp,
+// atomic pairing), or delivery of the head announcement.
 func tieSuccessors(s tieState, mode tieMode) []tieState {
 	var out []tieState
 	for i := 0; i < 2; i++ {
@@ -131,9 +117,7 @@ func tieSuccessors(s tieState, mode tieMode) []tieState {
 			n.q[i] = append([]tieMsg(nil), n.q[i][1:]...)
 			if tieAccept(mode, i, n.p[i], m) {
 				if mode == tieModeRanked && m.ver == n.p[i].own && n.p[i].content != m.content {
-					// The tie loser adopts the winner and preserves its own
-					// concurrent write (the conflict-copy policy still applies:
-					// a tie is provably concurrent).
+					// The loser adopts the winner and preserves its own write.
 					n.preserved = n.p[i].content
 				}
 				n.p[i].watermark = m.ver
@@ -166,8 +150,7 @@ func tieQuiescent(s tieState) bool {
 		len(s.q[0]) == 0 && len(s.q[1]) == 0
 }
 
-// checkTie explores one scope. In counting mode divergent terminals are
-// counted, not failed, so the shipped predicates can be demonstrated.
+// checkTie explores one scope. Counting mode demonstrates, fail mode gates.
 func checkTie(t *testing.T, mode tieMode, writesA, writesB, ties int, failOnDiverge bool) (terminals, divergent, preservedTerminals int) {
 	t.Helper()
 
@@ -198,9 +181,7 @@ func checkTie(t *testing.T, mode tieMode, writesA, writesB, ties int, failOnDive
 	return rep.Terminals, divergent, preservedTerminals
 }
 
-// The shipped ADD predicate (strictly greater) diverges permanently on a tie:
-// both peers reject the other's announce and each keeps its own bytes. No
-// interleaving heals it. No loss, no convergence.
+// The shipped ADD predicate diverges permanently on a tie: both reject.
 func TestTie_AddStrictPredicateDiverges(t *testing.T) {
 	for _, tc := range []struct{ a, b int }{{0, 0}, {1, 0}, {1, 1}} {
 		_, divergent, _ := checkTie(t, tieModeAddStrict, tc.a, tc.b, 1, false)
@@ -210,9 +191,7 @@ func TestTie_AddStrictPredicateDiverges(t *testing.T) {
 	}
 }
 
-// The shipped EDIT predicate (rejects only strictly older) also diverges on a
-// tie, in the worse shape: both peers accept and the contents SWAP. Each side
-// ends holding the other's bytes.
+// The shipped EDIT predicate diverges worse: both accept, contents swap.
 func TestTie_EditPredicateSwapsContents(t *testing.T) {
 	_, divergent, _ := checkTie(t, tieModeEditGE, 0, 0, 1, false)
 	if divergent == 0 {
@@ -220,8 +199,7 @@ func TestTie_EditPredicateSwapsContents(t *testing.T) {
 	}
 }
 
-// Without a tie both shipped predicates converge in every interleaving; the
-// divergence is caused by the tie alone, not by the added tie action.
+// Without a tie every interleaving converges: the tie alone diverges.
 func TestTie_NoTieNoDivergence(t *testing.T) {
 	for _, mode := range []tieMode{tieModeAddStrict, tieModeRanked} {
 		_, divergent, _ := checkTie(t, mode, 2, 1, 0, false)
@@ -231,9 +209,8 @@ func TestTie_NoTieNoDivergence(t *testing.T) {
 	}
 }
 
-// The fix rule: on an exact tie the higher-ranked peer wins on both sides.
-// Exactly one side accepts, every interleaving converges, and in the pure tie
-// scope the losing write is preserved, never silently dropped.
+// The fix rule: one winner on both sides, every interleaving converges,
+// the losing write is preserved.
 func TestTie_RankedTieBreakConverges(t *testing.T) {
 	for _, tc := range []struct{ a, b int }{{0, 0}, {1, 0}, {0, 1}, {1, 1}} {
 		checkTie(t, tieModeRanked, tc.a, tc.b, 1, true)
@@ -245,8 +222,7 @@ func TestTie_RankedTieBreakConverges(t *testing.T) {
 	}
 }
 
-// In the pure tie scope the winner is the higher-ranked peer's write, on both
-// peers. The rank decides the survivor deterministically.
+// The winner is the higher-ranked peer's write, on both peers.
 func TestTie_RankedWinnerIsHigherRank(t *testing.T) {
 	m := Model[tieState]{
 		Key:        tieKey,

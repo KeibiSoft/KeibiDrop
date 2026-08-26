@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The crossing predicate: mv A B/ against mv B A/ must be detected in both
-// orientations, same-source rename-rename too, and unrelated moves never.
+// The crossing predicate: both orientations and same-source detected,
+// unrelated moves never.
 func TestCrossingDirMove(t *testing.T) {
 	d := newTestDir(t.TempDir())
 	d.RecordLocalDirMove("/A", "/B/A")

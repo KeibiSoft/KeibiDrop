@@ -1696,8 +1696,8 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		return int(convertOsErrToSyscallErrno("rename", err))
 	}
 
-	// One stat, reused for the directory check here and the announce attr
-	// below: the file-rename hot path pays no extra syscall.
+	// One stat serves the dir check and the announce attr: no extra
+	// syscall on the file-rename hot path.
 	var renStat winfuse.Stat_t
 	renStatOK := false
 	if stgo, statErr := platLstat(cleanNewPath); statErr == nil {
@@ -1735,9 +1735,8 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	}
 	d.Adm.Unlock()
 
-	// A directory carried its whole subtree: re-key every child entry, or
-	// the old paths keep serving as ghosts. Recorded for the crossing check
-	// against an incoming peer move.
+	// A directory move carries its subtree: re-key the children and
+	// record the move for the crossing check.
 	if isDirRename {
 		d.RekeyChildren(oldpath, newpath)
 		d.RecordLocalDirMove(oldpath, newpath)
@@ -2011,11 +2010,8 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	// d.logger.Info("FUSE unlink", "path", path, "notifyPeer", notifyPeer)
 	logger := d.logger.With("method", "unlink", "path", path)
 
-	// The delete's base: the newest version this peer holds for the path,
-	// captured before the maps are cleaned. The receiver compares it with its
-	// own authority: a dirty receiver above the base proves the delete raced
-	// an edit the deleter never saw, and preserves instead of discarding.
-	// One map lookup; can only overstate, so it never fires a false copy.
+	// Capture the delete's base before the maps are cleaned: a dirty
+	// receiver above it proves the delete raced an edit and preserves.
 	var removeBase int64
 	if notifyPeer {
 		removeBase = d.targetIdentity(path)
@@ -3245,22 +3241,15 @@ func conflictNames(relPath, realPath string) (string, string) {
 }
 
 // pathIsUnder reports whether p equals base or lies inside base's subtree.
-// FUSE relative paths are slash-separated on every platform: use the stdlib
-// path package on them (path.Dir, path.Clean), never filepath, whose Dir
-// returns backslashes on Windows and broke the crossing predicate there.
-// filepath stays correct for DISK paths.
+// Rel paths are slash-only on all platforms: use path.*, never filepath.
 func pathIsUnder(p, base string) bool {
 	p = path.Clean(p)
 	base = path.Clean(base)
 	return p == base || strings.HasPrefix(p, base+"/")
 }
 
-// RekeyChildren re-keys every tracked entry under oldpath to newpath after a
-// DIRECTORY rename, and updates the path fields the objects carry. Without
-// it the old child keys keep serving forever: the peer sees the moved child
-// under BOTH names (ghost), or a phantom entry readdir lists but stat
-// rejects. The walk is O(tracked entries); file renames, the app hot path,
-// never call it.
+// RekeyChildren re-keys all entries below oldpath after a directory rename.
+// Without it the old child keys serve forever. File renames never call it.
 func (d *Dir) RekeyChildren(oldpath, newpath string) {
 	oldPrefix := oldpath + "/"
 	reroot := func(k string) string { return newpath + k[len(oldpath):] }
@@ -3320,21 +3309,19 @@ func (d *Dir) RekeyChildren(oldpath, newpath string) {
 	d.Adm.Unlock()
 }
 
-// localDirMove records one local directory rename for the crossing check.
+// localDirMove is one local directory rename, kept for the crossing check.
 type localDirMove struct {
 	oldPath string
 	newPath string
 	at      time.Time
 }
 
-// dirMoveWindow bounds how long a local directory move counts as concurrent
-// with an incoming one. Crossing moves meet within network latency; a minute
-// is generous and keeps the table tiny.
+// dirMoveWindow bounds how long a local move counts as concurrent with an
+// incoming one. Crossing moves meet within network latency.
 const dirMoveWindow = time.Minute
 
-// RecordLocalDirMove notes a LOCAL directory rename so an incoming peer
-// rename can be checked for a crossing (mv A B/ against mv B A/). Only
-// kernel-originated moves are recorded; applying a peer move never counts.
+// RecordLocalDirMove notes a kernel-originated directory rename for the
+// crossing check. Applied peer moves are never recorded.
 func (d *Dir) RecordLocalDirMove(oldpath, newpath string) {
 	r := d.Root
 	if r == nil {
@@ -3353,11 +3340,8 @@ func (d *Dir) RecordLocalDirMove(oldpath, newpath string) {
 	r.dirMovesMu.Unlock()
 }
 
-// CrossingDirMove reports whether the incoming directory rename crosses a
-// recent local one. Two shapes: mutual nesting (the incoming target sits in
-// the tree we moved away while our target sits in the tree they moved), and
-// a rename-rename of the same source. Returns our move so the loser side can
-// undo it.
+// CrossingDirMove reports whether the incoming rename crosses a recent local
+// one: mutual nesting or same source. Returns our move for the undo.
 func (d *Dir) CrossingDirMove(inOld, inNew string) (bool, string, string) {
 	r := d.Root
 	if r == nil {
@@ -3380,8 +3364,7 @@ func (d *Dir) CrossingDirMove(inOld, inNew string) (bool, string, string) {
 	return false, "", ""
 }
 
-// ForgetLocalDirMove drops one recorded move (after an undo, so the same
-// incoming rename cannot match it twice).
+// ForgetLocalDirMove drops one recorded move after an undo.
 func (d *Dir) ForgetLocalDirMove(newpath string) {
 	r := d.Root
 	if r == nil {
@@ -3397,10 +3380,8 @@ func (d *Dir) ForgetLocalDirMove(newpath string) {
 	r.dirMovesMu.Unlock()
 }
 
-// UndoLocalDirMove reverses a local directory move on disk and in the maps,
-// WITHOUT announcing: the winning peer never applied our move (it skips it
-// under the same rank rule), so there is nothing to undo on their side. Used
-// by the crossing-move loser before it applies the winner's move.
+// UndoLocalDirMove reverses a local directory move without an announce: the
+// winner skipped our move, so there is nothing to undo on their side.
 func (d *Dir) UndoLocalDirMove(movedTo, movedFrom string) error {
 	realNew := filepath.Clean(filepath.Join(d.LocalDownloadFolder, movedTo))
 	realOld := filepath.Clean(filepath.Join(d.LocalDownloadFolder, movedFrom))
@@ -3443,9 +3424,8 @@ func (d *Dir) UndoLocalDirMove(movedTo, movedFrom string) error {
 	return nil
 }
 
-// copyFileContents copies src to dst byte for byte. Fallback for a failed
-// preserve rename. Not atomic; callers read dst only after success. O_EXCL:
-// conflictNames guarantees a free name, a survivor there means a race.
+// copyFileContents copies src to dst. Fallback for a failed preserve rename;
+// O_EXCL because conflictNames guarantees a free name.
 func copyFileContents(src, dst string) error {
 	in, err := os.Open(src) // #nosec G304 -- both paths are cache-internal
 	if err != nil {
@@ -3464,12 +3444,8 @@ func copyFileContents(src, dst string) error {
 	return out.Close()
 }
 
-// preserveLoserBytes moves the losing local version aside under the conflict
-// name. Rename is the O(1) fast path. On failure it closes local handles for
-// the path (the realistic rename blocker on Windows), retries once, then
-// falls back to a byte copy. An error means every route failed; the caller
-// MUST refuse the acceptance then, because proceeding would destroy the only
-// copy of the loser's bytes (silent last-writer-wins).
+// preserveLoserBytes moves the losing version to the conflict name: rename,
+// on failure close handles and retry, then copy. On error the caller refuses.
 func (d *Dir) preserveLoserBytes(logger *slog.Logger, relPath, realPath string) (string, string, error) {
 	conflictRel, conflictReal := conflictNames(relPath, realPath)
 	renErr := os.Rename(realPath, conflictReal)
@@ -3497,14 +3473,10 @@ func (d *Dir) preserveLoserBytes(logger *slog.Logger, relPath, realPath string) 
 	return conflictRel, conflictReal, nil
 }
 
-// PreserveConflictSiblingForDelete preserves the local version of path as a
-// conflict sibling, for a peer delete that provably raced a local edit. The
-// canonical entry stays for the caller to remove. An error means the bytes
-// could not be preserved on any route: the caller must then refuse the
-// delete rather than lose the only copy.
+// PreserveConflictSiblingForDelete preserves the local version before a peer
+// delete that raced a local edit. On error the caller must refuse the delete.
 func (d *Dir) PreserveConflictSiblingForDelete(logger *slog.Logger, path string) (string, error) {
-	// An edited remote file lives in RemoteFiles; a purely local one in
-	// AllFileMap. Same lookup order as SwapWouldConflict.
+	// Same lookup order as SwapWouldConflict.
 	d.RemoteFilesLock.RLock()
 	f := d.RemoteFiles[path]
 	d.RemoteFilesLock.RUnlock()
@@ -3526,11 +3498,8 @@ func (d *Dir) PreserveConflictSiblingForDelete(logger *slog.Logger, path string)
 	return conflictRel, nil
 }
 
-// UnsyncedConflictSiblings returns the conflict siblings this peer minted
-// and still holds write authority for (LocalNewer): the set to re-announce
-// on connect. A drop between the preserve and its delivery strands the
-// sibling on this side; re-announcing is idempotent because the peer
-// rejects an equal stamp. Each entry is {relative path, real path}.
+// UnsyncedConflictSiblings returns the siblings this peer minted and still
+// owns (LocalNewer): the set the connect path re-announces. {rel, real} pairs.
 func (d *Dir) UnsyncedConflictSiblings() [][2]string {
 	var out [][2]string
 	d.AfmLock.RLock()
@@ -3640,10 +3609,8 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			existingMtime = existingStatMtime
 		}
 		accepted := incomingMtime > existingMtime
-		// Exact tie against our own concurrent write: the fingerprint rank
-		// picks the same winner on both machines. Without it both sides
-		// reject and the pair never converges. A tie against the remote
-		// watermark (wasLocalNewer false) is a redelivery and stays rejected.
+		// Exact tie with our own write: the fingerprint rank picks the same
+		// winner on both peers. A tie with the watermark is a redelivery.
 		if !accepted && wasLocalNewer && incomingMtime > 0 && incomingMtime == existingMtime &&
 			d.Root != nil && d.Root.TieBreakPeerWins.Load() {
 			accepted = true
@@ -3690,12 +3657,8 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			return nil
 		}
 
-		// Preserve the losing local version before the acceptance clobbers it.
-		// A rename is O(1); the canonical name re-fetches the winner in full.
-		// A failed preserve refuses the acceptance and rolls the watermark and
-		// authority back, so the retried announce is not compared-equal into a
-		// permanent wedge. Silent last-writer-wins here would destroy the only
-		// copy of the loser's bytes.
+		// Preserve the loser before the winner clobbers it. A failed preserve
+		// refuses the acceptance and rolls back, never silent last-writer-wins.
 		var conflictRel, conflictReal string
 		if conflict && existing.RealPathOfFile != "" {
 			var pErr error
@@ -4158,13 +4121,8 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 		d.RemoteFilesLock.Unlock()
 		return syscall.ECANCELED
 	}
-	// Exact tie against our own concurrent write: without a rank both sides
-	// accept and the contents SWAP (each ends holding the other's bytes).
-	// The fingerprint rank picks one winner on both machines; the loser
-	// accepts and the conflict predicate below preserves its bytes. An
-	// equal stamp without dirty local bytes stays accepted: that is a
-	// metadata refresh or a redelivery, and rejecting it would break
-	// mode-only propagation.
+	// Exact tie with a dirty local write: the rank picks one winner; the
+	// loser accepts and preserves. An equal stamp when clean stays accepted.
 	if incomingEditMtime == editRef && editLocalNewer &&
 		(d.Root == nil || !d.Root.TieBreakPeerWins.Load()) {
 		d.RemoteFilesLock.Unlock()
@@ -4194,11 +4152,8 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	// the same struct Getattr may mutate, so reading it post-unlock would race.
 	newSize := stat.Size
 
-	// Preserve the losing local version before the acceptance clobbers it.
-	// A rename is O(1); the canonical name re-fetches the winner in full.
-	// A failed preserve refuses the acceptance and rolls the watermark back,
-	// so the retried announce is not compared-equal into a permanent wedge.
-	// Silent last-writer-wins here would destroy the only copy of the bytes.
+	// Preserve the loser before the winner clobbers it. A failed preserve
+	// refuses the acceptance and rolls back, never silent last-writer-wins.
 	var conflictRel, conflictReal string
 	if conflict && f.RealPathOfFile != "" {
 		var pErr error

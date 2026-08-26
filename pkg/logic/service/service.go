@@ -149,8 +149,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			strings.Contains(req.Path, ".fuse_hidden") &&
 			req.OldPath != "" && !strings.Contains(req.OldPath, ".fuse_hidden") {
 			logger.Info("Rename to FUSE hidden name, buffering remove of source", "path", req.OldPath)
-			// Base 0 on purpose: the rename's base describes the hidden
-			// TARGET, not the source leaving the folder. Plain delete.
+			// Base 0: the rename base describes the hidden target, not
+			// the source leaving the folder.
 			kd.bufferRemove(req.OldPath, 0, logger)
 		}
 		return &bindings.NotifyResponse{}, nil
@@ -359,12 +359,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			oldDiskPath := filepath.Clean(filepath.Join(kd.FS().Root().RealPathOfFile, req.OldPath))
 			newDiskPath := filepath.Clean(filepath.Join(kd.FS().Root().RealPathOfFile, req.Path))
 
-			// Crossing directory moves (mv A B/ against mv B A/): both peers
-			// moved concurrently, and applying the peer's move on top would
-			// nest the trees into each other via the MkdirAll below. The
-			// fingerprint rank picks ONE move on both machines: the loser
-			// undoes its own and applies the winner's; the winner skips the
-			// peer's. One converged tree, no resurrection.
+			// Crossing directory moves: applying the peer's move over ours
+			// nests the trees. The rank keeps ONE move; the loser undoes.
 			if crossed, ourNew, ourOld := kd.FS().Root().CrossingDirMove(req.OldPath, req.Path); crossed {
 				if kd.FS().Root().TieBreakPeerWins.Load() {
 					if undoErr := kd.FS().Root().UndoLocalDirMove(ourNew, ourOld); undoErr != nil {
@@ -461,10 +457,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 			}
 			kd.FS().Root().AfmLock.Unlock()
 
-			// A directory travels as RENAME_FILE too: re-key the dir's own
-			// entry and every child, or the old paths keep serving as
-			// ghosts, and keep it away from the file-shaped acceptance
-			// branches below.
+			// A directory travels as RENAME_FILE: re-key its entry and
+			// children, and skip the file-shaped branches below.
 			if st, statErr := os.Stat(newDiskPath); statErr == nil && st.IsDir() {
 				isDirRename = true
 				root := kd.FS().Root()
@@ -568,9 +562,8 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 				}
 				logger.Info("Created file from RENAME (old path not tracked)", "path", req.Path, "size", req.Attr.Size)
 			}
-			// Children of a renamed directory, both key shapes (FUSE-origin
-			// keys carry a leading slash, API-origin none). File renames take
-			// the exact-hit path above and never pay the walk.
+			// Children of a renamed directory, both key shapes. File
+			// renames take the exact hit above and never pay the walk.
 			if isDirRename || !exactHit {
 				rekeyPrefix := func(oldP, newP string) {
 					oldPre := oldP + "/"
@@ -659,10 +652,8 @@ type pendingRemove struct {
 	armedAt time.Time
 }
 
-// bufferRemove delays a REMOVE_FILE by 1000ms. If CancelPendingRemove is
-// called for the same path before the timer fires, the remove is discarded.
-// The delete's declared base rides along for the edit-race check at
-// execution.
+// bufferRemove delays a REMOVE_FILE by 1000ms; CancelPendingRemove discards
+// it. The declared base rides along for the edit-race check.
 func (kd *KeibidropServiceImpl) bufferRemove(path string, baseMtimeNs int64, logger *slog.Logger) {
 	kd.pendingRemovesMu.Lock()
 	defer kd.pendingRemovesMu.Unlock()
@@ -719,11 +710,8 @@ func (kd *KeibidropServiceImpl) cancelAllPendingRemoves() {
 	kd.pendingRemoves = nil
 }
 
-// executeRemove performs the actual REMOVE_FILE logic (previously inline in
-// Notify). armedAt is when the remove was buffered: a cache file whose mtime
-// is newer was written locally inside the window and must not be deleted.
-// baseMtimeNs is the delete's declared base: a dirty local file above it
-// raced an edit the deleter never saw and is preserved as a sibling first.
+// executeRemove runs the buffered REMOVE_FILE. armedAt: a cache file written
+// after it survives. baseMtimeNs: a dirty file above it is preserved first.
 func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, logger *slog.Logger, armedAt time.Time) {
 	// Snapshot FS/root once: teardown may SetFS(nil) while this timer
 	// goroutine runs, and repeated loads would race it (nil-receiver panic).
@@ -737,12 +725,8 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, lo
 			logger.Info("Skipping buffered remove, local write is newer", "path", path)
 			return
 		}
-		// A delete whose base is below local authority raced an edit the
-		// deleter never saw (same predicate as the swap path). Preserve the
-		// local version as a sibling first; its announce recreates it on the
-		// deleter, so the file sets converge with the edit surviving. Base 0
-		// is an old sender: plain delete, exactly the previous behavior.
-		// The FUSE maps key by leading slash; API-origin paths carry none.
+		// A delete below local authority raced an unseen edit: preserve as
+		// a sibling first. Base 0 keeps the plain delete. Maps key by "/".
 		fusePath := path
 		if !strings.HasPrefix(fusePath, "/") {
 			fusePath = "/" + fusePath

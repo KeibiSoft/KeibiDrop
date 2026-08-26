@@ -4,13 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Exact version-stamp ties. Observed once in CI (bidirectional-edit-matrix
-// iter-7): two peers wrote within the same nanosecond and both sides rejected
-// each other's announce forever. The rank rule (TieBreakPeerWins, from the
-// fingerprint order) makes exactly one side accept. These tests drive both
-// sides of the tie through the real acceptance paths: the ranked loser
-// accepts and preserves its bytes as a conflict sibling, the ranked winner
-// keeps rejecting. The model twin is tests/model/twopeer_tie_model_test.go.
+// Exact version-stamp ties (observed once in CI). The rank rule makes exactly
+// one side accept; the loser preserves. Model twin: twopeer_tie_model_test.go.
 
 package filesystem
 
@@ -25,16 +20,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setExactIdentity pins the file's in-memory identity to an exact stamp so
-// the incoming announce can tie it deterministically.
+// setExactIdentity pins the identity so the incoming announce ties it.
 func setExactIdentity(f *File, ts time.Time) {
 	f.metaMu.Lock()
 	f.stat.Mtim = winfuse.NewTimespec(ts)
 	f.metaMu.Unlock()
 }
 
-// The ranked winner: the peer does NOT outrank us, so a tied ADD stays
-// rejected and local authority survives untouched.
+// The winner: a tied ADD stays rejected, local authority survives.
 func TestTieBreak_AddWinnerKeepsRejecting(t *testing.T) {
 	d, _ := newConflictTestDir(t)
 	f := seedLocalFile(t, d, "/doc.txt", "winner-side-content")
@@ -54,9 +47,8 @@ func TestTieBreak_AddWinnerKeepsRejecting(t *testing.T) {
 	require.True(t, localNewer, "a tied ADD without rank must keep local authority")
 }
 
-// The ranked loser: the peer outranks us, so the tied ADD is accepted, the
-// winner takes the canonical path, and our concurrent bytes survive as a
-// conflict sibling (the tie is provably concurrent, base below the stamp).
+// The loser: the tied ADD is accepted and the concurrent local bytes
+// survive as a conflict sibling.
 func TestTieBreak_AddLoserAcceptsAndPreserves(t *testing.T) {
 	d, _ := newConflictTestDir(t)
 	d.Root.TieBreakPeerWins.Store(true)
@@ -81,11 +73,8 @@ func TestTieBreak_AddLoserAcceptsAndPreserves(t *testing.T) {
 	require.False(t, localNewer, "the tie loser hands authority to the winner")
 }
 
-// A tie against the REMOTE watermark (no dirty local write) is a redelivery,
-// not a concurrent write: rank must not turn it into an acceptance, so no
-// sibling appears and no authority changes. Same size on purpose: a size
-// change rides the separate metadata-refresh path for clean files, which is
-// existing behaviour outside this rule.
+// A tie with the remote watermark is a redelivery: no acceptance, no
+// sibling. Same size on purpose: a size change rides the refresh path.
 func TestTieBreak_AddRedeliveryMintsNoConflict(t *testing.T) {
 	d, _ := newConflictTestDir(t)
 	d.Root.TieBreakPeerWins.Store(true)
@@ -109,9 +98,8 @@ func TestTieBreak_AddRedeliveryMintsNoConflict(t *testing.T) {
 	require.False(t, localNewer, "redelivery must not fabricate authority")
 }
 
-// The EDIT twin of the winner side. Before the rank rule an equal stamp
-// PASSED the strictly-older rejection, so two tied dirty peers each adopted
-// the other's edit and the contents swapped. The winner must reject.
+// EDIT winner side: before the rank an equal stamp passed and tied dirty
+// peers swapped contents. The winner must reject.
 func TestTieBreak_EditWinnerRejectsTie(t *testing.T) {
 	d, _ := newConflictTestDir(t)
 	f := seedLocalFile(t, d, "/doc.txt", "winner-edit-content")
@@ -128,8 +116,7 @@ func TestTieBreak_EditWinnerRejectsTie(t *testing.T) {
 	require.Equal(t, "winner-edit-content", string(got))
 }
 
-// The EDIT twin of the loser side: accepted, and the concurrent local bytes
-// survive as a sibling.
+// EDIT loser side: accepted, local bytes survive as a sibling.
 func TestTieBreak_EditLoserAcceptsAndPreserves(t *testing.T) {
 	d, _ := newConflictTestDir(t)
 	d.Root.TieBreakPeerWins.Store(true)
@@ -147,8 +134,7 @@ func TestTieBreak_EditLoserAcceptsAndPreserves(t *testing.T) {
 	require.Equal(t, "loser-edit-content", string(got))
 }
 
-// An equal stamp WITHOUT dirty local bytes is a metadata refresh (mode-only
-// propagation stamps the same mtime) and must stay accepted on both ranks.
+// An equal stamp when clean is a metadata refresh: accepted on both ranks.
 func TestTieBreak_EditEqualNotDirtyStillAccepted(t *testing.T) {
 	for _, peerWins := range []bool{false, true} {
 		d, _ := newConflictTestDir(t)

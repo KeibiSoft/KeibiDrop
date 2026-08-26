@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2025 KeibiSoft S.R.L.
 
-// Models the life of a conflict sibling across a session drop. A sibling is
-// minted on the losing peer only (registerConflictCopy) and reaches the other
-// peer as an ordinary ADD announcement. Delivery is at-most-once across a
-// session boundary: a drop clears the in-flight queues and nothing re-announces
-// FUSE-registered local files on reconnect. The checked claim, shipped rules:
-// there exist interleavings where the drop lands between the preserve and its
-// delivery, the sibling then exists on exactly one peer at quiescence, and no
-// later action heals it. The fix rule (re-announce local siblings on
-// reconnect) closes every such interleaving.
+// Models a conflict sibling across a session drop. Shipped rules: a drop
+// between the preserve and its delivery strands the sibling on one peer
+// forever. The fix rule (re-announce local siblings on reconnect) closes
+// every such interleaving.
 package model
 
 import (
@@ -95,11 +90,8 @@ func ccKey(s ccState) string {
 	return string(b)
 }
 
-// Actions: a write carrying the base the writer held, delivery of the head
-// message (a stale-base winner preserves the overwritten version as a sibling
-// and announces the sibling), and a session drop that clears both in-flight
-// queues. reannounce models the fix: the drop is followed by a reconnect
-// re-announce of every locally present sibling.
+// Actions: a write with its base, delivery (a stale-base winner preserves
+// and announces a sibling), and a drop that clears both queues.
 func ccSuccessors(s ccState, reannounce bool) []ccState {
 	var out []ccState
 	for i := 0; i < 2; i++ {
@@ -125,8 +117,7 @@ func ccSuccessors(s ccState, reannounce bool) []ccState {
 			case ccEdit:
 				if m.ver > n.p[i].watermark && m.ver > n.p[i].own {
 					if old := n.p[i].content; old != 0 && old != m.base {
-						// Stale base: provably concurrent. Preserve the loser
-						// locally and announce the sibling to the other peer.
+						// Stale base: preserve the loser and announce the sibling.
 						n.p[i].sibs[old] = true
 						n.q[1-i] = append(n.q[1-i], ccMsg{kind: ccSib, sib: old})
 					}
@@ -207,9 +198,7 @@ func checkCC(t *testing.T, writesA, writesB, drops int, reannounce, failOnAsymme
 	return rep.Terminals, asymmetric, withSibs
 }
 
-// Without a session drop every minted sibling is delivered: the sibling sets
-// agree at every quiescent terminal. The announce pipeline alone is enough
-// while the session lives.
+// Without a drop every minted sibling is delivered: the sets agree.
 func TestConflictCopy_NoDropAlwaysSymmetric(t *testing.T) {
 	for _, tc := range []struct{ a, b int }{{1, 1}, {2, 1}, {2, 2}} {
 		_, asymmetric, withSibs := checkCC(t, tc.a, tc.b, 0, false, true)
@@ -220,10 +209,7 @@ func TestConflictCopy_NoDropAlwaysSymmetric(t *testing.T) {
 	}
 }
 
-// Shipped rules with one session drop: interleavings exist where the drop
-// lands between the preserve and its delivery, and the sibling then exists on
-// exactly one peer at quiescence. Nothing re-announces it. This is the
-// deterministic form of the at-most-once weakness for conflict copies.
+// One drop: interleavings exist where the sibling ends on exactly one peer.
 func TestConflictCopy_DropLosesSiblingOnOnePeer(t *testing.T) {
 	_, asymmetric, withSibs := checkCC(t, 1, 1, 1, false, false)
 	if withSibs == 0 {
@@ -234,9 +220,8 @@ func TestConflictCopy_DropLosesSiblingOnOnePeer(t *testing.T) {
 	}
 }
 
-// The fix rule: reconnect re-announces every locally present sibling. Every
-// interleaving then ends with equal sibling sets, at the cost of re-sending
-// already-delivered siblings (idempotent, sibling ids are stable).
+// The fix rule: reconnect re-announces local siblings; every interleaving
+// ends with equal sets. Re-sends are idempotent.
 func TestConflictCopy_ReannounceRestoresSymmetry(t *testing.T) {
 	for _, tc := range []struct{ a, b, drops int }{{1, 1, 1}, {2, 1, 1}, {2, 2, 1}} {
 		_, asymmetric, _ := checkCC(t, tc.a, tc.b, tc.drops, true, true)

@@ -22,17 +22,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFUSEtoFUSE_DirectoryMoves pins directory-rename behavior across peers.
-// Directory renames travel as RENAME_FILE on the wire; both sides re-key the
-// moved directory's children (or the old paths serve forever as ghosts and
-// phantoms). The sequential subtest is the control: a one-sided move keeps
-// children reachable and retires the old path. The concurrent subtest is the
-// classic tree-invariant violation (VMCAI 2018: move is the one operation
-// that unsynchronised breaks the tree): mv A B/ crossing mv B A/. The
-// fingerprint rank picks ONE move on both machines: the loser undoes its own
-// and applies the winner's, the winner skips the peer's, and both trees
-// converge with no MkdirAll resurrection. Content loss is asserted
-// unconditionally. Set KD_DM_LOGDIR to keep the peers' logs.
+// TestFUSEtoFUSE_DirectoryMoves: a one-sided directory move keeps children
+// reachable and retires the old path; crossing moves (mv A B/ against
+// mv B A/) converge to the ranked winner's single move on both peers.
+// Set KD_DM_LOGDIR to keep the peers' logs.
 func TestFUSEtoFUSE_DirectoryMoves(t *testing.T) {
 	skipIfNoFUSE(t)
 	if runtime.GOOS == "windows" {
@@ -120,13 +113,8 @@ func TestFUSEtoFUSE_DirectoryMoves(t *testing.T) {
 		}
 	}
 
-	// treeOf returns the sorted relative paths of every regular file under the
-	// mount, read through the peer's own exec so the peer's FUSE view is what
-	// is listed, not the host's cached view. A stale map entry can leave a
-	// PHANTOM directory (readdir lists it, stat fails), which makes find exit
-	// 1 while still printing everything it reached; that is itself part of
-	// the demonstration, so any exit code is accepted and phantoms are kept
-	// as entries.
+	// treeOf lists every regular file through the peer's own mount view.
+	// A phantom entry makes find exit 1; keep it as a PHANTOM: marker.
 	treeOf := func(t *testing.T, p *testPeer) []string {
 		t.Helper()
 		resp := p.send(t, "exec . find . -type f", 20*time.Second)
@@ -168,8 +156,7 @@ func TestFUSEtoFUSE_DirectoryMoves(t *testing.T) {
 		return strings.TrimSpace(ex(t, p, "cat "+rel, 15*time.Second))
 	}
 
-	// The control: a one-sided directory rename must keep children reachable
-	// on the peer. This is the baseline the concurrent case is judged against.
+	// Control: a one-sided rename keeps children reachable on the peer.
 	t.Run("SequentialDirRenameKeepsChildren", func(t *testing.T) {
 		ex(t, bob, "mkdir -p projA", 15*time.Second)
 		mustSend(t, bob, "write_file projA/f1.txt hello-from-projA")
@@ -185,8 +172,7 @@ func TestFUSEtoFUSE_DirectoryMoves(t *testing.T) {
 			t.Fatalf("child must stay readable through the peer's mount after a directory rename: got %q", got)
 		}
 
-		// Ghost check: the OLD child path must disappear on the peer. Before
-		// the child re-keying it stayed visible forever (measured 2026-08-26).
+		// The old child path must disappear on the peer.
 		ghostGone := func() bool {
 			_, err := os.Stat(filepath.Join(aliceMount, "projA", "f1.txt"))
 			return os.IsNotExist(err)
@@ -203,9 +189,7 @@ func TestFUSEtoFUSE_DirectoryMoves(t *testing.T) {
 		}
 	})
 
-	// The cycle: mv A B/ on Alice crossing mv B A/ on Bob. A correct tree
-	// keeps one arrangement on both peers; the shipped path re-creates the
-	// departed parent via MkdirAll and the trees diverge.
+	// The cycle: mv A B/ crossing mv B A/ must converge to one arrangement.
 	t.Run("ConcurrentCrossMoves", func(t *testing.T) {
 		ex(t, bob, "mkdir -p A B", 15*time.Second)
 		mustSend(t, bob, "write_file A/fa.txt content-of-fa")
@@ -219,8 +203,7 @@ func TestFUSEtoFUSE_DirectoryMoves(t *testing.T) {
 			t.Fatalf("seed read B/fb.txt through Alice's mount: got %q", got)
 		}
 
-		// The crossing moves, issued as close to simultaneously as the
-		// stdin protocol allows.
+		// Issue both moves as simultaneously as the protocol allows.
 		aliceMove := alice.sendAsync(t, "exec . mv A B")
 		bobMove := bob.sendAsync(t, "exec . mv B A")
 		aliceResp := <-aliceMove
@@ -236,8 +219,7 @@ func TestFUSEtoFUSE_DirectoryMoves(t *testing.T) {
 		t.Logf("alice tree: %v", aliceTree)
 		t.Logf("bob   tree: %v", bobTree)
 
-		// Content preservation is unconditional: the bytes of both files
-		// must exist somewhere on each peer, diverged tree or not.
+		// Bytes must exist somewhere on each peer, diverged or not.
 		for _, want := range []struct{ name, content string }{
 			{"fa.txt", "content-of-fa"},
 			{"fb.txt", "content-of-fb"},

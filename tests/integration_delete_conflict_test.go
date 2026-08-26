@@ -35,10 +35,8 @@ func listConflictFiles(t *testing.T, dir, stem string) []string {
 	return out
 }
 
-// TestDeleteConflict_EditRacesDelete drives Alice's REMOVE_FILE handler the
-// way Bob's client does, with the three base classes. The dirty case is the
-// gap this closes: before the delete base, an edit made outside the 1 s
-// cancellation window vanished with no copy when the delete executed.
+// TestDeleteConflict_EditRacesDelete drives the REMOVE_FILE handler with the
+// three base classes: racing edit preserved, turn-taking and legacy plain.
 func TestDeleteConflict_EditRacesDelete(t *testing.T) {
 	skipIfNoFUSE(t)
 	if testing.Short() {
@@ -61,8 +59,7 @@ func TestDeleteConflict_EditRacesDelete(t *testing.T) {
 		require.NoError(err)
 	}
 
-	// Capture the seed identity BEFORE the edit: this is what a deleter that
-	// never saw the edit declares as its base.
+	// The seed identity is what a deleter that never saw the edit declares.
 	seedInfo, err := os.Stat(filepath.Join(tp.BobSaveDir, "doc.txt"))
 	require.NoError(err)
 	seedIdentity := seedInfo.ModTime().UnixNano()
@@ -76,9 +73,7 @@ func TestDeleteConflict_EditRacesDelete(t *testing.T) {
 	svc := tp.Alice.KDSvc
 	require.NotNil(svc)
 
-	// Case 1, the race: delete with the SEED base against dirty local state.
-	// The buffered remove fires after 1 s; the preserved sibling then appears
-	// and the canonical goes away.
+	// Case 1, the race: seed base against dirty local state.
 	_, err = svc.Notify(context.Background(), &bindings.NotifyRequest{
 		Type: bindings.NotifyType_REMOVE_FILE, Path: "/doc.txt", BaseMtimeNs: seedIdentity,
 	})
@@ -93,8 +88,7 @@ func TestDeleteConflict_EditRacesDelete(t *testing.T) {
 	require.Equal(edited, string(got), "the racing edit must survive as the sibling")
 	WaitForFileAbsent(t, filepath.Join(tp.AliceMountDir, "doc.txt"), 15*time.Second)
 
-	// Case 2, turn-taking: a delete of a CLEAN file with its current base is
-	// a plain delete, no sibling.
+	// Case 2, turn-taking: clean file, current base, plain delete.
 	cleanInfo, err := os.Stat(filepath.Join(tp.BobSaveDir, "clean.txt"))
 	require.NoError(err)
 	_, err = svc.Notify(context.Background(), &bindings.NotifyRequest{
@@ -104,8 +98,7 @@ func TestDeleteConflict_EditRacesDelete(t *testing.T) {
 	WaitForFileAbsent(t, filepath.Join(tp.AliceMountDir, "clean.txt"), 15*time.Second)
 	require.Empty(listConflictFiles(t, tp.AliceSaveDir, "clean"), "turn-taking delete must not mint a sibling")
 
-	// Case 3, legacy sender: base 0 keeps the old contract, plain delete
-	// even against dirty local state.
+	// Case 3, legacy sender: base 0, plain delete even against dirty state.
 	require.NoError(os.WriteFile(filepath.Join(tp.AliceMountDir, "legacy.txt"), []byte("legacy-dirty"), 0o644))
 	time.Sleep(1500 * time.Millisecond)
 	_, err = svc.Notify(context.Background(), &bindings.NotifyRequest{

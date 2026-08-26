@@ -48,10 +48,8 @@ func logDist(t *testing.T, name string, ds []time.Duration) {
 		pct(ds, 0.99).Round(time.Microsecond), pct(ds, 1.0).Round(time.Microsecond))
 }
 
-// TestPerfHotpath_SwapSaveStorm measures the atomic app-save through the
-// mount: write a working copy, rename it over the target, 100 times. The
-// rename-only distribution is the gate: no conflict fix touches the Rename
-// path, so it must stay at baseline.
+// TestPerfHotpath_SwapSaveStorm: the app save (write copy, rename over)
+// through the mount. The rename-only distribution is the gate.
 func TestPerfHotpath_SwapSaveStorm(t *testing.T) {
 	skipUnlessPerf(t)
 	require := require.New(t)
@@ -84,9 +82,8 @@ func TestPerfHotpath_SwapSaveStorm(t *testing.T) {
 	logDist(t, "swap-save full (write+rename)", saveDur)
 }
 
-// TestPerfHotpath_ColdRandomAccess measures random jumps into cold regions
-// of a large remote file (prefetch off, pure on-demand) and writes landing
-// on cold paths. First-byte latency per jump.
+// TestPerfHotpath_ColdRandomAccess: random jumps into a cold remote file
+// and writes on cold paths. First-byte latency per jump.
 func TestPerfHotpath_ColdRandomAccess(t *testing.T) {
 	skipUnlessPerf(t)
 	require := require.New(t)
@@ -131,8 +128,7 @@ func TestPerfHotpath_ColdRandomAccess(t *testing.T) {
 	}
 	logDist(t, fmt.Sprintf("cold random 4K reads over %d MiB", sizeMB), readDur)
 
-	// Cold-path writes: 4K writes at random offsets into the still-cold
-	// file through the mount (writes landing in unfetched regions).
+	// Cold-path writes: 4K at random offsets into unfetched regions.
 	wfh, err := os.OpenFile(coldPath, os.O_WRONLY, 0o644) // #nosec G304
 	require.NoError(err)
 	defer wfh.Close()
