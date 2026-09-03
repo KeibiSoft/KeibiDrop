@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -62,12 +63,17 @@ func socketPath() string {
 type Request struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args,omitempty"`
+	// TimeoutS caps a blocking verb. Zero means the verb's own default.
+	TimeoutS int `json:"timeout_s,omitempty"`
 }
 
 type Response struct {
 	OK    bool            `json:"ok"`
 	Data  json.RawMessage `json:"data,omitempty"`
 	Error string          `json:"error,omitempty"`
+	// Code is a stable machine-readable classification of Error, added for
+	// agents. Empty on success. See the code* constants in agent.go.
+	Code string `json:"code,omitempty"`
 }
 
 func okResponse(data any) Response {
@@ -75,8 +81,11 @@ func okResponse(data any) Response {
 	return Response{OK: true, Data: b}
 }
 
+// errResponse keeps the Error text every existing caller already produces and
+// classifies it into a stable Code, so agents branch on the code and humans
+// still read the message.
 func errResponse(msg string) Response {
-	return Response{OK: false, Error: msg}
+	return Response{OK: false, Error: msg, Code: classifyMessage(msg)}
 }
 
 // promptPassphraseFromTTY reads a passphrase from the terminal without echo.
@@ -362,6 +371,30 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 
 	case "connect":
 		return cmdConnect(kd)
+
+	// Agent surface. These are additive: the verbs above keep their exact
+	// shapes and blocking behavior.
+
+	case "connect-timeout":
+		return runConnectWithTimeout(kd, timeoutOrDefault(req, defaultConnectTimeout))
+
+	case "wait-connected":
+		return cmdWaitConnected(kd, timeoutOrDefault(req, defaultConnectTimeout))
+
+	case "pull-async":
+		return cmdPullAsync(kd, req.Args)
+
+	case "transfer-status":
+		return cmdTransferStatus(kd, req.Args)
+
+	case "transfers":
+		return cmdTransfers(kd)
+
+	case "mount-info":
+		return cmdMountInfo(kd)
+
+	case "wait-mount":
+		return cmdWaitMount(kd, timeoutOrDefault(req, defaultConnectTimeout))
 
 	case "add":
 		if len(req.Args) < 1 {
@@ -1017,23 +1050,67 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 
 // --- Client ---
 
+// extractTimeoutFlag pulls a leading or trailing --timeout=<seconds> (or
+// --timeout <seconds>) out of args and returns the rest. Parsing here rather
+// than with the flag package keeps every existing positional argument working
+// exactly as before.
+func extractTimeoutFlag(args []string) (rest []string, timeoutS int) {
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case strings.HasPrefix(a, "--timeout="):
+			if n, err := strconv.Atoi(strings.TrimPrefix(a, "--timeout=")); err == nil && n > 0 {
+				timeoutS = n
+			}
+		case a == "--timeout" && i+1 < len(args):
+			if n, err := strconv.Atoi(args[i+1]); err == nil && n > 0 {
+				timeoutS = n
+			}
+			i++
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return rest, timeoutS
+}
+
 func runClient(cmd string, args []string) {
+	args, timeoutS := extractTimeoutFlag(args)
+
 	sock := socketPath()
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"daemon not running (socket: %s)"}`+"\n", sock)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr,
+			`{"ok":false,"error":"daemon not running (socket: %s)","code":%q}`+"\n",
+			sock, codeNotConnected)
+		os.Exit(exitNotConnected)
 	}
 	defer conn.Close()
 
-	req := Request{Command: cmd, Args: args}
+	req := Request{Command: cmd, Args: args, TimeoutS: timeoutS}
 	b, _ := json.Marshal(req)
 	_, _ = fmt.Fprintf(conn, "%s\n", b)
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer for large responses
-	if scanner.Scan() {
-		fmt.Println(scanner.Text())
+	if !scanner.Scan() {
+		fmt.Fprintf(os.Stderr,
+			`{"ok":false,"error":"no response from daemon","code":%q}`+"\n", codeInternal)
+		os.Exit(exitInternal)
+	}
+
+	line := scanner.Text()
+	fmt.Println(line)
+
+	// Exit codes are the whole point of this surface: a script must branch
+	// without parsing JSON. An unparseable line is itself a failure.
+	var resp Response
+	if err := json.Unmarshal([]byte(line), &resp); err != nil {
+		os.Exit(exitInternal)
+	}
+	if !resp.OK {
+		os.Exit(exitCodeFor(resp.Code))
 	}
 }
 
@@ -1105,6 +1182,32 @@ USAGE:
   kd bench-pull <name> [path]    Benchmark: pull file, report MB/s, cleanup.
   kd help                        Show this help.
 
+AGENT SURFACE (non-interactive; every verb below is additive):
+  kd connect-timeout             connect, but give up after --timeout seconds.
+                                 Use this, not create/join: connect compares the
+                                 two fingerprints and derives the same role split
+                                 on both machines, so neither side is told which
+                                 one it is.
+  kd wait-connected              Block until the session is healthy.
+  kd pull-async <name> [path]    Start a download, return a transfer_id at once.
+  kd transfer-status <id>        Poll one transfer: done, bytes, total, error.
+  kd transfers                   List every transfer this daemon started.
+  kd mount-info                  Where the peer's files are readable, and if live.
+  kd wait-mount                  Block until the FUSE mount is live.
+
+  --timeout=<seconds>            Cap any blocking verb. Default 60.
+
+EXIT CODES (branch on these, not on the message text):
+  0 ok            2 not_connected   4 not_found        6 busy
+  1 internal      3 timeout         5 invalid_argument 7 refused   8 unsupported
+  Every response also carries a stable "code" field matching these names.
+
+EVENTS (kd poll-event pops one, non-blocking, "" when empty):
+  The queue holds 64 events and drops the oldest when full, so a slow poller
+  loses events. Do not use it as the only signal that something finished;
+  poll transfer-status or wait-connected instead. Events are opaque strings,
+  some in a "prefix:value" shape, e.g. connect_status:..., tokens_added.
+
 ENVIRONMENT (for "kd start"):
   KD_RELAY                Relay URL        (default: https://keibidroprelay.keibisoft.com)
   KD_INBOUND_PORT         Listen port      (default: 26431)
@@ -1115,7 +1218,11 @@ ENVIRONMENT (for "kd start"):
   KD_LOG_FILE             Log file path    (default: stderr)
   KD_INCOGNITO            Force ephemeral mode, no identity saved (any value)
   KD_PASSPHRASE_PROTECT   Prompt for passphrase to encrypt identity (any value)
+                          Do not set this headless: it reads from a TTY.
   KD_SOCKET               Unix socket path (default: /tmp/kd.sock)
+  KEIBIDROP_CONFIG_DIR    Config and identity directory. Set a distinct one per
+                          daemon: two daemons sharing it load the same identity
+                          and get identical fingerprints, which connect rejects.
 
 EXAMPLE (first connection):
   KD_SAVE_PATH=./received KD_NO_FUSE=1 kd start
