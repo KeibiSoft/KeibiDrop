@@ -221,6 +221,16 @@ Mount an evidence share read only across NAT and extract the artifact set you ne
 
 [Mount the workstation that holds the data](https://keibidrop.com/for/ml.html). No bucket, and no upload before the first batch.
 
+### Agents, and the data they work on
+
+<p align="center">
+  <img src="demo-photos/agents-mcp-demo.gif" alt="Two agents pairing over MCP: the laptop offers a 2,184 file dataset in place, the gpu box lists it and reads shards off the mount" width="900">
+</p>
+
+Two agents, one per machine, each driving a KeibiDrop peer through the MCP server. The laptop offers a folder where it sits. The gpu box mounts it, lists 2,184 files six folders deep, and checksums 24 shards. In that run 88,581 bytes crossed the network out of 6,784,286 on disk, because that is what it opened. The whole thing, pairing included, took 12.5 seconds.
+
+Build it with `make build-kdmcp`, then `kdmcp install` prints the config snippet for your MCP client. Sending stays off until `KD_SHARE_ROOT` names one directory to send from, so a receiving agent cannot be talked into shipping files out.
+
 ## Links
 
 - [Website](https://keibidrop.com)
