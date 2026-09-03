@@ -25,13 +25,21 @@ build-cli:
 build-kd:
 	go build -ldflags="$(LDFLAGS)" -o kd$(EXE) ./cmd/kd
 
+# kdmcp is the MCP server an AI agent launches. One self-contained binary with
+# no Go dependencies outside this module. Built with cgo like every other
+# KeibiDrop binary, so it carries the FUSE mount, which is the reason an agent
+# uses KeibiDrop instead of a copy tool.
+# -trimpath keeps build paths out of the shipped binary.
+build-kdmcp:
+	go build -trimpath -ldflags="-s -w $(LDFLAGS)" -o kdmcp$(EXE) ./cmd/kdmcp
+
 build-static-rust-bridge:
 	go build -ldflags="$(LDFLAGS)" -buildmode=c-archive -o libkeibidrop.a ./rustbridge
 
 build-rust: protoc build-static-rust-bridge
 	cd rust && cargo build --release
 
-build-all: build-rust build-cli build-kd
+build-all: build-rust build-cli build-kd build-kdmcp
 
 # Cross-compile for macOS arm64 (from Intel) or x86_64 (from arm64)
 # Usage: make cross-macos CROSS_ARCH=arm64   (from Intel Mac, target M1/M2)
@@ -493,7 +501,7 @@ android-deploy: build-android
 	adb shell am force-stop com.keibisoft.keibidrop
 	adb shell am start -n com.keibisoft.keibidrop/.MainActivity
 
-.PHONY: build-cli build-kd build-static-rust-bridge build-rust build-all \
+.PHONY: build-cli build-kd build-kdmcp build-static-rust-bridge build-rust build-all \
         test test-race lint sec install-proto protoc rust-bindings slint-preview \
         package-macos package-tar package-deb package-windows package-choco checksums clean-dist clean \
         run-alice run-bob \
