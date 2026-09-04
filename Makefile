@@ -138,8 +138,8 @@ sec:
 # ── Protobuf ──────────────────────────────────────────────
 
 install-proto:
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
 
 # NOTE: the pkg/transport/proto pb files carry a //go:build bench first line;
 # regeneration drops it, re-add after running this target.
@@ -203,7 +203,7 @@ package-tar: $(DIST)
 	rm -rf $(DIST)/tar-staging
 	@echo "Created $(DIST)/keibidrop-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz"
 
-# Linux .deb — requires nfpm (go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest)
+# Linux .deb — requires nfpm (go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0)
 package-deb: $(DIST)
 	@echo "Packaging .deb for $(GOARCH)..."
 	VERSION=$(VERSION) GOARCH=$(GOARCH) nfpm package -p deb -f nfpm.yaml -t $(DIST)/

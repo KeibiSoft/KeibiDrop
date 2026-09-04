@@ -103,7 +103,8 @@ jobs:
 
       - name: Install nfpm (Linux)
         if: runner.os == 'Linux'
-        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+        # Pinned: v2.47.0 needs Go 1.26.4 and GOTOOLCHAIN is local.
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.46.0
 
       - name: Add Rust cross-compile target (macOS x86_64 from arm64)
         if: matrix.cross == true

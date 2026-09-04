@@ -35,7 +35,7 @@ jobs:
       - name: Install FUSE headers for the cgo build
         run: sudo apt-get install -y libfuse-dev libfuse3-dev
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - name: Scan modules and stdlib
         env:
           CGO_ENABLED: "1"
