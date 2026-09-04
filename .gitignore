@@ -6,7 +6,10 @@ libkeibidrop.h
 /keibidrop-cli
 /keibidrop
 /kd
+/kdmcp
 /cli
+/keibidrop-mcp.mcpb
+/mcp-publisher
 dist/
 *.test
 

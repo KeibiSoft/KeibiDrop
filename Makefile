@@ -226,6 +226,38 @@ endif
 	rm -rf $(DIST)/win-staging
 	@echo "Created $(DIST)/keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip"
 
+# Manifest and registry want semver without the 'v' prefix.
+MCPB_VERSION := $(patsubst v%,%,$(VERSION))
+
+# MCP bundle. kdmcp links cgofuse, so slices are built natively by the release
+# matrix. macOS only: lipo joins the darwin slices.
+#   make package-mcpb VERSION=0.4.3 MCPB_DARWIN_ARM64=.. MCPB_DARWIN_AMD64=.. \
+#     MCPB_WINDOWS=.. MCPB_LINUX=..
+package-mcpb: $(DIST)
+	@test -n "$(MCPB_DARWIN_ARM64)" || (echo "ERROR: set MCPB_DARWIN_ARM64" && exit 1)
+	@test -n "$(MCPB_DARWIN_AMD64)" || (echo "ERROR: set MCPB_DARWIN_AMD64" && exit 1)
+	@test -n "$(MCPB_WINDOWS)" || (echo "ERROR: set MCPB_WINDOWS" && exit 1)
+	@test -n "$(MCPB_LINUX)" || (echo "ERROR: set MCPB_LINUX" && exit 1)
+	@echo "Packaging .mcpb for $(MCPB_VERSION)..."
+	rm -rf $(DIST)/mcpb-staging
+	mkdir -p $(DIST)/mcpb-staging/server
+	lipo -create -output $(DIST)/mcpb-staging/server/kdmcp \
+	  $(MCPB_DARWIN_ARM64) $(MCPB_DARWIN_AMD64)
+	cp $(MCPB_WINDOWS) $(DIST)/mcpb-staging/server/kdmcp.exe
+	cp $(MCPB_LINUX) $(DIST)/mcpb-staging/server/kdmcp-linux
+	chmod +x $(DIST)/mcpb-staging/server/kdmcp $(DIST)/mcpb-staging/server/kdmcp.exe \
+	  $(DIST)/mcpb-staging/server/kdmcp-linux
+	sed 's/__VERSION__/$(MCPB_VERSION)/' packaging/mcpb/manifest.json \
+	  > $(DIST)/mcpb-staging/manifest.json
+ifneq ($(CODESIGN_IDENTITY),)
+	codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --timestamp \
+	  $(DIST)/mcpb-staging/server/kdmcp
+endif
+	cd $(DIST)/mcpb-staging && zip -qrD ../keibidrop-mcp.mcpb manifest.json server
+	rm -rf $(DIST)/mcpb-staging
+	@echo "Created $(DIST)/keibidrop-mcp.mcpb"
+	@shasum -a 256 $(DIST)/keibidrop-mcp.mcpb
+
 # Chocolatey .nupkg — requires choco pack + package-windows first
 # Choco requires semver without 'v' prefix (e.g. 0.1.1, not v0.1.1).
 CHOCO_VERSION := $(patsubst v%,%,$(VERSION))
@@ -503,7 +535,8 @@ android-deploy: build-android
 
 .PHONY: build-cli build-kd build-kdmcp build-static-rust-bridge build-rust build-all \
         test test-race lint sec install-proto protoc rust-bindings slint-preview \
-        package-macos package-tar package-deb package-windows package-choco checksums clean-dist clean \
+        package-macos package-tar package-deb package-windows package-choco package-mcpb \
+        checksums clean-dist clean \
         run-alice run-bob \
         run-cli-alice run-cli-bob \
         run-kd-alice run-kd-bob \
