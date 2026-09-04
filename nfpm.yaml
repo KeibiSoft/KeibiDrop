@@ -60,6 +60,11 @@ contents:
     file_info:
       mode: 0755
 
+  - src: kdmcp
+    dst: /usr/local/bin/kdmcp
+    file_info:
+      mode: 0755
+
   - src: assets/icons/icon-256.png
     dst: /usr/share/icons/hicolor/256x256/apps/keibidrop.png
 

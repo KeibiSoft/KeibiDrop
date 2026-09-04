@@ -136,19 +136,12 @@ jobs:
           COMMIT=${{ steps.version.outputs.commit }}
           GOARCH=${{ matrix.goarch }} make build-cli build-kd VERSION=$VERSION COMMIT=$COMMIT
 
-      # Unsigned: lipo drops signatures, so the mcpb job signs the join.
       - name: Build kdmcp (MCP server)
         shell: bash
         run: |
           VERSION=${{ steps.version.outputs.version }}
           COMMIT=${{ steps.version.outputs.commit }}
           GOARCH=${{ matrix.goarch }} make build-kdmcp VERSION=$VERSION COMMIT=$COMMIT
-          mkdir -p dist
-          if [ -f kdmcp.exe ]; then
-            cp kdmcp.exe dist/kdmcp-${{ matrix.goos }}-${{ matrix.goarch }}.exe
-          else
-            cp kdmcp dist/kdmcp-${{ matrix.goos }}-${{ matrix.goarch }}
-          fi
 
       - name: Import signing certificate (macOS)
         if: runner.os == 'macOS'
@@ -170,13 +163,27 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"
-          for bin in keibidrop-cli kd; do
+          for bin in keibidrop-cli kd kdmcp; do
             if [ -f "$bin" ]; then
               codesign --force --options runtime --sign "$IDENTITY" --timestamp "./$bin"
             fi
           done
           if [ -f "rust/target/release/keibidrop-rust" ]; then
             codesign --force --options runtime --sign "$IDENTITY" --timestamp "rust/target/release/keibidrop-rust"
+          fi
+
+      # After signing, so the standalone download and the bundle carry the
+      # signature. lipo drops it again, and the mcpb job re-signs the join.
+      - name: Stage kdmcp for download
+        shell: bash
+        run: |
+          V=${{ steps.version.outputs.version }}
+          P=${{ matrix.goos }}-${{ matrix.goarch }}
+          mkdir -p dist
+          if [ -f kdmcp.exe ]; then
+            cp kdmcp.exe "dist/kdmcp-$V-$P.exe"
+          else
+            cp kdmcp "dist/kdmcp-$V-$P"
           fi
 
       - name: Package .dmg (macOS arm64)
@@ -291,12 +298,13 @@ jobs:
 
       - name: Package .mcpb
         run: |
+          V=${{ steps.version.outputs.version }}
           make package-mcpb \
-            VERSION=${{ steps.version.outputs.version }} \
-            MCPB_DARWIN_ARM64=artifacts/kdmcp-darwin-arm64 \
-            MCPB_DARWIN_AMD64=artifacts/kdmcp-darwin-amd64 \
-            MCPB_WINDOWS=artifacts/kdmcp-windows-amd64.exe \
-            MCPB_LINUX=artifacts/kdmcp-linux-amd64 \
+            VERSION=$V \
+            MCPB_DARWIN_ARM64=artifacts/kdmcp-$V-darwin-arm64 \
+            MCPB_DARWIN_AMD64=artifacts/kdmcp-$V-darwin-amd64 \
+            MCPB_WINDOWS=artifacts/kdmcp-$V-windows-amd64.exe \
+            MCPB_LINUX=artifacts/kdmcp-$V-linux-amd64 \
             CODESIGN_IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"
 
       # Fails on drift, and fills the hash so publishing needs no hand edit.
@@ -334,7 +342,7 @@ jobs:
       - name: Collect release files and generate checksums
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*-setup.exe" -o -name "*.mcpb" \) -exec cp {} release/ \;
+          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*-setup.exe" -o -name "*.mcpb" -o -name "kdmcp-*" \) -exec cp {} release/ \;
           ls -lh release/
           cd release && sha256sum * > SHA256SUMS 2>/dev/null || shasum -a 256 * > SHA256SUMS
 

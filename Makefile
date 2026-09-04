@@ -175,6 +175,7 @@ package-macos: $(DIST)
 	cp rust/target/release/keibidrop-rust $(DIST)/dmg-staging/KeibiDrop.app/Contents/MacOS/keibidrop
 	cp keibidrop-cli $(DIST)/dmg-staging/KeibiDrop.app/Contents/MacOS/
 	cp kd $(DIST)/dmg-staging/KeibiDrop.app/Contents/MacOS/
+	cp kdmcp $(DIST)/dmg-staging/KeibiDrop.app/Contents/MacOS/
 	cp assets/icons/keibidrop.icns $(DIST)/dmg-staging/KeibiDrop.app/Contents/Resources/keibidrop.icns
 	sed 's/VERSION_PLACEHOLDER/$(VERSION)/g' assets/Info.plist.tmpl > $(DIST)/dmg-staging/KeibiDrop.app/Contents/Info.plist
 	# Sign .app bundle if CODESIGN_IDENTITY is set
@@ -198,6 +199,7 @@ package-tar: $(DIST)
 	cp rust/target/release/keibidrop-rust $(DIST)/tar-staging/keibidrop-$(VERSION)/keibidrop
 	cp keibidrop-cli $(DIST)/tar-staging/keibidrop-$(VERSION)/
 	cp kd $(DIST)/tar-staging/keibidrop-$(VERSION)/
+	cp kdmcp $(DIST)/tar-staging/keibidrop-$(VERSION)/
 	cp README.md LICENSE $(DIST)/tar-staging/keibidrop-$(VERSION)/
 	cd $(DIST)/tar-staging && tar czf ../keibidrop-$(VERSION)-$(GOOS)-$(GOARCH).tar.gz keibidrop-$(VERSION)/
 	rm -rf $(DIST)/tar-staging
@@ -216,6 +218,7 @@ package-windows: $(DIST)
 	mkdir -p $(DIST)/win-staging
 	cp kd.exe $(DIST)/win-staging/ 2>/dev/null || cp kd $(DIST)/win-staging/kd.exe
 	cp keibidrop-cli.exe $(DIST)/win-staging/ 2>/dev/null || cp keibidrop-cli $(DIST)/win-staging/keibidrop-cli.exe
+	cp kdmcp.exe $(DIST)/win-staging/ 2>/dev/null || cp kdmcp $(DIST)/win-staging/kdmcp.exe
 	cp rust/target/release/keibidrop-rust.exe $(DIST)/win-staging/keibidrop.exe 2>/dev/null || true
 	cp README.md LICENSE DUAL-LICENSE.md $(DIST)/win-staging/
 ifeq ($(GOOS),windows)
