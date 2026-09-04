@@ -1,0 +1,89 @@
+{
+  "manifest_version": "0.2",
+  "name": "keibidrop",
+  "display_name": "KeibiDrop",
+  "version": "__VERSION__",
+  "description": "Give two agents on two machines the same folder. Peer to peer, encrypted end to end, no cloud storage in between.",
+  "long_description": "KeibiDrop connects two machines directly and gives each one access to a folder on the other. Traffic is encrypted end to end with a hybrid post-quantum key exchange, and a relay is used only to help the two peers find each other, holding an encrypted blob it cannot read. With a FUSE provider present the peer's files are ordinary paths, so a program reads them where they sit and only the bytes it reads cross the network, which suits model weights and datasets. Pairing needs a code from each side, so a single leaked code connects nobody. Sending is limited to one directory named at startup.",
+  "author": {
+    "name": "KeibiSoft S.R.L.",
+    "url": "https://keibisoft.com"
+  },
+  "homepage": "https://keibidrop.com",
+  "documentation": "https://keibidrop.com/docs/how-to/automate-with-kd.html",
+  "support": "https://github.com/KeibiSoft/KeibiDrop/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeibiSoft/KeibiDrop"
+  },
+  "license": "MPL-2.0",
+  "keywords": ["file-transfer", "p2p", "encryption", "filesystem", "storage", "networking"],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/kdmcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/kdmcp",
+      "args": [],
+      "env": {
+        "KD_SHARE_ROOT": "${user_config.share_root}",
+        "KD_SAVE_PATH": "${user_config.save_path}",
+        "KD_MOUNT_PATH": "${user_config.mount_path}"
+      },
+      "platform_overrides": {
+        "linux": {
+          "command": "${__dirname}/server/kdmcp-linux",
+          "args": [],
+          "env": {
+            "KD_SHARE_ROOT": "${user_config.share_root}",
+            "KD_SAVE_PATH": "${user_config.save_path}",
+            "KD_MOUNT_PATH": "${user_config.mount_path}"
+          }
+        }
+      }
+    }
+  },
+  "user_config": {
+    "share_root": {
+      "type": "directory",
+      "title": "Share root",
+      "description": "The only folder KeibiDrop may send from. Leave empty to keep sending off and receive only.",
+      "required": false
+    },
+    "save_path": {
+      "type": "directory",
+      "title": "Received files",
+      "description": "Where pulled files are written.",
+      "required": false,
+      "default": "${HOME}/KeibiDrop/Received"
+    },
+    "mount_path": {
+      "type": "directory",
+      "title": "Mount folder",
+      "description": "Where the peer's files appear when a FUSE provider is installed.",
+      "required": false,
+      "default": "${HOME}/KeibiDrop/Mount"
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"]
+  },
+  "tools": [
+    { "name": "kd_setup", "description": "Provision the local environment and report FUSE or copy mode" },
+    { "name": "kd_create_share", "description": "Return this peer's pairing code" },
+    { "name": "kd_accept_peer", "description": "Accept the other peer's code and connect in the background" },
+    { "name": "kd_join", "description": "Join with the other peer's code and wait for the session" },
+    { "name": "kd_status", "description": "Session state, transport, bytes moved, mount path" },
+    { "name": "kd_list_files", "description": "List files shared and offered in the session" },
+    { "name": "kd_send_file", "description": "Offer a file or directory tree to the peer" },
+    { "name": "kd_pull_file", "description": "Start a download and return a transfer id immediately" },
+    { "name": "kd_transfer_status", "description": "Progress for one transfer id" },
+    { "name": "kd_credit", "description": "Relay credit held and session usage" },
+    { "name": "kd_buy_credit", "description": "Checkout link for a data pack" },
+    { "name": "kd_add_credit", "description": "Add a prepaid data pack code" },
+    { "name": "kd_peers", "description": "List saved peers and whether each is online" },
+    { "name": "kd_save_peer", "description": "Save the connected peer under a name" },
+    { "name": "kd_connect_peer", "description": "Reconnect to a saved peer with no code exchange" },
+    { "name": "kd_wait_event", "description": "Block until the session reports something" },
+    { "name": "kd_disconnect", "description": "End the session and reset for a new share" }
+  ]
+}

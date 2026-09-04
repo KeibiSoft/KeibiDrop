@@ -135,6 +135,20 @@ jobs:
           COMMIT=${{ steps.version.outputs.commit }}
           GOARCH=${{ matrix.goarch }} make build-cli build-kd VERSION=$VERSION COMMIT=$COMMIT
 
+      # Unsigned: lipo drops signatures, so the mcpb job signs the join.
+      - name: Build kdmcp (MCP server)
+        shell: bash
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          COMMIT=${{ steps.version.outputs.commit }}
+          GOARCH=${{ matrix.goarch }} make build-kdmcp VERSION=$VERSION COMMIT=$COMMIT
+          mkdir -p dist
+          if [ -f kdmcp.exe ]; then
+            cp kdmcp.exe dist/kdmcp-${{ matrix.goos }}-${{ matrix.goarch }}.exe
+          else
+            cp kdmcp dist/kdmcp-${{ matrix.goos }}-${{ matrix.goarch }}
+          fi
+
       - name: Import signing certificate (macOS)
         if: runner.os == 'macOS'
         env:
@@ -237,8 +251,74 @@ jobs:
           name: release-${{ matrix.name }}
           path: dist/*
 
-  publish:
+  # macOS: needs lipo and the Developer ID.
+  mcpb:
     needs: build
+    runs-on: macos-15
+    name: Bundle MCP (.mcpb)
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set version from tag
+        id: version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH=$RUNNER_TEMP/cert.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
+          echo "$APPLE_CERTIFICATE_P12" | base64 -d > "$CERT_PATH"
+          security create-keychain -p "" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+      - name: Package .mcpb
+        run: |
+          make package-mcpb \
+            VERSION=${{ steps.version.outputs.version }} \
+            MCPB_DARWIN_ARM64=artifacts/kdmcp-darwin-arm64 \
+            MCPB_DARWIN_AMD64=artifacts/kdmcp-darwin-amd64 \
+            MCPB_WINDOWS=artifacts/kdmcp-windows-amd64.exe \
+            MCPB_LINUX=artifacts/kdmcp-linux-amd64 \
+            CODESIGN_IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"
+
+      # Fails on drift, and fills the hash so publishing needs no hand edit.
+      - name: Sync server.json to the tag
+        run: |
+          V=${{ steps.version.outputs.version }}
+          jq -e --arg v "$V" '.version == $v' server.json > /dev/null \
+            || { echo "::error::server.json version is not $V"; exit 1; }
+          SHA=$(shasum -a 256 dist/keibidrop-mcp.mcpb | cut -d' ' -f1)
+          jq --arg s "$SHA" '.packages[0].fileSha256 = $s' server.json \
+            > dist/server.json
+          echo "mcpb sha256: $SHA" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload .mcpb
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-mcpb
+          path: |
+            dist/keibidrop-mcp.mcpb
+            dist/server.json
+
+  publish:
+    needs: [build, mcpb]
     runs-on: ubuntu-22.04
 
     steps:
@@ -253,7 +333,7 @@ jobs:
       - name: Collect release files and generate checksums
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*-setup.exe" \) -exec cp {} release/ \;
+          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.zip" -o -name "*-setup.exe" -o -name "*.mcpb" \) -exec cp {} release/ \;
           ls -lh release/
           cd release && sha256sum * > SHA256SUMS 2>/dev/null || shasum -a 256 * > SHA256SUMS
 
@@ -263,16 +343,46 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
 
-          # Create release if it doesn't exist yet
+          # Only a suffixed tag (v0.4.3-beta.1) is a prerelease. --latest is
+          # explicit so a side release cannot take the pointer.
           if ! gh release view "$TAG" > /dev/null 2>&1; then
             PRERELEASE=""
+            LATEST="--latest"
             TITLE="KeibiDrop $TAG"
-            if [[ "$TAG" == *"-"* ]] || [[ "$TAG" == v0.* ]]; then
+            if [[ "$TAG" == *"-"* ]]; then
               PRERELEASE="--prerelease"
+              LATEST="--latest=false"
               TITLE="KeibiDrop $TAG (Beta)"
             fi
-            gh release create "$TAG" --title "$TITLE" --generate-notes $PRERELEASE
+            gh release create "$TAG" --title "$TITLE" --generate-notes $LATEST $PRERELEASE
           fi
 
           # Upload artifacts
           gh release upload "$TAG" release/* --clobber
+
+      # Install commands resolve through /releases/latest. Fail if it moved.
+      - name: Verify the published release serves the install path
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest"
+
+          LATEST=$(gh release view --json tagName --jq .tagName)
+          if [ "$LATEST" != "$TAG" ]; then
+            echo "::error::latest is $LATEST, expected $TAG. Installs break."
+            exit 1
+          fi
+
+          for PAT in '_amd64\.deb' '\.mcpb'; do
+            URL=$(curl -sL "$API" | grep -o "https://[^\"]*${PAT}" | head -1)
+            if [ -z "$URL" ]; then
+              echo "::error::no asset matching ${PAT} in latest"
+              exit 1
+            fi
+            curl -sfIL -o /dev/null "$URL" \
+              || { echo "::error::$URL does not resolve"; exit 1; }
+            echo "ok: $URL"
+          done
