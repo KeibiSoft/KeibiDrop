@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.KeibiSoft/keibidrop",
+  "title": "KeibiDrop",
+  "description": "Give two agents on two machines the same encrypted folder. P2P, no cloud, only read bytes move.",
+  "version": "0.1.0",
+  "websiteUrl": "https://keibidrop.com",
+  "repository": {
+    "url": "https://github.com/KeibiSoft/KeibiDrop",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/KeibiSoft/KeibiDrop/releases/download/kdmcp-v0.1.0/keibidrop-mcp.mcpb",
+      "fileSha256": "d7639b19b6b3aa13e60e1ae6173c34cb46cf3020f142cb2c600973e77be6d4ae",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
