@@ -13,7 +13,7 @@
     {
       "registryType": "mcpb",
       "identifier": "https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.3/keibidrop-mcp.mcpb",
-      "fileSha256": "FILL_FROM_SHA256SUMS_AFTER_THE_RELEASE_BUILD",
+      "fileSha256": "SET_BY_RELEASE_WORKFLOW",
       "transport": {
         "type": "stdio"
       }
