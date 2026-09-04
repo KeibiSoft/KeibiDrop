@@ -307,15 +307,16 @@ jobs:
             MCPB_LINUX=artifacts/kdmcp-$V-linux-amd64 \
             CODESIGN_IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"
 
-      # Fails on drift, and fills the hash so publishing needs no hand edit.
+      # Version, URL and hash all come from the tag, so no hand edit per release.
       - name: Sync server.json to the tag
         run: |
           V=${{ steps.version.outputs.version }}
-          jq -e --arg v "$V" '.version == $v' server.json > /dev/null \
-            || { echo "::error::server.json version is not $V"; exit 1; }
           SHA=$(shasum -a 256 dist/keibidrop-mcp.mcpb | cut -d' ' -f1)
-          jq --arg s "$SHA" '.packages[0].fileSha256 = $s' server.json \
-            > dist/server.json
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download"
+          jq --arg v "$V" --arg s "$SHA" --arg u "$URL/v$V/keibidrop-mcp.mcpb" \
+            '.version = $v
+             | .packages[0].fileSha256 = $s
+             | .packages[0].identifier = $u' server.json > dist/server.json
           echo "mcpb sha256: $SHA" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload .mcpb
@@ -329,6 +330,9 @@ jobs:
   publish:
     needs: [build, mcpb]
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v7
@@ -395,3 +399,13 @@ jobs:
               || { echo "::error::$URL does not resolve"; exit 1; }
             echo "ok: $URL"
           done
+
+      # OIDC publishes as the repo, so no personal account and no token.
+      - name: Publish to the MCP registry
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          curl -sSL -o pub.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz"
+          tar xzf pub.tar.gz mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish artifacts/server.json
