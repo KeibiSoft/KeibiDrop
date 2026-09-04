@@ -42,6 +42,11 @@ func main() {
 		os.Exit(2)
 	}
 
+	os.Exit(run())
+}
+
+// run returns instead of exiting so cancel and shutdown always execute.
+func run() int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -49,7 +54,7 @@ func main() {
 	if err != nil {
 		// Startup failures go to stderr: stdout carries only JSON-RPC frames.
 		fmt.Fprintf(os.Stderr, "kdmcp: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer p.shutdown()
 
@@ -63,8 +68,9 @@ func main() {
 
 	if err := serve(os.Stdin, os.Stdout, &handler{kd: p}); err != nil {
 		fmt.Fprintf(os.Stderr, "kdmcp: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func usage() {

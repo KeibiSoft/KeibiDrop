@@ -1076,6 +1076,11 @@ func extractTimeoutFlag(args []string) (rest []string, timeoutS int) {
 }
 
 func runClient(cmd string, args []string) {
+	os.Exit(clientExitCode(cmd, args))
+}
+
+// clientExitCode returns instead of exiting so the connection's defer runs.
+func clientExitCode(cmd string, args []string) int {
 	args, timeoutS := extractTimeoutFlag(args)
 
 	sock := socketPath()
@@ -1084,7 +1089,7 @@ func runClient(cmd string, args []string) {
 		fmt.Fprintf(os.Stderr,
 			`{"ok":false,"error":"daemon not running (socket: %s)","code":%q}`+"\n",
 			sock, codeNotConnected)
-		os.Exit(exitNotConnected)
+		return exitNotConnected
 	}
 	defer conn.Close()
 
@@ -1097,7 +1102,7 @@ func runClient(cmd string, args []string) {
 	if !scanner.Scan() {
 		fmt.Fprintf(os.Stderr,
 			`{"ok":false,"error":"no response from daemon","code":%q}`+"\n", codeInternal)
-		os.Exit(exitInternal)
+		return exitInternal
 	}
 
 	line := scanner.Text()
@@ -1107,11 +1112,12 @@ func runClient(cmd string, args []string) {
 	// without parsing JSON. An unparseable line is itself a failure.
 	var resp Response
 	if err := json.Unmarshal([]byte(line), &resp); err != nil {
-		os.Exit(exitInternal)
+		return exitInternal
 	}
 	if !resp.OK {
-		os.Exit(exitCodeFor(resp.Code))
+		return exitCodeFor(resp.Code)
 	}
+	return 0
 }
 
 // --- Helpers ---
