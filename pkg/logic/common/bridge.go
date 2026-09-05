@@ -161,3 +161,71 @@ func (kd *KeibiDrop) dialBridgeAddr(addr, direction string, logger *slog.Logger)
 	}
 	return conn, nil
 }
+
+// bridgeInbound runs the creator's inbound leg on the bridge and reports whether a
+// joiner completed the handshake on it. It reads the leg parked by the previous
+// round first, then dials a fresh one.
+//
+// A leg that saw no joiner is parked open, not closed. The bridge keeps an
+// unmatched room until its own expiry whether or not the client is still there,
+// so a closed leg leaves a corpse that the next joiner is paired with, and that
+// joiner reads EOF. Measured on the Timisoara bridge: the joiner arrived 5 s after
+// the creator closed its leg, matched the corpse, and both sides waited out their
+// windows alone. An open leg stays a live half: the joiner's hello lands in it
+// while the creator runs its direct window, and the next bridge phase reads it.
+func (kd *KeibiDrop) bridgeInbound(logger *slog.Logger) bool {
+	if parked := kd.takeParkedBridgeIn(); parked != nil {
+		if err := session.PerformInboundHandshakeWait(kd.session, parked, bridgeRoundWait); err == nil {
+			logger.Info("Joiner arrived on the bridge leg parked from the last round")
+			return true
+		} else {
+			parked.Close()
+			kd.session.ResetInboundCrypto()
+			logger.Info("Parked bridge leg had no joiner", "error", err)
+		}
+	}
+	inConn, err := kd.dialBridgeDir("pair1", logger)
+	if err != nil {
+		logger.Warn("Bridge dial (inbound) failed this round", "error", err)
+		return false
+	}
+	// Bound the wait for the joiner to the round. Without a deadline this blocks
+	// until the REMOTE bridge closes the unpaired room, which is what produced the
+	// +38s EOF and made the round length a property of the bridge, not of us. The
+	// handshake clears the deadline itself once the conn becomes the transport.
+	if err := session.PerformInboundHandshakeWait(kd.session, inConn, bridgeRoundWait); err != nil {
+		kd.session.ResetInboundCrypto()
+		kd.parkBridgeIn(inConn)
+		logger.Info("No joiner on the bridge this round", "error", err)
+		return false
+	}
+	return true
+}
+
+// parkBridgeIn keeps a bridge inbound leg open for the next round. Any leg already
+// parked is closed: the bridge has expired its room by now.
+func (kd *KeibiDrop) parkBridgeIn(c net.Conn) {
+	kd.mu.Lock()
+	old := kd.parkedBridgeIn
+	kd.parkedBridgeIn = c
+	kd.mu.Unlock()
+	if old != nil {
+		old.Close()
+	}
+}
+
+// takeParkedBridgeIn hands the parked leg to the caller and forgets it.
+func (kd *KeibiDrop) takeParkedBridgeIn() net.Conn {
+	kd.mu.Lock()
+	defer kd.mu.Unlock()
+	c := kd.parkedBridgeIn
+	kd.parkedBridgeIn = nil
+	return c
+}
+
+// closeParkedBridgeIn drops a leg nobody will read again: the create ended.
+func (kd *KeibiDrop) closeParkedBridgeIn() {
+	if c := kd.takeParkedBridgeIn(); c != nil {
+		c.Close()
+	}
+}

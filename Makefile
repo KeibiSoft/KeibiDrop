@@ -261,6 +261,13 @@ endif
 	@echo "Created $(DIST)/keibidrop-mcp.mcpb"
 	@shasum -a 256 $(DIST)/keibidrop-mcp.mcpb
 
+# Serving-peer container image (docker/Dockerfile). Local single-arch build;
+# the release workflow publishes the multi-arch image to GHCR on every tag.
+IMAGE ?= ghcr.io/keibisoft/keibidrop
+docker-image:
+	docker build -f docker/Dockerfile -t $(IMAGE):$(VERSION) -t $(IMAGE):latest \
+	  --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) .
+
 # Chocolatey .nupkg — requires choco pack + package-windows first
 # Choco requires semver without 'v' prefix (e.g. 0.1.1, not v0.1.1).
 CHOCO_VERSION := $(patsubst v%,%,$(VERSION))

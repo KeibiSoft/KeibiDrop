@@ -8,6 +8,7 @@ package tests
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ type MockRelay struct {
 	Server *httptest.Server
 	mu     sync.RWMutex
 	store  map[string]string // lookupToken -> blob JSON
+	probe  *bool             // /probe verdict; nil answers 404 like a relay without the endpoint
 }
 
 // NewMockRelay creates and starts a mock relay server.
@@ -32,12 +34,33 @@ func NewMockRelay() *MockRelay {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/register", mr.handleRegister)
 	mux.HandleFunc("/fetch", mr.handleFetch)
+	mux.HandleFunc("/probe", mr.handleProbe)
 	mr.Server = httptest.NewServer(mux)
 
 	return mr
 }
 
 // Close shuts down the mock relay.
+// SetProbeReachable makes /probe answer with a fixed verdict. Unset, the relay
+// behaves like one without the endpoint and answers 404.
+func (mr *MockRelay) SetProbeReachable(reachable bool) {
+	mr.mu.Lock()
+	defer mr.mu.Unlock()
+	mr.probe = &reachable
+}
+
+func (mr *MockRelay) handleProbe(w http.ResponseWriter, r *http.Request) {
+	mr.mu.Lock()
+	verdict := mr.probe
+	mr.mu.Unlock()
+	if verdict == nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"reachable":%v}`, *verdict)
+}
+
 func (mr *MockRelay) Close() {
 	mr.Server.Close()
 }

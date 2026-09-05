@@ -29,3 +29,16 @@ func handshakeOrClose(s *session.Session, c net.Conn) error {
 	}
 	return nil
 }
+
+// joinBridgeInbound runs the joiner's inbound handshake on its own bridge leg and
+// closes the leg when it fails. The accept-loop bound in handshakeOrClose is too
+// short here: the creator may still be dialing our blocked listener. This is a
+// socket we dialed, not an accept loop, so the longer window pins nothing a
+// stranger can reach.
+func (kd *KeibiDrop) joinBridgeInbound(c net.Conn) error {
+	if err := session.PerformInboundHandshakeWait(kd.session, c, joinBridgeWait); err != nil {
+		c.Close()
+		return err
+	}
+	return nil
+}

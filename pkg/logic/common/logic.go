@@ -37,6 +37,13 @@ const Timeout = 10*60 - 5
 // direct accept window, so a round is the same length whichever path it takes.
 const bridgeRoundWait = 15 * time.Second
 
+// joinBridgeWait bounds the joiner's wait for the creator's hello on its bridge
+// leg. A creator with an open inbound accepts our direct dial, then dials our
+// listener for the full DirectDialTimeout before it takes the bridge, because a
+// direct handshake carries no reachability verdict. It can also still be inside
+// one direct accept window when we arrive. The window covers both, with margin.
+const joinBridgeWait = 2 * (session.DirectDialTimeout + bridgeRoundWait)
+
 // dropOutboundConn closes a completed outbound conn and forgets it. Every LAN bail-out
 // needs this: the outbound handshake has already succeeded by then, and ResetOutboundCrypto
 // only wipes the keys, so without it the conn is stranded when we fall through to
@@ -928,7 +935,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 
 				if acceptErr != nil {
 					logger.Warn("Inbound accept failed", "error", acceptErr)
-					kd.markInboundBlocked() // nothing reached us here; skip the wait next time
+					kd.noteEmptyAcceptWindow() // nothing reached us here; skip the wait next time
 					needBridge = kd.BridgeAddr != ""
 					if !needBridge {
 						if kd.StrictMode {
@@ -980,7 +987,7 @@ func (kd *KeibiDrop) JoinRoom() error {
 			if err != nil {
 				return fmt.Errorf("bridge dial (inbound): %w", err)
 			}
-			if err := handshakeOrClose(kd.session, inConn); err != nil {
+			if err := kd.joinBridgeInbound(inConn); err != nil {
 				return fmt.Errorf("bridge inbound handshake: %w", err)
 			}
 			kd.ConnectionMode = "bridge"
@@ -1059,6 +1066,8 @@ func (kd *KeibiDrop) CreateRoom() error {
 	}
 
 	kd.prepareBridgePolicy(logger)
+	// A leg parked between rounds belongs to this create only.
+	defer kd.closeParkedBridgeIn()
 
 	if !kd.IsLocalMode {
 		if err := kd.registerRoomToRelay(); err != nil {
@@ -1233,7 +1242,7 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 			if round == 0 {
 				// Learn reachability once. Re-marking every round would say nothing new
 				// and would keep skipping the direct window for the rest of the budget.
-				kd.markInboundBlocked()
+				kd.noteEmptyAcceptWindow()
 			}
 			useBridge = true
 		}
@@ -1290,19 +1299,7 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 			// Bridge fallback.
 			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
 
-			inConn, err := kd.dialBridgeDir("pair1", logger)
-			if err != nil {
-				logger.Warn("Bridge dial (inbound) failed this round", "error", err)
-				return false, nil
-			}
-			// Bound the wait for the joiner to the round. Without a deadline this blocks
-			// until the REMOTE bridge closes the unpaired room, which is what produced the
-			// +38s EOF and made the round length a property of the bridge, not of us. The
-			// handshake clears the deadline itself once the conn becomes the transport.
-			if err := session.PerformInboundHandshakeWait(kd.session, inConn, bridgeRoundWait); err != nil {
-				inConn.Close()
-				kd.session.ResetInboundCrypto()
-				logger.Info("No joiner on the bridge this round", "error", err)
+			if !kd.bridgeInbound(logger) {
 				return false, nil
 			}
 

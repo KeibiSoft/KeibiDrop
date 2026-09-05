@@ -71,6 +71,7 @@ func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
 	// every time, and a re-ask would add a round trip to every registration.
 	kd.probedOn.Store(addr)
 	kd.probedAt.Store(time.Now().UnixNano())
+	kd.probedReachable.Store(false)
 
 	if resp.StatusCode != http.StatusOK {
 		logger.Debug("Relay does not offer an inbound probe", "status", resp.StatusCode)
@@ -81,6 +82,7 @@ func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
 		return
 	}
 	if result.Reachable {
+		kd.probedReachable.Store(true)
 		kd.markInboundReachable()
 		return
 	}
@@ -121,3 +123,24 @@ func (kd *KeibiDrop) InboundBlocked() bool {
 
 // PeerInboundBlocked reports whether the peer advertised its listener as unreachable.
 func (kd *KeibiDrop) PeerInboundBlocked() bool { return kd.peerInboundBlocked.Load() }
+
+// probeSaysReachable reports a fresh relay verdict that the listener is reachable on
+// the current address.
+func (kd *KeibiDrop) probeSaysReachable() bool {
+	on, ok := kd.probedOn.Load().(string)
+	return ok && on == kd.LocalIPv6IP && kd.probedReachable.Load() &&
+		time.Since(time.Unix(0, kd.probedAt.Load())) < probeCacheTTL
+}
+
+// noteEmptyAcceptWindow records that a direct accept window closed with nobody in it.
+// Without a probe verdict that is the only evidence there is, so it marks the
+// listener blocked. Against a fresh reachable verdict it is not evidence: the peer
+// was not dialing yet. An always-on peer waits through many empty windows, and a
+// mark here would pin it to the bridge, because the hint stops the peer from dialing
+// and only an arriving dial clears the mark.
+func (kd *KeibiDrop) noteEmptyAcceptWindow() {
+	if kd.probeSaysReachable() {
+		return
+	}
+	kd.markInboundBlocked()
+}
