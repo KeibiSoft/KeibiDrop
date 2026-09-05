@@ -34,6 +34,5 @@ f=$(ls "$MOUNT/photos" | head -1)
 say "sha256sum $MOUNT/photos/$f | cut -c1-64"
 { shasum -a 256 "$MOUNT/photos/$f" 2>/dev/null || sha256sum "$MOUNT/photos/$f"; } | cut -c1-64
 pause 1.5
-printf '\n%sThe box you already own is now the half that never sleeps.%s\n' "$B" "$N"
-printf '%sOnly the bytes a program reads cross the wire.%s\n' "$DIM" "$N"
+printf '\n%sThe box serves. The laptop mounts. Only the bytes a program reads cross the wire.%s\n' "$B" "$N"
 printf '%skeibidrop.com/docs/how-to/run-on-a-nas.html%s\n' "$DIM" "$N"

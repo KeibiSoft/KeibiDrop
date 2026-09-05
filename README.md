@@ -221,7 +221,7 @@ Mount an evidence share read only across NAT and extract the artifact set you ne
 
 [Mount the workstation that holds the data](https://keibidrop.com/for/ml.html). No bucket, and no upload before the first batch.
 
-### The box that never sleeps
+### An always-on box: NAS, mini PC, home server
 
 <p align="center">
   <img src="demo-photos/nas-demo.gif" alt="Two terminals. Left: a container on a NAS prints its code and Peer connected. Right: a laptop adds the box as a contact, connects, lists the shared folder and hashes one photo through the mount" width="900">
