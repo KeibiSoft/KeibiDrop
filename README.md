@@ -221,6 +221,18 @@ Mount an evidence share read only across NAT and extract the artifact set you ne
 
 [Mount the workstation that holds the data](https://keibidrop.com/for/ml.html). No bucket, and no upload before the first batch.
 
+### The box that never sleeps
+
+<p align="center">
+  <img src="demo-photos/nas-demo.gif" alt="Two terminals. Left: a container on a NAS prints its code and Peer connected. Right: a laptop adds the box as a contact, connects, lists the shared folder and hashes one photo through the mount" width="900">
+</p>
+
+A session needs both machines online, and a NAS, a mini PC or a home server is online all the time. The container in `docker/` runs the serving side on that box from plain Docker with the stock kernel. Your laptop mounts the folder from anywhere and reads on demand, so only the bytes a program reads cross the wire. In that run the box, a container on a server in Timisoara, served 161 files to a laptop in Bucharest; the laptop paired once, listed the folder and hashed one photo. Setup is one compose file, in the [guide](https://keibidrop.com/docs/how-to/run-on-a-nas.html). An Unraid template is in `docker/unraid/`.
+
+### Photographers and editors
+
+The raws and the footage stay on the box at the studio. The laptop mounts the folder, Lightroom or Resolve opens the files from the mount, and each file moves only when it is opened; a 1 MiB read out of a big file moves one 16 MiB block. The catalog stays on the laptop, as the [post-production page](https://keibidrop.com/for/post-production.html) and the [video and audio guide](https://keibidrop.com/docs/how-to/video-audio-projects.html) describe. Set the share read only when the box is the archive and the laptop must change nothing.
+
 ### Agents, and the data they work on
 
 <p align="center">
