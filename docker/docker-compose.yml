@@ -1,0 +1,41 @@
+# KeibiDrop serving peer. The box shares a folder; your computer mounts it
+# with the KeibiDrop app and reads it on demand, end to end encrypted.
+#
+#   docker compose up -d
+#   docker compose logs -f      # prints this box's code and the pairing steps
+#
+# Setup guide: https://keibidrop.com/docs/how-to/run-on-a-nas.html
+
+services:
+  keibidrop:
+    image: ghcr.io/keibisoft/keibidrop:latest
+    container_name: keibidrop
+    restart: unless-stopped
+    # Host networking gives the peer the box's real ports and IPv6, which is
+    # what a direct connection needs. Without it every connection goes
+    # through the bridge.
+    network_mode: host
+    environment:
+      # Your computer's 86-character code (Settings, Identity, in the app;
+      # or `kd show fingerprint`). Leave empty and pair later with
+      # `docker exec keibidrop kd add-contact laptop <code>`.
+      KD_PEER: ""
+      KD_PEER_NAME: laptop
+      # true: the peer can read and change nothing. Pair it with :ro below.
+      KD_SHARE_READ_ONLY: "false"
+      # Change only if another peer on this box already uses them.
+      # KD_INBOUND_PORT: "26431"
+      # KD_OUTBOUND_PORT: "26432"
+      # Never fall back to the bridge; fail instead when no direct path exists.
+      # KD_STRICT: "false"
+    volumes:
+      # The folder to serve. Append :ro to make the mount itself read only.
+      - /path/to/your/files:/shares
+      # Identity and contacts. Private key inside; keep it out of shared backups.
+      - keibidrop-config:/config
+    # The container runs as uid 1000. If the folder above belongs to another
+    # user, run as that user instead:
+    # user: "1000:1000"
+
+volumes:
+  keibidrop-config:

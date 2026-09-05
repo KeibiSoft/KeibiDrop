@@ -191,6 +191,8 @@ type KeibiDrop struct {
 	inboundBlockedOn   atomic.Value // string
 	probedOn           atomic.Value // string: the local address the relay probe last ran on
 	probedAt           atomic.Int64 // Unix nano of that probe, so the verdict expires.
+	probedReachable    atomic.Bool  // The relay reached the listener on that probe.
+	parkedBridgeIn     net.Conn     // Creator's bridge inbound leg kept open between rounds; see bridgeInbound.
 
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc

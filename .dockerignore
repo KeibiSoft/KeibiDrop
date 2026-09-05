@@ -1,0 +1,12 @@
+# Whitelist. docker/Dockerfile builds from the repository root, and the tree
+# carries build output, media and untracked working folders that must never
+# reach a build context or an image layer.
+*
+!go.mod
+!go.sum
+!cmd/
+!pkg/
+!grpc_bindings/
+!docker/
+**/*_test.go
+**/testdata/

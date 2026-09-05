@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>KeibiDrop</Name>
+  <Repository>ghcr.io/keibisoft/keibidrop:latest</Repository>
+  <Registry>https://github.com/KeibiSoft/KeibiDrop/pkgs/container/keibidrop</Registry>
+  <Network>host</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/KeibiSoft/KeibiDrop/issues</Support>
+  <Project>https://keibidrop.com</Project>
+  <Overview>Your Unraid box becomes the always-on peer of an encrypted peer-to-peer folder mount. Your computer mounts the shared folder with the KeibiDrop app and reads it on demand: only the bytes you touch move, end to end encrypted (hybrid post-quantum key exchange). No account, no cloud. The serving side needs no FUSE. MPL-2.0.&#xD;
+&#xD;
+After the first start, open the container log: it prints this box's code and the three pairing steps.</Overview>
+  <Category>Network:FileSharing Tools:Utilities</Category>
+  <WebUI/>
+  <TemplateURL>https://raw.githubusercontent.com/KeibiSoft/KeibiDrop/main/docker/unraid/keibidrop.xml</TemplateURL>
+  <Icon>https://keibidrop.com/favicon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Shared folder" Target="/shares" Default="/mnt/user/" Mode="rw" Description="The folder this box serves. Set the mode to read only to let the peer read and change nothing." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/</Config>
+  <Config Name="Identity and contacts" Target="/config" Default="/mnt/user/appdata/keibidrop" Mode="rw" Description="Holds this box's private identity key. Keep it out of shared backups." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/keibidrop</Config>
+  <Config Name="Peer code" Target="KD_PEER" Default="" Mode="" Description="Your computer's 86-character code (Settings, Identity, in the KeibiDrop app). Leave empty to pair later from the container console with: kd add-contact laptop &lt;code&gt;" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Peer name" Target="KD_PEER_NAME" Default="laptop" Mode="" Description="Contact name for the peer code." Type="Variable" Display="advanced" Required="false" Mask="false">laptop</Config>
+  <Config Name="Read only share" Target="KD_SHARE_READ_ONLY" Default="false" Mode="" Description="true refuses every change the peer sends." Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="Inbound port" Target="KD_INBOUND_PORT" Default="26431" Mode="" Description="TCP port peers dial (26000 to 27000). Change only if another KeibiDrop peer on this box uses it." Type="Variable" Display="advanced" Required="false" Mask="false">26431</Config>
+  <Config Name="Outbound port" Target="KD_OUTBOUND_PORT" Default="26432" Mode="" Description="TCP port this box dials from." Type="Variable" Display="advanced" Required="false" Mask="false">26432</Config>
+  <Config Name="Strict mode" Target="KD_STRICT" Default="false" Mode="" Description="true never falls back to the bridge; the connection fails when no direct path exists." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+</Container>

@@ -30,6 +30,12 @@ var (
 	inboundHandshakeTimeout = 30 * time.Second
 )
 
+// DirectDialTimeout bounds a direct dial to the peer's listener. A joiner whose
+// inbound is blocked cannot tell the creator so from inside a direct handshake, so
+// the creator pays this in full before it takes the bridge. The joiner's bridge
+// window is sized from it; see joinBridgeWait in pkg/logic/common.
+const DirectDialTimeout = 15 * time.Second
+
 // PeerHandshakeMessage defines the JSON payload sent during handshake.
 type PeerHandshakeMessage struct {
 	Fingerprint      string            `json:"fingerprint"`
@@ -311,7 +317,7 @@ func storePeerKeysFromExchange(session *Session, logger *slog.Logger, msg keyExc
 // PerformOutboundHandshake dials remoteAddr and sends the PQC handshake.
 func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 	logger := session.logger.With("phase", "outbound-handshake")
-	conn, err := DialWithStableAddr("tcp", remoteAddr, 15*time.Second, logger)
+	conn, err := DialWithStableAddr("tcp", remoteAddr, DirectDialTimeout, logger)
 	if err != nil {
 		logger.Error("Failed to dial", "addr", remoteAddr, "error", err)
 		return fmt.Errorf("failed to connect to %s: %w", remoteAddr, err)
