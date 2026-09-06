@@ -42,13 +42,23 @@ echo "  windows-amd64: $SHA_WINDOWS_AMD64"
 BREW_FORMULA="../homebrew-keibidrop/Formula/keibidrop.rb"
 if [ -f "$BREW_FORMULA" ]; then
   echo "==> Updating Homebrew formula..."
-  sed -i '' \
-    -e "s/version \".*\"/version \"$VERSION\"/" \
-    -e "s/PLACEHOLDER_ARM64_SHA256/$SHA_DARWIN_ARM64/" \
-    -e "s/PLACEHOLDER_AMD64_SHA256/$SHA_DARWIN_AMD64/" \
-    -e "s/PLACEHOLDER_LINUX_AMD64_SHA256/$SHA_LINUX_AMD64/" \
-    "$BREW_FORMULA"
-  # Also update any previously filled SHA256s
+  for sha in "$SHA_DARWIN_ARM64" "$SHA_DARWIN_AMD64" "$SHA_LINUX_AMD64"; do
+    if [ "$sha" = "NOT_FOUND" ] || [ -z "$sha" ]; then
+      echo "  ABORT: a checksum is missing from SHA256SUMS; formula left untouched"
+      exit 1
+    fi
+  done
+  # Each url line names its platform; the sha256 on the line after it belongs
+  # to that url. The old placeholder rewrite only worked on the first fill and
+  # left every later release with the previous hashes (v0.4.5, set by hand).
+  awk -v arm="$SHA_DARWIN_ARM64" -v amd="$SHA_DARWIN_AMD64" -v lin="$SHA_LINUX_AMD64" -v ver="$VERSION" '
+    /^[[:space:]]*version "/ { sub(/version "[^"]*"/, "version \"" ver "\"") }
+    /darwin-arm64\.tar\.gz/ { want = arm }
+    /darwin-amd64\.tar\.gz/ { want = amd }
+    /linux-amd64\.tar\.gz/  { want = lin }
+    /^[[:space:]]*sha256 "/ && want != "" { sub(/sha256 "[^"]*"/, "sha256 \"" want "\""); want = "" }
+    { print }
+  ' "$BREW_FORMULA" > "$BREW_FORMULA.tmp" && mv "$BREW_FORMULA.tmp" "$BREW_FORMULA"
   echo "  Updated $BREW_FORMULA"
   echo "  Remember to: cd ../homebrew-keibidrop && git commit -am 'Update to $VERSION' && git push"
 else
