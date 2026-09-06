@@ -16,7 +16,7 @@
   <a href="https://www.youtube.com/watch?v=6DEEfoms-j8">
     <img src="demo-photos/resolve-nas-demo.gif" alt="DaVinci Resolve scrubbing a 4K timeline whose clips live on a NAS 400 km away. The thumbnails fill in as the playhead moves; only the touched parts cross the internet. Click to watch the two minute demo on YouTube." width="900">
   </a>
-  <br><sub><b>Edit from a NAS at home in DaVinci Resolve, only the parts you touch.</b> Click to watch the two minute demo on YouTube.</sub>
+  <br><sub><b>How to edit in DaVinci Resolve, Premiere Pro or Final Cut while traveling.</b> Your footage stays on the studio NAS, you open it on demand from the app, no waiting for a download or an upload. Click for the two minute demo.</sub>
 </p>
 
 Another computer's files show up as a folder on yours. Open and edit them in your own apps, with nothing to download first.
