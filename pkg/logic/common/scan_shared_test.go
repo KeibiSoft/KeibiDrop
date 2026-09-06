@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
@@ -253,4 +254,121 @@ func TestScanAndShareSaveDir_CancelledContext(t *testing.T) {
 	_, err := kd.ScanAndShareSaveDir(ctx)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, cli.paths())
+}
+
+// A file whose mtime is still moving is skipped while rescans are on, and
+// announced once it has settled. With rescans off every file is announced at
+// once, because nothing would come back for it.
+func TestScanAndShareSaveDir_SettleWindow(t *testing.T) {
+	dir := t.TempDir()
+	kd, cli := newScanTestKD(t, dir)
+	kd.RescanSharedSeconds = 30
+	writeFile(t, filepath.Join(dir, "landing.mov"), []byte("partial"))
+
+	n, err := kd.ScanAndShareSaveDir(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "a file written just now must wait for its mtime to settle")
+
+	old := time.Now().Add(-2 * sharedSettleWindow)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, "landing.mov"), old, old))
+	n, err = kd.ScanAndShareSaveDir(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.Equal(t, []string{"landing.mov"}, cli.paths())
+
+	kd2, cli2 := newScanTestKD(t, t.TempDir())
+	kd2.RescanSharedSeconds = 0
+	writeFile(t, filepath.Join(kd2.ToSave, "now.mov"), []byte("x"))
+	n, err = kd2.ScanAndShareSaveDir(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "with rescans off a fresh file is announced at once")
+	require.Equal(t, []string{"now.mov"}, cli2.paths())
+}
+
+// The rescan loop announces a file that lands after the session started, and
+// stops when its context ends.
+func TestRescanSharedLoop_AnnouncesLateFiles(t *testing.T) {
+	dir := t.TempDir()
+	kd, cli := newScanTestKD(t, dir)
+	kd.RescanSharedSeconds = 1
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		kd.rescanSharedLoop(ctx, kd.logger)
+		close(done)
+	}()
+
+	late := filepath.Join(dir, "late.mov")
+	writeFile(t, late, []byte("late"))
+	settled := time.Now().Add(-2 * sharedSettleWindow)
+	require.NoError(t, os.Chtimes(late, settled, settled))
+
+	require.Eventually(t, func() bool {
+		for _, p := range cli.paths() {
+			if p == "late.mov" {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond, "the rescan loop must announce a late file")
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("rescan loop did not stop on context cancel")
+	}
+}
+
+// A newer loop retires the older one, so a reconnect never leaves two walkers.
+func TestRescanSharedLoop_NewerGenerationRetiresOlder(t *testing.T) {
+	kd, _ := newScanTestKD(t, t.TempDir())
+	kd.RescanSharedSeconds = 1
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := make(chan struct{})
+	go func() {
+		kd.rescanSharedLoop(ctx, kd.logger)
+		close(first)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	go kd.rescanSharedLoop(ctx, kd.logger) // the reconnect's loop
+	select {
+	case <-first:
+	case <-time.After(4 * time.Second):
+		t.Fatal("the older rescan loop must exit once a newer one starts")
+	}
+}
+
+// Off by default in the engine: a zero interval returns at once.
+func TestRescanSharedLoop_ZeroIntervalReturns(t *testing.T) {
+	kd, _ := newScanTestKD(t, t.TempDir())
+	kd.RescanSharedSeconds = 0
+	done := make(chan struct{})
+	go func() {
+		kd.rescanSharedLoop(context.Background(), kd.logger)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("a zero interval must not start a loop")
+	}
+}
+
+// A disconnect while CreateRoom waits for the peer's fingerprint returns at
+// once instead of holding the daemon until Timeout.
+func TestWaitForPeerFingerprint_CancelledByDisconnect(t *testing.T) {
+	kd, _ := newScanTestKD(t, t.TempDir())
+	kd.session.ExpectedPeerFingerprint = ""
+	errCh := make(chan error, 1)
+	go func() { errCh <- kd.waitForPeerFingerprint() }()
+	time.Sleep(100 * time.Millisecond)
+	kd.CancelPendingConnect()
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, ErrConnectCancelled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("wait did not return after CancelPendingConnect")
+	}
 }

@@ -453,7 +453,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	// writer is pending. The value only seeds a new File's LocalNewer below; a
 	// microsecond-stale read self-corrects on the next announce.
 	d.RemoteFilesLock.RLock()
-	_, isRemoteFile := d.RemoteFiles[path]
+	remEntry, isRemoteFile := d.RemoteFiles[path]
 	d.RemoteFilesLock.RUnlock()
 
 	d.AfmLock.Lock()
@@ -476,16 +476,28 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		}
 
 		if fileExists || hasCreate {
-			fh = &File{
-				logger:          d.logger,
-				openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
-				Name:            getNameFromPath(path),
-				RelativePath:    path,
-				RealPathOfFile:  localPath,
-				IsLocalPresent:  fileExists,
-				LocalNewer:      !isRemoteFile, // A remote file must not be marked local newer.
-				StreamProvider:  d.OpenStreamProvider(),
-				stat:            &winfuse.Stat_t{},
+			if remEntry != nil && !hasCreate {
+				// The peer announced this path and a cache copy from an earlier
+				// session is on disk. Adopt the announced entry: it carries the
+				// chunk bitmap. A second, bitmap-less object for the same path
+				// made every read fetch its block again (7 GB for 557 MB of
+				// clips, 2026-09-06).
+				fh = remEntry
+				fh.metaMu.Lock()
+				fh.IsLocalPresent = true
+				fh.metaMu.Unlock()
+			} else {
+				fh = &File{
+					logger:          d.logger,
+					openFileCounter: OpenFileCounter{mu: &sync.Mutex{}},
+					Name:            getNameFromPath(path),
+					RelativePath:    path,
+					RealPathOfFile:  localPath,
+					IsLocalPresent:  fileExists,
+					LocalNewer:      !isRemoteFile, // A remote file must not be marked local newer.
+					StreamProvider:  d.OpenStreamProvider(),
+					stat:            &winfuse.Stat_t{},
+				}
 			}
 			d.AllFileMap[path] = fh
 		} else {
@@ -939,6 +951,11 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 			}
 
 			// The file is also present locally. Compare the stats.
+			// One object per path: the open must find the announced entry, with
+			// its bitmap, and not build a bitmap-less twin from the cache copy.
+			if _, has := d.AllFileMap[path]; !has {
+				d.AllFileMap[path] = remFile
+			}
 
 			auxStat := &stgo
 
@@ -3743,7 +3760,8 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			if fuseOpLog {
 				d.logger.Debug("oplog same-size verdict", "path", path, "reset", incomingMtime > existingMtime)
 			}
-			if incomingMtime > existingMtime {
+			switch {
+			case incomingMtime > existingMtime:
 				existing.metaMu.Lock()
 				existing.NotLocalSynced = true
 				existing.metaMu.Unlock()
@@ -3762,11 +3780,31 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 				if conflictRel != "" {
 					oldBitmap = nil
 				}
-			} else if existing.Bitmap != nil && !existing.Bitmap.IsComplete() {
+			case existing.Bitmap != nil && !existing.Bitmap.IsComplete():
 				// Same mtime, still incomplete — keep fetching the rest on-demand.
 				existing.metaMu.Lock()
 				existing.NotLocalSynced = true
 				existing.metaMu.Unlock()
+			case existing.Bitmap == nil && (!wasLocalNewer || accepted):
+				// The entry was registered from the cache copy on disk (a stat or
+				// open before this announce, after a daemon restart) and has no
+				// bitmap. Reads of such an entry stream every block and can never
+				// mark it: each read re-fetched 16 MiB, a 21 MB clip cost 386 MiB
+				// to decode. Attach one, resumed from a sidecar when present; the
+				// copy's bytes are fetched once more and cached from then on. A
+				// local write that outranked the announce keeps its authority.
+				bm := NewChunkBitmap(stat.Size)
+				if bm != nil && existing.RealPathOfFile != "" {
+					if loaded, loadErr := LoadChunkBitmap(BitmapPath(existing.RealPathOfFile), stat.Size); loadErr == nil {
+						bm = loaded
+					}
+				}
+				if bm != nil {
+					existing.metaMu.Lock()
+					existing.Bitmap = bm
+					existing.NotLocalSynced = !bm.IsComplete()
+					existing.metaMu.Unlock()
+				}
 			}
 			d.RemoteFilesLock.Unlock()
 			// No-op unless the in-place reset branch above ran (oldBitmap stays nil for

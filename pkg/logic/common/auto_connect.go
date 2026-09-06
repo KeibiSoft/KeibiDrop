@@ -66,6 +66,7 @@ func (kd *KeibiDrop) StartAutoConnect(ctx context.Context) error {
 	}
 	logger := kd.logger.With("method", "auto-connect", "peer", target)
 	logger.Info("Auto-connect armed")
+	kd.autoConnectArmed.Store(true)
 	go kd.autoConnectLoop(ctx, defaultAutoConnectTuning,
 		func() error { return kd.ConnectToContact(fp) },
 		kd.IsRunning,
@@ -93,8 +94,10 @@ func (kd *KeibiDrop) reconnectBusy() bool {
 // autoConnectLoop keeps one contact connected: dial with exponential backoff,
 // then sit idle while the session runs. Transient drops belong to the
 // ReconnectManager; the loop re-dials only after the session has been down a
-// full rearm grace with no reconnect in progress (peer-initiated disconnect or
-// reconnect gave up).
+// full rearm grace with no reconnect in progress (reconnect gave up). A peer
+// that said goodbye leaves no reconnect to defer to, so the loop redials on
+// the next poll: measured, the grace alone cost 90 of the 112 s a laptop took
+// to come back after a clean box restart.
 func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 	dial func() error, isRunning func() bool, busy func() bool) {
 	logger := kd.logger.With("method", "auto-connect")
@@ -107,6 +110,7 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 		case isRunning():
 			hadSession = true
 			idleSince = time.Time{}
+			kd.peerSaidGoodbye.Store(false)
 			backoff = tun.initialBackoff
 			if !sleepCtx(ctx, tun.poll) {
 				return
@@ -121,7 +125,7 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 			if !sleepCtx(ctx, tun.poll) {
 				return
 			}
-		case hadSession && time.Since(idleSince) < tun.rearmGrace:
+		case hadSession && !kd.peerSaidGoodbye.Load() && time.Since(idleSince) < tun.rearmGrace:
 			if !sleepCtx(ctx, tun.poll) {
 				return
 			}

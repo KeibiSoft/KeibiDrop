@@ -109,14 +109,25 @@ type KeibiDrop struct {
 	PushOnWrite    bool
 	// AutoCache enables the macFUSE auto_cache mount option, so a peer's same-size
 	// in-place edit shows live. The caller sets it from config.LiveCollab. False = git-safe.
-	AutoCache         bool
-	PrefetchAutoMB    int    // Files >= this many MB auto-prefetch on open. From config.PrefetchAutoMB. 0 = off.
-	ReadAheadWindowMB int    // Cap in MB for predictive sequential read-ahead. From config.ReadAheadWindowMB. 0 = off.
-	ScanSharedOnStart bool   // Announce files already in ToSave when a session starts. From config.ScanSharedOnStart.
-	AutoConnectPeer   string // Saved contact to connect to on startup, with retry. From config.AutoConnectPeer.
-	ShareReadOnly     bool   // Refuse every inbound peer mutation at the service layer. From config.ShareReadOnly.
-	MountReadOnly     bool   // Local FUSE mount returns EROFS on write ops. From config.MountReadOnly.
-	PreserveMetadata  bool   // Apply the origin's mode and times to files saved on disk. From config.PreserveMetadata.
+	AutoCache           bool
+	PrefetchAutoMB      int    // Files >= this many MB auto-prefetch on open. From config.PrefetchAutoMB. 0 = off.
+	ReadAheadWindowMB   int    // Cap in MB for predictive sequential read-ahead. From config.ReadAheadWindowMB. 0 = off.
+	ScanSharedOnStart   bool   // Announce files already in ToSave when a session starts. From config.ScanSharedOnStart.
+	RescanSharedSeconds int    // Re-walk ToSave this often while a session runs and announce new files. From config.RescanSharedSeconds. 0 = off.
+	AutoConnectPeer     string // Saved contact to connect to on startup, with retry. From config.AutoConnectPeer.
+	ShareReadOnly       bool   // Refuse every inbound peer mutation at the service layer. From config.ShareReadOnly.
+	MountReadOnly       bool   // Local FUSE mount returns EROFS on write ops. From config.MountReadOnly.
+	PreserveMetadata    bool   // Apply the origin's mode and times to files saved on disk. From config.PreserveMetadata.
+	// rescanGen retires an older rescan loop when a reconnect starts a new one.
+	rescanGen atomic.Uint64
+	// peerSaidGoodbye records that no reconnect is left to defer to: the peer
+	// said goodbye, or the reconnect manager gave up. No reconnect runs after
+	// one, so the auto-connect loop redials without the rearm grace.
+	peerSaidGoodbye  atomic.Bool
+	autoConnectArmed atomic.Bool // StartAutoConnect started its loop; a give-up then ends the session so the loop redials.
+	// connectCancelled makes a pending CreateRoom or JoinRoom wait return, so a
+	// disconnect frees the daemon instead of holding it until Timeout.
+	connectCancelled atomic.Bool
 
 	// Signals for loop management.
 	signals      chan TaskSignal

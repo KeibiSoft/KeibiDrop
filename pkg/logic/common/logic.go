@@ -666,10 +666,20 @@ func (kd *KeibiDrop) SetPeerDirectAddress(addr string) error {
 // waitForPeerFingerprint blocks until the expected peer fingerprint is set
 // (via AddPeerFingerprint or a relay lookup), polling once a second up to the
 // connection Timeout. Returns ErrTimeoutReached if it never arrives.
+// CancelPendingConnect makes a CreateRoom or JoinRoom still waiting for the
+// peer return ErrConnectCancelled. Disconnect calls it, so the daemon does
+// not stay busy for Timeout after the operator gave up.
+func (kd *KeibiDrop) CancelPendingConnect() {
+	kd.connectCancelled.Store(true)
+}
+
 func (kd *KeibiDrop) waitForPeerFingerprint() error {
 	for elapsed := 0; elapsed < Timeout; elapsed++ {
 		if kd.session.ExpectedPeerFingerprint != "" {
 			return nil
+		}
+		if kd.connectCancelled.Load() {
+			return ErrConnectCancelled
 		}
 		time.Sleep(time.Second)
 	}
@@ -736,6 +746,7 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 
 func (kd *KeibiDrop) JoinRoom() error {
 	logger := kd.logger.With("method", "join-room")
+	kd.connectCancelled.Store(false)
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -1056,6 +1067,7 @@ func DecideLocalRole(myName, peerName, peerAddr string) bool {
 
 func (kd *KeibiDrop) CreateRoom() error {
 	logger := kd.logger.With("method", "create-room")
+	kd.connectCancelled.Store(false)
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -1399,6 +1411,7 @@ func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond boo
 	}
 
 	fs := filesystem.NewFS(logger)
+	fs.OnRootReady = kd.BackfillRemoteFilesIntoFS // Announces that beat the mount sit in the tracker.
 	kd.KDSvc.SetFS(fs)
 
 	if err := fs.Mount(filepath.Clean(toMount), isSecond, filepath.Clean(toSave)); err != nil {

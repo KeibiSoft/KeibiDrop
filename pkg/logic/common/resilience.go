@@ -187,11 +187,10 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 			n, err := kd.ScanAndShareSaveDir(ctx)
 			if err != nil {
 				logger.Warn("Save folder scan stopped early", "announced", n, "error", err)
-				return
-			}
-			if n > 0 {
+			} else if n > 0 {
 				logger.Info("Announced pre-existing save folder files", "count", n)
 			}
+			kd.rescanSharedLoop(ctx, logger)
 		}()
 	}
 
@@ -447,11 +446,10 @@ func (kd *KeibiDrop) onReconnected() {
 			n, err := kd.ScanAndShareSaveDir(scanCtx)
 			if err != nil {
 				logger.Warn("Reconnect save folder scan stopped early", "announced", n, "error", err)
-				return
-			}
-			if n > 0 {
+			} else if n > 0 {
 				logger.Info("Announced save folder files after reconnect", "count", n)
 			}
+			kd.rescanSharedLoop(scanCtx, logger)
 		}()
 	}
 
@@ -629,6 +627,22 @@ func (kd *KeibiDrop) wireReconnectEvents() {
 
 	kd.ReconnectManager.OnReconnecting = wrapCb(kd.ReconnectManager.OnReconnecting, "reconnecting:")
 	kd.ReconnectManager.OnReconnected = wrapCb(kd.ReconnectManager.OnReconnected, "reconnected:")
+	// A manager that exhausted its attempts leaves a session that is running
+	// with no link. The auto-connect watchdog defers to a running session, so
+	// a box whose laptop slept through the retry budget waited forever (seen
+	// 2026-09-06: gave_up at 12:22, nothing until a container restart at
+	// 15:58). End the session and skip the rearm grace: there is no reconnect
+	// left to defer to.
+	origGaveUp := kd.ReconnectManager.OnGaveUp
+	kd.ReconnectManager.OnGaveUp = func() {
+		if origGaveUp != nil {
+			origGaveUp()
+		}
+		if kd.autoConnectArmed.Load() {
+			kd.peerSaidGoodbye.Store(true)
+			go kd.cancelContext()
+		}
+	}
 	kd.ReconnectManager.OnGaveUp = wrapCb(kd.ReconnectManager.OnGaveUp, "gave_up:")
 }
 

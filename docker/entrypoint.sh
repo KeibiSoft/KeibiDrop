@@ -33,6 +33,8 @@ export KD_LOG_FILE="${KD_LOG_FILE:-/tmp/keibidrop.log}"
 # The serving side never mounts. Announce what is already in /shares.
 export KD_NO_FUSE="${KD_NO_FUSE:-true}"
 export KD_SCAN_SHARED_ON_START="${KD_SCAN_SHARED_ON_START:-true}"
+# Files that land in /shares mid-session are announced on the next pass.
+export KD_RESCAN_SHARED_SECONDS="${KD_RESCAN_SHARED_SECONDS:-30}"
 
 say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 

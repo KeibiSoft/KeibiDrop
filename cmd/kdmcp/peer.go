@@ -128,6 +128,7 @@ func newPeer(ctx context.Context) (*peer, error) {
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	kd.ReadAheadWindowMB = cfg.ReadAheadWindowMB
 	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
+	kd.RescanSharedSeconds = cfg.RescanSharedSeconds
 	kd.ShareReadOnly = cfg.ShareReadOnly
 	kd.MountReadOnly = cfg.MountReadOnly
 	kd.PreserveMetadata = cfg.PreserveMetadata

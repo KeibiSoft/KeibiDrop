@@ -13,10 +13,10 @@
 <h2 align="center">Work on shared files instantly.<br>No more upload or download waiting.</h2>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=9Wt0NMx2_I8">
-    <img src="demo-photos/keibidrop-demo.gif" alt="KeibiDrop demo, Mac and Windows side by side. Click to watch on YouTube with sound." width="900">
+  <a href="https://www.youtube.com/watch?v=6DEEfoms-j8">
+    <img src="demo-photos/resolve-nas-demo.gif" alt="DaVinci Resolve scrubbing a 4K timeline whose clips live on a NAS 400 km away. The thumbnails fill in as the playhead moves; only the touched parts cross the internet. Click to watch the two minute demo on YouTube." width="900">
   </a>
-  <br><sub><b>Click to watch on YouTube</b> (with sound)</sub>
+  <br><sub><b>Edit from a NAS at home in DaVinci Resolve, only the parts you touch.</b> Click to watch the two minute demo on YouTube.</sub>
 </p>
 
 Another computer's files show up as a folder on yours. Open and edit them in your own apps, with nothing to download first.
@@ -39,6 +39,13 @@ Another computer's files show up as a folder on yours. Open and edit them in you
 | Finder | Terminal (git) |
 |:---:|:---:|
 | <img src="demo-photos/as-filesystem-accessible-from-finder.png" alt="Shared files in Finder" width="450"> | <img src="demo-photos/as-filesystem-git-ops-work.png" alt="Git on FUSE mount" width="450"> |
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=9Wt0NMx2_I8">
+    <img src="demo-photos/keibidrop-demo.gif" alt="KeibiDrop demo, Mac and Windows side by side. Click to watch on YouTube with sound." width="700">
+  </a>
+  <br><sub>Mac and Windows side by side. <b>Click to watch on YouTube</b> (with sound)</sub>
+</p>
 
 ---
 
