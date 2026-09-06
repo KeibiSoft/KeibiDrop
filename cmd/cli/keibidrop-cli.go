@@ -886,6 +886,7 @@ func main() {
 	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
+	kd.RescanSharedSeconds = cfg.RescanSharedSeconds
 	kd.ShareReadOnly = cfg.ShareReadOnly
 	kd.MountReadOnly = cfg.MountReadOnly
 	kd.PreserveMetadata = cfg.PreserveMetadata

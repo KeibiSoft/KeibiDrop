@@ -55,6 +55,7 @@ docker exec keibidrop kd add-contact laptop <your 86-character code>
 | `KD_INBOUND_PORT` | `26431` | TCP port peers dial. Range 26000 to 27000. |
 | `KD_OUTBOUND_PORT` | `26432` | TCP port this box dials from. |
 | `KD_STRICT` | `false` | `true` never falls back to the bridge. |
+| `KD_RESCAN_SHARED_SECONDS` | `30` | How often the box re-walks the shared folder and announces files that landed since the last pass. `0` turns it off; new files then wait for the next connect. |
 | `KD_RELAY`, `KD_BRIDGE` | production | A self-hosted relay and bridge. |
 | `KD_LOG_FILE` | `/tmp/keibidrop.log` | Engine log. Capped at `KD_LOG_MAX_MB` (64). |
 

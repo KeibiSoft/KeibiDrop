@@ -173,6 +173,11 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 			if err != nil {
 				continue
 			}
+			// A file still landing has a moving size. With rescans on, leave it
+			// until its mtime settles; the next pass takes it.
+			if kd.RescanSharedSeconds > 0 && time.Since(finfo.ModTime()) < sharedSettleWindow {
+				continue
+			}
 
 			kd.SyncTracker.LocalFilesMu.Lock()
 			if _, tracked := kd.SyncTracker.LocalFiles[rel]; tracked {

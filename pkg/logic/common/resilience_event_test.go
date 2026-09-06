@@ -8,10 +8,12 @@
 package common
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	"github.com/stretchr/testify/require"
@@ -78,4 +80,42 @@ func TestWireReconnectEvents_NilReconnectManagerIsNoop(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	}
 	kd.wireReconnectEvents()
+}
+
+// A give-up with auto-connect armed must end the session, so the watchdog
+// redials, and skip the rearm grace. Without it the box sat "running" with no
+// link for hours after the laptop slept through the retry budget.
+func TestGaveUp_EndsSessionWhenAutoConnectArmed(t *testing.T) {
+	kd := newEventTestKD()
+	ctx, cancel := context.WithCancel(context.Background())
+	kd.Cancel = cancel
+	kd.autoConnectArmed.Store(true)
+	kd.wireReconnectEvents()
+
+	kd.ReconnectManager.OnGaveUp()
+
+	require.True(t, kd.peerSaidGoodbye.Load(), "the grace must be skipped after a give-up")
+	select {
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("the session context must be cancelled after a give-up")
+	}
+}
+
+// Without auto-connect a give-up changes nothing: the user decides.
+func TestGaveUp_LeavesSessionWithoutAutoConnect(t *testing.T) {
+	kd := newEventTestKD()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	kd.Cancel = cancel
+	kd.wireReconnectEvents()
+
+	kd.ReconnectManager.OnGaveUp()
+
+	require.False(t, kd.peerSaidGoodbye.Load())
+	select {
+	case <-ctx.Done():
+		t.Fatal("a give-up without auto-connect must not end the session")
+	case <-time.After(300 * time.Millisecond):
+	}
 }

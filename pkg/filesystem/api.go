@@ -32,13 +32,14 @@ type FS struct {
 	OpenStreamProvider func() types.FileStreamProvider
 
 	// Collab sync options (set from env before Mount).
-	PrefetchOnOpen    bool // If true, Open() fetches the whole file and writes it to local disk.
-	PrefetchAutoMB    int  // Files at or above this many MB prefetch on open (0=off; PrefetchOnOpen forces any size).
-	ReadAheadWindowMB int  // MB cap for predictive sequential read-ahead (0=off). Each Dir converts it to blocks.
-	PushOnWrite       bool // If true, Write() pushes deltas to the peer asynchronously.
-	AutoCache         bool // If true (live_collab), add macFUSE auto_cache so a peer's same-size in-place edit shows live. Costs mmap-write integrity (git) on macOS; no-op on Linux/Windows.
-	MountReadOnly     bool // If true, every mutating FUSE op returns EROFS. Peer updates still apply.
-	PreserveMetadata  bool // If true, apply the origin's mode and times to files saved on disk when their content completes.
+	PrefetchOnOpen    bool   // If true, Open() fetches the whole file and writes it to local disk.
+	PrefetchAutoMB    int    // Files at or above this many MB prefetch on open (0=off; PrefetchOnOpen forces any size).
+	ReadAheadWindowMB int    // MB cap for predictive sequential read-ahead (0=off). Each Dir converts it to blocks.
+	PushOnWrite       bool   // If true, Write() pushes deltas to the peer asynchronously.
+	AutoCache         bool   // If true (live_collab), add macFUSE auto_cache so a peer's same-size in-place edit shows live. Costs mmap-write integrity (git) on macOS; no-op on Linux/Windows.
+	OnRootReady       func() // Runs inside Mount once the root exists, before FUSE serves it. The daemon folds pre-mount announces into the tree here.
+	MountReadOnly     bool   // If true, every mutating FUSE op returns EROFS. Peer updates still apply.
+	PreserveMetadata  bool   // If true, apply the origin's mode and times to files saved on disk when their content completes.
 
 	// TieBreakPeerWins: on an exact stamp tie with a dirty local write the
 	// peer wins. Set from the fingerprint order at each handshake.
@@ -208,6 +209,11 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	fs.ctxMu.Unlock()
 	root.SetCtx(ctx)
 	fs.root.Store(root)
+	// The root exists now and nothing serves it yet: fold in what arrived before
+	// the mount (announces land in the tracker while Root() is nil).
+	if fs.OnRootReady != nil {
+		fs.OnRootReady()
+	}
 
 	host := winfuse.NewFileSystemHost(root)
 	host.SetCapReaddirPlus(true)

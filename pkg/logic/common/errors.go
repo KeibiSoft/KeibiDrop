@@ -25,6 +25,7 @@ var (
 	ErrServerError                   = errors.New("server error")
 	ErrTemporaryRetry                = errors.New("temporary network issue")
 	ErrTimeoutReached                = errors.New("timeout reached")
+	ErrConnectCancelled              = errors.New("connect cancelled")
 	ErrFingerprintMismatch           = errors.New("fingerprint mismatch")
 	ErrRelayAtFullCapacityRetryLater = errors.New("relay at full capacity, retry later")
 	ErrNotFound                      = errors.New("not found")

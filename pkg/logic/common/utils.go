@@ -392,6 +392,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	fs := kd.FS
 	if fs == nil {
 		fs = filesystem.NewFS(logger)
+		fs.OnRootReady = kd.BackfillRemoteFilesIntoFS // Announces that beat the mount sit in the tracker.
 		kd.FS = fs
 	}
 
@@ -703,13 +704,17 @@ func (kd *KeibiDrop) openStreamProvider() types.FileStreamProvider {
 	kd.mu.Lock()
 	s := kd.session
 	qcc := kd.quicControlClient
+	relayed := strings.HasPrefix(kd.quicPeerAddr, relayAddrPrefix)
 	kd.mu.Unlock()
 	if s == nil || s.GRPCClient == nil {
 		return nil
 	}
-	// With the QUIC control channel up, split prefetch (StreamFile) on TCP from on-demand reads
-	// and chunk hashes on QUIC. Providers are per open, so a later channel is picked up.
-	if qcc != nil {
+	// With a DIRECT QUIC control channel up, split prefetch (StreamFile) on TCP from
+	// on-demand reads and chunk hashes on QUIC. Providers are per open, so a later
+	// channel is picked up. A relayed lane carries control only: a 16 MiB read
+	// through the UDP relay starved the 2 s heartbeat ping, the lane was demoted
+	// mid-read, and the first block of every session cost 4 to 8 s (2026-09-06).
+	if qcc != nil && !relayed {
 		return NewImplStreamProviderDual(s.GRPCClient, bindings.NewKeibiServiceClient(qcc))
 	}
 	return NewImplStreamProvider(s.GRPCClient)
@@ -787,6 +792,7 @@ const cancelPendingSentinel bindings.NotifyType = 999
 // flushes before we cancel the context. Must run in a goroutine separate from the gRPC handler,
 // which is still writing the response when this runs.
 func (kd *KeibiDrop) handleNotifyDisconnect() {
+	kd.peerSaidGoodbye.Store(true)
 	if kd.FS != nil {
 		// Keep the FUSE mount alive across the disconnect: cgofuse allows only one mount per
 		// process, so a remount on reconnect is fragile. CancelInFlight cancels in-flight reads

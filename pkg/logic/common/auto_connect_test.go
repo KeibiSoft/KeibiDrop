@@ -200,3 +200,39 @@ func TestAutoConnectLoop_DefersToReconnectManager(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// A peer that said goodbye leaves no reconnect to defer to: the loop redials
+// on the next poll instead of sitting out the rearm grace, and a new session
+// clears the flag.
+func TestAutoConnectLoop_RedialsAtOnceAfterPeerGoodbye(t *testing.T) {
+	kd := newBareKD()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var dials atomic.Int32
+	var running atomic.Bool
+	dial := func() error {
+		dials.Add(1)
+		running.Store(true)
+		return nil
+	}
+	slow := fastTuning
+	slow.rearmGrace = 5 * time.Second
+
+	done := make(chan struct{})
+	go func() {
+		kd.autoConnectLoop(ctx, slow, dial, running.Load, func() bool { return false })
+		close(done)
+	}()
+
+	waitFor(t, 2*time.Second, func() bool { return dials.Load() == 1 }, "first dial")
+	waitFor(t, 2*time.Second, running.Load, "session up")
+
+	kd.peerSaidGoodbye.Store(true)
+	running.Store(false)
+	waitFor(t, time.Second, func() bool { return dials.Load() == 2 }, "re-dial without the rearm grace")
+	waitFor(t, time.Second, func() bool { return !kd.peerSaidGoodbye.Load() }, "new session clears the goodbye flag")
+
+	cancel()
+	<-done
+}

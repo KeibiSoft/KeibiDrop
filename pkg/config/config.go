@@ -20,28 +20,29 @@ import (
 // Config holds all user-configurable settings.
 // Values resolve in this order: built-in defaults, config file, environment variables.
 type Config struct {
-	Relay             string `toml:"relay"`
-	SavePath          string `toml:"save_path"`
-	MountPath         string `toml:"mount_path"`
-	LogFile           string `toml:"log_file"`
-	InboundPort       int    `toml:"inbound_port"`
-	OutboundPort      int    `toml:"outbound_port"`
-	BridgeAddr        string `toml:"bridge_addr"` // TCP bridge relay address
-	StrictMode        bool   `toml:"strict_mode"` // Disable data relay fallback
-	NoFUSE            bool   `toml:"no_fuse"`
-	Incognito         bool   `toml:"incognito"`
-	PrefetchOnOpen    bool   `toml:"prefetch_on_open"`
-	PrefetchAutoMB    int    `toml:"prefetch_auto_mb"`     // Prefetch files at or above this many MB. Default 0 is off because prefetch saturates slow links and starves seeks.
-	ReadAheadWindowMB int    `toml:"read_ahead_window_mb"` // Cap in MB for sequential read-ahead; prevents stalls at block boundaries on high-RTT links. Self-tunes below the cap. Default 64; 0 disables.
-	PushOnWrite       bool   `toml:"push_on_write"`
-	LiveCollab        bool   `toml:"live_collab"`          // Show peers' same-size in-place edits live (macFUSE auto_cache); risks local mmap-write integrity (git).
-	PassphraseProtect bool   `toml:"passphrase_protect"`   // Enable Tier 2 identity at-rest encryption with an Argon2id passphrase.
-	ScanSharedOnStart bool   `toml:"scan_shared_on_start"` // Announce files already in save_path when a session starts.
-	AutoConnectPeer   string `toml:"auto_connect_peer"`    // Saved contact (name or fingerprint) to connect to on startup, with retry.
-	ShareReadOnly     bool   `toml:"share_read_only"`      // Refuse every peer mutation of this node's data (origin-enforced).
-	MountReadOnly     bool   `toml:"mount_read_only"`      // Local FUSE mount returns EROFS on write ops. Keeps the local view equal to the origin.
-	PreserveMetadata  bool   `toml:"preserve_metadata"`    // Apply the origin's mode and timestamps to files saved on disk.
-	UpdateCheck       bool   `toml:"update_check"`         // Fetch the newest version number from keibidrop.com at start and show a notice when this build is older.
+	Relay               string `toml:"relay"`
+	SavePath            string `toml:"save_path"`
+	MountPath           string `toml:"mount_path"`
+	LogFile             string `toml:"log_file"`
+	InboundPort         int    `toml:"inbound_port"`
+	OutboundPort        int    `toml:"outbound_port"`
+	BridgeAddr          string `toml:"bridge_addr"` // TCP bridge relay address
+	StrictMode          bool   `toml:"strict_mode"` // Disable data relay fallback
+	NoFUSE              bool   `toml:"no_fuse"`
+	Incognito           bool   `toml:"incognito"`
+	PrefetchOnOpen      bool   `toml:"prefetch_on_open"`
+	PrefetchAutoMB      int    `toml:"prefetch_auto_mb"`     // Prefetch files at or above this many MB. Default 0 is off because prefetch saturates slow links and starves seeks.
+	ReadAheadWindowMB   int    `toml:"read_ahead_window_mb"` // Cap in MB for sequential read-ahead; prevents stalls at block boundaries on high-RTT links. Self-tunes below the cap. Default 64; 0 disables.
+	PushOnWrite         bool   `toml:"push_on_write"`
+	LiveCollab          bool   `toml:"live_collab"`           // Show peers' same-size in-place edits live (macFUSE auto_cache); risks local mmap-write integrity (git).
+	PassphraseProtect   bool   `toml:"passphrase_protect"`    // Enable Tier 2 identity at-rest encryption with an Argon2id passphrase.
+	ScanSharedOnStart   bool   `toml:"scan_shared_on_start"`  // Announce files already in save_path when a session starts.
+	RescanSharedSeconds int    `toml:"rescan_shared_seconds"` // With scan_shared_on_start: re-walk save_path this often while a session runs. 0 = off.
+	AutoConnectPeer     string `toml:"auto_connect_peer"`     // Saved contact (name or fingerprint) to connect to on startup, with retry.
+	ShareReadOnly       bool   `toml:"share_read_only"`       // Refuse every peer mutation of this node's data (origin-enforced).
+	MountReadOnly       bool   `toml:"mount_read_only"`       // Local FUSE mount returns EROFS on write ops. Keeps the local view equal to the origin.
+	PreserveMetadata    bool   `toml:"preserve_metadata"`     // Apply the origin's mode and timestamps to files saved on disk.
+	UpdateCheck         bool   `toml:"update_check"`          // Fetch the newest version number from keibidrop.com at start and show a notice when this build is older.
 }
 
 const DefaultRelay = "https://keibidroprelay.keibisoft.com/"
@@ -51,15 +52,16 @@ const DefaultBridge = "bridge.keibisoft.com:26600"
 func DefaultConfig() Config {
 	home, _ := os.UserHomeDir()
 	cfg := Config{
-		Relay:             DefaultRelay,
-		SavePath:          filepath.Join(home, "KeibiDrop", "Received"),
-		MountPath:         filepath.Join(home, "KeibiDrop", "Mount"),
-		InboundPort:       InboundPort,
-		OutboundPort:      OutboundPort,
-		BridgeAddr:        DefaultBridge,
-		PrefetchAutoMB:    0,  // Off by default: prefetch saturates slow links and freezes seeks.
-		ReadAheadWindowMB: 64, // On by default: prevents sequential-read stalls on high-RTT links.
-		UpdateCheck:       true,
+		Relay:               DefaultRelay,
+		SavePath:            filepath.Join(home, "KeibiDrop", "Received"),
+		MountPath:           filepath.Join(home, "KeibiDrop", "Mount"),
+		InboundPort:         InboundPort,
+		OutboundPort:        OutboundPort,
+		BridgeAddr:          DefaultBridge,
+		PrefetchAutoMB:      0,  // Off by default: prefetch saturates slow links and freezes seeks.
+		ReadAheadWindowMB:   64, // On by default: prevents sequential-read stalls on high-RTT links.
+		RescanSharedSeconds: 30, // A serving box picks up files that land mid-session.
+		UpdateCheck:         true,
 	}
 	switch runtime.GOOS {
 	case "darwin":
@@ -199,6 +201,11 @@ no_fuse = %v
 # each file. Metadata only; content streams on demand.
 # scan_shared_on_start = false
 #
+# rescan_shared_seconds: with scan_shared_on_start, re-walk save_path this
+# often while a session runs and announce files that landed since the last
+# pass. 0 turns it off.
+# rescan_shared_seconds = 30
+#
 # auto_connect_peer: connect to this saved contact (name or fingerprint) on
 # startup and keep retrying while the peer is offline. Requires a persistent
 # identity and a saved contact (save-contact / add-contact).
@@ -297,6 +304,10 @@ live_collab = %v
 # is announced to the peer (metadata only; content streams on demand).
 scan_shared_on_start = %v
 
+# Re-walk save_path this often (seconds) while a session runs and announce
+# files that landed since the last pass. Needs scan_shared_on_start. 0 = off.
+rescan_shared_seconds = %v
+
 # Connect to this saved contact (name or fingerprint) on startup and keep
 # retrying with backoff while the peer is offline. Empty = off. Requires a
 # persistent identity (incognito off) and a contact saved via save-contact
@@ -334,7 +345,7 @@ preserve_metadata = %v
 update_check = %v
 `, cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
-		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.PrefetchAutoMB, cfg.PrefetchOnOpen, cfg.ReadAheadWindowMB, cfg.LiveCollab, cfg.ScanSharedOnStart, cfg.AutoConnectPeer,
+		cfg.NoFUSE, cfg.StrictMode, cfg.Incognito, cfg.PrefetchAutoMB, cfg.PrefetchOnOpen, cfg.ReadAheadWindowMB, cfg.LiveCollab, cfg.ScanSharedOnStart, cfg.RescanSharedSeconds, cfg.AutoConnectPeer,
 		cfg.ShareReadOnly, cfg.MountReadOnly, cfg.PreserveMetadata, cfg.UpdateCheck)
 
 	return os.WriteFile(path, []byte(content), 0600) // #nosec G306
@@ -399,6 +410,11 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if b, ok := envBool("KEIBIDROP_SCAN_SHARED_ON_START", "KD_SCAN_SHARED_ON_START"); ok {
 		cfg.ScanSharedOnStart = b
+	}
+	if v := envFirst("KEIBIDROP_RESCAN_SHARED_SECONDS", "KD_RESCAN_SHARED_SECONDS"); v != "" {
+		if s, err := strconv.Atoi(v); err == nil && s >= 0 {
+			cfg.RescanSharedSeconds = s
+		}
 	}
 	if v := envFirst("KEIBIDROP_AUTO_CONNECT_PEER", "KD_AUTO_CONNECT_PEER"); v != "" {
 		cfg.AutoConnectPeer = v

@@ -281,13 +281,29 @@ func (r *ReconnectManager) useBridgeFirst() bool {
 	return r.PreferDirect == nil || !r.PreferDirect()
 }
 
-// reconnectBridge redoes both directions via the bridge. Pair order differs by
-// role so the two peers' rooms match.
+// reconnectBridge redoes both directions via the bridge, with the same room
+// directions as a fresh create and join: the lower fingerprint (creator there,
+// initiator here) reads pair1 as its inbound and writes pair2 as its outbound;
+// the other side the reverse. The mapping has to match across the two paths,
+// because a peer that restarted mid-outage comes back through a fresh create or
+// join while this side is still reconnecting. Measured with the NAS container:
+// with the roles inverted both sides read pair1 and every attempt timed out.
 func (r *ReconnectManager) reconnectBridge(logger *slog.Logger, initiator bool) error {
 	logger.Info("Reconnecting via bridge", "addr", r.BridgeAddr)
 
 	if initiator {
-		outConn, err := r.DialBridge("pair1")
+		inConn, err := r.DialBridge("pair1")
+		if err != nil {
+			return fmt.Errorf("bridge dial (inbound): %w", err)
+		}
+		// Bridge leg: the peer arrives on its own reconnect cadence, so give the
+		// first byte the full handshake bound instead of the accept-site default.
+		if err := PerformInboundHandshakeWait(r.session, inConn, inboundHandshakeTimeout); err != nil {
+			_ = inConn.Close()
+			return fmt.Errorf("bridge inbound handshake: %w", err)
+		}
+
+		outConn, err := r.DialBridge("pair2")
 		if err != nil {
 			return fmt.Errorf("bridge dial (outbound): %w", err)
 		}
@@ -296,37 +312,26 @@ func (r *ReconnectManager) reconnectBridge(logger *slog.Logger, initiator bool) 
 			return fmt.Errorf("bridge outbound handshake: %w", err)
 		}
 
-		inConn, err := r.DialBridge("pair2")
-		if err != nil {
-			return fmt.Errorf("bridge dial (inbound): %w", err)
-		}
-		if err := PerformInboundHandshake(r.session, inConn); err != nil {
-			_ = inConn.Close()
-			return fmt.Errorf("bridge inbound handshake: %w", err)
-		}
-
 		logger.Info("Both directions reconnected via bridge (initiator)")
 		return nil
 	}
 
-	inConn, err := r.DialBridge("pair1")
-	if err != nil {
-		return fmt.Errorf("bridge dial (inbound): %w", err)
-	}
-	// Bridge leg: the peer arrives on its own reconnect cadence, so give the
-	// first byte the full handshake bound instead of the accept-site default.
-	if err := PerformInboundHandshakeWait(r.session, inConn, inboundHandshakeTimeout); err != nil {
-		_ = inConn.Close()
-		return fmt.Errorf("bridge inbound handshake: %w", err)
-	}
-
-	outConn, err := r.DialBridge("pair2")
+	outConn, err := r.DialBridge("pair1")
 	if err != nil {
 		return fmt.Errorf("bridge dial (outbound): %w", err)
 	}
 	if err := PerformOutboundHandshakeOnConn(r.session, outConn); err != nil {
 		_ = outConn.Close()
 		return fmt.Errorf("bridge outbound handshake: %w", err)
+	}
+
+	inConn, err := r.DialBridge("pair2")
+	if err != nil {
+		return fmt.Errorf("bridge dial (inbound): %w", err)
+	}
+	if err := PerformInboundHandshakeWait(r.session, inConn, inboundHandshakeTimeout); err != nil {
+		_ = inConn.Close()
+		return fmt.Errorf("bridge inbound handshake: %w", err)
 	}
 
 	logger.Info("Both directions reconnected via bridge (responder)")

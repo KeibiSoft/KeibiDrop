@@ -169,6 +169,7 @@ func runDaemon() {
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	kd.ReadAheadWindowMB = cfg.ReadAheadWindowMB
 	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
+	kd.RescanSharedSeconds = cfg.RescanSharedSeconds
 	kd.ShareReadOnly = cfg.ShareReadOnly
 	kd.MountReadOnly = cfg.MountReadOnly
 	kd.PreserveMetadata = cfg.PreserveMetadata
@@ -234,20 +235,21 @@ func runDaemon() {
 
 	fp, _ := kd.ExportFingerprint()
 	startData := map[string]any{
-		"socket":               sock,
-		"fingerprint":          fp,
-		"relay":                cfg.Relay,
-		"ip":                   kd.LocalIPv6IP,
-		"fuse":                 isFuse,
-		"save_path":            cfg.SavePath,
-		"mount_path":           cfg.MountPath,
-		"log_file":             cfg.LogFile,
-		"config_path":          config.ConfigPath(),
-		"scan_shared_on_start": cfg.ScanSharedOnStart,
-		"auto_connect_peer":    cfg.AutoConnectPeer,
-		"share_read_only":      cfg.ShareReadOnly,
-		"mount_read_only":      cfg.MountReadOnly,
-		"preserve_metadata":    cfg.PreserveMetadata,
+		"socket":                sock,
+		"fingerprint":           fp,
+		"relay":                 cfg.Relay,
+		"ip":                    kd.LocalIPv6IP,
+		"fuse":                  isFuse,
+		"save_path":             cfg.SavePath,
+		"mount_path":            cfg.MountPath,
+		"log_file":              cfg.LogFile,
+		"config_path":           config.ConfigPath(),
+		"scan_shared_on_start":  cfg.ScanSharedOnStart,
+		"rescan_shared_seconds": cfg.RescanSharedSeconds,
+		"auto_connect_peer":     cfg.AutoConnectPeer,
+		"share_read_only":       cfg.ShareReadOnly,
+		"mount_read_only":       cfg.MountReadOnly,
+		"preserve_metadata":     cfg.PreserveMetadata,
 	}
 	if isLocal {
 		addr, _ := common.GetLinkLocalAddress(kd.InboundPort())
@@ -474,6 +476,7 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		return cmdStatus(kd)
 
 	case "disconnect":
+		kd.CancelPendingConnect()
 		discMu.Lock()
 		disc := daemonDisc
 		daemonDisc = nil
@@ -1155,8 +1158,8 @@ USAGE:
   kd show [what]                 Show info (fingerprint, ip, peer, relay, status, config, or all).
   kd register <fingerprint>      Register peer's fingerprint.
   kd connect                     Connect (auto role via fingerprint tiebreak).
-  kd create                      Create a room (you are the initiator).
-  kd join                        Join a room (peer must have created first).
+  kd create                      Advanced: force the creator role. connect picks it for you.
+  kd join                        Advanced: force the joiner role. connect picks it for you.
   kd add <filepath>              Share a file with the peer.
   kd add-as <path> <remote-name> Share with a custom remote name.
   kd unshare <filename>          Stop sharing a file (keeps it on disk).
