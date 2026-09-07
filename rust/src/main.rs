@@ -1765,7 +1765,13 @@ fn main() {
         // ---- Feedback ----
 
         let weak_fb = app.as_weak();
-        app.on_send_feedback(move |message, contact| {
+        if let Ok(t) = env::var("KD_WINDOW_TITLE") {
+            if !t.trim().is_empty() {
+                app.set_window_title(format!("KEIBIDROP · {}", t.trim()).into());
+            }
+        }
+
+        app.on_send_feedback(move |message, contact, rating| {
             if let Some(app) = weak_fb.upgrade() {
                 app.set_feedback_sending(true);
             }
@@ -1776,7 +1782,11 @@ fn main() {
                 let ok = {
                     let m = CString::new(msg).unwrap_or_default();
                     let c = CString::new(contact).unwrap_or_default();
-                    bindings::KD_SendFeedback(m.as_ptr() as *mut i8, c.as_ptr() as *mut i8) == 0
+                    bindings::KD_SendFeedback(
+                        m.as_ptr() as *mut i8,
+                        c.as_ptr() as *mut i8,
+                        rating as std::os::raw::c_int,
+                    ) == 0
                 };
                 if ok {
                     show_toast(&weak, "Thanks. Your message was sent.");
@@ -1793,6 +1803,7 @@ fn main() {
                             app.set_feedback_visible(false);
                             app.set_feedback_message("".into());
                             app.set_feedback_contact("".into());
+                            app.set_feedback_rating(0);
                         }
                     }
                 });
@@ -2012,6 +2023,18 @@ fn main() {
                     &weak_auto,
                     &format!("Connects to '{}' when the app starts.", name),
                 );
+            }
+        });
+
+        // The help panel links to the guide with the short videos.
+        app.on_open_help_url(|| {
+            let url = "https://keibidrop.com/how-to-use.html";
+            if cfg!(target_os = "macos") {
+                let _ = Command::new("open").arg(url).spawn();
+            } else if cfg!(target_os = "windows") {
+                let _ = Command::new("explorer").arg(url).spawn();
+            } else {
+                let _ = Command::new("xdg-open").arg(url).spawn();
             }
         });
 

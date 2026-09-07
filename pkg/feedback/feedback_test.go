@@ -47,6 +47,33 @@ func TestSendPostsAllFields(t *testing.T) {
 	}
 }
 
+func TestSendIncludesRating(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &got)
+	}))
+	defer srv.Close()
+	t.Setenv("KEIBIDROP_FEEDBACK_URL", srv.URL)
+
+	if err := Send(Report{Message: "works", Rating: 4}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got["rating"] != float64(4) {
+		t.Errorf("rating = %v, want 4", got["rating"])
+	}
+	// Out of range and zero are both "no rating": the field stays away.
+	for _, r := range []int{0, 9, -1} {
+		if err := Send(Report{Message: "works", Rating: r}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		if _, has := got["rating"]; has {
+			t.Errorf("rating %d: field present, want absent", r)
+		}
+	}
+}
+
 func TestSendRejectsEmptyMessage(t *testing.T) {
 	t.Setenv("KEIBIDROP_FEEDBACK_URL", "http://127.0.0.1:1")
 	if err := Send(Report{Message: "   "}); err == nil {

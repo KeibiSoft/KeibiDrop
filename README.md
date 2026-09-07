@@ -27,6 +27,17 @@ Another computer's files show up as a folder on yours. Open and edit them in you
 - Their files become a real folder on your machine. Open, edit, `git clone`, anything.
 - macOS, Linux, Windows, Android. iOS coming soon. Open source engine (MPL-2.0).
 
+**Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.5/keibidrop-0.4.5-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.5/keibidrop-0.4.5-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.5/keibidrop_0.4.5_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html)
+
+**Three steps:** install it on both computers. Connect once: same Wi-Fi, turn on the switch; anywhere else, send your code in any chat and paste theirs. Then drop a file in, or open their files as a folder. [How to use it, with a short clip for each step.](https://keibidrop.com/how-to-use.html)
+
+<p align="center">
+  <a href="https://keibidrop.com/how-to-use.html">
+    <img src="demo-photos/how-to-use.gif" alt="Connecting two computers with a code: Copy my code, paste it in a chat, paste the other code, press Connect on both sides." width="700">
+  </a>
+  <br><sub>Copy your code, send it in any chat, paste theirs, both press Connect. <b>Every step, click by click.</b></sub>
+</p>
+
 <p align="center">
   <img src="demo-photos/initial-screen.png" alt="KeibiDrop connection screen" width="700">
 </p>

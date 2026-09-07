@@ -28,7 +28,7 @@ jobs:
             name: macOS-x86_64
             goos: darwin
             goarch: amd64
-            package: tar
+            package: dmg
             cross: true
           - os: ubuntu-22.04
             name: Linux-x86_64
@@ -112,7 +112,7 @@ jobs:
 
       - name: Build Rust UI
         if: runner.os != 'Windows' && matrix.cross != true
-        run: make build-rust
+        run: make build-rust VERSION=${{ steps.version.outputs.version }} COMMIT=${{ steps.version.outputs.commit }}
 
       - name: Set cross-compile env (macOS x86_64 from arm64)
         if: matrix.cross == true && runner.os == 'macOS'
@@ -124,7 +124,7 @@ jobs:
       - name: Build Rust UI (cross-compile x86_64)
         if: matrix.cross == true && runner.os == 'macOS'
         run: |
-          GOARCH=amd64 go build -buildmode=c-archive -o libkeibidrop.a ./rustbridge
+          GOARCH=amd64 make build-static-rust-bridge VERSION=${{ steps.version.outputs.version }} COMMIT=${{ steps.version.outputs.commit }}
           cd rust && cargo build --release --target x86_64-apple-darwin
           mkdir -p target/release
           cp target/x86_64-apple-darwin/release/keibidrop-rust target/release/keibidrop-rust
@@ -186,7 +186,7 @@ jobs:
             cp kdmcp "dist/kdmcp-$V-$P"
           fi
 
-      - name: Package .dmg (macOS arm64)
+      - name: Package .dmg (macOS, both chips)
         if: matrix.package == 'dmg'
         run: |
           make package-macos VERSION=${{ steps.version.outputs.version }} GOARCH=${{ matrix.goarch }} CODESIGN_IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"

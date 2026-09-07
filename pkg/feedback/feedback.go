@@ -24,6 +24,8 @@ type Report struct {
 	Contact string `json:"contact,omitempty"`
 	Version string `json:"version,omitempty"`
 	Surface string `json:"surface,omitempty"`
+	// Rating is 1 to 5 stars, 0 when the person gave none.
+	Rating int `json:"rating,omitempty"`
 }
 
 type payload struct {
@@ -40,6 +42,9 @@ func Send(r Report) error {
 	}
 	if len(r.Message) > maxMessage {
 		r.Message = r.Message[:maxMessage]
+	}
+	if r.Rating < 1 || r.Rating > 5 {
+		r.Rating = 0
 	}
 	body, err := json.Marshal(payload{Report: r, Platform: runtime.GOOS})
 	if err != nil {

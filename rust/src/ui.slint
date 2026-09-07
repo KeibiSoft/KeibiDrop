@@ -741,7 +741,9 @@ component FileCard inherits Rectangle {
 
 
 export component MainWindow inherits Window {
-    title: "KEIBIDROP";
+    title: root.window_title;
+    // KD_WINDOW_TITLE names the window when two instances run side by side.
+    in property<string> window_title: "KEIBIDROP";
     default-font-family: "Inter";
     preferred-width: 1144px;
     preferred-height: 760px;
@@ -870,7 +872,9 @@ export component MainWindow inherits Window {
     in-out property<bool> feedback_sending: false;
     in-out property<string> feedback_message: "";
     in-out property<string> feedback_contact: "";
-    callback send_feedback(string, string);
+    in-out property<int> feedback_rating: 0;   // 1 to 5 stars, 0 = none
+    callback send_feedback(string, string, int);
+    callback open_help_url();
     in property<string> cfg_relay: "";
     in property<string> cfg_save_path: "";
     in property<string> cfg_mount_path: "";
@@ -1875,6 +1879,15 @@ export component MainWindow inherits Window {
         clicked => { root.disconnect_pressed() }
     }
 
+    // Feedback button (Screen 0 only: the first screen a new person sees)
+    if root.current_screen == 0: SmallOutlineButton {
+        x: 700px;
+        y: 93px;
+        width: 72px;
+        text: "Feedback";
+        clicked => { root.feedback_visible = true; }
+    }
+
     // Saved Files button (Screen 0 only, when files exist)
     if root.current_screen == 0 && root.saved_file_list.length > 0: SmallOutlineButton {
         x: 780px;
@@ -2234,24 +2247,33 @@ export component MainWindow inherits Window {
             color: #bbb;
             font-size: 13px;
             text: root.current_screen == 0
-                ? "1. Copy your code and send it to your peer\n2. Paste their code and press Add\n3. Press Connect (both peers)\n4. Drag files to share, or toggle Virtual Folder\n\nSaved contacts appear below. Click to reconnect.\n\nIncognito: new keys each session. Peer can't save you.\n\nLocal Network: find devices on the same WiFi.\n\nVirtual Folder: requires macFUSE, fuse3, or WinFsp."
+                ? "1. Same Wi-Fi: turn on the switch below Connect (it says Same network? Turn this on) on both computers, then click Connect next to the other computer.\n2. Anywhere else: press Copy my code, send the code to the other person, paste the code they send you. Both press Connect.\n3. Drag files onto the window to send them. Accept Files as a folder to open their files in any app.\n\nSaved contacts appear below. Click Connect next to a name.\n\nIncognito: new keys each session. Nobody can save you as a contact."
                 : root.current_screen == 1
                 ? "Drag files onto the window or press Add File.\nYour peer sees your files and can save them.\nClick Save to download a peer's file.\n\nSave Peer adds them to your contacts.\n\nConnection badge:\n  LAN = same network\n  Direct P2P = over the internet\n  Via Relay = through encrypted bridge"
                 : "Your peer's files appear in the mounted folder.\nOpen with any app: Finder, Terminal, git, etc.\nFiles stream on access, no full download needed.\n\nDrop files into the folder to share.\nSave Peer adds them to your contacts.";
         }
 
-        Text {
+        Rectangle {
             x: 20px;
-            y: parent.height - 28px;
-            text: "keibidrop.com";
-            color: #555;
-            font-size: 11px;
+            y: parent.height - 30px;
+            width: help-link.preferred-width;
+            height: 20px;
+            help-link := Text {
+                text: "Guide with short videos: keibidrop.com/how-to-use";
+                color: help-link-touch.has-hover ? #60a5fa : #3b82f6;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+            help-link-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.open_help_url(); }
+            }
         }
 
         SmallOutlineButton {
-            x: parent.width - 150px;
+            x: parent.width - 100px;
             y: parent.height - 34px;
-            text: "Report a problem";
+            text: "Feedback";
             clicked => {
                 root.help_visible = false;
                 root.feedback_visible = true;
@@ -2259,12 +2281,12 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Feedback overlay: message to the KeibiDrop inbox, no mail app needed
+    // Feedback overlay: stars and a message to the KeibiDrop inbox, no mail app needed
     if root.feedback_visible: Rectangle {
         x: (parent.width - 460px) / 2;
-        y: (parent.height - 370px) / 2;
+        y: (parent.height - 400px) / 2;
         width: 460px;
-        height: 370px;
+        height: 400px;
         border-radius: 10px;
         background: #2a2a2a;
         border-width: 1px;
@@ -2281,15 +2303,45 @@ export component MainWindow inherits Window {
         Text {
             x: 20px;
             y: 16px;
-            text: "Report a problem";
+            text: "Feedback";
             color: white;
             font-size: 16px;
             font-weight: 700;
         }
 
+        // Five stars. Click one to rate, click it again to clear.
+        for i in [1, 2, 3, 4, 5]: Rectangle {
+            x: 20px + (i - 1) * 30px;
+            y: 42px;
+            width: 28px;
+            height: 28px;
+            Text {
+                text: i <= root.feedback_rating ? "\u{2605}" : "\u{2606}";
+                color: i <= root.feedback_rating ? #f5b301 : (star-touch.has-hover ? #ccc : #666);
+                font-size: 22px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: parent.width;
+                height: parent.height;
+            }
+            star-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.feedback_rating = root.feedback_rating == i ? 0 : i; }
+            }
+        }
+        Text {
+            x: 178px;
+            y: 42px;
+            height: 28px;
+            text: root.feedback_rating == 0 ? "How is it going? Optional." : root.feedback_rating + " of 5";
+            color: #777;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+
         Text {
             x: 20px;
-            y: 46px;
+            y: 78px;
             text: "What happened? What did you expect instead?";
             color: #bbb;
             font-size: 12px;
@@ -2297,9 +2349,9 @@ export component MainWindow inherits Window {
 
         TextEdit {
             x: 20px;
-            y: 68px;
+            y: 100px;
             width: parent.width - 40px;
-            height: 148px;
+            height: 144px;
             font-size: 13px;
             wrap: word-wrap;
             text <=> root.feedback_message;
@@ -2307,7 +2359,7 @@ export component MainWindow inherits Window {
 
         LineEdit {
             x: 20px;
-            y: 226px;
+            y: 254px;
             width: parent.width - 40px;
             height: 30px;
             font-size: 13px;
@@ -2317,9 +2369,9 @@ export component MainWindow inherits Window {
 
         Text {
             x: 20px;
-            y: 264px;
+            y: 292px;
             width: parent.width - 40px;
-            text: "Sends your message, the reply address, the app version and the platform. Nothing else.";
+            text: "Sends your stars, your message, the reply address, the app version and the platform. Nothing else.";
             color: #777;
             font-size: 10px;
             wrap: word-wrap;
@@ -2327,16 +2379,16 @@ export component MainWindow inherits Window {
 
         PillButton {
             x: 20px;
-            y: 306px;
+            y: 336px;
             width: 120px;
             text: root.feedback_sending ? "Sending..." : "Send";
             enabled: !root.feedback_sending && root.feedback_message != "";
-            clicked => { root.send_feedback(root.feedback_message, root.feedback_contact); }
+            clicked => { root.send_feedback(root.feedback_message, root.feedback_contact, root.feedback_rating); }
         }
 
         SmallOutlineButton {
             x: 152px;
-            y: 311px;
+            y: 341px;
             text: "Cancel";
             clicked => { root.feedback_visible = false; }
         }
