@@ -84,6 +84,7 @@
     { "name": "kd_save_peer", "description": "Save the connected peer under a name" },
     { "name": "kd_connect_peer", "description": "Reconnect to a saved peer with no code exchange" },
     { "name": "kd_wait_event", "description": "Block until the session reports something" },
-    { "name": "kd_disconnect", "description": "End the session and reset for a new share" }
+    { "name": "kd_disconnect", "description": "End the session and reset for a new share" },
+    { "name": "kd_feedback", "description": "Send a rating, a few words, or both to the KeibiDrop developers" }
   ]
 }

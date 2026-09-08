@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -94,16 +95,19 @@ func (c *cliContext) executor(in string) {
 		common.PrintBanner()
 
 	case "feedback":
-		msg := strings.TrimSpace(strings.Join(args[1:], " "))
-		if msg == "" {
-			fmt.Println("Usage: feedback <message>")
-			fmt.Println("Include an email address in the message if you want a reply.")
+		stars, rest := feedbackStars(args[1:])
+		msg := strings.TrimSpace(strings.Join(rest, " "))
+		if msg == "" && stars == 0 {
+			fmt.Println("Usage: feedback [--stars 1-5] [any words]")
+			fmt.Println("A rating alone is fine, a few words are fine, both are fine.")
+			fmt.Println("Include an email address if you want a reply.")
 			return
 		}
 		if err := feedback.Send(feedback.Report{
 			Message: msg,
 			Version: common.Version,
 			Surface: "cli",
+			Rating:  stars,
 		}); err != nil {
 			fmt.Println("Could not send:", err)
 			fmt.Println("You can email marius@keibisoft.com instead.")
@@ -554,7 +558,7 @@ func printHelp() {
 	fmt.Println(`
 help                         Show this help message
 version                      Show banner and version
-feedback <message>           Send a problem report to the developers
+feedback [--stars 1-5] [words]  Tell the developers how it went. Either part is enough
 status                       Full connection and session status
 show fingerprint             Show your fingerprint
 show ip                      Show your IP
@@ -941,4 +945,29 @@ func main() {
 	)
 
 	p.Run()
+}
+
+// feedbackStars takes --stars N, -s N or --stars=N out of args. Anything
+// that is not 1 to 5 counts as no rating.
+func feedbackStars(args []string) (int, []string) {
+	stars := 0
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		val := ""
+		switch {
+		case strings.HasPrefix(a, "--stars="):
+			val = strings.TrimPrefix(a, "--stars=")
+		case (a == "--stars" || a == "-s") && i+1 < len(args):
+			i++
+			val = args[i]
+		default:
+			rest = append(rest, a)
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && n >= 1 && n <= 5 {
+			stars = n
+		}
+	}
+	return stars, rest
 }

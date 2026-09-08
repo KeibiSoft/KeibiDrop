@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -290,4 +291,25 @@ func TestDispatch_DiscoverDisconnectConcurrent(t *testing.T) {
 	start.Done()
 	discoverWG.Wait()
 	disconnectWG.Wait()
+}
+
+func TestFeedbackStars(t *testing.T) {
+	cases := []struct {
+		args  []string
+		stars int
+		rest  string
+	}{
+		{[]string{"--stars", "4", "works", "well"}, 4, "works well"},
+		{[]string{"-s", "5"}, 5, ""},
+		{[]string{"--stars=2", "slow", "today"}, 2, "slow today"},
+		{[]string{"--stars", "9", "out", "of", "range"}, 0, "out of range"},
+		{[]string{"just", "words"}, 0, "just words"},
+		{[]string{"--stars"}, 0, "--stars"},
+	}
+	for _, c := range cases {
+		stars, rest := feedbackStars(c.args)
+		if stars != c.stars || strings.Join(rest, " ") != c.rest {
+			t.Errorf("feedbackStars(%v) = %d, %q; want %d, %q", c.args, stars, strings.Join(rest, " "), c.stars, c.rest)
+		}
+	}
 }

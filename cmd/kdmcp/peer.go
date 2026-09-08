@@ -26,6 +26,7 @@ import (
 
 	"github.com/KeibiSoft/KeibiDrop/cmd/internal/checkfuse"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
+	"github.com/KeibiSoft/KeibiDrop/pkg/feedback"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
 
@@ -415,9 +416,40 @@ func (h *handler) invoke(name string, args json.RawMessage) (any, *toolError) {
 		return p.connectPeer(args)
 	case "kd_disconnect":
 		return p.disconnect()
+	case "kd_feedback":
+		return p.sendFeedback(args)
 	default:
 		return nil, toolErr(codeUnsupported, "unknown tool: %s", name)
 	}
+}
+
+// sendFeedback needs no session: it posts straight to the feedback
+// endpoint. A rating alone, a message alone, or both.
+func (p *peer) sendFeedback(args json.RawMessage) (any, *toolError) {
+	var a struct {
+		Rating  int    `json:"rating"`
+		Message string `json:"message"`
+		Contact string `json:"contact"`
+	}
+	_ = json.Unmarshal(args, &a)
+	a.Message = strings.TrimSpace(a.Message)
+	if a.Message == "" && (a.Rating < 1 || a.Rating > 5) {
+		return nil, toolErr(codeInvalidArgument, "give a rating from 1 to 5, a message, or both")
+	}
+	err := feedback.Send(feedback.Report{
+		Message: a.Message,
+		Contact: strings.TrimSpace(a.Contact),
+		Version: common.Version,
+		Surface: "mcp",
+		Rating:  a.Rating,
+	})
+	if err != nil {
+		return nil, toolErr(codeInternal, "could not send: %v. The user can email marius@keibisoft.com instead", err)
+	}
+	return map[string]any{
+		"sent": true,
+		"next": "Tell the user it was sent, with thanks.",
+	}, nil
 }
 
 func (p *peer) code() string {

@@ -1180,7 +1180,7 @@ USAGE:
   kd tokens [list]               Relay credit chains and balance (JSON).
   kd tokens add <code>           Paste a prepaid relay token code.
   kd tokens balance              Refresh balances from the relay.
-  kd feedback <message>          Send a problem report to the developers.
+  kd feedback [--stars 1-5] [words]  Tell the developers how it went. Either part is enough.
   kd version                     Show version and commit hash.
   kd export-logs [dest]          Export sanitized logs.
   kd sanitize-logs [dest]        Alias for export-logs.
@@ -1280,16 +1280,19 @@ func main() {
 
 // runFeedback needs no daemon: it posts straight to the endpoint.
 func runFeedback(args []string) {
-	msg := strings.TrimSpace(strings.Join(args, " "))
-	if msg == "" {
-		fmt.Println("Usage: kd feedback <message>")
-		fmt.Println("Include an email address in the message if you want a reply.")
+	stars, rest := feedbackStars(args)
+	msg := strings.TrimSpace(strings.Join(rest, " "))
+	if msg == "" && stars == 0 {
+		fmt.Println("Usage: kd feedback [--stars 1-5] [any words]")
+		fmt.Println("A rating alone is fine, a few words are fine, both are fine.")
+		fmt.Println("Include an email address if you want a reply.")
 		os.Exit(1)
 	}
 	err := feedback.Send(feedback.Report{
 		Message: msg,
 		Version: common.Version,
 		Surface: "kd",
+		Rating:  stars,
 	})
 	if err != nil {
 		fmt.Println("Could not send:", err)
@@ -1297,4 +1300,29 @@ func runFeedback(args []string) {
 		os.Exit(1)
 	}
 	fmt.Println("Sent. Thanks.")
+}
+
+// feedbackStars takes --stars N, -s N or --stars=N out of args. Anything
+// that is not 1 to 5 counts as no rating.
+func feedbackStars(args []string) (int, []string) {
+	stars := 0
+	rest := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		val := ""
+		switch {
+		case strings.HasPrefix(a, "--stars="):
+			val = strings.TrimPrefix(a, "--stars=")
+		case (a == "--stars" || a == "-s") && i+1 < len(args):
+			i++
+			val = args[i]
+		default:
+			rest = append(rest, a)
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(val)); err == nil && n >= 1 && n <= 5 {
+			stars = n
+		}
+	}
+	return stars, rest
 }

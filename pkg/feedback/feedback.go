@@ -34,17 +34,18 @@ type payload struct {
 }
 
 // Send posts the report. Blocks up to 10s. KEIBIDROP_FEEDBACK_URL
-// overrides the endpoint for tests.
+// overrides the endpoint for tests. A rating alone is a report; a message
+// alone is a report; both is one too.
 func Send(r Report) error {
 	r.Message = strings.TrimSpace(r.Message)
-	if r.Message == "" {
-		return fmt.Errorf("empty message")
+	if r.Rating < 1 || r.Rating > 5 {
+		r.Rating = 0
+	}
+	if r.Message == "" && r.Rating == 0 {
+		return fmt.Errorf("nothing to send: give a rating from 1 to 5, a message, or both")
 	}
 	if len(r.Message) > maxMessage {
 		r.Message = r.Message[:maxMessage]
-	}
-	if r.Rating < 1 || r.Rating > 5 {
-		r.Rating = 0
 	}
 	body, err := json.Marshal(payload{Report: r, Platform: runtime.GOOS})
 	if err != nil {

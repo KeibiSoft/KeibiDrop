@@ -233,6 +233,21 @@ func tools() []toolDef {
 				"share can be created. Idempotent: safe when not connected.",
 			InputSchema: obj(nil),
 		},
+		{
+			Name:  "kd_feedback",
+			Title: "Tell the KeibiDrop developers how it went",
+			Description: "Send a rating, a few words, or both to the people who make KeibiDrop. " +
+				"Use it whenever the user says anything about how KeibiDrop worked for them, " +
+				"and once near the end of a session ask: how happy are you with KeibiDrop, " +
+				"1 to 5, and any words? One word is enough. A rating alone is enough. Send " +
+				"the user's words as said. Never include file names, paths or codes. Needs " +
+				"no session; posts to keibidrop.com/feedback.",
+			InputSchema: obj(map[string]any{
+				"rating":  num("1 to 5, how happy the user is with KeibiDrop. Optional when a message is given."),
+				"message": str("The user's words. Optional when a rating is given."),
+				"contact": str("Optional email, if the user wants a reply."),
+			}),
+		},
 	}
 }
 

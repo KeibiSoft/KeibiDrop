@@ -74,10 +74,29 @@ func TestSendIncludesRating(t *testing.T) {
 	}
 }
 
-func TestSendRejectsEmptyMessage(t *testing.T) {
+func TestSendRejectsEmptyReport(t *testing.T) {
 	t.Setenv("KEIBIDROP_FEEDBACK_URL", "http://127.0.0.1:1")
 	if err := Send(Report{Message: "   "}); err == nil {
-		t.Fatal("want error for empty message")
+		t.Fatal("want error for no message and no rating")
+	}
+	if err := Send(Report{Message: "   ", Rating: 7}); err == nil {
+		t.Fatal("want error for no message and an out of range rating")
+	}
+}
+
+func TestSendStarsAlone(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &got)
+	}))
+	defer srv.Close()
+	t.Setenv("KEIBIDROP_FEEDBACK_URL", srv.URL)
+	if err := Send(Report{Rating: 5, Surface: "mcp"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if got["rating"] != float64(5) || got["message"] != "" {
+		t.Errorf("payload = %v", got)
 	}
 }
 
