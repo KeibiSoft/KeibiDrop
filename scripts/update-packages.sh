@@ -12,6 +12,8 @@ set -euo pipefail
 TAG="${1:?Usage: $0 <tag> (e.g. v0.2.0-beta.1)}"
 VERSION="${TAG#v}"
 
+sedi() { local expr="$1"; shift; sed -i '' "$expr" "$@" 2>/dev/null || sed -i "$expr" "$@"; }
+
 echo "==> Updating packages for $TAG (version $VERSION)"
 
 # Download SHA256SUMS from the release
@@ -81,6 +83,16 @@ sed -i "s/version: '.*'/version: '$VERSION'/" snap/snapcraft.yaml
 echo "  Updated snap/snapcraft.yaml"
 echo "  To publish: snapcraft && snapcraft upload keibidrop_*.snap --release=edge"
 
+# ── Version literals in the tree ──────────────────────────
+# make and the release workflow stamp the version from the tag. These three
+# files hold it as text, so they move here and a plain go build, cargo
+# metadata and the tree itself all say the released version.
+echo "==> Updating version literals..."
+sedi "s/^\tVersion    = \"[^\"]*\"/\tVersion    = \"$VERSION\"/" pkg/logic/common/ascii_art.go
+perl -0pi -e 's/^version = "[^"]*"/version = "'"$VERSION"'"/m' rust/Cargo.toml
+perl -0pi -e 's/(name = "keibidrop-rust"\nversion = ")[^"]*"/${1}'"$VERSION"'"/' rust/Cargo.lock
+echo "  Updated pkg/logic/common/ascii_art.go, rust/Cargo.toml, rust/Cargo.lock"
+
 # ── keibidrop.com and README ──────────────────────────────
 # The download buttons carry versioned asset URLs (no stable aliases yet), so
 # every page with buttons, the README and latest-version.txt move together.
@@ -90,7 +102,6 @@ SITE="${SITE_DIR:-../../KeibiSoft/keibidrop.com}"
 if [ -f "$SITE/latest-version.txt" ]; then
   PREV=$(tr -d '[:space:]' < "$SITE/latest-version.txt")
   echo "==> Updating keibidrop.com and README from $PREV to $VERSION..."
-  sedi() { local expr="$1"; shift; sed -i '' "$expr" "$@" 2>/dev/null || sed -i "$expr" "$@"; }
   for f in "$SITE"/index.html "$SITE"/install.html "$SITE"/how-to-use.html "$SITE"/guides/*.html README.md; do
     sedi "s#/v$PREV/#/v$VERSION/#g; s#keibidrop-$PREV-#keibidrop-$VERSION-#g; s#keibidrop_${PREV}_#keibidrop_${VERSION}_#g" "$f"
   done
@@ -108,4 +119,4 @@ fi
 
 echo ""
 echo "==> Done. Review changes, then commit and publish."
-echo "  Still by hand: apt (reprepro), Chocolatey (choco push), MCP registry (server.json version + publish), Homebrew push."
+echo "  Still by hand: apt (reprepro), Homebrew push, snap upload. Chocolatey and the MCP registry go out from the release workflow."

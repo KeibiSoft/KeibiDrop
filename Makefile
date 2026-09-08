@@ -1,5 +1,7 @@
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "0.1.0-beta")
+# Tags carry the v prefix, nothing built from them does: one form from here on.
+override VERSION := $(patsubst v%,%,$(VERSION))
 LDFLAGS := -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.Version=$(VERSION) \
            -X github.com/KeibiSoft/KeibiDrop/pkg/logic/common.CommitHash=$(COMMIT)
 DIST    := dist
@@ -222,26 +224,24 @@ package-windows: $(DIST)
 	cp rust/target/release/keibidrop-rust.exe $(DIST)/win-staging/keibidrop.exe 2>/dev/null || true
 	cp README.md LICENSE LICENSING.md $(DIST)/win-staging/
 ifeq ($(GOOS),windows)
-	powershell.exe -Command "Compress-Archive -Path '$(DIST)/win-staging/*' -DestinationPath '$(DIST)/keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip' -Force"
+	powershell.exe -Command "Compress-Archive -Path '$(DIST)/win-staging/*' -DestinationPath '$(DIST)/keibidrop-$(VERSION)-windows-$(GOARCH).zip' -Force"
 else
-	cd $(DIST)/win-staging && zip -r ../keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip .
+	cd $(DIST)/win-staging && zip -r ../keibidrop-$(VERSION)-windows-$(GOARCH).zip .
 endif
 	rm -rf $(DIST)/win-staging
-	@echo "Created $(DIST)/keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip"
+	@echo "Created $(DIST)/keibidrop-$(VERSION)-windows-$(GOARCH).zip"
 
-# Manifest and registry want semver without the 'v' prefix.
-MCPB_VERSION := $(patsubst v%,%,$(VERSION))
 
 # MCP bundle. kdmcp links cgofuse, so slices are built natively by the release
 # matrix. macOS only: lipo joins the darwin slices.
-#   make package-mcpb VERSION=0.4.3 MCPB_DARWIN_ARM64=.. MCPB_DARWIN_AMD64=.. \
+#   make package-mcpb VERSION=x.y.z MCPB_DARWIN_ARM64=.. MCPB_DARWIN_AMD64=.. \
 #     MCPB_WINDOWS=.. MCPB_LINUX=..
 package-mcpb: $(DIST)
 	@test -n "$(MCPB_DARWIN_ARM64)" || (echo "ERROR: set MCPB_DARWIN_ARM64" && exit 1)
 	@test -n "$(MCPB_DARWIN_AMD64)" || (echo "ERROR: set MCPB_DARWIN_AMD64" && exit 1)
 	@test -n "$(MCPB_WINDOWS)" || (echo "ERROR: set MCPB_WINDOWS" && exit 1)
 	@test -n "$(MCPB_LINUX)" || (echo "ERROR: set MCPB_LINUX" && exit 1)
-	@echo "Packaging .mcpb for $(MCPB_VERSION)..."
+	@echo "Packaging .mcpb for $(VERSION)..."
 	rm -rf $(DIST)/mcpb-staging
 	mkdir -p $(DIST)/mcpb-staging/server
 	lipo -create -output $(DIST)/mcpb-staging/server/kdmcp \
@@ -250,7 +250,7 @@ package-mcpb: $(DIST)
 	cp $(MCPB_LINUX) $(DIST)/mcpb-staging/server/kdmcp-linux
 	chmod +x $(DIST)/mcpb-staging/server/kdmcp $(DIST)/mcpb-staging/server/kdmcp.exe \
 	  $(DIST)/mcpb-staging/server/kdmcp-linux
-	sed 's/__VERSION__/$(MCPB_VERSION)/' packaging/mcpb/manifest.json \
+	sed 's/__VERSION__/$(VERSION)/' packaging/mcpb/manifest.json \
 	  > $(DIST)/mcpb-staging/manifest.json
 ifneq ($(CODESIGN_IDENTITY),)
 	codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --timestamp \
@@ -270,16 +270,15 @@ docker-image:
 
 # Chocolatey .nupkg — requires choco pack + package-windows first
 # Choco requires semver without 'v' prefix (e.g. 0.1.1, not v0.1.1).
-CHOCO_VERSION := $(patsubst v%,%,$(VERSION))
 
 package-choco: $(DIST)
-	@echo "Packaging Chocolatey .nupkg ($(CHOCO_VERSION))..."
-	$(eval WIN_ZIP := $(DIST)/keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip)
+	@echo "Packaging Chocolatey .nupkg ($(VERSION))..."
+	$(eval WIN_ZIP := $(DIST)/keibidrop-$(VERSION)-windows-$(GOARCH).zip)
 	$(eval SHA256 := $(shell shasum -a 256 $(WIN_ZIP) 2>/dev/null | cut -d' ' -f1))
 	@test -n "$(SHA256)" || (echo "ERROR: $(WIN_ZIP) not found — run 'make package-windows' first" && exit 1)
-	VERSION=$(CHOCO_VERSION) envsubst '$$VERSION' < choco/keibidrop.nuspec.tmpl > $(DIST)/keibidrop.nuspec
+	VERSION=$(VERSION) envsubst '$$VERSION' < choco/keibidrop.nuspec.tmpl > $(DIST)/keibidrop.nuspec
 	mkdir -p $(DIST)/tools
-	TAG=v$(CHOCO_VERSION) SEMVER=$(CHOCO_VERSION) SHA256=$(SHA256) envsubst '$$TAG$$SEMVER$$SHA256' < choco/tools/chocolateyinstall.ps1.tmpl > $(DIST)/tools/chocolateyinstall.ps1
+	TAG=v$(VERSION) SEMVER=$(VERSION) SHA256=$(SHA256) envsubst '$$TAG$$SEMVER$$SHA256' < choco/tools/chocolateyinstall.ps1.tmpl > $(DIST)/tools/chocolateyinstall.ps1
 	cp choco/tools/chocolateyuninstall.ps1 $(DIST)/tools/
 	cd $(DIST) && choco pack keibidrop.nuspec || echo "choco pack failed"
 	@echo "Created .nupkg in $(DIST)/ (SHA256=$(SHA256))"

@@ -3,7 +3,7 @@
   "name": "io.github.KeibiSoft/keibidrop",
   "title": "KeibiDrop",
   "description": "Give two agents on two machines the same encrypted folder. P2P, no cloud, only read bytes move.",
-  "version": "0.4.3",
+  "version": "SET_BY_RELEASE_WORKFLOW",
   "websiteUrl": "https://keibidrop.com",
   "repository": {
     "url": "https://github.com/KeibiSoft/KeibiDrop",
@@ -12,7 +12,7 @@
   "packages": [
     {
       "registryType": "mcpb",
-      "identifier": "https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.3/keibidrop-mcp.mcpb",
+      "identifier": "SET_BY_RELEASE_WORKFLOW",
       "fileSha256": "SET_BY_RELEASE_WORKFLOW",
       "transport": {
         "type": "stdio"

@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	Version    = "0.4.2"
-	CommitHash = "dev" // Build ldflags overwrite this value.
+	Version    = "0.4.6" // Last release. Build ldflags overwrite both values from the tag.
+	CommitHash = "dev"
 )
 
 const keibiLogo = `
