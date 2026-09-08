@@ -81,5 +81,31 @@ sed -i "s/version: '.*'/version: '$VERSION'/" snap/snapcraft.yaml
 echo "  Updated snap/snapcraft.yaml"
 echo "  To publish: snapcraft && snapcraft upload keibidrop_*.snap --release=edge"
 
+# ── keibidrop.com and README ──────────────────────────────
+# The download buttons carry versioned asset URLs (no stable aliases yet), so
+# every page with buttons, the README and latest-version.txt move together.
+# latest-version.txt drives the in-app update notice: it changes only here,
+# after the release assets exist.
+SITE="${SITE_DIR:-../../KeibiSoft/keibidrop.com}"
+if [ -f "$SITE/latest-version.txt" ]; then
+  PREV=$(tr -d '[:space:]' < "$SITE/latest-version.txt")
+  echo "==> Updating keibidrop.com and README from $PREV to $VERSION..."
+  sedi() { local expr="$1"; shift; sed -i '' "$expr" "$@" 2>/dev/null || sed -i "$expr" "$@"; }
+  for f in "$SITE"/index.html "$SITE"/install.html "$SITE"/how-to-use.html "$SITE"/guides/*.html README.md; do
+    sedi "s#/v$PREV/#/v$VERSION/#g; s#keibidrop-$PREV-#keibidrop-$VERSION-#g; s#keibidrop_${PREV}_#keibidrop_${VERSION}_#g" "$f"
+  done
+  sedi "s/\"softwareVersion\": \"$PREV\"/\"softwareVersion\": \"$VERSION\"/" "$SITE/index.html"
+  if grep -q "darwin-amd64.dmg" /tmp/SHA256SUMS; then
+    sedi "s/darwin-amd64\.tar\.gz/darwin-amd64.dmg/g" "$SITE/install.html"
+    echo "  Intel Mac line now points at the DMG"
+  fi
+  printf '%s\n' "$VERSION" > "$SITE/latest-version.txt"
+  echo "  Updated buttons on 7 pages, README, softwareVersion, latest-version.txt"
+  echo "  By hand: the $VERSION entry on $SITE/docs/releases.html (and its meta description), then cd $SITE/.. && make push-kd && make indexnow SINCE=$(date +%F)"
+else
+  echo "  SKIP: site not found at $SITE (set SITE_DIR)"
+fi
+
 echo ""
 echo "==> Done. Review changes, then commit and publish."
+echo "  Still by hand: apt (reprepro), Chocolatey (choco push), MCP registry (server.json version + publish), Homebrew push."
