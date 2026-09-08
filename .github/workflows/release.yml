@@ -219,16 +219,6 @@ jobs:
             echo "PACKAGECLOUD_TOKEN not set, skipping"
           fi
 
-      # Pack only. The push happens in the chocolatey job after the release
-      # exists, so the checksum inside the package is the checksum of the zip
-      # people download from the release.
-      - name: Package Chocolatey (Windows)
-        if: matrix.package == 'zip'
-        shell: bash
-        run: |
-          SHA256=$(sha256sum dist/keibidrop-${{ steps.version.outputs.version }}-windows-amd64.zip | cut -d' ' -f1)
-          make package-choco VERSION=${{ steps.version.outputs.version }} SHA256=$SHA256
-
       - name: Notarize (macOS)
         if: runner.os == 'macOS' && matrix.package == 'dmg'
         env:
@@ -472,45 +462,17 @@ jobs:
           ./mcp-publisher publish artifacts/server.json
 
 
-  # Chocolatey goes out only after the release is up. The package embeds the
-  # checksum of the zip it will download from the release, so the job checks
-  # the two against each other before pushing; a package for a release that
-  # never appeared would be an orphan. Windows, because choco is.
+  # Chocolatey goes out only after the release is up. The package downloads
+  # the Windows zip from the release and carries its checksum, so the
+  # Chocolatey workflow builds it from that zip and checks the address it
+  # will download from before it pushes. The same workflow runs by hand for
+  # a repush of the same version.
   chocolatey:
     needs: publish
     if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: windows-latest
     name: Push Chocolatey
-    steps:
-      - name: Download the Windows artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: release-Windows-x86_64
-          path: dist
-
-      - name: Check the package against the released zip
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*windows-amd64.zip' -D released
-          RELEASED=$(sha256sum released/*.zip | cut -d' ' -f1)
-          PACKED=$(tar -xOf dist/keibidrop.*.nupkg tools/chocolateyinstall.ps1 | grep -o "checksum64 *= *'[0-9a-f]*'" | grep -o "[0-9a-f]\{64\}")
-          echo "released: $RELEASED"
-          echo "packaged: $PACKED"
-          if [ -z "$PACKED" ] || [ "$RELEASED" != "$PACKED" ]; then
-            echo "::error::the Chocolatey package checksum does not match the zip on the release; not pushing"
-            exit 1
-          fi
-
-      - name: Push
-        shell: bash
-        env:
-          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
-        run: |
-          if [ -z "$CHOCO_API_KEY" ]; then
-            echo "::warning::CHOCO_API_KEY is not set. The package is in the run artifacts; set the secret and rerun this job."
-            exit 0
-          fi
-          choco push dist/keibidrop.*.nupkg --source https://push.chocolatey.org/ --api-key "$CHOCO_API_KEY"
+    uses: ./.github/workflows/chocolatey.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}

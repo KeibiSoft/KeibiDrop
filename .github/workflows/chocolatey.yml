@@ -1,0 +1,85 @@
+# Builds the Chocolatey package for a published release and pushes it to
+# community.chocolatey.org. The release workflow calls it once the release
+# is up. Run it by hand when moderation asks for a repush of the same
+# version, or when a release run did not reach the push:
+#
+#   gh workflow run chocolatey.yml -f tag=v0.4.6
+#
+# The package downloads the Windows zip from the GitHub release and carries
+# that zip's checksum, so both come from the release here, never from a
+# build artifact, and the download address is checked before the push.
+name: Chocolatey
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, with the v prefix (v0.4.6)
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+    secrets:
+      CHOCO_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    runs-on: windows-latest
+    name: Push Chocolatey
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the package from the released zip
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::the tag must carry the v prefix, got '$TAG'"; exit 1 ;;
+          esac
+          SEMVER="${TAG#v}"
+          command -v make >/dev/null || choco install make -y
+          mkdir -p dist
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "keibidrop-$SEMVER-windows-amd64.zip" -D dist
+          make package-choco VERSION="$SEMVER" GOARCH=amd64
+          test -f "dist/keibidrop.$SEMVER.nupkg"
+          echo "SEMVER=$SEMVER" >> "$GITHUB_ENV"
+
+      - name: Check the download address and the checksum
+        shell: bash
+        run: |
+          SCRIPT=dist/tools/chocolateyinstall.ps1
+          URL=$(grep -o 'https://[^"]*windows-amd64\.zip' "$SCRIPT")
+          PACKED=$(grep -o "checksum64 *= *'[0-9a-f]*'" "$SCRIPT" | grep -o "[0-9a-f]\{64\}")
+          RELEASED=$(sha256sum "dist/keibidrop-$SEMVER-windows-amd64.zip" | cut -d' ' -f1)
+          echo "url:      $URL"
+          echo "packaged: $PACKED"
+          echo "released: $RELEASED"
+          if ! curl -fsSL -o /dev/null -r 0-0 "$URL"; then
+            echo "::error::the package downloads from $URL and that address does not answer"
+            exit 1
+          fi
+          if [ -z "$PACKED" ] || [ "$RELEASED" != "$PACKED" ]; then
+            echo "::error::the checksum in the package does not match the zip on the release"
+            exit 1
+          fi
+
+      - name: Push
+        shell: bash
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        run: |
+          if [ -z "$CHOCO_API_KEY" ]; then
+            echo "::error::CHOCO_API_KEY is not set"
+            exit 1
+          fi
+          choco push "dist/keibidrop.$SEMVER.nupkg" --source https://push.chocolatey.org/ --api-key "$CHOCO_API_KEY"

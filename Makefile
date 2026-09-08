@@ -279,7 +279,7 @@ package-choco: $(DIST)
 	@test -n "$(SHA256)" || (echo "ERROR: $(WIN_ZIP) not found — run 'make package-windows' first" && exit 1)
 	VERSION=$(CHOCO_VERSION) envsubst '$$VERSION' < choco/keibidrop.nuspec.tmpl > $(DIST)/keibidrop.nuspec
 	mkdir -p $(DIST)/tools
-	TAG=$(VERSION) SEMVER=$(CHOCO_VERSION) SHA256=$(SHA256) envsubst '$$TAG$$SEMVER$$SHA256' < choco/tools/chocolateyinstall.ps1.tmpl > $(DIST)/tools/chocolateyinstall.ps1
+	TAG=v$(CHOCO_VERSION) SEMVER=$(CHOCO_VERSION) SHA256=$(SHA256) envsubst '$$TAG$$SEMVER$$SHA256' < choco/tools/chocolateyinstall.ps1.tmpl > $(DIST)/tools/chocolateyinstall.ps1
 	cp choco/tools/chocolateyuninstall.ps1 $(DIST)/tools/
 	cd $(DIST) && choco pack keibidrop.nuspec || echo "choco pack failed"
 	@echo "Created .nupkg in $(DIST)/ (SHA256=$(SHA256))"

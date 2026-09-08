@@ -68,11 +68,11 @@ fi
 # ── Chocolatey ────────────────────────────────────────────
 echo "==> Updating Chocolatey package..."
 mkdir -p dist/choco/tools
-VERSION="$VERSION" envsubst < choco/keibidrop.nuspec.tmpl > dist/choco/keibidrop.nuspec
-VERSION="$VERSION" SHA256="$SHA_WINDOWS_AMD64" envsubst < choco/tools/chocolateyinstall.ps1.tmpl > dist/choco/tools/chocolateyinstall.ps1
+VERSION="$VERSION" envsubst '$VERSION' < choco/keibidrop.nuspec.tmpl > dist/choco/keibidrop.nuspec
+TAG="$TAG" SEMVER="$VERSION" SHA256="$SHA_WINDOWS_AMD64" envsubst '$TAG$SEMVER$SHA256' < choco/tools/chocolateyinstall.ps1.tmpl > dist/choco/tools/chocolateyinstall.ps1
 cp choco/tools/chocolateyuninstall.ps1 dist/choco/tools/
 echo "  Generated dist/choco/"
-echo "  To publish: cd dist/choco && choco pack && choco push keibidrop.$VERSION.nupkg --source https://push.chocolatey.org/"
+echo "  To publish: gh workflow run chocolatey.yml -f tag=$TAG   (or: cd dist/choco && choco pack && choco push keibidrop.$VERSION.nupkg --source https://push.chocolatey.org/)"
 
 # ── Snap ──────────────────────────────────────────────────
 echo "==> Updating Snap..."
