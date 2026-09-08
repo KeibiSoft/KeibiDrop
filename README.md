@@ -27,7 +27,7 @@ Another computer's files show up as a folder on yours. Open and edit them in you
 - Their files become a real folder on your machine. Open, edit, `git clone`, anything.
 - macOS, Linux, Windows, Android. iOS coming soon. Open source engine (MPL-2.0).
 
-**Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.5/keibidrop-0.4.5-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.5/keibidrop-0.4.5-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.5/keibidrop_0.4.5_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html)
+**Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.6/keibidrop-0.4.6-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.6/keibidrop-0.4.6-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.6/keibidrop_0.4.6_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html)
 
 **Three steps:** install it on both computers. Connect once: same Wi-Fi, turn on the switch; anywhere else, send your code in any chat and paste theirs. Then drop a file in, or open their files as a folder. [How to use it, with a short clip for each step.](https://keibidrop.com/how-to-use.html) [The clips as a YouTube playlist.](https://www.youtube.com/playlist?list=PLB-moSLYtzF0)
 
