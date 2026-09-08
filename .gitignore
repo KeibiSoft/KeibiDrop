@@ -85,3 +85,8 @@ mount-fuse
 /task-*/
 /keibidrop.aar
 kd_bridge.log
+
+# Demo harness build products (compiled from the .swift files next to them; the Go daemon build)
+scripts/onboarding/caption
+scripts/onboarding/endcard
+scripts/resolve/bin/
