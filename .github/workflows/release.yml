@@ -219,19 +219,15 @@ jobs:
             echo "PACKAGECLOUD_TOKEN not set, skipping"
           fi
 
-      - name: Package and push Chocolatey (Windows)
+      # Pack only. The push happens in the chocolatey job after the release
+      # exists, so the checksum inside the package is the checksum of the zip
+      # people download from the release.
+      - name: Package Chocolatey (Windows)
         if: matrix.package == 'zip'
         shell: bash
-        env:
-          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
         run: |
           SHA256=$(sha256sum dist/keibidrop-${{ steps.version.outputs.version }}-windows-amd64.zip | cut -d' ' -f1)
           make package-choco VERSION=${{ steps.version.outputs.version }} SHA256=$SHA256
-          if [ -n "$CHOCO_API_KEY" ]; then
-            choco push dist/*.nupkg --source https://push.chocolatey.org/ --api-key "$CHOCO_API_KEY"
-          else
-            echo "CHOCO_API_KEY not set, skipping push"
-          fi
 
       - name: Notarize (macOS)
         if: runner.os == 'macOS' && matrix.package == 'dmg'
@@ -253,11 +249,15 @@ jobs:
             rm -f "$ZIP_PATH"
           done
 
+      # overwrite: a rerun of one build job replaces its artifact. Without it
+      # the run holds two artifacts of the same name and every job that
+      # downloads "all artifacts" fails on a digest mismatch (v0.4.6).
       - name: Upload release artifacts
         uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.name }}
           path: dist/*
+          overwrite: true
 
   # macOS: needs lipo and the Developer ID.
   mcpb:
@@ -322,6 +322,7 @@ jobs:
       - name: Upload .mcpb
         uses: actions/upload-artifact@v7
         with:
+          overwrite: true
           name: release-mcpb
           path: |
             dist/keibidrop-mcp.mcpb
@@ -457,8 +458,59 @@ jobs:
       - name: Publish to the MCP registry
         if: ${{ !contains(github.ref_name, '-') }}
         run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # A rerun of this job must not publish the same version twice.
+          if curl -sS "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.KeibiSoft/keibidrop" \
+              | grep -Eq "\"version\": ?\"$VERSION\""; then
+            echo "$VERSION is already in the registry, nothing to publish"
+            exit 0
+          fi
           curl -sSL -o pub.tar.gz \
             "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz"
           tar xzf pub.tar.gz mcp-publisher
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish artifacts/server.json
+
+
+  # Chocolatey goes out only after the release is up. The package embeds the
+  # checksum of the zip it will download from the release, so the job checks
+  # the two against each other before pushing; a package for a release that
+  # never appeared would be an orphan. Windows, because choco is.
+  chocolatey:
+    needs: publish
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: windows-latest
+    name: Push Chocolatey
+    steps:
+      - name: Download the Windows artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: release-Windows-x86_64
+          path: dist
+
+      - name: Check the package against the released zip
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*windows-amd64.zip' -D released
+          RELEASED=$(sha256sum released/*.zip | cut -d' ' -f1)
+          PACKED=$(tar -xOf dist/keibidrop.*.nupkg tools/chocolateyinstall.ps1 | grep -o "checksum64 *= *'[0-9a-f]*'" | grep -o "[0-9a-f]\{64\}")
+          echo "released: $RELEASED"
+          echo "packaged: $PACKED"
+          if [ -z "$PACKED" ] || [ "$RELEASED" != "$PACKED" ]; then
+            echo "::error::the Chocolatey package checksum does not match the zip on the release; not pushing"
+            exit 1
+          fi
+
+      - name: Push
+        shell: bash
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+        run: |
+          if [ -z "$CHOCO_API_KEY" ]; then
+            echo "::warning::CHOCO_API_KEY is not set. The package is in the run artifacts; set the secret and rerun this job."
+            exit 0
+          fi
+          choco push dist/keibidrop.*.nupkg --source https://push.chocolatey.org/ --api-key "$CHOCO_API_KEY"
