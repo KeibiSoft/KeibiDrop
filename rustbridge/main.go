@@ -843,15 +843,17 @@ func KD_CheckUpdate() *C.char {
 	return C.CString("")
 }
 
-// KD_SendFeedback posts a user-written problem report with an optional
-// reply contact. Sent: message, contact, version, platform, surface.
-// Blocks up to 10s: call off the UI thread.
+// KD_SendFeedback posts a user-written report with an optional reply
+// contact and a 1 to 5 star rating (0 = none). Sent: message, contact,
+// rating, version, platform, surface. Blocks up to 10s: call off the UI
+// thread.
 //
 //export KD_SendFeedback
-func KD_SendFeedback(message, contact *C.char) C.int {
+func KD_SendFeedback(message, contact *C.char, rating C.int) C.int {
 	err := feedback.Send(feedback.Report{
 		Message: C.GoString(message),
 		Contact: C.GoString(contact),
+		Rating:  int(rating),
 		Version: common.Version,
 		Surface: "desktop",
 	})
