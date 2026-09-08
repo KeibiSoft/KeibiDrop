@@ -49,8 +49,13 @@ jobs:
           SEMVER="${TAG#v}"
           command -v make >/dev/null || choco install make -y
           mkdir -p dist
+          ZIP="dist/keibidrop-$SEMVER-windows-amd64.zip"
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "keibidrop-$SEMVER-windows-amd64.zip" -D dist
-          make package-choco VERSION="$SEMVER" GOARCH=amd64
+          ls -l dist
+          # The checksum is computed here and handed to make: the Makefile's own
+          # shasum step returns nothing on the Windows runner.
+          SHA256=$(sha256sum "$ZIP" | cut -d' ' -f1)
+          make package-choco VERSION="$SEMVER" GOARCH=amd64 SHA256="$SHA256"
           test -f "dist/keibidrop.$SEMVER.nupkg"
           echo "SEMVER=$SEMVER" >> "$GITHUB_ENV"
 

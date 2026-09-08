@@ -220,7 +220,7 @@ package-windows: $(DIST)
 	cp keibidrop-cli.exe $(DIST)/win-staging/ 2>/dev/null || cp keibidrop-cli $(DIST)/win-staging/keibidrop-cli.exe
 	cp kdmcp.exe $(DIST)/win-staging/ 2>/dev/null || cp kdmcp $(DIST)/win-staging/kdmcp.exe
 	cp rust/target/release/keibidrop-rust.exe $(DIST)/win-staging/keibidrop.exe 2>/dev/null || true
-	cp README.md LICENSE DUAL-LICENSE.md $(DIST)/win-staging/
+	cp README.md LICENSE LICENSING.md $(DIST)/win-staging/
 ifeq ($(GOOS),windows)
 	powershell.exe -Command "Compress-Archive -Path '$(DIST)/win-staging/*' -DestinationPath '$(DIST)/keibidrop-$(CHOCO_VERSION)-windows-$(GOARCH).zip' -Force"
 else

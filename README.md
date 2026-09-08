@@ -208,7 +208,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 Go engine, CLI, and mobile bindings: [Mozilla Public License 2.0](./LICENSE) (per-file copyleft)
 
-Rust UI, mobile apps, and brand assets: Proprietary - see [DUAL-LICENSE.md](./DUAL-LICENSE.md)
+Rust UI, mobile apps, and brand assets: Proprietary - see [LICENSING.md](./LICENSING.md)
 
 Desktop UI built with [Slint](https://slint.dev)
 
