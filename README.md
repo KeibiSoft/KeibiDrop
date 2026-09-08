@@ -13,10 +13,10 @@
 <h2 align="center">Work on shared files instantly.<br>No more upload or download waiting.</h2>
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=k8b_6quIqx0">
-    <img src="demo-photos/resolve-nas-demo.gif" alt="DaVinci Resolve playing a clip that lives on a NAS 400 km away, then jumping to the next clip, which is there when the playhead lands on it. Click to watch the two minute demo on YouTube." width="900">
+  <a href="https://www.youtube.com/watch?v=9Wt0NMx2_I8">
+    <img src="demo-photos/keibidrop-demo.gif" alt="KeibiDrop demo, Mac and Windows side by side. Click to watch on YouTube with sound." width="900">
   </a>
-  <br><sub><b>How to edit in DaVinci Resolve, Premiere Pro or Final Cut while traveling.</b> Your footage stays on the studio NAS, you open it on demand from the app, no waiting for a download or an upload. Click for the two minute demo.</sub>
+  <br><sub><b>Mac to Windows, one folder, nothing to download first.</b> Two computers side by side. Click to watch on YouTube, with sound.</sub>
 </p>
 
 Another computer's files show up as a folder on yours. Open and edit them in your own apps, with nothing to download first.
@@ -50,13 +50,6 @@ Another computer's files show up as a folder on yours. Open and edit them in you
 | Finder | Terminal (git) |
 |:---:|:---:|
 | <img src="demo-photos/as-filesystem-accessible-from-finder.png" alt="Shared files in Finder" width="450"> | <img src="demo-photos/as-filesystem-git-ops-work.png" alt="Git on FUSE mount" width="450"> |
-
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=9Wt0NMx2_I8">
-    <img src="demo-photos/keibidrop-demo.gif" alt="KeibiDrop demo, Mac and Windows side by side. Click to watch on YouTube with sound." width="700">
-  </a>
-  <br><sub>Mac and Windows side by side. <b>Click to watch on YouTube</b> (with sound)</sub>
-</p>
 
 ---
 
@@ -233,7 +226,14 @@ Mount an evidence share read only across NAT and extract the artifact set you ne
 
 ### Post-production handoff
 
-[Mount the camera originals](https://keibidrop.com/for/post-production.html). No proxy transcode before the handoff, and no relink after it.
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=6DEEfoms-j8">
+    <img src="demo-photos/resolve-nas-demo.gif" alt="DaVinci Resolve playing a clip that lives on a NAS 400 km away, then jumping to the next clip, which is there when the playhead lands on it. Click to watch the two minute demo on YouTube." width="700">
+  </a>
+  <br><sub><b>How to edit in DaVinci Resolve, Premiere Pro or Final Cut while traveling.</b> Your footage stays on the studio NAS, you open it on demand from the app, no waiting for a download or an upload. Click for the two minute demo.</sub>
+</p>
+
+[Mount the camera originals](https://keibidrop.com/for/post-production.html). No proxy transcode before the handoff, and no relink after it. [The Resolve setup, step by step](https://keibidrop.com/docs/how-to/edit-from-a-nas-in-davinci-resolve.html).
 
 ### Datasets on a rented GPU box
 
