@@ -1035,6 +1035,7 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 	data["state"] = st.State
 	data["state_text"] = st.Text
 	data["mount_ready"] = st.MountReady
+	data["throttled"] = st.Throttled
 	data["throughput"] = map[string]any{
 		"recv_bps": st.RecvBps,
 		"sent_bps": st.SentBps,

@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,6 +37,26 @@ var (
 // window is sized from it; see joinBridgeWait in pkg/logic/common.
 const DirectDialTimeout = 15 * time.Second
 
+// mixedLegAck is the one byte each side writes on a direct leg whose joiner said
+// MixedLegs, before either upgrades to the encrypted transport: the creator after it
+// read the handshake, the joiner after it read the creator's byte. The handshake
+// itself is one message with nothing coming back, so a joiner cannot tell a leg the
+// creator took from a TCP connect that landed in an idle listen backlog (a creator
+// inside its reconnect loop accepts nothing), and a creator cannot tell a live
+// joiner from a dial that sat in that backlog for minutes and was closed long ago.
+// Either kept as the only leg hangs the session. Gated on the flag on both sides,
+// so an older peer never sees or waits for a byte.
+const mixedLegAck = 0x4B
+
+// mixedAckTimeout bounds each side's wait for the other's byte. A live peer answers
+// within a round trip; silence is treated as a failed dial or a failed accept.
+var mixedAckTimeout = 5 * time.Second
+
+// ErrNoMixedAck says the other side never took the direct leg. The joiner falls
+// back to the bridge for both legs as after a failed dial; the creator's accept loop
+// closes the leg and accepts again.
+var ErrNoMixedAck = errors.New("peer did not take the direct leg")
+
 // PeerHandshakeMessage defines the JSON payload sent during handshake.
 type PeerHandshakeMessage struct {
 	Fingerprint      string            `json:"fingerprint"`
@@ -45,6 +66,17 @@ type PeerHandshakeMessage struct {
 	SupportedCiphers []string          `json:"supported_ciphers"` // cipher negotiation
 	Persistent       bool              `json:"persistent,omitempty"`
 	KeyUpdate        bool              `json:"key_update,omitempty"` // in-band ratchet capability
+	// InboundBlocked says the sender's own listener is unreachable, so the receiver
+	// skips the return dial that would only time out. MixedLegs says the sender keeps
+	// THIS leg when the return dial fails and takes its inbound from the bridge
+	// (pair2), so the receiver keeps the leg too and dials only pair2 for its
+	// outbound. Both are advisory and plaintext, like Persistent and the port: a
+	// flipped bit costs a slower connect or one relayed leg, which an on-path
+	// attacker can force anyway by dropping packets, and the relay sees nothing
+	// new. Neither is bound into the key, so a mismatch can never kill a session.
+	// Older peers omit them, which decodes as false and keeps the old behaviour.
+	InboundBlocked bool `json:"inbound_blocked,omitempty"`
+	MixedLegs      bool `json:"mixed_legs,omitempty"`
 }
 
 // keyUpdateBinding returns a fixed, domain-separated tag for the sender's advertised in-band
@@ -147,6 +179,8 @@ func PerformInboundHandshakeWait(session *Session, conn net.Conn, firstByte time
 	session.PeerPort = msg.OutboundPort
 	session.PeerIsPersistent = msg.Persistent
 	session.PeerSupportsKeyUpdate = msg.KeyUpdate
+	session.PeerInboundBlocked = msg.InboundBlocked
+	session.PeerMixedLegs = msg.MixedLegs
 
 	seed1tr, ok := msg.EncSeeds["x25519"]
 	if !ok {
@@ -221,6 +255,21 @@ func PerformInboundHandshakeWait(session *Session, conn net.Conn, firstByte time
 
 	// Wait for user to confirm out-of-band fingerprint
 	logger.Info("Peer fingerprint verified, awaiting user confirmation", "peer-port", session.PeerPort)
+
+	// A joiner that keeps this leg needs to know we took it, and we need to know it
+	// is still there before we keep it (see mixedLegAck).
+	if msg.MixedLegs {
+		if _, err := conn.Write([]byte{mixedLegAck}); err != nil {
+			logger.Error("Failed to acknowledge the direct leg", "error", err)
+			return fmt.Errorf("write leg ack: %w", err)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(mixedAckTimeout))
+		var back [1]byte
+		if _, err := io.ReadFull(conn, back[:]); err != nil || back[0] != mixedLegAck {
+			logger.Info("Joiner is not there for the direct leg", "error", err)
+			return fmt.Errorf("%w within %s: %v", ErrNoMixedAck, mixedAckTimeout, err)
+		}
+	}
 
 	// TODO: Uncomment this and get permission from User.
 	/*
@@ -314,7 +363,9 @@ func storePeerKeysFromExchange(session *Session, logger *slog.Logger, msg keyExc
 	return nil
 }
 
-// PerformOutboundHandshake dials remoteAddr and sends the PQC handshake.
+// PerformOutboundHandshake dials remoteAddr and sends the PQC handshake. This is the
+// direct leg: the one a joiner may keep while its inbound rides the bridge, so the
+// MixedLegs intent and the leg acknowledgement travel here and nowhere else.
 func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 	logger := session.logger.With("phase", "outbound-handshake")
 	conn, err := DialWithStableAddr("tcp", remoteAddr, DirectDialTimeout, logger)
@@ -322,12 +373,20 @@ func PerformOutboundHandshake(session *Session, remoteAddr string) error {
 		logger.Error("Failed to dial", "addr", remoteAddr, "error", err)
 		return fmt.Errorf("failed to connect to %s: %w", remoteAddr, err)
 	}
-	return PerformOutboundHandshakeOnConn(session, conn)
+	return performOutboundHandshake(session, conn, true)
 }
 
 // PerformOutboundHandshakeOnConn sends the PQC handshake on an existing connection.
-// Used by bridge mode where the connection is pre-established (with room token already sent).
+// Used by bridge mode where the connection is pre-established (with room token already
+// sent). A bridge leg never carries the MixedLegs intent or waits for the leg
+// acknowledgement: the bridge holds the message until the creator dials the room,
+// which can take longer than the acknowledgement budget, and the leg is never kept
+// as the direct one anyway.
 func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
+	return performOutboundHandshake(session, conn, false)
+}
+
+func performOutboundHandshake(session *Session, conn net.Conn, directLeg bool) error {
 	if session == nil || session.OwnKeys == nil || session.PeerPubKeys == nil {
 		return fmt.Errorf("nil pointer dereference")
 	}
@@ -407,6 +466,8 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 		SupportedCiphers: supportedStr,
 		Persistent:       session.OwnIsPersistent,
 		KeyUpdate:        own,
+		InboundBlocked:   session.OwnInboundBlocked,
+		MixedLegs:        session.OwnMixedLegs && directLeg,
 	}
 
 	// Write handshake: 4-byte big-endian length prefix, then JSON payload.
@@ -428,19 +489,26 @@ func PerformOutboundHandshakeOnConn(session *Session, conn net.Conn) error {
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}
 
-	// TODO: Review the commented out code.
-	/*
-		// Await confirmation from Bob that he's happy
-		ack := make([]byte, 2)
-		if _, err := io.ReadFull(conn, ack); err != nil || string(ack) != "OK" {
+	// The handshake is one message: nothing comes back, so a successful write only
+	// says the bytes left. A joiner about to keep this leg as its only outbound
+	// needs more than that, and reads the creator's one-byte acknowledgement.
+	if msg.MixedLegs {
+		_ = conn.SetReadDeadline(time.Now().Add(mixedAckTimeout))
+		var ack [1]byte
+		if _, err := io.ReadFull(conn, ack[:]); err != nil || ack[0] != mixedLegAck {
 			_ = conn.Close()
-			logger.Error("Did not receive 'OK' from peer", "got", string(ack), "error", err)
-			return fmt.Errorf("handshake rejected or invalid response")
+			logger.Info("Creator did not take the direct leg", "error", err)
+			return fmt.Errorf("%w within %s: %v", ErrNoMixedAck, mixedAckTimeout, err)
 		}
-
-
-	*/
-	logger.Info("Peer confirmed handshake upgrading to encrypted connection")
+		_ = conn.SetReadDeadline(time.Time{})
+		if _, err := conn.Write([]byte{mixedLegAck}); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("write leg ack: %w", err)
+		}
+		logger.Info("Creator took the direct leg, upgrading to encrypted connection")
+	} else {
+		logger.Info("Handshake sent, upgrading to encrypted connection")
+	}
 
 	// Upgrade to SecureConn. Dialer role -> outbound nonce prefix.
 	secure := NewSecureConn(conn, session.SEKOutbound, suite, NoncePrefixOutbound)

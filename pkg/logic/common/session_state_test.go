@@ -15,10 +15,12 @@ import (
 )
 
 func TestSessionState_Texts(t *testing.T) {
-	require.Equal(t, "Connected on the local network", connectedText("lan", false, false))
-	require.Equal(t, "Connected directly, slow link", connectedText("direct", false, true))
-	require.Equal(t, "Connected via relay, paid lane", connectedText("bridge", true, false))
-	require.Equal(t, "Connected via relay, free lane", connectedText("bridge", false, false))
+	require.Equal(t, "Connected on the local network", connectedText("lan", false, false, false))
+	require.Equal(t, "Connected directly, slow link", connectedText("direct", false, true, false))
+	require.Equal(t, "Connected via relay, paid lane", connectedText("bridge", true, false, false))
+	require.Equal(t, "Connected via relay, free lane", connectedText("bridge", false, false, false))
+	require.Equal(t, "Connected via relay, free lane, shared right now", connectedText("bridge", false, false, true))
+	require.Equal(t, "Connected via relay, free lane, shared right now", connectedText("bridge", false, true, true), "the lane a person can change comes before the one they can only wait out")
 	require.Equal(t, "Waiting for the other side", waitingText("Waiting for peer...", ""))
 	require.Equal(t, "Waiting for nas", waitingText("Waiting for peer...", "nas"))
 	require.Equal(t, "nas has not pressed Connect yet", waitingText("peer_not_ready", "nas"))

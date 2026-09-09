@@ -134,6 +134,13 @@ type KeibiDrop struct {
 	// connectStatus is the last connect_status text emitted while a create or
 	// join waits for the peer. SessionState shows it; the wait clears it.
 	connectStatus atomic.Value
+	// relayThrottled marks a session whose free relay lane held a reader for
+	// seconds; relaySlowSignalled latches the one reminder per session.
+	relayThrottled     atomic.Bool
+	relaySlowSignalled atomic.Bool
+	// mountFailed holds why the folder could not be remounted (a string), or
+	// "" while it is mounted or a remount is still due. mountLoop sets it.
+	mountFailed atomic.Value
 	// Throughput over the last sample interval, fed by throughput().
 	tpMu                   sync.Mutex
 	tpAt                   time.Time
@@ -210,11 +217,16 @@ type KeibiDrop struct {
 	// it expires instead of pinning the node to the relay.
 	inboundBlocked     atomic.Bool
 	peerInboundBlocked atomic.Bool
-	inboundBlockedOn   atomic.Value // string
-	probedOn           atomic.Value // string: the local address the relay probe last ran on
-	probedAt           atomic.Int64 // Unix nano of that probe, so the verdict expires.
-	probedReachable    atomic.Bool  // The relay reached the listener on that probe.
-	parkedBridgeIn     net.Conn     // Creator's bridge inbound leg kept open between rounds; see bridgeInbound.
+	// peerMixedLegs is the creator's MixedLegs capability from its registration.
+	peerMixedLegs atomic.Bool
+	// connectMode is the mode the session was made with. The reconnect order follows
+	// it, so a session that fell back to the bridge retries its shape next outage.
+	connectMode      string
+	inboundBlockedOn atomic.Value // string
+	probedOn         atomic.Value // string: the local address the relay probe last ran on
+	probedAt         atomic.Int64 // Unix nano of that probe, so the verdict expires.
+	probedReachable  atomic.Bool  // The relay reached the listener on that probe.
+	parkedBridgeIn   net.Conn     // Creator's bridge inbound leg kept open between rounds; see bridgeInbound.
 
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc
@@ -448,6 +460,10 @@ type PeerRegistration struct {
 	Reverse     *ConnectionHint   `json:"reverse,omitempty"`
 	LocalAddrs  []string          `json:"local_addrs,omitempty"` // LAN IPs (192.168.x.x, fe80::x) for same-network detection
 	Timestamp   int64             `json:"timestamp"`
+	// MixedLegs is a capability: this peer keeps a direct leg a joiner opened when the
+	// joiner's inbound is blocked, and bridges only its own outbound. A joiner reads
+	// it before deciding to keep its leg; older peers omit it, which decodes as false.
+	MixedLegs bool `json:"mixed_legs,omitempty"`
 }
 
 type ConnectionHint struct {
@@ -729,6 +745,7 @@ func (kd *KeibiDrop) Run() {
 			kd.session = newSess
 			kd.mu.Unlock()
 			kd.rollSessionWire(oldSess)
+			kd.resetRelaySignals()
 			kd.SyncTracker = synctracker.NewSyncTracker()
 			kd.lastSharedPeerFP = prevPeerFP
 			kd.lastSharedFiles = prevLocal
@@ -801,12 +818,8 @@ func (kd *KeibiDrop) Run() {
 					// ADD_FILE notifies that raced this publish landed only in
 					// SyncTracker. Fold them into the tree before serving.
 					kd.BackfillRemoteFilesIntoFS()
-					if kd.FS.IsMounted() {
-						logger.Info("FUSE already mounted, waiting for disconnect")
-						<-kd.ctx.Done()
-					} else {
-						kd.mountLoop(kd.ctx, logger)
-					}
+					// A host from an earlier session is watched, not mounted over.
+					kd.mountLoop(kd.ctx, logger)
 				} else {
 					logger.Warn("No FS to mount")
 					<-kd.ctx.Done()

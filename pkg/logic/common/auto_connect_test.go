@@ -236,3 +236,38 @@ func TestAutoConnectLoop_RedialsAtOnceAfterPeerGoodbye(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// The goodbye arrives a moment before the session ends. Polls that land in that
+// gap see the session still running; they must not clear the goodbye, or the
+// loop waits the full rearm grace (measured on the box: 95 s instead of 8).
+func TestAutoConnectLoop_GoodbyeSurvivesPollsBeforeTheSessionEnds(t *testing.T) {
+	kd := newBareKD()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var dials atomic.Int32
+	var running atomic.Bool
+	dial := func() error {
+		dials.Add(1)
+		running.Store(true)
+		return nil
+	}
+	slow := fastTuning
+	slow.rearmGrace = 5 * time.Second
+
+	done := make(chan struct{})
+	go func() {
+		kd.autoConnectLoop(ctx, slow, dial, running.Load, func() bool { return false })
+		close(done)
+	}()
+	waitFor(t, 2*time.Second, running.Load, "session up")
+
+	kd.peerSaidGoodbye.Store(true)
+	time.Sleep(20 * slow.poll) // many running polls between the goodbye and the end
+	require.True(t, kd.peerSaidGoodbye.Load(), "a running poll must not swallow the goodbye")
+	running.Store(false)
+	waitFor(t, time.Second, func() bool { return dials.Load() == 2 }, "re-dial without the rearm grace")
+
+	cancel()
+	<-done
+}

@@ -97,13 +97,19 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		}
 		return ln.Accept()
 	}
-	// Order reconnect transports from the session mode and the reachability hints.
-	// A direct retry against a blocked inbound only burns its timeout.
+	// Order reconnect transports from the shape the session was made with and the
+	// reachability hints. A direct retry against a blocked inbound only burns its
+	// timeout. The made shape, not the live mode: a session that fell back to the
+	// bridge in one outage retries its shape in the next.
+	kd.connectMode = kd.ConnectionMode
 	kd.ReconnectManager.PreferDirect = func() bool {
-		if kd.ConnectionMode == "bridge" {
+		if kd.connectMode == "bridge" {
 			return false
 		}
 		return !kd.InboundBlocked() && !kd.PeerInboundBlocked()
+	}
+	kd.ReconnectManager.MixedLegs = func() bool {
+		return kd.connectMode == ModeDirectOut || kd.connectMode == ModeDirectIn
 	}
 	if kd.BridgeAddr != "" {
 		kd.ReconnectManager.BridgeAddr = kd.effectiveBridgeAddr()
@@ -384,6 +390,10 @@ func (kd *KeibiDrop) onReconnected() {
 	if rm != nil && sess != nil {
 		rm.CachedPeerIP = kd.PeerIPv6IP
 		rm.CachedPeerPort = sess.PeerPort
+	}
+	if rm != nil {
+		// Before the QUIC lane restarts below: it picks its path from the mode.
+		kd.setModeAfterReconnect(rm.LastTransport())
 	}
 
 	if rk != nil {

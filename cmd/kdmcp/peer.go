@@ -693,6 +693,7 @@ func (p *peer) status() any {
 		"session_state": st.State,
 		"state_text":    st.Text,
 		"mount_ready":   st.MountReady,
+		"throttled":     st.Throttled,
 		"in_bps":        st.RecvBps,
 		"out_bps":       st.SentBps,
 	}

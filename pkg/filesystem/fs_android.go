@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	winfuse "github.com/winfsp/cgofuse/fuse"
@@ -34,6 +35,7 @@ type Dir struct {
 type FS struct {
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
+	OnSlowFetch        func(waited time.Duration) // Unused on Android (no FUSE). Present so shared setup code compiles.
 	PrefetchOnOpen     bool
 	PrefetchAutoMB     int
 	ReadAheadWindowMB  int // Unused on Android (no FUSE). Present so shared setup code compiles.

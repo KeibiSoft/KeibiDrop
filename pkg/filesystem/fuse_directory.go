@@ -501,6 +501,16 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 					StreamProvider:  d.OpenStreamProvider(),
 					stat:            &winfuse.Stat_t{},
 				}
+				switch {
+				case fileExists && flags&syscall.O_TRUNC != 0:
+					// The file is being rewritten: whatever cache copy it was, it
+					// is a local edit from here on.
+					dropSidecar(localPath)
+				case fileExists && !isRemoteFile:
+					// Before the peer's announce a cache copy from an earlier
+					// session must not pass for a local file (sidecar.go).
+					d.adoptCacheCopy(fh, localPath)
+				}
 			}
 			d.AllFileMap[path] = fh
 		} else {
@@ -1596,6 +1606,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 			}
 			if cacheFD != nil {
 				f.CacheWg.Wait() // Wait for in-flight async cache writes to finish.
+				f.flushSidecar()
 				if closeErr := cacheFD.Close(); closeErr != nil {
 					logger.Error("Failed to close cache FD", "error", closeErr)
 				}
@@ -2069,6 +2080,7 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 
 	// Try to unlink local file (may not exist if remote-only).
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
+	dropSidecar(cleanPath)
 	err := platUnlink(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -2441,6 +2453,7 @@ func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap 
 			f.finishFetch(bf, werr)
 			return
 		}
+		f.noteLanded()
 		f.finishFetch(bf, nil) // release waiters after the bytes are in cache
 	}
 }
@@ -2982,6 +2995,9 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		// operation. Read-ahead should make these rare on sequential access.
 		if waited := time.Since(waitBegin); waited > 50*time.Millisecond {
 			logger.Debug("on-demand read blocked on fetch", "offset", offset, "block", unitStart, "waited", waited)
+			if waited > SlowFetchNotice {
+				d.noteSlowFetch(waited)
+			}
 		}
 
 		covered := fetchStart <= offset && (fetchEnd >= reqEnd || (remoteFileSize > 0 && fetchEnd >= remoteFileSize))
@@ -2998,6 +3014,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 				}
 				return -winfuse.EIO
 			}
+			f.noteLanded()
 			if isLeader {
 				asyncWriterScheduled = true
 				f.finishFetch(bf, nil)
@@ -3029,6 +3046,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 					logger.Error("Cache write failed", "error", werr)
 					return -winfuse.EIO
 				}
+				f.noteLanded()
 			}
 			return d.preadCached(logger, fd, buff, offset, remoteFileSize)
 		}
@@ -3073,6 +3091,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 					}
 					return
 				}
+				f.noteLanded()
 				if leader {
 					f.finishFetch(leaderBf, nil)
 				}

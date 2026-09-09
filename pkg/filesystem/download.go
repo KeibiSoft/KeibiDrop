@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 )
@@ -74,6 +75,12 @@ const ReadAheadBlock = config.GRPCStreamBuffer // 16 MiB
 // stream that has consumed half a block (the read-ahead gate) is back on whole
 // blocks. Read-ahead off (window 0) keeps the plain block fetch.
 const ProbeFetch = 2 * 1024 * 1024
+
+// SlowFetchNotice is how long one demand fetch may hold a reader before the
+// filesystem reports it through FS.OnSlowFetch. A probe unit lands in well
+// under a second on a lane that is not shared; a wait this long is what the
+// free relay lane feels like under load, and the session says so once.
+const SlowFetchNotice = 2 * time.Second
 
 // SmallFileWarmThreshold marks files the sibling warmer batches. It stays
 // below the ReadBatch frame cap, so a warmed file arrives as one frame.
@@ -342,7 +349,17 @@ func (b *ChunkBitmap) Save(path string) error {
 	for i, w := range b.bits {
 		binary.LittleEndian.PutUint64(buf[bitmapHeaderSize+i*8:], w)
 	}
-	return os.WriteFile(path, buf, 0600)
+	// Whole file or nothing: a crash mid-write must not leave a truncated sidecar
+	// that reads as no sidecar, and a reader must never see a half-written one.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, buf, 0600); err != nil {
+		return err
+	}
+	if err := RenameShared(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // LoadChunkBitmap reads a bitmap from a .kdbitmap file.

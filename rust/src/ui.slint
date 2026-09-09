@@ -779,7 +779,7 @@ export component MainWindow inherits Window {
     in-out property<bool> drag_hovering: false;
     // Mount path for FUSE mode (Screen 2)
     in property<string> mount_path: "";
-    in property<string> connection_mode: ""; // "lan", "direct", "bridge"
+    in property<string> connection_mode: ""; // "lan", "direct", "bridge", "direct-out" (our reads direct), "direct-in" (the peer's reads direct)
     // Toast message (brief feedback shown at bottom-center, auto-hides)
     in-out property<string> toast_message: "";
     // Peer code feedback: set by Rust after KD_AddPeerFingerprint
@@ -1460,13 +1460,13 @@ export component MainWindow inherits Window {
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
                 background: root.session_state == "connected" || root.session_state == "" ? #22c55e
-                          : root.session_state == "gave_up" ? #ef4444
+                          : root.session_state == "gave_up" || root.session_state == "mount_failed" ? #ef4444
                           : #d97706;
             }
             Text {
                 text: root.session_state_text != "" ? root.session_state_text : "Connected";
                 color: root.session_state == "connected" || root.session_state == "" ? #22c55e
-                     : root.session_state == "gave_up" ? #ef4444
+                     : root.session_state == "gave_up" || root.session_state == "mount_failed" ? #ef4444
                      : #d97706;
                 font-size: 13px;
                 vertical-alignment: center;
@@ -1483,15 +1483,17 @@ export component MainWindow inherits Window {
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
                 background: root.connection_mode == "lan" ? rgba(34,197,94,0.12)
-                          : root.connection_mode == "direct" ? rgba(59,130,246,0.12)
+                          : root.connection_mode == "direct" || root.connection_mode == "direct-out" ? rgba(59,130,246,0.12)
                           : rgba(217,119,6,0.12);
                 mode-text := Text {
                     text: root.connection_mode == "lan" ? "LAN"
                         : root.connection_mode == "direct" ? "Direct P2P"
+                        : root.connection_mode == "direct-out" ? "Direct reads"
+                        : root.connection_mode == "direct-in" ? "Direct for peer"
                         : root.connection_mode == "bridge" ? "Via Relay"
                         : root.connection_mode;
                     color: root.connection_mode == "lan" ? #22c55e
-                         : root.connection_mode == "direct" ? #3b82f6
+                         : root.connection_mode == "direct" || root.connection_mode == "direct-out" ? #3b82f6
                          : #d97706;
                     font-size: 11px;
                     font-weight: 600;
@@ -1653,13 +1655,13 @@ export component MainWindow inherits Window {
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
                 background: root.session_state == "connected" || root.session_state == "" ? #22c55e
-                          : root.session_state == "gave_up" ? #ef4444
+                          : root.session_state == "gave_up" || root.session_state == "mount_failed" ? #ef4444
                           : #d97706;
             }
             Text {
                 text: root.session_state_text != "" ? root.session_state_text : "Connected · FUSE mounted";
                 color: root.session_state == "connected" || root.session_state == "" ? #22c55e
-                     : root.session_state == "gave_up" ? #ef4444
+                     : root.session_state == "gave_up" || root.session_state == "mount_failed" ? #ef4444
                      : #d97706;
                 font-size: 13px;
                 vertical-alignment: center;

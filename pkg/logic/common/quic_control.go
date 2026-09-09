@@ -367,6 +367,12 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 		logger.Info("peer did not negotiate a QUIC channel; staying TCP-only")
 		return
 	}
+	// KEIBIDROP_NO_QUIC=1 keeps every session TCP-only, for A/B measurements of the
+	// lane on a direct path (the relay-only switch below predates it).
+	if os.Getenv("KEIBIDROP_NO_QUIC") == "1" {
+		logger.Info("QUIC lane off by KEIBIDROP_NO_QUIC; staying TCP-only")
+		return
+	}
 
 	// Bridge mode has no direct path, so a local bind and a peer dial can never meet.
 	// KEIBIDROP_NO_QUIC_RELAY=1 keeps bridge sessions TCP-only, for A/B against the lane.

@@ -110,7 +110,6 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 		case isRunning():
 			hadSession = true
 			idleSince = time.Time{}
-			kd.peerSaidGoodbye.Store(false)
 			backoff = tun.initialBackoff
 			if !sleepCtx(ctx, tun.poll) {
 				return
@@ -130,6 +129,12 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 				return
 			}
 		default:
+			// The goodbye is consumed here, not on every running poll: a poll that
+			// landed between the peer's goodbye and the session's end cleared the
+			// flag and cost the full rearm grace (measured 2026-09-09 on the box:
+			// 95 s to redial after a clean disconnect, against 8 s the times the
+			// poll fell on the other side of that gap).
+			kd.peerSaidGoodbye.Store(false)
 			logger.Info("Auto-connect dialing")
 			if err := dial(); err != nil {
 				logger.Warn("Auto-connect attempt failed", "error", err, "retry_in", backoff)

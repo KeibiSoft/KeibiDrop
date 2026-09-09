@@ -342,6 +342,7 @@ func (d *Dir) landWarmFile(c *warmClaim, data []byte) {
 		c.bm.SetHash(chunk, xxh3.Hash(data[begin:end]))
 	}
 	c.f.Download.UpdateProgress(0, len(data))
+	c.f.noteLanded()
 
 	c.f.metaMu.Lock()
 	if c.f.Bitmap == c.bm && c.bm.IsComplete() {

@@ -17,13 +17,17 @@ import (
 // words. State is stable for scripts; Text is for people.
 type SessionState struct {
 	// State is one of idle, waiting_for_peer, connected, reconnecting,
-	// gave_up, mount_gone.
+	// gave_up, mount_gone, mount_failed.
 	State string `json:"state"`
 	Text  string `json:"state_text"`
-	// Mode is lan, direct or bridge; empty before a session.
+	// Mode is lan, direct, bridge, direct-out (our reads direct, the return leg on
+	// the relay) or direct-in (the peer's reads direct); empty before a session.
 	Mode string `json:"mode"`
 	// Paid reports a funded relay lane. False on a free lane and off the bridge.
 	Paid bool `json:"paid"`
+	// Throttled reports a free relay lane that held a reader for seconds this
+	// session. A data pack lifts it. Never true on a paid or direct session.
+	Throttled bool `json:"throttled"`
 	// MountReady reports the FUSE folder mounted and served. False with FUSE off.
 	MountReady  bool `json:"mount_ready"`
 	Attempt     int  `json:"attempt"`
@@ -41,6 +45,7 @@ const (
 	StateReconnecting   = "reconnecting"
 	StateGaveUp         = "gave_up"
 	StateMountGone      = "mount_gone"
+	StateMountFailed    = "mount_failed"
 )
 
 // SessionState derives the state from what already exists: the run flag, the
@@ -61,6 +66,7 @@ func (kd *KeibiDrop) SessionState() SessionState {
 	running := kd.IsRunning()
 	if running {
 		st.Paid = kd.BridgeInfo().Paid
+		st.Throttled = st.Mode == "bridge" && !st.Paid && kd.relayThrottled.Load()
 		// IsMounted lags an eject by the time the host takes to return (10 s
 		// measured), so ask the OS as well.
 		st.MountReady = kd.IsFUSE && kd.FS != nil && kd.FS.IsMounted() && MountIsLive(kd.ToMount)
@@ -90,12 +96,16 @@ func (kd *KeibiDrop) SessionState() SessionState {
 		st.State = StateReconnecting
 		st.Text = "Connection lost, reconnecting"
 	case running:
-		if kd.IsFUSE && !st.MountReady {
+		switch {
+		case kd.IsFUSE && !st.MountReady && kd.mountFailedReason() != "":
+			st.State = StateMountFailed
+			st.Text = "Connected, but the folder could not be remounted"
+		case kd.IsFUSE && !st.MountReady:
 			st.State = StateMountGone
 			st.Text = "Connected, but the folder is not mounted. Remounting"
-		} else {
+		default:
 			st.State = StateConnected
-			st.Text = connectedText(st.Mode, st.Paid, health == session.HealthDegraded.String())
+			st.Text = connectedText(st.Mode, st.Paid, health == session.HealthDegraded.String(), st.Throttled)
 		}
 	case kd.connectStatusText() != "":
 		st.State = StateWaitingForPeer
@@ -115,7 +125,9 @@ func awayLabel(peer string) string {
 	return "Peer away"
 }
 
-func connectedText(mode string, paid, degraded bool) string {
+// connectedText names the lane. A shared free lane says so before a slow
+// link does: the person can act on the first, only wait out the second.
+func connectedText(mode string, paid, degraded, throttled bool) string {
 	var text string
 	switch mode {
 	case "lan":
@@ -128,10 +140,23 @@ func connectedText(mode string, paid, degraded bool) string {
 		} else {
 			text = "Connected via relay, free lane"
 		}
+	case ModeDirectOut:
+		text = "Connected directly for reads, relay for the rest"
+		if paid {
+			text += ", paid lane"
+		}
+	case ModeDirectIn:
+		text = "Connected, peer reads directly, relay for the rest"
+		if paid {
+			text += ", paid lane"
+		}
 	default:
 		text = "Connected"
 	}
-	if degraded {
+	switch {
+	case throttled:
+		text += ", shared right now"
+	case degraded:
 		text += ", slow link"
 	}
 	return text

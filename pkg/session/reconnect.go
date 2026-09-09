@@ -54,6 +54,15 @@ type ReconnectManager struct {
 	// the bridge. Nil means bridge-first whenever a bridge is configured.
 	PreferDirect func() bool
 
+	// MixedLegs reports a session made with the joiner's outbound leg direct and the
+	// creator's outbound leg on the bridge (pair2). Such a session reconnects the same
+	// way first; a failure flips the outage to bridge-first like a failed direct attempt.
+	MixedLegs func() bool
+
+	// lastTransport is the transport of the last successful reconnect: "direct",
+	// "bridge" or "mixed". The engine reads it to keep its connection mode truthful.
+	lastTransport atomic.Value
+
 	// Callbacks
 	OnReconnecting func()                                                    // Called when reconnection starts
 	OnReconnected  func()                                                    // Called on successful reconnection
@@ -258,16 +267,37 @@ func (r *ReconnectManager) reconnectAsInitiator() error {
 	logger := r.logger.With("role", "initiator")
 
 	if r.useBridgeFirst() {
-		return r.reconnectBridge(logger, true)
+		return r.finishTransport(transportBridge, r.reconnectBridge(logger, true))
 	}
-	err := r.reconnectDirectInitiator(logger)
+	if r.mixedFirst() {
+		return r.finishTransport(transportMixed, r.noteDirectFailure(logger, r.reconnectMixed(logger, true)))
+	}
+	return r.finishTransport(transportDirect, r.noteDirectFailure(logger, r.reconnectDirectInitiator(logger)))
+}
+
+// noteDirectFailure flips the outage to bridge-first after a failed direct or mixed
+// attempt. Direct and bridge stay in separate attempts, so a half-done direct
+// handshake never leaks into the bridge pairing.
+func (r *ReconnectManager) noteDirectFailure(logger *slog.Logger, err error) error {
 	if err != nil && r.BridgeAddr != "" && r.DialBridge != nil {
-		// Direct and bridge stay in separate attempts, so a half-done direct
-		// handshake never leaks into the bridge pairing.
 		r.fallbackToBridge.Store(true)
 		logger.Info("Direct reconnect failed, next attempt uses the bridge", "error", err)
 	}
 	return err
+}
+
+// finishTransport records which transport a successful attempt used.
+func (r *ReconnectManager) finishTransport(transport string, err error) error {
+	if err == nil {
+		r.lastTransport.Store(transport)
+	}
+	return err
+}
+
+// LastTransport is the transport of the last successful reconnect, or "" before one.
+func (r *ReconnectManager) LastTransport() string {
+	v, _ := r.lastTransport.Load().(string)
+	return v
 }
 
 // useBridgeFirst orders the transports for this attempt.
@@ -278,7 +308,16 @@ func (r *ReconnectManager) useBridgeFirst() bool {
 	if r.fallbackToBridge.Load() {
 		return true
 	}
+	if r.mixedFirst() {
+		return false // The mixed shape is tried before the bridge, see reconnectMixed.
+	}
 	return r.PreferDirect == nil || !r.PreferDirect()
+}
+
+// mixedFirst reports that this attempt should rebuild the mixed shape: the session was
+// made that way, the bridge is there for the relayed leg, and no attempt has failed yet.
+func (r *ReconnectManager) mixedFirst() bool {
+	return r.MixedLegs != nil && r.MixedLegs() && r.BridgeAddr != "" && r.DialBridge != nil && !r.fallbackToBridge.Load()
 }
 
 // reconnectBridge redoes both directions via the bridge, with the same room
@@ -340,27 +379,8 @@ func (r *ReconnectManager) reconnectBridge(logger *slog.Logger, initiator bool) 
 
 // reconnectDirectInitiator dials the peer, then accepts the return leg.
 func (r *ReconnectManager) reconnectDirectInitiator(logger *slog.Logger) error {
-	addr := ""
-	if r.CachedPeerIP != "" && r.CachedPeerPort > 0 {
-		addr = net.JoinHostPort(r.CachedPeerIP, fmt.Sprintf("%d", r.CachedPeerPort))
-	}
-
-	if err := PerformOutboundHandshake(r.session, addr); err != nil {
-		logger.Debug("Cached address failed, trying relay lookup", "error", err)
-		if r.RelayLookup == nil {
-			return fmt.Errorf("outbound failed and no relay lookup: %w", err)
-		}
-		ip, port, lookupErr := r.RelayLookup(r.session.ExpectedPeerFingerprint)
-		if lookupErr != nil {
-			return fmt.Errorf("relay lookup failed: %w", lookupErr)
-		}
-		r.CachedPeerIP = ip
-		r.CachedPeerPort = port
-		addr = net.JoinHostPort(ip, fmt.Sprintf("%d", port))
-
-		if err := PerformOutboundHandshake(r.session, addr); err != nil {
-			return fmt.Errorf("outbound handshake failed: %w", err)
-		}
+	if err := r.dialPeerDirect(logger); err != nil {
+		return err
 	}
 
 	if r.AcceptConn == nil {
@@ -382,14 +402,42 @@ func (r *ReconnectManager) reconnectAsResponder() error {
 	logger := r.logger.With("role", "responder")
 
 	if r.useBridgeFirst() {
-		return r.reconnectBridge(logger, false)
+		return r.finishTransport(transportBridge, r.reconnectBridge(logger, false))
 	}
-	err := r.reconnectDirectResponder(logger)
-	if err != nil && r.BridgeAddr != "" && r.DialBridge != nil {
-		r.fallbackToBridge.Store(true)
-		logger.Info("Direct reconnect failed, next attempt uses the bridge", "error", err)
+	if r.mixedFirst() {
+		return r.finishTransport(transportMixed, r.noteDirectFailure(logger, r.reconnectMixed(logger, false)))
 	}
-	return err
+	return r.finishTransport(transportDirect, r.noteDirectFailure(logger, r.reconnectDirectResponder(logger)))
+}
+
+// dialPeerDirect runs the outbound handshake against the cached peer address, and
+// once more against a fresh relay lookup when that fails.
+func (r *ReconnectManager) dialPeerDirect(logger *slog.Logger) error {
+	addr := ""
+	if r.CachedPeerIP != "" && r.CachedPeerPort > 0 {
+		addr = net.JoinHostPort(r.CachedPeerIP, fmt.Sprintf("%d", r.CachedPeerPort))
+	}
+
+	err := PerformOutboundHandshake(r.session, addr)
+	if err == nil {
+		return nil
+	}
+	logger.Debug("Cached address failed, trying relay lookup", "error", err)
+	if r.RelayLookup == nil {
+		return fmt.Errorf("outbound failed and no relay lookup: %w", err)
+	}
+	ip, port, lookupErr := r.RelayLookup(r.session.ExpectedPeerFingerprint)
+	if lookupErr != nil {
+		return fmt.Errorf("relay lookup failed: %w", lookupErr)
+	}
+	r.CachedPeerIP = ip
+	r.CachedPeerPort = port
+	addr = net.JoinHostPort(ip, fmt.Sprintf("%d", port))
+
+	if err := PerformOutboundHandshake(r.session, addr); err != nil {
+		return fmt.Errorf("outbound handshake failed: %w", err)
+	}
+	return nil
 }
 
 // reconnectDirectResponder accepts inbound, then dials outbound.

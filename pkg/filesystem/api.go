@@ -30,6 +30,9 @@ type FS struct {
 
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
+	// OnSlowFetch fires when one demand fetch held a reader for longer than
+	// SlowFetchNotice. The session decides what that means for its link.
+	OnSlowFetch func(waited time.Duration)
 
 	// Collab sync options (set from env before Mount).
 	PrefetchOnOpen    bool   // If true, Open() fetches the whole file and writes it to local disk.
@@ -204,6 +207,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	root.TieBreakPeerWins.Store(fs.TieBreakPeerWins.Load())
 	root.warmDisabled = os.Getenv("KEIBIDROP_WARM_SIBLINGS") == "0"
 	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
+	root.SetOnSlowFetch(fs.OnSlowFetch)
 	fs.ctxMu.Lock()
 	ctx := fs.ctx
 	fs.ctxMu.Unlock()
@@ -294,6 +298,7 @@ func (fs *FS) RefreshCallbacks() {
 		return
 	}
 	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
+	root.SetOnSlowFetch(fs.OnSlowFetch)
 	fs.ctxMu.Lock()
 	ctx := fs.ctx
 	fs.ctxMu.Unlock()

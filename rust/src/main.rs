@@ -558,6 +558,61 @@ fn refresh_tokens_status(app: &MainWindow) {
     }
 }
 
+/// A system notification: Notification Center on macOS, a toast on Windows,
+/// the desktop notifier on Linux. Off the UI thread, and a failure is silent:
+/// the notifier is a courtesy, never a dependency.
+fn system_notify(body: &str) {
+    let body = body.to_string();
+    std::thread::spawn(move || {
+        let _ = std::panic::catch_unwind(|| {
+            #[cfg(target_os = "macos")]
+            {
+                let script = format!(
+                    "display notification \"{}\" with title \"KeibiDrop\"",
+                    body.replace('\\', "\\\\").replace('\"', "\\\"")
+                );
+                let _ = Command::new("osascript").arg("-e").arg(&script).output();
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = notify_rust::Notification::new()
+                    .summary("KeibiDrop")
+                    .body(&body)
+                    .timeout(notify_rust::Timeout::Milliseconds(4000))
+                    .show();
+            }
+        });
+    });
+}
+
+/// True at most once per `every` for the reminder called `name`, paced by a
+/// stamp file in the config directory so the pace survives restarts. With no
+/// config directory every call is due.
+fn reminder_due(cfg_dir: &Option<std::path::PathBuf>, name: &str, every: std::time::Duration) -> bool {
+    let Some(dir) = cfg_dir else { return true };
+    let stamp = dir.join(format!(".reminder_{}", name));
+    if let Ok(modified) = std::fs::metadata(&stamp).and_then(|m| m.modified()) {
+        if modified.elapsed().map(|age| age < every).unwrap_or(false) {
+            return false;
+        }
+    }
+    let _ = std::fs::write(&stamp, "");
+    true
+}
+
+/// The engine's one line about the link, as the state timer shows it.
+fn engine_state_text() -> String {
+    unsafe {
+        let p = bindings::KD_SessionStateLine();
+        if p.is_null() {
+            return String::new();
+        }
+        let line = CStr::from_ptr(p).to_string_lossy().to_string();
+        libc::free(p as *mut libc::c_void);
+        line.split('\t').nth(1).unwrap_or("").to_string()
+    }
+}
+
 fn show_toast(weak: &slint::Weak<MainWindow>, msg: &str) {
     let w = weak.clone();
     let m = msg.to_string();
@@ -899,6 +954,7 @@ fn main() {
 
     // The FUSE offer shows once ever: after the first successful save,
     // never again once the marker file exists.
+    let reminder_dir = cfg_dir.clone();
     let fuse_offer_marker = cfg_dir.map(|d| d.join(".fuse_offer_done"));
     let fuse_offer_pending = Arc::new(AtomicBool::new(
         fuse_offer_marker.as_ref().map(|m| !m.exists()).unwrap_or(false),
@@ -2474,6 +2530,9 @@ fn main() {
             let disconnecting_evt = disconnecting.clone();
             let watcher_running_evt = watcher_running.clone();
             let arrived_files = arrived_files.clone();
+            let reminder_dir_evt = reminder_dir.clone();
+            // One "away" notification per outage, cleared by the reconnect.
+            let away_notified = std::rc::Rc::new(std::cell::Cell::new(false));
             timer.start(
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_millis(200),
@@ -2520,9 +2579,21 @@ fn main() {
                             }
                         }
 
-                        // The volume went away under a live session; the engine remounts it.
+                        // The volume went away under a live session; the engine
+                        // remounts it and says when it is back. The peer's session
+                        // is untouched either way.
                         if evt.starts_with("mount_gone:") {
                             show_toast(&weak_evt, "The folder was unmounted. Remounting it now.");
+                            system_notify("The folder was unmounted. Bringing it back.");
+                        } else if evt.starts_with("mount_back:") {
+                            show_toast(&weak_evt, "The folder is back.");
+                            system_notify("The folder is back.");
+                        } else if let Some(reason) = evt.strip_prefix("mount_failed:") {
+                            show_toast(&weak_evt, "The folder could not be remounted.");
+                            system_notify(&format!(
+                                "The folder could not be remounted ({}). Files still arrive in the save folder.",
+                                reason
+                            ));
                         }
 
                         // File arrival notifications
@@ -2536,10 +2607,22 @@ fn main() {
                             }
                         }
 
-                        if let Some(notice) = evt.strip_prefix("relay_busy:") {
-                            // Server-supplied copy: the relay decides the
-                            // upsell wording, the client just shows it.
+                        if let Some(notice) = evt
+                            .strip_prefix("relay_busy:")
+                            .or_else(|| evt.strip_prefix("relay_slow:"))
+                        {
+                            // Server-supplied copy for relay_busy, the engine's
+                            // for relay_slow: the client just shows it. The
+                            // toast is short-lived; the system notification is
+                            // the reminder, at most once per six hours.
                             show_toast(&weak_evt, notice);
+                            if reminder_due(
+                                &reminder_dir_evt,
+                                "relay",
+                                std::time::Duration::from_secs(6 * 3600),
+                            ) {
+                                system_notify(notice);
+                            }
                             if let Some(app) = weak_evt.upgrade() {
                                 refresh_tokens_status(&app);
                             }
@@ -2600,9 +2683,21 @@ fn main() {
                                     format!("Resuming {} download(s)...", count),
                                 ));
                             }
+                        } else if evt.starts_with("reconnecting:") {
+                            if !away_notified.replace(true) {
+                                let text = engine_state_text();
+                                system_notify(if text.is_empty() {
+                                    "The other side is away. Reconnecting."
+                                } else {
+                                    &text
+                                });
+                            }
                         } else if evt.starts_with("reconnected:") {
                             if let Some(app) = weak_evt.upgrade() {
                                 app.set_status_message(slint::SharedString::from("Reconnected"));
+                            }
+                            if away_notified.replace(false) {
+                                system_notify("Reconnected.");
                             }
                         }
 
@@ -2624,6 +2719,12 @@ fn main() {
                             } else {
                                 "Connection lost"
                             };
+                            away_notified.set(false);
+                            system_notify(if evt.starts_with("peer_disconnected:") {
+                                "The other side disconnected."
+                            } else {
+                                "Gave up reconnecting. Connect again from the app."
+                            });
 
                             // Update UI immediately (we're on the UI thread)
                             if let Some(app) = weak_evt.upgrade() {
@@ -2678,30 +2779,7 @@ fn main() {
                         };
                         files.clear();
                         drop(files);
-
-                        std::thread::spawn(move || {
-                            let _ = std::panic::catch_unwind(|| {
-                                #[cfg(target_os = "macos")]
-                                {
-                                    let script = format!(
-                                        "display notification \"{}\" with title \"KeibiDrop\"",
-                                        body.replace('\"', "\\\"")
-                                    );
-                                    let _ = Command::new("osascript")
-                                        .arg("-e")
-                                        .arg(&script)
-                                        .output();
-                                }
-                                #[cfg(not(target_os = "macos"))]
-                                {
-                                    let _ = notify_rust::Notification::new()
-                                        .summary("KeibiDrop")
-                                        .body(&body)
-                                        .timeout(notify_rust::Timeout::Milliseconds(4000))
-                                        .show();
-                                }
-                            });
-                        });
+                        system_notify(&body);
                     }
                 },
             );
