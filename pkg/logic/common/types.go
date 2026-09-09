@@ -65,6 +65,7 @@ type KeibiDrop struct {
 	session *session.Session
 
 	PeerIPv6IP     string
+	PeerIPv4IP     string   // The peer's public IPv4 from its registration; "" when it has none.
 	PeerLocalAddrs []string // LAN IPs from the relay registration, for same-network direct connect.
 
 	LocalIPv6IP string
@@ -138,6 +139,8 @@ type KeibiDrop struct {
 	// seconds; relaySlowSignalled latches the one reminder per session.
 	relayThrottled     atomic.Bool
 	relaySlowSignalled atomic.Bool
+	// diskLow mirrors the filesystem's free-space guard for the state line.
+	diskLow atomic.Bool
 	// mountFailed holds why the folder could not be remounted (a string), or
 	// "" while it is mounted or a remount is still due. mountLoop sets it.
 	mountFailed atomic.Value
@@ -226,7 +229,14 @@ type KeibiDrop struct {
 	probedOn         atomic.Value // string: the local address the relay probe last ran on
 	probedAt         atomic.Int64 // Unix nano of that probe, so the verdict expires.
 	probedReachable  atomic.Bool  // The relay reached the listener on that probe.
-	parkedBridgeIn   net.Conn     // Creator's bridge inbound leg kept open between rounds; see bridgeInbound.
+	// publicIPv4 is the address the relay dialed back on the last probe that went
+	// over IPv4, with its verdict. A NAS with a forwarded port and no IPv6 route
+	// is reached through it (dial_addrs.go).
+	publicIPv4          atomic.Value // string
+	inbound4Reachable   atomic.Bool
+	peerInbound4Blocked atomic.Bool  // The peer's IPv4 hint says nothing reaches it.
+	peerDialedIP        atomic.Value // string: the peer address that answered the direct dial.
+	parkedBridgeIn      net.Conn     // Creator's bridge inbound leg kept open between rounds; see bridgeInbound.
 
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc
@@ -457,9 +467,13 @@ type PeerRegistration struct {
 	Fingerprint string            `json:"fingerprint"`
 	PublicKeys  map[string]string `json:"public_keys"` // base64 encoded
 	Listen      *ConnectionHint   `json:"listen"`
-	Reverse     *ConnectionHint   `json:"reverse,omitempty"`
-	LocalAddrs  []string          `json:"local_addrs,omitempty"` // LAN IPs (192.168.x.x, fe80::x) for same-network detection
-	Timestamp   int64             `json:"timestamp"`
+	// Listen4 is the same listener at the public IPv4 the relay saw this peer on,
+	// with the relay's verdict on it. Omitted before a probe answered over IPv4;
+	// older peers omit it always.
+	Listen4    *ConnectionHint `json:"listen4,omitempty"`
+	Reverse    *ConnectionHint `json:"reverse,omitempty"`
+	LocalAddrs []string        `json:"local_addrs,omitempty"` // LAN IPs (192.168.x.x, fe80::x) for same-network detection
+	Timestamp  int64           `json:"timestamp"`
 	// MixedLegs is a capability: this peer keeps a direct leg a joiner opened when the
 	// joiner's inbound is blocked, and bridges only its own outbound. A joiner reads
 	// it before deciding to keep its leg; older peers omit it, which decodes as false.
@@ -703,6 +717,8 @@ func (kd *KeibiDrop) Run() {
 			kd.session = nil
 			kd.mu.Unlock()
 			kd.PeerIPv6IP = ""
+			kd.PeerIPv4IP = ""
+			kd.peerDialedIP.Store("")
 
 			// Permanent shutdown: close the listener and exit.
 			select {

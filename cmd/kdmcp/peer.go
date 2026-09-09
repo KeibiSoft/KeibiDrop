@@ -694,6 +694,7 @@ func (p *peer) status() any {
 		"state_text":    st.Text,
 		"mount_ready":   st.MountReady,
 		"throttled":     st.Throttled,
+		"disk_low":      st.DiskLow,
 		"in_bps":        st.RecvBps,
 		"out_bps":       st.SentBps,
 	}

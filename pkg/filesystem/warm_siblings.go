@@ -214,6 +214,9 @@ func (d *Dir) warmSiblings(dirPath, triggerPath string) {
 		}
 	}()
 
+	if !d.fetchAllowed() {
+		return // Under the floor nothing is warmed; each reader meets the guard itself.
+	}
 	provider := d.OpenStreamProvider()
 	br, hasBatch := provider.(types.BatchReader)
 	if provider == nil || !hasBatch {

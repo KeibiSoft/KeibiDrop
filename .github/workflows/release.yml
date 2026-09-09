@@ -180,12 +180,14 @@ jobs:
             codesign --force --options runtime --sign "$IDENTITY" --timestamp "rust/target/release/keibidrop-rust"
           fi
 
-      # Windows: Azure Artifact Signing (Trusted Signing). Both steps are
-      # skipped until the repository variable AZURE_SIGNING_ACCOUNT exists, so a
-      # release before the Azure account is set up still ships, unsigned as
-      # before. Setup: first_launch/WINDOWS-SIGNING-AZURE.html (private).
+      # Windows: Azure Artifact Signing (Trusted Signing). The three steps are
+      # skipped until the repository variable AZURE_SIGNING_PROFILE exists,
+      # which the setup script sets once the identity validation completed, so
+      # a release before that still ships unsigned as before. Setup:
+      # first_launch/WINDOWS-SIGNING-AZURE.html and azure-signing-setup.sh
+      # (private); the "Windows signing check" workflow proves the chain.
       - name: Azure login for Artifact Signing (Windows)
-        if: runner.os == 'Windows' && vars.AZURE_SIGNING_ACCOUNT != ''
+        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -193,7 +195,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign binaries (Windows, Azure Artifact Signing)
-        if: runner.os == 'Windows' && vars.AZURE_SIGNING_ACCOUNT != ''
+        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
@@ -209,7 +211,7 @@ jobs:
           timestamp-digest: SHA256
 
       - name: Verify the Windows signatures
-        if: runner.os == 'Windows' && vars.AZURE_SIGNING_ACCOUNT != ''
+        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
         shell: pwsh
         run: |
           $files = @("kd.exe", "keibidrop-cli.exe", "kdmcp.exe", "rust\target\release\keibidrop-rust.exe")

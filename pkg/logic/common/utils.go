@@ -109,6 +109,7 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		PublicKeys: pkMap,
 		Timestamp:  time.Now().UnixNano(),
 		MixedLegs:  true,
+		Listen4:    kd.listen4Hint(),
 	}
 
 	// Serialize and encrypt the registration.
@@ -299,6 +300,15 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		logger.Info("Peer advertises a blocked inbound; its direct dial will be skipped")
 	}
 	kd.peerMixedLegs.Store(peerReg.MixedLegs)
+	kd.PeerIPv4IP = ""
+	kd.peerInbound4Blocked.Store(false)
+	if l4 := peerReg.Listen4; l4 != nil {
+		if ip := net.ParseIP(l4.IP); ip != nil && ip.To4() != nil {
+			kd.PeerIPv4IP = ip.String()
+			kd.peerInbound4Blocked.Store(l4.InboundBlocked)
+			logger.Info("Peer advertises an IPv4 address", "ip", kd.PeerIPv4IP, "inbound_blocked", l4.InboundBlocked)
+		}
+	}
 	if isValidIPv6(peerReg.Listen.IP) {
 		kd.PeerIPv6IP = peerReg.Listen.IP
 	} else if peerReg.Listen.IP != "" {
@@ -397,6 +407,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 		fs = filesystem.NewFS(logger)
 		fs.OnRootReady = kd.BackfillRemoteFilesIntoFS // Announces that beat the mount sit in the tracker.
 		fs.OnSlowFetch = kd.noteSlowFetch
+		fs.OnLowDisk = kd.noteLowDisk
 		kd.FS = fs
 	}
 
@@ -716,17 +727,17 @@ func (kd *KeibiDrop) openStreamProvider() types.FileStreamProvider {
 	if s == nil || s.GRPCClient == nil {
 		return nil
 	}
-	// With a DIRECT QUIC control channel up, split prefetch (StreamFile) on TCP from
-	// on-demand reads and chunk hashes on QUIC: a cache miss must not queue behind
-	// the bulk stream on a congested wire (designed and measured in 0.4.0, 512 KiB
-	// miss reads at p50 about 7 ms under bulk). Providers are per open, so a later
-	// channel is picked up. A relayed lane carries control only: a 16 MiB read
-	// through the UDP relay starved the 2 s heartbeat ping, the lane was demoted
-	// mid-read, and the first block of every session cost 4 to 8 s (2026-09-06).
-	// KEIBIDROP_QUIC_READS=0 keeps reads on TCP with the lane up, for A/B: on an
-	// uncongested direct leg from an Intel Mac the lane measured slower than TCP
-	// (BUGS 28), and since the 2 MiB demand units the read-ahead window's own block
-	// fetches ride this lane too, which the split did not assume.
+	// With a DIRECT QUIC control channel up, split the predicted traffic (StreamFile
+	// prefetch and the read-ahead window, StreamPool.ReadAtBulk) on TCP from the
+	// reads a blocked reader waits on and chunk hashes on QUIC: a cache miss must
+	// not queue behind bulk bytes on a congested wire (designed and measured in
+	// 0.4.0, 512 KiB miss reads at p50 about 7 ms under bulk). Providers are per
+	// open, so a later channel is picked up. A relayed lane carries control only: a
+	// 16 MiB read through the UDP relay starved the 2 s heartbeat ping, the lane was
+	// demoted mid-read, and the first block of every session cost 4 to 8 s
+	// (2026-09-06). KEIBIDROP_QUIC_READS=0 keeps every read on TCP with the lane up,
+	// for A/B: on an uncongested direct leg from an Intel Mac the lane moved bulk
+	// bytes slower than TCP (BUGS 28), which is why the window no longer rides it.
 	if qcc != nil && !relayed && !quicReadsOff {
 		return NewImplStreamProviderDual(s.GRPCClient, bindings.NewKeibiServiceClient(qcc)).WithFetchHook(kd.noteFetch)
 	}

@@ -114,3 +114,39 @@ func TestBridgeLegHolder_WinnerClosesAndRefusesLater(t *testing.T) {
 	require.False(t, h.set(c), "a leg dialed after the win is refused")
 	_ = c.Close()
 }
+
+// A dial that lands between two rounds sits in the listener's backlog and the
+// next round's acceptor takes it, bytes intact. The round used to close the
+// listener on its way out, which reset that dial (seen live 2026-09-09 20:49:
+// "connection reset" 33 ms after connecting) and refused the next one; both
+// sent the joiner to all-bridge for the whole session.
+func TestDirectAcceptor_DialInTheGapWaitsForTheNextRound(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	arrivals := make(chan roundArrival, 8)
+
+	first := startDirectAcceptor(ln.(*net.TCPListener), arrivals, 100*time.Millisecond)
+	a := <-arrivals
+	require.Error(t, a.err, "the window ends with nobody in it")
+	first.stop()
+
+	// The gap between rounds: the joiner dials and sends its first bytes.
+	c, err := net.Dial("tcp", ln.Addr().String())
+	require.NoError(t, err)
+	defer c.Close()
+	_, err = c.Write([]byte("hello"))
+	require.NoError(t, err)
+
+	second := startDirectAcceptor(ln.(*net.TCPListener), arrivals, 5*time.Second)
+	defer second.stop()
+	a = <-arrivals
+	require.NoError(t, a.err, "the next round takes the dial from the backlog")
+	require.NotNil(t, a.conn)
+	defer a.conn.Close()
+	buf := make([]byte, 5)
+	_ = a.conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, err = io.ReadFull(a.conn, buf)
+	require.NoError(t, err)
+	require.Equal(t, "hello", string(buf))
+}

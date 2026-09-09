@@ -2432,6 +2432,9 @@ func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap 
 		if bitmap.HasRange(blockStart, int(end-blockStart)) {
 			continue // already cached
 		}
+		if !d.fetchAllowed() {
+			return // The disk is under the floor; a read that needs the block meets the guard itself.
+		}
 		// Own every unit of the block nobody holds yet; a read that owns one, or
 		// a unit that landed on demand, ends the range (the rest is theirs).
 		bf, leader, owned := f.beginFetchSpan(blockStart, end, d.fetchUnit(), bitmap)
@@ -2440,7 +2443,7 @@ func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap 
 		}
 		d.raPrefetchCalls.Add(1) // observability: blocks actually fetched by read-ahead
 		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		data, err := pool.ReadAt(rctx, blockStart, owned-blockStart)
+		data, err := pool.ReadAtBulk(rctx, blockStart, owned-blockStart)
 		cancel()
 		if err != nil || len(data) == 0 {
 			// Best-effort: release this block's waiters and stop the range (a real
@@ -2907,6 +2910,14 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 		// Every demand fetch, at debug: a byte census of a run ("every byte once")
 		// needs the ranges, and the slow-wait line below only shows the stalls.
 		logger.Debug("on-demand fetch", "start", fetchStart, "len", fetchLen, "key", fetchStart)
+
+		// No fetch onto a disk under the floor: the reader gets ENOSPC now, not
+		// a half-written cache file later. The deferred backstop releases any
+		// waiters, and each one meets the same guard.
+		if !d.fetchAllowed() {
+			logger.Debug("on-demand fetch refused, save folder disk is almost full")
+			return -winfuse.ENOSPC
+		}
 
 		// Retry loop for resilience against transient failures.
 		var data []byte
@@ -4000,6 +4011,10 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		_ = os.Truncate(realPath, fileSize)
 	}
 
+	if !d.fetchAllowed() {
+		logger.Warn("Prefetch: save folder disk is almost full, not started")
+		return
+	}
 	fsp := d.OpenStreamProvider()
 	if fsp == nil {
 		logger.Warn("Prefetch: no stream provider available")

@@ -179,6 +179,8 @@ type Dir struct {
 	// onSlowFetch is the session's ear for a demand fetch that held a reader
 	// for seconds (SlowFetchNotice). Root-only and atomic like the two above.
 	onSlowFetch atomic.Pointer[func(waited time.Duration)]
+	// disk is the free-space guard of the save folder (disk_guard.go). Root-only.
+	disk diskGuard
 
 	// Collab sync options (propagated from FS).
 	PrefetchOnOpen bool // If true, Open() fetches the whole file and writes it to local disk.

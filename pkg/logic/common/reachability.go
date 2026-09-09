@@ -12,6 +12,7 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -30,7 +31,8 @@ const probeCacheTTL = 15 * time.Minute
 
 // relayProbeResult is the relay's /probe answer.
 type relayProbeResult struct {
-	Reachable bool `json:"reachable"`
+	Reachable bool   `json:"reachable"`
+	IP        string `json:"ip"` // The address the relay dialed back: what the peer can dial.
 }
 
 // ProbeInboundReachability asks the relay to dial the local listener and caches the
@@ -81,6 +83,14 @@ func (kd *KeibiDrop) ProbeInboundReachability(ctx context.Context) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return
 	}
+	// The relay dialed the address this request came from. Over IPv4 that is
+	// the public address a peer can dial, which this host cannot see behind a
+	// NAT. The relay answers on IPv4 only today, so every probe lands here; a
+	// dual-stack relay would leave the IPv4 knowledge as it was.
+	if ip := net.ParseIP(result.IP); ip != nil && ip.To4() != nil {
+		kd.publicIPv4.Store(ip.String())
+		kd.inbound4Reachable.Store(result.Reachable)
+	}
 	if result.Reachable {
 		kd.probedReachable.Store(true)
 		kd.markInboundReachable()
@@ -124,6 +134,13 @@ func (kd *KeibiDrop) InboundBlocked() bool {
 // PeerInboundBlocked reports whether the peer advertised its listener as unreachable.
 func (kd *KeibiDrop) PeerInboundBlocked() bool { return kd.peerInboundBlocked.Load() }
 
+// PublicIPv4 is the address the relay saw this host on, or "" before a probe
+// answered over IPv4.
+func (kd *KeibiDrop) PublicIPv4() string {
+	v, _ := kd.publicIPv4.Load().(string)
+	return v
+}
+
 // probeSaysReachable reports a fresh relay verdict that the listener is reachable on
 // the current address.
 func (kd *KeibiDrop) probeSaysReachable() bool {
@@ -132,12 +149,11 @@ func (kd *KeibiDrop) probeSaysReachable() bool {
 		time.Since(time.Unix(0, kd.probedAt.Load())) < probeCacheTTL
 }
 
-// noteEmptyAcceptWindow records that a direct accept window closed with nobody in it.
-// Without a probe verdict that is the only evidence there is, so it marks the
-// listener blocked. Against a fresh reachable verdict it is not evidence: the peer
-// was not dialing yet. An always-on peer waits through many empty windows, and a
-// mark here would pin it to the bridge, because the hint stops the peer from dialing
-// and only an arriving dial clears the mark.
+// noteEmptyAcceptWindow records that the joiner's accept window closed with nobody
+// in it. The creator dials back right after our handshake, so a window that stays
+// empty for DirectDialTimeout is evidence, unless a fresh probe verdict says the
+// listener is reachable (then the creator was slow, not blocked). The creator's
+// own rounds never call this: an empty round means the joiner had not arrived.
 func (kd *KeibiDrop) noteEmptyAcceptWindow() {
 	if kd.probeSaysReachable() {
 		return

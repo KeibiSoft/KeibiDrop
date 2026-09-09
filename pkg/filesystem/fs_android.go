@@ -35,7 +35,8 @@ type Dir struct {
 type FS struct {
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
-	OnSlowFetch        func(waited time.Duration) // Unused on Android (no FUSE). Present so shared setup code compiles.
+	OnSlowFetch        func(waited time.Duration)  // Unused on Android (no FUSE). Present so shared setup code compiles.
+	OnLowDisk          func(low bool, free uint64) // Unused on Android, as above.
 	PrefetchOnOpen     bool
 	PrefetchAutoMB     int
 	ReadAheadWindowMB  int // Unused on Android (no FUSE). Present so shared setup code compiles.

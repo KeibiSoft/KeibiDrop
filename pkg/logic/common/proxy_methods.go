@@ -44,8 +44,9 @@ func NewImplStreamProvider(cli bindings.KeibiServiceClient) *ImplFileStreamProvi
 	return &ImplFileStreamProvider{cli: cli}
 }
 
-// NewImplStreamProviderDual routes bulk prefetch to TCP, on-demand reads and chunk
-// hashes to QUIC. A cache miss then does not queue behind a running prefetch.
+// NewImplStreamProviderDual routes bulk prefetch and the read-ahead window to TCP,
+// the reads a blocked reader waits on and chunk hashes to QUIC. A cache miss then
+// does not queue behind a running prefetch or behind the window.
 func NewImplStreamProviderDual(bulk, fast bindings.KeibiServiceClient) *ImplFileStreamProvider {
 	return &ImplFileStreamProvider{cli: bulk, fast: fast}
 }
@@ -144,6 +145,21 @@ func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint
 		return nil, err
 	}
 
+	rfs := NewImplRemoteFileStream(stream, inode, path)
+	rfs.onFetch = sp.onFetch
+	return rfs, nil
+}
+
+// OpenRemoteFileBulk opens a read stream for predicted fetches: TCP first, QUIC when
+// TCP is dead. The read-ahead window fetches on it (types.BulkReadOpener), so the
+// miss lane carries only the reads a blocked reader waits on.
+func (sp *ImplFileStreamProvider) OpenRemoteFileBulk(ctx context.Context, inode uint64, path string) (types.RemoteFileStream, error) {
+	stream, err := preferBulk(sp, func(c bindings.KeibiServiceClient) (grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse], error) {
+		return c.Read(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
 	rfs := NewImplRemoteFileStream(stream, inode, path)
 	rfs.onFetch = sp.onFetch
 	return rfs, nil

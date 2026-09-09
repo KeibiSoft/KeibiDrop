@@ -38,8 +38,9 @@ func (f fakeRouteCli) StreamFile(_ context.Context, _ *bindings.StreamFileReques
 	return nil, f.note("StreamFile")
 }
 
-// TestProviderRouting pins the dual stream provider's routing contract: reads prefer QUIC
-// (fall back to TCP), bulk StreamFile prefers TCP (falls back to QUIC), single-client unchanged.
+// TestProviderRouting pins the dual stream provider's routing contract: the reads a
+// blocked reader waits on prefer QUIC (fall back to TCP), bulk StreamFile and the
+// read-ahead window's lane prefer TCP (fall back to QUIC), single-client unchanged.
 func TestProviderRouting(t *testing.T) {
 	ctx := context.Background()
 
@@ -80,6 +81,20 @@ func TestProviderRouting(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("both alive: the read-ahead window rides TCP", func(t *testing.T) {
+		sp, calls := setup(false, false)
+		_, err := sp.OpenRemoteFileBulk(ctx, 1, "/f")
+		require.NoError(t, err)
+		require.Equal(t, []string{"tcp.Read"}, *calls)
+	})
+
+	t.Run("TCP dead: the window falls back to QUIC", func(t *testing.T) {
+		sp, calls := setup(true, false)
+		_, err := sp.OpenRemoteFileBulk(ctx, 1, "/f")
+		require.NoError(t, err)
+		require.Equal(t, []string{"tcp.Read", "quic.Read"}, *calls)
+	})
+
 	t.Run("single-client provider unchanged", func(t *testing.T) {
 		calls := &[]string{}
 		sp := NewImplStreamProvider(fakeRouteCli{name: "tcp", calls: calls})
@@ -87,6 +102,8 @@ func TestProviderRouting(t *testing.T) {
 		require.NoError(t, err)
 		_, err = sp.StreamFile(ctx, "/f", 0)
 		require.NoError(t, err)
-		require.Equal(t, []string{"tcp.Read", "tcp.StreamFile"}, *calls)
+		_, err = sp.OpenRemoteFileBulk(ctx, 1, "/f")
+		require.NoError(t, err)
+		require.Equal(t, []string{"tcp.Read", "tcp.StreamFile", "tcp.Read"}, *calls)
 	})
 }

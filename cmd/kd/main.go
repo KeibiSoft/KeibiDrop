@@ -814,6 +814,7 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 	}
 	if showAll || what == "ip" {
 		data["ip"] = kd.LocalIPv6IP
+		data["ipv4"] = kd.PublicIPv4()
 	}
 	if showAll || what == "peer" || what == "peer fingerprint" {
 		pfp, _ := kd.GetPeerFingerprint()
@@ -821,6 +822,7 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 	}
 	if showAll || what == "peer ip" {
 		data["peer_ip"] = kd.PeerIPv6IP
+		data["peer_ipv4"] = kd.PeerIPv4IP
 	}
 	if showAll || what == "relay" {
 		data["relay"] = kd.RelayEndoint.String()
@@ -1018,6 +1020,8 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"peer_fingerprint":  pfp,
 		"ip":                kd.LocalIPv6IP,
 		"peer_ip":           kd.PeerIPv6IP,
+		"ipv4":              kd.PublicIPv4(),
+		"peer_ipv4":         kd.PeerIPv4IP,
 		"connection_mode":   kd.ConnectionMode,
 		"quic_lane":         kd.QUICLaneStatus(),
 		"quic_inbound":      kd.QUICInboundAccepted(),
@@ -1036,6 +1040,7 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 	data["state_text"] = st.Text
 	data["mount_ready"] = st.MountReady
 	data["throttled"] = st.Throttled
+	data["disk_low"] = st.DiskLow
 	data["throughput"] = map[string]any{
 		"recv_bps": st.RecvBps,
 		"sent_bps": st.SentBps,

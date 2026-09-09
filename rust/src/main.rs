@@ -2594,6 +2594,16 @@ fn main() {
                                 "The folder could not be remounted ({}). Files still arrive in the save folder.",
                                 reason
                             ));
+                        } else if let Some(free_mb) = evt.strip_prefix("disk_low:") {
+                            // The engine says it once per crossing; reads that
+                            // need bytes from the peer fail until space is freed.
+                            show_toast(&weak_evt, "The save folder's disk is almost full.");
+                            system_notify(&format!(
+                                "The save folder's disk is almost full ({} MB free). Reads from the peer stop until space is freed.",
+                                free_mb
+                            ));
+                        } else if evt.starts_with("disk_ok:") {
+                            show_toast(&weak_evt, "The save folder's disk has space again.");
                         }
 
                         // File arrival notifications

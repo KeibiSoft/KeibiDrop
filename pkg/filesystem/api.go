@@ -33,6 +33,9 @@ type FS struct {
 	// OnSlowFetch fires when one demand fetch held a reader for longer than
 	// SlowFetchNotice. The session decides what that means for its link.
 	OnSlowFetch func(waited time.Duration)
+	// OnLowDisk fires once per crossing when the save folder's disk drops under
+	// LowDiskFloor (low true) or has space again (low false).
+	OnLowDisk func(low bool, free uint64)
 
 	// Collab sync options (set from env before Mount).
 	PrefetchOnOpen    bool   // If true, Open() fetches the whole file and writes it to local disk.
@@ -208,6 +211,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	root.warmDisabled = os.Getenv("KEIBIDROP_WARM_SIBLINGS") == "0"
 	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
 	root.SetOnSlowFetch(fs.OnSlowFetch)
+	root.SetOnLowDisk(fs.OnLowDisk)
 	fs.ctxMu.Lock()
 	ctx := fs.ctx
 	fs.ctxMu.Unlock()
@@ -299,6 +303,7 @@ func (fs *FS) RefreshCallbacks() {
 	}
 	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
 	root.SetOnSlowFetch(fs.OnSlowFetch)
+	root.SetOnLowDisk(fs.OnLowDisk)
 	fs.ctxMu.Lock()
 	ctx := fs.ctx
 	fs.ctxMu.Unlock()

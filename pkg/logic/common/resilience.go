@@ -57,7 +57,7 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	kd.HealthMonitor = kd.newConfiguredHealthMonitor(kd.session, kd.KDClient, logger)
 
 	kd.ReconnectManager = session.NewReconnectManager(kd.session, kd.logger)
-	kd.ReconnectManager.CachedPeerIP = kd.PeerIPv6IP
+	kd.ReconnectManager.CachedPeerIP = kd.peerDirectIP()
 	kd.ReconnectManager.CachedPeerPort = kd.session.PeerPort
 	if !kd.IsLocalMode {
 		kd.ReconnectManager.RelayRefresh = func() error {
@@ -77,7 +77,7 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 			if sess == nil {
 				return "", 0, fmt.Errorf("session nil during relay lookup")
 			}
-			return kd.PeerIPv6IP, sess.PeerPort, nil
+			return kd.peerDirectIP(), sess.PeerPort, nil
 		}
 	}
 	kd.ReconnectManager.AcceptConn = func(timeout time.Duration) (net.Conn, error) {
@@ -388,7 +388,7 @@ func (kd *KeibiDrop) onReconnected() {
 	kd.mu.Unlock()
 
 	if rm != nil && sess != nil {
-		rm.CachedPeerIP = kd.PeerIPv6IP
+		rm.CachedPeerIP = kd.peerDirectIP()
 		rm.CachedPeerPort = sess.PeerPort
 	}
 	if rm != nil {

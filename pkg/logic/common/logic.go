@@ -35,14 +35,14 @@ const Timeout = 10*60 - 5
 
 // bridgeRoundWait bounds one round's wait for a joiner on the bridge. It matches the
 // direct accept window, so a round is the same length whichever path it takes.
-const bridgeRoundWait = 15 * time.Second
+var bridgeRoundWait = 15 * time.Second // A variable so the round test can shrink it.
 
 // joinBridgeWait bounds the joiner's wait for the creator's hello on its bridge
 // leg. A creator with an open inbound accepts our direct dial, then dials our
 // listener for the full DirectDialTimeout before it takes the bridge, because a
 // direct handshake carries no reachability verdict. It can also still be inside
 // one direct accept window when we arrive. The window covers both, with margin.
-const joinBridgeWait = 2 * (session.DirectDialTimeout + bridgeRoundWait)
+var joinBridgeWait = 2 * (session.DirectDialTimeout + bridgeRoundWait)
 
 // dropOutboundConn closes a completed outbound conn and forgets it. Every LAN bail-out
 // needs this: the outbound handshake has already succeeded by then, and ResetOutboundCrypto
@@ -918,17 +918,11 @@ func (kd *KeibiDrop) JoinRoom() error {
 		kd.session.OwnInboundBlocked = kd.InboundBlocked()
 		kd.session.OwnMixedLegs = kd.BridgeAddr != "" && kd.PeerMixedLegs()
 
-		// 2. Try direct IPv6 P2P (skip if peer has no IPv6, e.g. mobile).
-		var directErr error
-		switch {
-		case kd.PeerInboundBlocked(): // dialing it would only burn the timeout
-			directErr = fmt.Errorf("peer advertises a blocked inbound")
-		case kd.PeerIPv6IP != "":
-			peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
-			directErr = session.PerformOutboundHandshake(kd.session, peerAddr)
-		default:
-			directErr = fmt.Errorf("peer has no IPv6 address")
-		}
+		// 2. Try direct P2P: IPv6 first, then the public IPv4 from the peer's
+		// registration (a NAS with a forwarded port has no IPv6 route to
+		// offer). A family the relay could not reach is skipped; dialing it
+		// would only burn the timeout.
+		directErr := kd.dialPeerDirect(logger, kd.peerDialAddrs(kd.session.PeerPort))
 
 		needBridge := false
 		// keepDirectOut: the direct outbound stays (it carries our reads) and only
@@ -1257,8 +1251,8 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 		return false, fmt.Errorf("create-room: inbound listener not open and no bridge configured")
 	case kd.listener == nil:
 		logger.Warn("Inbound listener not open (prior bridge fallback), using bridge")
-	case kd.LocalIPv6IP == "" && kd.BridgeAddr != "":
-		logger.Info("No IPv6, skipping direct P2P, using bridge")
+	case kd.LocalIPv6IP == "" && kd.PublicIPv4() == "" && kd.BridgeAddr != "":
+		logger.Info("No public address known, skipping direct P2P, using bridge")
 		direct = false
 	case kd.InboundBlocked() && kd.BridgeAddr != "":
 		// Nothing reaches our listener, so the joiner's dial cannot arrive.
@@ -1338,17 +1332,18 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 		}
 	}
 
-	// Nobody arrived. Close the listener so a late joiner gets "connection refused"
-	// instead of a TCP accept nobody reads; the next round re-arms it.
-	if direct {
-		kd.listener.Close()
-		kd.listener = nil
-		if round == 0 {
-			// Learn reachability once. Re-marking every round would say nothing new
-			// and would keep skipping the direct window for the rest of the budget.
-			kd.noteEmptyAcceptWindow()
-		}
-	}
+	// Nobody arrived. The listener stays open for the next round: closing it
+	// here reset a dial that had just landed in its backlog (seen 2026-09-09
+	// 20:49: the joiner read "connection reset" 33 ms after connecting and fell
+	// to all-bridge), and a dial in the gap got "connection refused" with the
+	// same outcome. A dial nobody reads is no longer a hazard: the joiner waits
+	// for the leg acknowledgement, and the next round's acceptor answers it.
+	// An empty window says nothing about reachability (the joiner had not
+	// arrived yet), so it marks nothing: the first round used to mark the
+	// inbound blocked when no probe verdict existed, which turned every later
+	// round bridge-only and advertised "blocked" to the joiner (BUGS 33). The
+	// relay probe is the reachability oracle; the joiner's accept window, where
+	// a dial was due, is the other evidence (JoinRoom).
 	return false, nil
 }
 
@@ -1381,7 +1376,16 @@ func (kd *KeibiDrop) finishDirectInbound(logger *slog.Logger, conn net.Conn) (bo
 		dialErr = errPeerInboundBlocked
 		logger.Info("Joiner advertises a blocked inbound; skipping the direct dial")
 	} else {
-		dialErr = session.PerformOutboundHandshake(kd.session, outboundAddr)
+		// The address it dialed us from first, then the other family it
+		// advertised: a joiner that reached us over IPv4 may take its own
+		// inbound over IPv6, or the other way round.
+		addrs := []string{outboundAddr}
+		for _, a := range kd.peerDialAddrs(kd.session.PeerPort) {
+			if a != outboundAddr {
+				addrs = append(addrs, a)
+			}
+		}
+		dialErr = kd.dialPeerDirect(logger, addrs)
 	}
 	switch {
 	case dialErr == nil:
@@ -1535,6 +1539,7 @@ func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond boo
 	fs := filesystem.NewFS(logger)
 	fs.OnRootReady = kd.BackfillRemoteFilesIntoFS // Announces that beat the mount sit in the tracker.
 	fs.OnSlowFetch = kd.noteSlowFetch
+	fs.OnLowDisk = kd.noteLowDisk
 	kd.KDSvc.SetFS(fs)
 
 	if err := fs.Mount(filepath.Clean(toMount), isSecond, filepath.Clean(toSave)); err != nil {

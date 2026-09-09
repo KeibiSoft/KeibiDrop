@@ -28,6 +28,9 @@ type SessionState struct {
 	// Throttled reports a free relay lane that held a reader for seconds this
 	// session. A data pack lifts it. Never true on a paid or direct session.
 	Throttled bool `json:"throttled"`
+	// DiskLow reports the save folder's disk under the free-space floor at the
+	// last fetch. Reads that need bytes from the peer fail until space is freed.
+	DiskLow bool `json:"disk_low"`
 	// MountReady reports the FUSE folder mounted and served. False with FUSE off.
 	MountReady  bool `json:"mount_ready"`
 	Attempt     int  `json:"attempt"`
@@ -57,7 +60,7 @@ func (kd *KeibiDrop) SessionState() SessionState {
 	sess := kd.session
 	kd.mu.Unlock()
 
-	st := SessionState{Mode: kd.ConnectionMode}
+	st := SessionState{Mode: kd.ConnectionMode, DiskLow: kd.diskLow.Load()}
 	st.SentBps, st.RecvBps = kd.throughput()
 	if rm != nil {
 		st.Attempt = rm.Attempts()
@@ -113,6 +116,9 @@ func (kd *KeibiDrop) SessionState() SessionState {
 	default:
 		st.State = StateIdle
 		st.Text = "Not connected"
+	}
+	if st.DiskLow {
+		st.Text += ", save disk almost full"
 	}
 	return st
 }
