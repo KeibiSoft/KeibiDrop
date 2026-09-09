@@ -133,6 +133,7 @@ func newPeer(ctx context.Context) (*peer, error) {
 	kd.ShareReadOnly = cfg.ShareReadOnly
 	kd.MountReadOnly = cfg.MountReadOnly
 	kd.PreserveMetadata = cfg.PreserveMetadata
+	kd.StartThroughputSampler(ctx)
 
 	if !cfg.Incognito {
 		// PassphraseProtect is deliberately not honored here: it reads from a
@@ -666,6 +667,7 @@ func (p *peer) status() any {
 	p.kd.SyncTracker.RemoteFilesMu.RLock()
 	remoteN := len(p.kd.SyncTracker.RemoteFiles)
 	p.kd.SyncTracker.RemoteFilesMu.RUnlock()
+	st := p.kd.SessionState()
 
 	return map[string]any{
 		"connected":          connected,
@@ -686,6 +688,13 @@ func (p *peer) status() any {
 		// showing bytes the origin does not hold. It is the signal that
 		// matters when the mount is standing in for the original data.
 		"peer_refused_writes": p.kd.PeerRefusedWrites(),
+		// One line of truth shared with kd status and the desktop app: what the
+		// link is doing right now, in words, plus the mount and the rate.
+		"session_state": st.State,
+		"state_text":    st.Text,
+		"mount_ready":   st.MountReady,
+		"in_bps":        st.RecvBps,
+		"out_bps":       st.SentBps,
 	}
 }
 

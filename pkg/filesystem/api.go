@@ -238,6 +238,10 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		}
 		return fmt.Errorf("FUSE mount failed for %s: %s", cleanMountPoint, hint)
 	}
+	// The host returned: the volume is gone, whether by Unmount or from outside
+	// (a Finder eject, diskutil). Drop the root like Unmount does, so IsMounted
+	// reports the truth and the run loop can mount again.
+	fs.root.Store(nil)
 	fs.logger.Warn("FUSE Mount completed", "mountPoint", cleanMountPoint)
 	return nil
 }

@@ -196,7 +196,8 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		logger.Warn("Not found")
+		// Normal while the peer has not registered yet; the caller logs the wait once.
+		logger.Debug("Not found")
 		return ErrNotFound
 	}
 
@@ -715,9 +716,9 @@ func (kd *KeibiDrop) openStreamProvider() types.FileStreamProvider {
 	// through the UDP relay starved the 2 s heartbeat ping, the lane was demoted
 	// mid-read, and the first block of every session cost 4 to 8 s (2026-09-06).
 	if qcc != nil && !relayed {
-		return NewImplStreamProviderDual(s.GRPCClient, bindings.NewKeibiServiceClient(qcc))
+		return NewImplStreamProviderDual(s.GRPCClient, bindings.NewKeibiServiceClient(qcc)).WithFetchHook(kd.noteFetch)
 	}
-	return NewImplStreamProvider(s.GRPCClient)
+	return NewImplStreamProvider(s.GRPCClient).WithFetchHook(kd.noteFetch)
 }
 
 // connectGRPCClientWithRetry waits until the gRPC server is ready and then creates the client.

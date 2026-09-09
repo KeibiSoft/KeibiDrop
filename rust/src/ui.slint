@@ -786,6 +786,15 @@ export component MainWindow inherits Window {
     in-out property<bool> peer_code_added: false;
     in-out property<bool> peer_code_error: false;
     in property<string> connect_status: "";
+    // Live session state from the engine, polled every second: the state for
+    // logic, the sentence for people, the rate. Same words as kd status.
+    in-out property<string> session_state: "";
+    in-out property<string> session_state_text: "";
+    in-out property<string> throughput_text: "";
+    // The engine could not start: shown in place of the code, with Retry and Quit.
+    in-out property<string> engine_error: "";
+    callback engine_retry();
+    callback engine_quit();
     // Version string from Go (set by Rust at init)
     in property<string> version_text: "";
     // Newer released version, set by Rust when the update check finds one
@@ -980,8 +989,8 @@ export component MainWindow inherits Window {
             font-size: 12px;
         }
 
-        // Card 2: Your Code
-        snd := SectionElement {
+        // Card 2: Your Code, or what stopped the engine, in its place
+        if root.engine_error == "": SectionElement {
             x: 261px;
             y: 459px;
             height: 178px;
@@ -996,6 +1005,44 @@ export component MainWindow inherits Window {
             helperText: root.local_mode ? "" : "Send this code to your peer via Telegram, Signal, Email or Carrier Pigeon.";
             process_code => { root.copy_my_code() }
             sectionNumber: 2;
+        }
+        if root.engine_error != "": Rectangle {
+            x: 261px;
+            y: 459px;
+            width: 570px;
+            height: 178px;
+            border-radius: 7px;
+            background: rgba(239,68,68,0.08);
+            border-width: 0.5px;
+            border-color: rgba(239,68,68,0.35);
+            Text {
+                x: 16px;
+                y: 14px;
+                width: parent.width - 32px;
+                text: "KeibiDrop could not start";
+                color: #ef4444;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            Text {
+                x: 16px;
+                y: 40px;
+                width: parent.width - 32px;
+                height: 80px;
+                text: root.engine_error;
+                color: #e5e7eb;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                x: 16px;
+                y: 128px;
+                height: 34px;
+                spacing: 10px;
+                alignment: start;
+                PillButton { text: "Retry"; clicked => { root.engine_retry(); } }
+                PillButton { text: "Quit"; clicked => { root.engine_quit(); } }
+            }
         }
 
         // Connect button (replaces separate Create/Join, role determined by fingerprint tiebreaker)
@@ -1412,12 +1459,22 @@ export component MainWindow inherits Window {
                 height: 8px;
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
-                background: #22c55e;
+                background: root.session_state == "connected" || root.session_state == "" ? #22c55e
+                          : root.session_state == "gave_up" ? #ef4444
+                          : #d97706;
             }
             Text {
-                text: "Connected";
-                color: #22c55e;
+                text: root.session_state_text != "" ? root.session_state_text : "Connected";
+                color: root.session_state == "connected" || root.session_state == "" ? #22c55e
+                     : root.session_state == "gave_up" ? #ef4444
+                     : #d97706;
                 font-size: 13px;
+                vertical-alignment: center;
+            }
+            if root.throughput_text != "": Text {
+                text: root.throughput_text;
+                color: #777;
+                font-size: 11px;
                 vertical-alignment: center;
             }
             if root.connection_mode != "": Rectangle {
@@ -1595,12 +1652,22 @@ export component MainWindow inherits Window {
                 height: 8px;
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
-                background: #22c55e;
+                background: root.session_state == "connected" || root.session_state == "" ? #22c55e
+                          : root.session_state == "gave_up" ? #ef4444
+                          : #d97706;
             }
             Text {
-                text: "Connected · FUSE mounted";
-                color: #22c55e;
+                text: root.session_state_text != "" ? root.session_state_text : "Connected · FUSE mounted";
+                color: root.session_state == "connected" || root.session_state == "" ? #22c55e
+                     : root.session_state == "gave_up" ? #ef4444
+                     : #d97706;
                 font-size: 13px;
+                vertical-alignment: center;
+            }
+            if root.throughput_text != "": Text {
+                text: root.throughput_text;
+                color: #777;
+                font-size: 11px;
                 vertical-alignment: center;
             }
             if root.connection_mode != "": Rectangle {

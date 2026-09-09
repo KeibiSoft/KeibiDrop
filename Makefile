@@ -108,7 +108,7 @@ test-race:
 # crypto, discovery, config, CLI, mobile bindings). Keychain suites
 # self-skip on runners without a keychain.
 test-pkgs:
-	go test -count=1 -timeout 300s ./pkg/identity/ ./pkg/logic/service/ ./pkg/crypto/ ./pkg/discovery/ ./internal/testkit/ ./cmd/kd/ ./internal/fp/ ./pkg/config/ ./pkg/sync-tracker/ ./pkg/feedback/ ./mobile/
+	go test -count=1 -timeout 300s ./pkg/identity/ ./pkg/logic/service/ ./pkg/crypto/ ./pkg/discovery/ ./internal/testkit/ ./cmd/kd/ ./internal/fp/ ./pkg/config/ ./pkg/sync-tracker/ ./pkg/feedback/ ./mobile/ ./cmd/kdmcp/
 
 # Headless Slint UI tests: real ui.slint, no engine, no display. Needs
 # libkeibidrop.a (make build-static-rust-bridge) for linking only.

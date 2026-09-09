@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -128,6 +127,18 @@ type KeibiDrop struct {
 	// connectCancelled makes a pending CreateRoom or JoinRoom wait return, so a
 	// disconnect frees the daemon instead of holding it until Timeout.
 	connectCancelled atomic.Bool
+	// activeFetches counts on-demand block fetches in flight. A 16 MiB block on
+	// a slow link holds the wire for seconds and can starve a heartbeat, so a
+	// failed heartbeat during one is deferred like one during a pull.
+	activeFetches atomic.Int64
+	// connectStatus is the last connect_status text emitted while a create or
+	// join waits for the peer. SessionState shows it; the wait clears it.
+	connectStatus atomic.Value
+	// Throughput over the last sample interval, fed by throughput().
+	tpMu                   sync.Mutex
+	tpAt                   time.Time
+	tpSent, tpRecv         uint64
+	tpRateSent, tpRateRecv uint64
 
 	// Signals for loop management.
 	signals      chan TaskSignal
@@ -794,21 +805,7 @@ func (kd *KeibiDrop) Run() {
 						logger.Info("FUSE already mounted, waiting for disconnect")
 						<-kd.ctx.Done()
 					} else {
-						logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
-						mountDone := make(chan struct{})
-						go func() {
-							if err := kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave)); err != nil {
-								logger.Error("Filesystem mount failed", "error", err)
-							} else {
-								logger.Info("Filesystem mount session ended")
-							}
-							close(mountDone)
-						}()
-						select {
-						case <-mountDone:
-						case <-kd.ctx.Done():
-							logger.Info("Context cancelled while FUSE mounted")
-						}
+						kd.mountLoop(kd.ctx, logger)
 					}
 				} else {
 					logger.Warn("No FS to mount")

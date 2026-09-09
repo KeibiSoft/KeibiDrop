@@ -34,6 +34,10 @@ func mapReadErr(err error) error {
 type ImplFileStreamProvider struct {
 	cli  bindings.KeibiServiceClient // Bulk channel (TCP): StreamFile prefetch.
 	fast bindings.KeibiServiceClient // Interactive channel (QUIC): on-demand reads and chunk hashes. Nil = use cli.
+	// onFetch reports an on-demand block fetch in flight (true) and done (false).
+	// Nil when nobody listens. The health monitor uses it to defer a disconnect
+	// verdict while a block is streaming.
+	onFetch func(active bool)
 }
 
 func NewImplStreamProvider(cli bindings.KeibiServiceClient) *ImplFileStreamProvider {
@@ -46,11 +50,18 @@ func NewImplStreamProviderDual(bulk, fast bindings.KeibiServiceClient) *ImplFile
 	return &ImplFileStreamProvider{cli: bulk, fast: fast}
 }
 
+// WithFetchHook installs the fetch-in-flight callback and returns the provider.
+func (sp *ImplFileStreamProvider) WithFetchHook(h func(active bool)) *ImplFileStreamProvider {
+	sp.onFetch = h
+	return sp
+}
+
 type ImplRemoteFileStream struct {
-	stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse]
-	handle uint64
-	path   string
-	mu     sync.Mutex // Serializes Send+Recv pairs. gRPC streams are not concurrency-safe.
+	stream  grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse]
+	handle  uint64
+	path    string
+	mu      sync.Mutex // Serializes Send+Recv pairs. gRPC streams are not concurrency-safe.
+	onFetch func(active bool)
 }
 
 func NewImplRemoteFileStream(stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse], inode uint64, path string) *ImplRemoteFileStream {
@@ -65,6 +76,10 @@ func (rfs *ImplRemoteFileStream) ReadAt(ctx context.Context, offset int64, size 
 	// Without this lock the stream framing corrupts.
 	rfs.mu.Lock()
 	defer rfs.mu.Unlock()
+	if rfs.onFetch != nil {
+		rfs.onFetch(true)
+		defer rfs.onFetch(false)
+	}
 
 	err := rfs.stream.Send(&bindings.ReadRequest{Handle: rfs.handle, Path: rfs.path, Offset: uint64(offset), Size: uint32(size)})
 	if err != nil {
@@ -129,7 +144,9 @@ func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint
 		return nil, err
 	}
 
-	return NewImplRemoteFileStream(stream, inode, path), nil
+	rfs := NewImplRemoteFileStream(stream, inode, path)
+	rfs.onFetch = sp.onFetch
+	return rfs, nil
 }
 
 // StreamFile starts a push-based download via the server-streaming StreamFile RPC.

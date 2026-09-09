@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-package main
+package common
 
 import (
 	"os"
@@ -18,7 +18,7 @@ import (
 // would report ready while every read still fails.
 func TestIsLiveMountRejectsPlainDirectory(t *testing.T) {
 	dir := t.TempDir()
-	if isLiveMount(dir) {
+	if MountIsLive(dir) {
 		t.Fatalf("%s is an ordinary directory, not a mount", dir)
 	}
 
@@ -26,13 +26,13 @@ func TestIsLiveMountRejectsPlainDirectory(t *testing.T) {
 	if err := os.Mkdir(nested, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if isLiveMount(nested) {
+	if MountIsLive(nested) {
 		t.Fatalf("%s is an ordinary directory, not a mount", nested)
 	}
 }
 
 func TestIsLiveMountRejectsMissingPath(t *testing.T) {
-	if isLiveMount(filepath.Join(t.TempDir(), "does-not-exist")) {
+	if MountIsLive(filepath.Join(t.TempDir(), "does-not-exist")) {
 		t.Fatal("a path that does not exist cannot be a live mount")
 	}
 }
@@ -58,7 +58,7 @@ func TestIsLiveMountAcceptsARealMount(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			continue
 		}
-		if isLiveMount(path) {
+		if MountIsLive(path) {
 			return // found one, the positive case holds
 		}
 	}

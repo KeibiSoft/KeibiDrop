@@ -745,6 +745,7 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 }
 
 func (kd *KeibiDrop) JoinRoom() error {
+	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "join-room")
 	kd.connectCancelled.Store(false)
 	if kd.session == nil {
@@ -780,12 +781,15 @@ func (kd *KeibiDrop) JoinRoom() error {
 		keyConn.Close()
 		logger.Info("Local key exchange complete (join side)")
 	} else {
-		if kd.OnEvent != nil {
-			kd.OnEvent("connect_status:Waiting for peer...")
-		}
+		kd.emitConnectStatus("Waiting for peer...")
+		// Poll once a second while the peer is likely mid-click, then every three
+		// seconds. A joiner waiting for an absent peer cost the relay one request
+		// per second for the whole minute, once per redial (BUGS 16). Sixty
+		// seconds in total, as before.
 		const relayRetryDelay = 1 * time.Second
-		const relayPhase1 = 15
-		const relayPhase2 = 45
+		const relaySlowRetryDelay = 3 * time.Second
+		const relayPhase1 = 15 // attempts at relayRetryDelay
+		const relayPhase2 = 15 // attempts at relaySlowRetryDelay
 		relayMaxRetries := relayPhase1 + relayPhase2
 		// Snapshot kd.ctx under kd.mu: Run's reconnect branch swaps it under the same lock.
 		kd.mu.Lock()
@@ -800,12 +804,20 @@ func (kd *KeibiDrop) JoinRoom() error {
 			if !errors.Is(relayErr, ErrNotFound) {
 				return relayErr
 			}
-			if attempt == relayPhase1 && kd.OnEvent != nil {
-				kd.OnEvent("connect_status:peer_not_ready")
+			if attempt == 0 {
+				logger.Info("Peer not on the relay yet, waiting for it")
+			}
+			if attempt == relayPhase1 {
+				kd.emitConnectStatus("peer_not_ready")
+				logger.Info("Peer still not on the relay, polling every three seconds")
 			}
 			if attempt < relayMaxRetries {
+				delay := relayRetryDelay
+				if attempt >= relayPhase1 {
+					delay = relaySlowRetryDelay
+				}
 				select {
-				case <-time.After(relayRetryDelay):
+				case <-time.After(delay):
 				case <-ctx.Done():
 					return ctx.Err()
 				}
@@ -1031,9 +1043,7 @@ func (kd *KeibiDrop) Connect() error {
 	}
 	if ownFP < peerFP {
 		logger.Info("Fingerprint tiebreak: I am creator", "own", ownFP[:8], "peer", peerFP[:8])
-		if kd.OnEvent != nil {
-			kd.OnEvent("connect_status:Waiting for peer to connect...")
-		}
+		kd.emitConnectStatus("Waiting for peer to connect...")
 		return kd.CreateRoom()
 	}
 	logger.Info("Fingerprint tiebreak: I am joiner", "own", ownFP[:8], "peer", peerFP[:8])
@@ -1066,6 +1076,7 @@ func DecideLocalRole(myName, peerName, peerAddr string) bool {
 }
 
 func (kd *KeibiDrop) CreateRoom() error {
+	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "create-room")
 	kd.connectCancelled.Store(false)
 	if kd.session == nil {

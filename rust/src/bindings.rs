@@ -8497,6 +8497,12 @@ extern "C" {
 extern "C" {
     pub fn KD_SaveCurrentPeerAsContact(name: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
+extern "C" {
+    pub fn KD_SessionStateLine() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_SessionStateJSON() -> *mut ::std::os::raw::c_char;
+}
 pub type __builtin_va_list = [__va_list_tag; 1usize];
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

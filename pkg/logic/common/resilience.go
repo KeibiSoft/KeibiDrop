@@ -223,7 +223,17 @@ func (kd *KeibiDrop) StopConnectionResilience() {
 func (kd *KeibiDrop) hasActiveTransfers() bool {
 	kd.activeDownloadsMu.Lock()
 	defer kd.activeDownloadsMu.Unlock()
-	return len(kd.activeDownloads) > 0
+	return len(kd.activeDownloads) > 0 || kd.activeFetches.Load() > 0
+}
+
+// noteFetch counts on-demand block fetches in flight for hasActiveTransfers.
+// Wired into every stream provider by openStreamProvider.
+func (kd *KeibiDrop) noteFetch(active bool) {
+	if active {
+		kd.activeFetches.Add(1)
+		return
+	}
+	kd.activeFetches.Add(-1)
 }
 
 // rekeyCooldown bounds how often a proactive rekey may fire, so a stuck reconnect
@@ -303,6 +313,15 @@ func (kd *KeibiDrop) onRekeyNeeded() bool {
 // onDisconnect runs when the health monitor loses the connection.
 func (kd *KeibiDrop) onDisconnect() {
 	logger := kd.logger.With("event", "disconnect")
+
+	// A re-fired verdict (see HealthMonitor.handleFailure) after the reconnect
+	// manager took over would restart its loop: leave it alone.
+	kd.mu.Lock()
+	owner := kd.ReconnectManager
+	kd.mu.Unlock()
+	if owner != nil && owner.State() != session.ReconnectStateConnected {
+		return
+	}
 
 	// Do not tear down during transfers: file data starves heartbeat RPCs, so failures
 	// are normal then. A stuck transfer holds the count forever, and an unbounded

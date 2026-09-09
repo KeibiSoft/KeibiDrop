@@ -67,6 +67,14 @@ func poolSizeForFile(size int64) int {
 // round trips per 16 MiB into one.
 const ReadAheadBlock = config.GRPCStreamBuffer // 16 MiB
 
+// ProbeFetch is what one cache miss fetches when the read is not part of a
+// proven sequential stream: the first touch of a file, a thumbnailer, an NLE's
+// filmstrip probes, a seek. Measured 2026-09-09: twenty single-frame probes
+// across a cold 82 MB clip pulled all 82 MB at ReadAheadBlock granularity. A
+// stream that has consumed half a block (the read-ahead gate) is back on whole
+// blocks. Read-ahead off (window 0) keeps the plain block fetch.
+const ProbeFetch = 2 * 1024 * 1024
+
 // SmallFileWarmThreshold marks files the sibling warmer batches. It stays
 // below the ReadBatch frame cap, so a warmed file arrives as one frame.
 const SmallFileWarmThreshold = 256 * 1024

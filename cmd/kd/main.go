@@ -154,6 +154,7 @@ func runDaemon() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	daemonCtx = ctx
 
 	kd, err := common.NewKeibiDrop(ctx, logger, isFuse, relayURL,
 		cfg.InboundPort, cfg.OutboundPort, cfg.MountPath, cfg.SavePath,
@@ -215,6 +216,7 @@ func runDaemon() {
 
 	go kd.Run()
 
+	kd.StartThroughputSampler(ctx)
 	if cfg.AutoConnectPeer != "" {
 		kd.AutoConnectPeer = cfg.AutoConnectPeer
 		if err := kd.StartAutoConnect(ctx); err != nil {
@@ -307,7 +309,7 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		return cmdShow(kd, req.Args)
 
 	case "register":
-		if len(req.Args) < 1 {
+		if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
 			return errResponse("usage: kd register <fingerprint-or-address>")
 		}
 		if kd.IsLocalMode {
@@ -574,13 +576,19 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		return okResponse(map[string]string{"status": "connecting"})
 
 	case "save-contact":
-		if len(req.Args) < 1 {
+		if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
 			return errResponse("usage: kd save-contact <name>")
 		}
 		if err := kd.SaveCurrentPeerAsContact(req.Args[0]); err != nil {
 			return errResponse(err.Error())
 		}
-		return okResponse(map[string]string{"saved": req.Args[0]})
+		out := map[string]string{"saved": req.Args[0]}
+		if peer, err := armAutoConnect(kd, req.Args[0]); err != nil {
+			out["auto_connect_error"] = err.Error()
+		} else if peer != "" {
+			out["auto_connect"] = peer
+		}
+		return okResponse(out)
 
 	case "unshare":
 		if len(req.Args) < 1 {
@@ -1023,6 +1031,19 @@ func cmdStatus(kd *common.KeibiDrop) Response {
 		"credit":            kd.TokensCreditStatus(),
 	}
 
+	st := kd.SessionState()
+	data["state"] = st.State
+	data["state_text"] = st.Text
+	data["mount_ready"] = st.MountReady
+	data["throughput"] = map[string]any{
+		"recv_bps": st.RecvBps,
+		"sent_bps": st.SentBps,
+		"window":   "last second",
+	}
+	if st.State == common.StateReconnecting {
+		data["reconnect"] = map[string]int{"attempt": st.Attempt, "max_attempts": st.MaxAttempts}
+	}
+
 	kd.SyncTracker.LocalFilesMu.RLock()
 	data["local_files"] = len(kd.SyncTracker.LocalFiles)
 	kd.SyncTracker.LocalFilesMu.RUnlock()
@@ -1325,4 +1346,33 @@ func feedbackStars(args []string) (int, []string) {
 		}
 	}
 	return stars, rest
+}
+
+// daemonCtx is the daemon's root context, so a request handler can arm the
+// auto-connect watchdog for the rest of the process.
+var daemonCtx context.Context
+
+// armAutoConnect makes a freshly saved contact the connect-on-start peer when
+// none is set yet, so a laptop that paired with an always-on box comes back on
+// its own after the box restarts (BUGS 10). An existing choice is kept; the
+// return value names the armed peer either way.
+func armAutoConnect(kd *common.KeibiDrop, name string) (string, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	if cfg.AutoConnectPeer != "" {
+		return cfg.AutoConnectPeer, nil
+	}
+	cfg.AutoConnectPeer = name
+	if err := config.Save(cfg); err != nil {
+		return "", err
+	}
+	kd.AutoConnectPeer = name
+	if daemonCtx != nil && !kd.AutoConnectArmed() {
+		if err := kd.StartAutoConnect(daemonCtx); err != nil {
+			return name, err
+		}
+	}
+	return name, nil
 }

@@ -47,10 +47,10 @@ type HealthMonitor struct {
 	rekeyBytesMark   uint64 // session byte total at the previous tick; detects serving activity for the rekey idle gate
 
 	// Configuration
-	Interval    time.Duration // heartbeat interval (default 5s)
-	Timeout     time.Duration // per-heartbeat timeout (default 3s)
+	Interval    time.Duration // heartbeat interval (default 3s)
+	Timeout     time.Duration // per-heartbeat timeout (default 5s)
 	DegradedRTT time.Duration // RTT above this = degraded (default 500ms)
-	MaxFailures int           // failures before disconnect (default 3)
+	MaxFailures int           // failures before disconnect (default 4)
 
 	// Callbacks
 	OnHealthChange func(old, new ConnectionHealth)
@@ -78,13 +78,18 @@ type HealthMonitor struct {
 // NewHealthMonitor creates a new health monitor with default settings.
 func NewHealthMonitor(session *Session, client bindings.KeibiServiceClient, logger *slog.Logger) *HealthMonitor {
 	m := &HealthMonitor{
-		session:     session,
-		grpcClient:  client,
-		logger:      logger.With("component", "health-monitor"),
-		Interval:    5 * time.Second,
+		session:    session,
+		grpcClient: client,
+		logger:     logger.With("component", "health-monitor"),
+		// Four misses three seconds apart: a hard drop is declared in about 12 s
+		// (five misses five seconds apart took 25 s, BUGS 9). A heartbeat that
+		// times out instead of failing fast costs Timeout each, so that case is
+		// about 20 s. A block fetch in flight defers the verdict: see
+		// KeibiDrop.noteFetch.
+		Interval:    3 * time.Second,
 		Timeout:     5 * time.Second,
 		DegradedRTT: 500 * time.Millisecond,
-		MaxFailures: 5,
+		MaxFailures: 4,
 		// The monitor may always propose a rotation; onRekeyNeeded decides whether to act.
 		// Defaulting on here (not at each call site) keeps the monitor onReconnected rebuilds
 		// from silently disabling the near-wrap re-handshake for a key-update pair.
@@ -320,11 +325,19 @@ func (m *HealthMonitor) handleFailure(err error) {
 		oldHealth := ConnectionHealth(m.health.Load())
 		m.health.Store(int32(HealthDisconnected))
 
-		if oldHealth != HealthDisconnected {
+		transition := oldHealth != HealthDisconnected
+		// OnDisconnect may defer its verdict behind a transfer in flight, and a
+		// transfer stuck on a dead link never ends on its own. Re-fire every
+		// MaxFailures misses while still down, so the deferral cap is reached;
+		// the callback ignores the call once a reconnect owns the session.
+		refire := !transition && int(fails)%m.MaxFailures == 0
+		if transition {
 			m.logger.Error("Connection lost", "failures", fails)
 			if m.OnHealthChange != nil {
 				m.OnHealthChange(oldHealth, HealthDisconnected)
 			}
+		}
+		if transition || refire {
 			if m.OnDisconnect != nil {
 				m.OnDisconnect()
 			}

@@ -388,7 +388,7 @@ func timeoutOrDefault(req Request, def time.Duration) time.Duration {
 func cmdMountInfo(kd *common.KeibiDrop) Response {
 	ready := false
 	if kd.IsFUSE && kd.ToMount != "" && kd.IsRunning() {
-		ready = isLiveMount(kd.ToMount)
+		ready = common.MountIsLive(kd.ToMount)
 	}
 	mode := "on_demand"
 	if !kd.IsFUSE {
@@ -418,7 +418,7 @@ func cmdWaitMount(kd *common.KeibiDrop, d time.Duration) Response {
 	}
 	deadline := time.Now().Add(d)
 	for {
-		if kd.IsRunning() && kd.ToMount != "" && isLiveMount(kd.ToMount) {
+		if kd.IsRunning() && kd.ToMount != "" && common.MountIsLive(kd.ToMount) {
 			return okResponse(map[string]any{
 				"ready":      true,
 				"mount_path": kd.ToMount,
