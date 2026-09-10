@@ -39,6 +39,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # kd embeds cgofuse, which needs the WinFsp headers, the same way the
+      # release job builds it.
+      - name: Install WinFsp
+        if: vars.AZURE_SIGNING_PROFILE != ''
+        shell: pwsh
+        run: |
+          choco install winfsp -y
+          $winfspDir = "C:\Program Files (x86)\WinFsp"
+          echo "CPATH=$winfspDir\inc\fuse" >> $env:GITHUB_ENV
+          echo "CGO_LDFLAGS=-L$winfspDir\lib" >> $env:GITHUB_ENV
+
       - name: Build kd.exe
         if: vars.AZURE_SIGNING_PROFILE != ''
         shell: bash
