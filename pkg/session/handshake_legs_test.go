@@ -112,13 +112,18 @@ func TestHandshake_CreatorRefusesALegWhoseJoinerLeft(t *testing.T) {
 	defer ln.Close()
 	// The joiner dials, writes its handshake, waits for a byte that never comes
 	// (nobody accepts yet) and closes: exactly a stale backlog entry.
+	joinerDone := make(chan struct{})
 	go func() {
+		defer close(joinerDone)
 		c, dErr := net.Dial("tcp", ln.Addr().String())
 		if dErr == nil {
 			_ = performOutboundHandshake(bob, c, true) // returns ErrNoMixedAck and closes c
 		}
 	}()
-	time.Sleep(400 * time.Millisecond) // let the joiner give up before the accept
+	// The joiner gives up on its own; waiting for it here orders the accept
+	// after that, with no sleep, and keeps Cleanup's restore of mixedAckTimeout
+	// from racing the read inside the handshake.
+	<-joinerDone
 	c, err := ln.Accept()
 	require.NoError(t, err)
 	defer c.Close()
