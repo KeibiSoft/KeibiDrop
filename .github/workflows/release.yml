@@ -201,11 +201,13 @@ jobs:
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          # The three executables this job builds. The Rust window is not built
+          # on Windows (the Build Rust UI step skips this runner), so there is
+          # no keibidrop-rust.exe here to sign.
           files: |
             ${{ github.workspace }}\kd.exe
             ${{ github.workspace }}\keibidrop-cli.exe
             ${{ github.workspace }}\kdmcp.exe
-            ${{ github.workspace }}\rust\target\release\keibidrop-rust.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -214,7 +216,7 @@ jobs:
         if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
         shell: pwsh
         run: |
-          $files = @("kd.exe", "keibidrop-cli.exe", "kdmcp.exe", "rust\target\release\keibidrop-rust.exe")
+          $files = @("kd.exe", "keibidrop-cli.exe", "kdmcp.exe")
           $bad = 0
           foreach ($f in $files) {
             $sig = Get-AuthenticodeSignature -FilePath $f
