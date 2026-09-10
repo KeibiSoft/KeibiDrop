@@ -962,7 +962,7 @@ func (kd *KeibiDrop) BridgeInfo() BridgeStatus {
 	st.Busy = kd.busyFlag
 	st.Notice = kd.busyNotice
 	kd.mu.Unlock()
-	if kd.ConnectionMode == "bridge" {
+	if kd.ConnectionMode == "bridge" || kd.mixedLegs() {
 		st.Addr = kd.effectiveBridgeAddr()
 		if host, _, err := net.SplitHostPort(st.Addr); err == nil {
 			st.Via = host

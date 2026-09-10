@@ -176,6 +176,11 @@ type Dir struct {
 	// OpenStreamProvider methods wrap the loads.
 	onLocalChange      atomic.Pointer[func(event types.FileEvent)]
 	openStreamProvider atomic.Pointer[func() types.FileStreamProvider]
+	// onSlowFetch is the session's ear for a demand fetch that held a reader
+	// for seconds (SlowFetchNotice). Root-only and atomic like the two above.
+	onSlowFetch atomic.Pointer[func(waited time.Duration)]
+	// disk is the free-space guard of the save folder (disk_guard.go). Root-only.
+	disk diskGuard
 
 	// Collab sync options (propagated from FS).
 	PrefetchOnOpen bool // If true, Open() fetches the whole file and writes it to local disk.
@@ -338,6 +343,23 @@ func (d *Dir) SetCallbacks(onLocalChange func(event types.FileEvent), provider f
 	d.SetStreamProvider(provider)
 }
 
+// SetOnSlowFetch publishes the slow-fetch report. Call it on the root.
+func (d *Dir) SetOnSlowFetch(fn func(waited time.Duration)) {
+	d.onSlowFetch.Store(&fn)
+}
+
+// noteSlowFetch reports a demand fetch that held a reader for waited. It
+// routes through the root and does nothing while no session listens.
+func (d *Dir) noteSlowFetch(waited time.Duration) {
+	r := d.Root
+	if r == nil {
+		r = d
+	}
+	if p := r.onSlowFetch.Load(); p != nil && *p != nil {
+		(*p)(waited)
+	}
+}
+
 type File struct {
 	logger *slog.Logger
 
@@ -468,6 +490,10 @@ type File struct {
 
 	// PrefetchCancel cancels the background prefetch goroutine for this file.
 	PrefetchCancel context.CancelFunc
+
+	// sidecarTimer coalesces .kdbitmap writes after on-demand landings (sidecar.go).
+	sidecarMu    sync.Mutex
+	sidecarTimer *time.Timer
 
 	stat *winfuse.Stat_t
 

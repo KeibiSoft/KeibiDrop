@@ -1,0 +1,69 @@
+# Proves the Windows signing chain before a release tag: the OIDC login from
+# environment "release", then a real signature on a freshly built kd.exe with
+# the same action and inputs release.yml uses. Run it from the Actions tab.
+name: Windows signing check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sign-check:
+    runs-on: windows-2022
+    environment: release
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Azure login (OIDC, no stored secret)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login worked
+        shell: pwsh
+        run: |
+          Write-Host "Federated credential accepted for repo:KeibiSoft/KeibiDrop:environment:release"
+          if ('${{ vars.AZURE_SIGNING_PROFILE }}' -eq '') {
+            Write-Host "::notice::AZURE_SIGNING_PROFILE is not set yet: the identity validation is still pending. Login is proven; signing is not tried."
+          }
+
+      - name: Set up Go
+        if: vars.AZURE_SIGNING_PROFILE != ''
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build kd.exe
+        if: vars.AZURE_SIGNING_PROFILE != ''
+        shell: bash
+        run: go build -trimpath -o kd.exe ./cmd/kd
+
+      - name: Sign kd.exe (Azure Artifact Signing)
+        if: vars.AZURE_SIGNING_PROFILE != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\kd.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the signature
+        if: vars.AZURE_SIGNING_PROFILE != ''
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature -FilePath kd.exe
+          Write-Host "kd.exe : $($sig.Status)"
+          Write-Host "signer : $($sig.SignerCertificate.Subject)"
+          Write-Host "issuer : $($sig.SignerCertificate.Issuer)"
+          Write-Host "expires: $($sig.SignerCertificate.NotAfter)"
+          if ($sig.Status -ne "Valid") { throw "kd.exe is not validly signed: $($sig.Status)" }
+          Write-Host "::notice::kd.exe carries a valid signature from $($sig.SignerCertificate.Subject). Releases will be signed the same way."

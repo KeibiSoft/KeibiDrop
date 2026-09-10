@@ -22,6 +22,7 @@ import "C"
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -69,6 +70,10 @@ func sortedLocalKeys() []string {
 }
 
 var kd *common.KeibiDrop
+
+// kdCtx is the engine's root context, kept so a later call can arm the
+// auto-connect watchdog for the rest of the process.
+var kdCtx context.Context
 
 // Last error string. The mutex makes access thread-safe.
 var (
@@ -154,6 +159,8 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	kd = instance
 	kd.Cancel = c
 	kd.OnEvent = pushEvent
+	kdCtx = ctx
+	kd.StartThroughputSampler(ctx)
 
 	if !cfg.Incognito {
 		opts := common.EnableOpts{
@@ -1266,11 +1273,51 @@ func KD_SaveCurrentPeerAsContact(name *C.char) C.int {
 		setLastError(fmt.Errorf("not initialized"))
 		return -1
 	}
-	if err := kd.SaveCurrentPeerAsContact(C.GoString(name)); err != nil {
+	n := C.GoString(name)
+	if err := kd.SaveCurrentPeerAsContact(n); err != nil {
 		setLastError(err)
 		return -1
 	}
+	// The first saved contact becomes the connect-on-start peer (BUGS 10): a
+	// laptop that paired with an always-on box comes back on its own after the
+	// box restarts. An existing choice is kept; the contacts panel changes it.
+	if cfg, err := config.Load(); err == nil && cfg.AutoConnectPeer == "" {
+		cfg.AutoConnectPeer = n
+		if err := config.Save(cfg); err == nil {
+			kd.AutoConnectPeer = n
+			if kdCtx != nil && !kd.AutoConnectArmed() {
+				_ = kd.StartAutoConnect(kdCtx)
+			}
+		}
+	}
 	return 0
+}
+
+// KD_SessionStateJSON returns the engine's SessionState as JSON: the one line
+// of truth the status line shows, shared with kd status and kdmcp.
+//
+// KD_SessionStateLine returns state, text, mount_ready, recv_bps and sent_bps
+// separated by tabs, for a caller without a JSON parser (the desktop app).
+//
+//export KD_SessionStateLine
+func KD_SessionStateLine() *C.char {
+	if kd == nil {
+		return C.CString("idle\tNot started\tfalse\t0\t0")
+	}
+	st := kd.SessionState()
+	return C.CString(fmt.Sprintf("%s\t%s\t%t\t%d\t%d", st.State, st.Text, st.MountReady, st.RecvBps, st.SentBps))
+}
+
+//export KD_SessionStateJSON
+func KD_SessionStateJSON() *C.char {
+	if kd == nil {
+		return C.CString(`{"state":"idle","state_text":"Not started"}`)
+	}
+	b, err := json.Marshal(kd.SessionState())
+	if err != nil {
+		return C.CString(`{"state":"idle","state_text":""}`)
+	}
+	return C.CString(string(b))
 }
 
 func main() {}

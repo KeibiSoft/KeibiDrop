@@ -6,7 +6,7 @@
 
 //go:build windows
 
-package main
+package common
 
 import (
 	"errors"
@@ -14,12 +14,12 @@ import (
 	"os"
 )
 
-// isLiveMount reports whether the WinFsp mount is readable. Windows has no
+// MountIsLive reports whether the WinFsp mount is readable. Windows has no
 // device-id comparison to make here: WinFsp owns the whole path (a drive
 // letter, or a directory it creates itself), so becoming listable is the
 // readiness signal. An empty mount is still a live mount, hence the io.EOF
 // case.
-func isLiveMount(path string) bool {
+func MountIsLive(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false

@@ -35,14 +35,14 @@ const Timeout = 10*60 - 5
 
 // bridgeRoundWait bounds one round's wait for a joiner on the bridge. It matches the
 // direct accept window, so a round is the same length whichever path it takes.
-const bridgeRoundWait = 15 * time.Second
+var bridgeRoundWait = 15 * time.Second // A variable so the round test can shrink it.
 
 // joinBridgeWait bounds the joiner's wait for the creator's hello on its bridge
 // leg. A creator with an open inbound accepts our direct dial, then dials our
 // listener for the full DirectDialTimeout before it takes the bridge, because a
 // direct handshake carries no reachability verdict. It can also still be inside
 // one direct accept window when we arrive. The window covers both, with margin.
-const joinBridgeWait = 2 * (session.DirectDialTimeout + bridgeRoundWait)
+var joinBridgeWait = 2 * (session.DirectDialTimeout + bridgeRoundWait)
 
 // dropOutboundConn closes a completed outbound conn and forgets it. Every LAN bail-out
 // needs this: the outbound handshake has already succeeded by then, and ResetOutboundCrypto
@@ -745,6 +745,7 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 }
 
 func (kd *KeibiDrop) JoinRoom() error {
+	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "join-room")
 	kd.connectCancelled.Store(false)
 	if kd.session == nil {
@@ -780,12 +781,15 @@ func (kd *KeibiDrop) JoinRoom() error {
 		keyConn.Close()
 		logger.Info("Local key exchange complete (join side)")
 	} else {
-		if kd.OnEvent != nil {
-			kd.OnEvent("connect_status:Waiting for peer...")
-		}
+		kd.emitConnectStatus("Waiting for peer...")
+		// Poll once a second while the peer is likely mid-click, then every three
+		// seconds. A joiner waiting for an absent peer cost the relay one request
+		// per second for the whole minute, once per redial (BUGS 16). Sixty
+		// seconds in total, as before.
 		const relayRetryDelay = 1 * time.Second
-		const relayPhase1 = 15
-		const relayPhase2 = 45
+		const relaySlowRetryDelay = 3 * time.Second
+		const relayPhase1 = 15 // attempts at relayRetryDelay
+		const relayPhase2 = 15 // attempts at relaySlowRetryDelay
 		relayMaxRetries := relayPhase1 + relayPhase2
 		// Snapshot kd.ctx under kd.mu: Run's reconnect branch swaps it under the same lock.
 		kd.mu.Lock()
@@ -800,12 +804,20 @@ func (kd *KeibiDrop) JoinRoom() error {
 			if !errors.Is(relayErr, ErrNotFound) {
 				return relayErr
 			}
-			if attempt == relayPhase1 && kd.OnEvent != nil {
-				kd.OnEvent("connect_status:peer_not_ready")
+			if attempt == 0 {
+				logger.Info("Peer not on the relay yet, waiting for it")
+			}
+			if attempt == relayPhase1 {
+				kd.emitConnectStatus("peer_not_ready")
+				logger.Info("Peer still not on the relay, polling every three seconds")
 			}
 			if attempt < relayMaxRetries {
+				delay := relayRetryDelay
+				if attempt >= relayPhase1 {
+					delay = relaySlowRetryDelay
+				}
 				select {
-				case <-time.After(relayRetryDelay):
+				case <-time.After(delay):
 				case <-ctx.Done():
 					return ctx.Err()
 				}
@@ -886,30 +898,53 @@ func (kd *KeibiDrop) JoinRoom() error {
 			kd.session.ResetOutboundCrypto()
 		}
 
-		// 2. Try direct IPv6 P2P (skip if peer has no IPv6, e.g. mobile).
-		var directErr error
-		switch {
-		case kd.PeerInboundBlocked(): // dialing it would only burn the timeout
-			directErr = fmt.Errorf("peer advertises a blocked inbound")
-		case kd.PeerIPv6IP != "":
-			peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(kd.session.PeerPort))
-			directErr = session.PerformOutboundHandshake(kd.session, peerAddr)
-		default:
-			directErr = fmt.Errorf("peer has no IPv6 address")
+		// Learn our own reachability before the dial when no fresh verdict is cached:
+		// a blocked joiner that knows it skips the 15 s accept wait and tells the
+		// creator to skip its 15 s dial, so the mixed shape is up in about a second
+		// instead of sixteen (measured 2026-09-09: 16 to 26 s on a fresh daemon,
+		// 1 s once the verdict was cached). The relay answers a reachable listener
+		// within a round trip and a blocked one within its own dial timeout, and
+		// the verdict lives probeCacheTTL, so this costs a later join nothing.
+		if !kd.IsLocalMode && kd.BridgeAddr != "" {
+			kd.mu.Lock()
+			probeCtx := kd.ctx
+			kd.mu.Unlock()
+			kd.ProbeInboundReachability(probeCtx)
 		}
 
+		// Leg shape hints for the creator (advisory, see session.PeerHandshakeMessage).
+		// Keeping the direct leg needs a creator that knows the shape; its
+		// registration says whether it does.
+		kd.session.OwnInboundBlocked = kd.InboundBlocked()
+		kd.session.OwnMixedLegs = kd.BridgeAddr != "" && kd.PeerMixedLegs()
+
+		// 2. Try direct P2P: IPv6 first, then the public IPv4 from the peer's
+		// registration (a NAS with a forwarded port has no IPv6 route to
+		// offer). A family the relay could not reach is skipped; dialing it
+		// would only burn the timeout.
+		directErr := kd.dialPeerDirect(logger, kd.peerDialAddrs(kd.session.PeerPort))
+
 		needBridge := false
+		// keepDirectOut: the direct outbound stays (it carries our reads) and only
+		// the inbound leg comes from the bridge. Needs a creator that keeps its
+		// side of it, which OwnMixedLegs already checked.
+		keepDirectOut := false
 
 		switch {
 		case directErr == nil:
 			// Direct outbound succeeded. Accept inbound with 15s timeout.
 			// If the peer can't reach us (firewall blocks inbound IPv6),
-			// fall back to bridge for both directions.
+			// fall back to bridge for both directions, or keep the direct
+			// outbound and bridge only the inbound when the creator can.
 			// Nothing reaches our listener, so the peer's dial cannot arrive.
-			if kd.InboundBlocked() && kd.BridgeAddr != "" {
+			switch {
+			case kd.InboundBlocked() && kd.BridgeAddr != "" && kd.session.OwnMixedLegs:
+				logger.Info("Inbound is blocked on this network, keeping the direct outbound and taking the inbound from the bridge")
+				keepDirectOut = true
+			case kd.InboundBlocked() && kd.BridgeAddr != "":
 				logger.Info("Inbound is blocked on this network, taking the bridge without waiting on accept")
 				needBridge = true
-			} else {
+			default:
 				logger.Info("Direct P2P outbound connected, waiting for inbound (15s timeout)")
 
 				// Snapshot under kd.mu: a prior bridge-fallback timeout or a concurrent
@@ -954,6 +989,13 @@ func (kd *KeibiDrop) JoinRoom() error {
 						}
 						return fmt.Errorf("inbound accept timed out and no bridge configured")
 					}
+					if kd.session.OwnMixedLegs {
+						// The creator's own dial to us is timing out right now; it
+						// then keeps our leg and dials pair2, as we do here.
+						logger.Info("Keeping the direct outbound, taking the inbound from the bridge")
+						keepDirectOut = true
+						needBridge = false
+					}
 				} else {
 					kd.markInboundReachable()
 					kd.ConnectionMode = "direct"
@@ -971,6 +1013,23 @@ func (kd *KeibiDrop) JoinRoom() error {
 					kd.session.SetOutboundConn(nil)
 				}
 				kd.session.ResetOutboundCrypto()
+			}
+			if keepDirectOut {
+				inConn, err := kd.dialBridgeDir("pair2", logger)
+				if err != nil {
+					kd.dropOutboundConn()
+					kd.session.ResetOutboundCrypto()
+					return fmt.Errorf("bridge dial (inbound): %w", err)
+				}
+				if err := kd.joinBridgeInbound(inConn); err != nil {
+					kd.dropOutboundConn()
+					kd.session.ResetOutboundCrypto()
+					return fmt.Errorf("bridge inbound handshake: %w", err)
+				}
+				kd.ConnectionMode = ModeDirectOut
+				if kd.OnEvent != nil {
+					kd.OnEvent("connection_mode:" + ModeDirectOut)
+				}
 			}
 		case kd.BridgeAddr != "":
 			logger.Warn("Direct P2P failed, falling back to bridge", "error", directErr, "bridge", kd.BridgeAddr)
@@ -1031,9 +1090,7 @@ func (kd *KeibiDrop) Connect() error {
 	}
 	if ownFP < peerFP {
 		logger.Info("Fingerprint tiebreak: I am creator", "own", ownFP[:8], "peer", peerFP[:8])
-		if kd.OnEvent != nil {
-			kd.OnEvent("connect_status:Waiting for peer to connect...")
-		}
+		kd.emitConnectStatus("Waiting for peer to connect...")
 		return kd.CreateRoom()
 	}
 	logger.Info("Fingerprint tiebreak: I am joiner", "own", ownFP[:8], "peer", peerFP[:8])
@@ -1066,6 +1123,7 @@ func DecideLocalRole(myName, peerName, peerAddr string) bool {
 }
 
 func (kd *KeibiDrop) CreateRoom() error {
+	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "create-room")
 	kd.connectCancelled.Store(false)
 	if kd.session == nil {
@@ -1171,159 +1229,227 @@ func (kd *KeibiDrop) CreateRoom() error {
 	return kd.finishConnect(logger)
 }
 
-// createRendezvousRound runs one direct-accept window then one bridge attempt. It reports
-// whether the session is connected. A false with no error means nobody arrived, and the
-// caller re-arms for another round while its budget lasts.
+// createRendezvousRound runs one round of the creator's rendezvous: the direct listener
+// and one bridge leg are open at the same time for bridgeRoundWait, and the first joiner
+// that speaks wins. It reports whether the session is connected. A false with no error
+// means nobody arrived, and the caller re-arms for another round while its budget lasts.
 func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool, error) {
-	{
-		useBridge := false
-
-		// A previous round closed the listener on its way to the bridge. Re-arm it, so
-		// this round can still take a direct joiner.
-		if kd.listener == nil && kd.BridgeAddr != "" && round > 0 && !kd.InboundBlocked() {
-			addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
-			if newLn, lnErr := net.Listen("tcp", addr); lnErr == nil {
-				kd.listener = newLn
-			} else {
-				logger.Warn("Could not re-arm the inbound listener for this round", "error", lnErr)
-			}
+	// A previous round closed the listener on its way out. Re-arm it, so this round
+	// can take a direct joiner.
+	if kd.listener == nil && kd.BridgeAddr != "" && round > 0 && !kd.InboundBlocked() {
+		addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
+		if newLn, lnErr := net.Listen("tcp", addr); lnErr == nil {
+			kd.listener = newLn
+		} else {
+			logger.Warn("Could not re-arm the inbound listener for this round", "error", lnErr)
 		}
+	}
 
-		// kd.listener is nil if a prior bridge fallback closed it and we returned
-		// before reopening it; use the bridge (reopened below) instead of nil-derefing.
-		if kd.listener == nil {
-			if kd.BridgeAddr == "" {
-				return false, fmt.Errorf("create-room: inbound listener not open and no bridge configured")
-			}
-			logger.Warn("Inbound listener not open (prior bridge fallback), using bridge")
-			useBridge = true
-		}
-
-		if kd.LocalIPv6IP == "" && kd.BridgeAddr != "" {
-			logger.Info("No IPv6, skipping direct P2P, using bridge")
-			useBridge = true
-		}
-
+	direct := kd.listener != nil
+	switch {
+	case kd.listener == nil && kd.BridgeAddr == "":
+		return false, fmt.Errorf("create-room: inbound listener not open and no bridge configured")
+	case kd.listener == nil:
+		logger.Warn("Inbound listener not open (prior bridge fallback), using bridge")
+	case kd.LocalIPv6IP == "" && kd.PublicIPv4() == "" && kd.BridgeAddr != "":
+		logger.Info("No public address known, skipping direct P2P, using bridge")
+		direct = false
+	case kd.InboundBlocked() && kd.BridgeAddr != "":
 		// Nothing reaches our listener, so the joiner's dial cannot arrive.
-		if kd.InboundBlocked() && kd.BridgeAddr != "" {
-			logger.Info("Inbound is blocked on this network, skipping direct P2P, using bridge")
-			useBridge = true
-		}
+		logger.Info("Inbound is blocked on this network, skipping direct P2P, using bridge")
+		direct = false
+	}
 
-		if !useBridge {
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
-		}
+	// Both legs open at once; the first joiner that speaks wins the round. Before
+	// 2026-09-09 the round was a direct window THEN a bridge window with the
+	// listener closed, so a joiner that arrived during the bridge half landed on
+	// the bridge for both legs although its direct dial would have worked
+	// (measured on the NAS rig: about every other fresh join).
+	arrivals := make(chan roundArrival, 8)
+	legs := 0
+	var acceptor *directAcceptor
+	if direct {
+		acceptor = startDirectAcceptor(kd.listener.(*net.TCPListener), arrivals, bridgeRoundWait)
+		legs++
+	}
+	bridgeLeg := &bridgeLegHolder{}
+	if kd.BridgeAddr != "" {
+		go kd.watchBridgeLeg(logger, bridgeLeg, kd.takeParkedBridgeIn(), bridgeRoundWait, arrivals)
+		legs++
+	}
 
-		var conn net.Conn
-		var acceptErr error
-		if !useBridge {
+	// stopLegs ends whatever leg did not win. The winner's conn is already in the
+	// session; the other leg is closed, not parked: this round is over for good.
+	stopLegs := func() {
+		if acceptor != nil {
+			acceptor.stop()
+		}
+		bridgeLeg.closeForWinner()
+	}
+
+	for pending := legs; pending > 0; {
+		a := <-arrivals
+		switch {
+		case a.err != nil && a.via == "direct":
+			pending--
+			if !isTimeout(a.err) {
+				logger.Warn("Inbound accept failed this round", "error", a.err)
+			}
+		case a.err != nil:
+			pending--
+			switch {
+			case a.conn != nil && isTimeout(a.err):
+				// Nobody spoke; the bridge may still pair the room next round.
+				kd.parkBridgeIn(a.conn)
+				logger.Info("No joiner on the bridge this round")
+			case a.conn != nil:
+				_ = a.conn.Close()
+			default:
+				logger.Warn("Bridge leg unavailable this round", "error", a.err)
+			}
+		case a.via == "direct":
 			// The public internet delivers junk connections: the relay's
-			// reachability probe and port scanners connect and close. A
-			// failed handshake must not kill the room. Close that
-			// connection and accept again until the deadline. This is
-			// safe: the handshake writes to the session only after the
+			// reachability probe and port scanners connect and close. A failed
+			// handshake must not kill the room; the acceptor keeps accepting.
+			// This is safe: the handshake writes to the session only after the
 			// fingerprint check passes.
-			for {
-				conn, acceptErr = kd.listener.Accept()
-				if acceptErr != nil {
-					break
-				}
-				if hsErr := handshakeOrClose(kd.session, conn); hsErr != nil {
-					logger.Warn("Inbound handshake failed, accepting again", "error", hsErr)
-					continue
-				}
-				break
+			if hsErr := handshakeOrClose(kd.session, a.conn); hsErr != nil {
+				logger.Warn("Inbound handshake failed, accepting again", "error", hsErr)
+				continue
 			}
-			_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
+			stopLegs()
+			return kd.finishDirectInbound(logger, a.conn)
+		default: // a joiner spoke on the bridge leg
+			if err := session.PerformInboundHandshakeWait(kd.session, a.conn, bridgeRoundWait); err != nil {
+				kd.session.ResetInboundCrypto()
+				_ = a.conn.Close()
+				logger.Info("Bridge leg handshake failed", "error", err)
+				pending--
+				continue
+			}
+			stopLegs()
+			return kd.finishBridgeInbound(logger)
 		}
+	}
 
-		if !useBridge && acceptErr != nil {
-			// Close the listener so late-arriving joiners get
-			// "connection refused" instead of a phantom TCP accept.
-			kd.listener.Close()
-			kd.listener = nil
+	// Nobody arrived. The listener stays open for the next round: closing it
+	// here reset a dial that had just landed in its backlog (seen 2026-09-09
+	// 20:49: the joiner read "connection reset" 33 ms after connecting and fell
+	// to all-bridge), and a dial in the gap got "connection refused" with the
+	// same outcome. A dial nobody reads is no longer a hazard: the joiner waits
+	// for the leg acknowledgement, and the next round's acceptor answers it.
+	// An empty window says nothing about reachability (the joiner had not
+	// arrived yet), so it marks nothing: the first round used to mark the
+	// inbound blocked when no probe verdict existed, which turned every later
+	// round bridge-only and advertised "blocked" to the joiner (BUGS 33). The
+	// relay probe is the reachability oracle; the joiner's accept window, where
+	// a dial was due, is the other evidence (JoinRoom).
+	return false, nil
+}
 
-			if kd.BridgeAddr == "" {
-				logger.Error("Direct P2P accept timed out and no bridge configured", "error", acceptErr)
-				if kd.StrictMode {
-					return false, fmt.Errorf("direct P2P accept timed out; strict mode keeps the relay fallback off: %w", acceptErr)
-				}
-				return false, acceptErr
-			}
-			logger.Warn("Direct P2P accept timed out, falling back to bridge", "error", acceptErr)
-			if round == 0 {
-				// Learn reachability once. Re-marking every round would say nothing new
-				// and would keep skipping the direct window for the rest of the budget.
-				kd.noteEmptyAcceptWindow()
-			}
-			useBridge = true
-		}
+// finishDirectInbound completes a round whose joiner arrived on the listener: the
+// return leg is dialed directly, or taken from the bridge (for our outbound only
+// when the joiner keeps its direct leg, for both legs otherwise).
+func (kd *KeibiDrop) finishDirectInbound(logger *slog.Logger, conn net.Conn) (bool, error) {
+	// Direct inbound succeeded; the accept loop verified the handshake.
+	kd.markInboundReachable()
 
-		if !useBridge {
-			// Direct inbound succeeded; the accept loop verified the handshake.
-			kd.markInboundReachable()
+	addr, ok := conn.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return false, fmt.Errorf("failed to cast TCP address")
+	}
+	peerIP := addr.IP.String()
+	if addr.Zone != "" {
+		peerIP = peerIP + "%" + addr.Zone
+	}
+	kd.PeerIPv6IP = peerIP
 
-			addr, ok := conn.RemoteAddr().(*net.TCPAddr)
-			if !ok {
-				return false, fmt.Errorf("failed to cast TCP address")
-			}
-			peerIP := addr.IP.String()
-			if addr.Zone != "" {
-				peerIP = peerIP + "%" + addr.Zone
-			}
-			kd.PeerIPv6IP = peerIP
-
-			// Try direct outbound to peer. If it fails (peer behind firewall),
-			// fall back to bridge for the outbound direction.
-			outboundAddr := net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))
-			if err := session.PerformOutboundHandshake(kd.session, outboundAddr); err != nil {
-				if kd.BridgeAddr != "" {
-					logger.Warn("Direct outbound to peer failed, falling back to bridge for outbound", "error", err)
-					// Reset outbound crypto state for bridge handshake.
-					kd.session.ResetOutboundCrypto()
-					// Close direct inbound too; we need both via bridge.
-					if c := kd.session.InboundConn(); c != nil {
-						c.Close()
-						kd.session.SetInboundConn(nil)
-					}
-					kd.session.ResetInboundCrypto()
-					useBridge = true
-				} else {
-					return false, err
-				}
-			}
-		}
-		if !useBridge {
-			if kd.IsLocalMode {
-				kd.ConnectionMode = "lan"
-			} else {
-				kd.ConnectionMode = "direct"
-			}
-			if kd.OnEvent != nil {
-				kd.OnEvent("connection_mode:" + kd.ConnectionMode)
+	// Try direct outbound to peer. If it fails (peer behind firewall), fall
+	// back to the bridge: for both legs with an old joiner, for our outbound
+	// only with a joiner that keeps its direct leg (it says so in its
+	// handshake). One that also says its inbound is blocked spares us the
+	// dial that would only time out.
+	outboundAddr := net.JoinHostPort(peerIP, strconv.Itoa(kd.session.PeerPort))
+	mixed := kd.session.PeerMixedLegs && kd.BridgeAddr != ""
+	var dialErr error
+	if mixed && kd.session.PeerInboundBlocked {
+		dialErr = errPeerInboundBlocked
+		logger.Info("Joiner advertises a blocked inbound; skipping the direct dial")
+	} else {
+		// The address it dialed us from first, then the other family it
+		// advertised: a joiner that reached us over IPv4 may take its own
+		// inbound over IPv6, or the other way round.
+		addrs := []string{outboundAddr}
+		for _, a := range kd.peerDialAddrs(kd.session.PeerPort) {
+			if a != outboundAddr {
+				addrs = append(addrs, a)
 			}
 		}
-		if useBridge {
-			kd.ConnectionMode = "bridge"
-			if kd.OnEvent != nil {
-				kd.OnEvent("connection_mode:bridge")
-			}
-			// Bridge fallback.
-			logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
-
-			if !kd.bridgeInbound(logger) {
-				return false, nil
-			}
-
-			outConn, err := kd.dialBridgeDir("pair2", logger)
-			if err != nil {
-				return false, fmt.Errorf("bridge dial (outbound): %w", err)
-			}
-			if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
-				outConn.Close()
-				return false, fmt.Errorf("bridge outbound handshake: %w", err)
-			}
+		dialErr = kd.dialPeerDirect(logger, addrs)
+	}
+	switch {
+	case dialErr == nil:
+		if kd.IsLocalMode {
+			kd.ConnectionMode = "lan"
+		} else {
+			kd.ConnectionMode = "direct"
 		}
+	case mixed:
+		// Keep the accepted leg (it carries the joiner's reads) and take only
+		// our outbound from the bridge. No crypto reset: the outbound
+		// handshake derives its own key, and the suite the inbound negotiated
+		// is the one the joiner's session already holds.
+		logger.Info("Joiner keeps its direct leg; taking our outbound from the bridge", "error", dialErr)
+		outConn, err := kd.dialBridgeDir("pair2", logger)
+		if err != nil {
+			return false, fmt.Errorf("bridge dial (outbound): %w", err)
+		}
+		if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
+			outConn.Close()
+			return false, fmt.Errorf("bridge outbound handshake: %w", err)
+		}
+		kd.ConnectionMode = ModeDirectIn
+	case kd.BridgeAddr != "":
+		logger.Warn("Direct outbound to peer failed, falling back to bridge for outbound", "error", dialErr)
+		// Reset outbound crypto state for bridge handshake.
+		kd.session.ResetOutboundCrypto()
+		// Close direct inbound too; we need both via bridge.
+		if c := kd.session.InboundConn(); c != nil {
+			c.Close()
+			kd.session.SetInboundConn(nil)
+		}
+		kd.session.ResetInboundCrypto()
+		// The joiner takes the bridge for both legs as well and waits on pair2
+		// for our outbound while dialing pair1 for its own; this round's bridge
+		// leg is gone, so open a fresh one for it.
+		logger.Info("Bridge mode: connecting to relay", "addr", kd.BridgeAddr)
+		if !kd.bridgeInbound(logger) {
+			return false, nil
+		}
+		return kd.finishBridgeInbound(logger)
+	default:
+		return false, dialErr
+	}
+	if kd.OnEvent != nil {
+		kd.OnEvent("connection_mode:" + kd.ConnectionMode)
+	}
+	return true, nil
+}
+
+// finishBridgeInbound completes a round whose inbound leg is on the bridge: the
+// outbound leg is dialed on pair2.
+func (kd *KeibiDrop) finishBridgeInbound(logger *slog.Logger) (bool, error) {
+	kd.ConnectionMode = "bridge"
+	if kd.OnEvent != nil {
+		kd.OnEvent("connection_mode:bridge")
+	}
+	outConn, err := kd.dialBridgeDir("pair2", logger)
+	if err != nil {
+		return false, fmt.Errorf("bridge dial (outbound): %w", err)
+	}
+	if err := session.PerformOutboundHandshakeOnConn(kd.session, outConn); err != nil {
+		outConn.Close()
+		return false, fmt.Errorf("bridge outbound handshake: %w", err)
 	}
 	return true, nil
 }
@@ -1412,6 +1538,8 @@ func (kd *KeibiDrop) MountFilesystem(toMount string, toSave string, isSecond boo
 
 	fs := filesystem.NewFS(logger)
 	fs.OnRootReady = kd.BackfillRemoteFilesIntoFS // Announces that beat the mount sit in the tracker.
+	fs.OnSlowFetch = kd.noteSlowFetch
+	fs.OnLowDisk = kd.noteLowDisk
 	kd.KDSvc.SetFS(fs)
 
 	if err := fs.Mount(filepath.Clean(toMount), isSecond, filepath.Clean(toSave)); err != nil {

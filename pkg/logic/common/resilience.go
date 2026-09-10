@@ -57,7 +57,7 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 	kd.HealthMonitor = kd.newConfiguredHealthMonitor(kd.session, kd.KDClient, logger)
 
 	kd.ReconnectManager = session.NewReconnectManager(kd.session, kd.logger)
-	kd.ReconnectManager.CachedPeerIP = kd.PeerIPv6IP
+	kd.ReconnectManager.CachedPeerIP = kd.peerDirectIP()
 	kd.ReconnectManager.CachedPeerPort = kd.session.PeerPort
 	if !kd.IsLocalMode {
 		kd.ReconnectManager.RelayRefresh = func() error {
@@ -77,7 +77,7 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 			if sess == nil {
 				return "", 0, fmt.Errorf("session nil during relay lookup")
 			}
-			return kd.PeerIPv6IP, sess.PeerPort, nil
+			return kd.peerDirectIP(), sess.PeerPort, nil
 		}
 	}
 	kd.ReconnectManager.AcceptConn = func(timeout time.Duration) (net.Conn, error) {
@@ -97,13 +97,19 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		}
 		return ln.Accept()
 	}
-	// Order reconnect transports from the session mode and the reachability hints.
-	// A direct retry against a blocked inbound only burns its timeout.
+	// Order reconnect transports from the shape the session was made with and the
+	// reachability hints. A direct retry against a blocked inbound only burns its
+	// timeout. The made shape, not the live mode: a session that fell back to the
+	// bridge in one outage retries its shape in the next.
+	kd.connectMode = kd.ConnectionMode
 	kd.ReconnectManager.PreferDirect = func() bool {
-		if kd.ConnectionMode == "bridge" {
+		if kd.connectMode == "bridge" {
 			return false
 		}
 		return !kd.InboundBlocked() && !kd.PeerInboundBlocked()
+	}
+	kd.ReconnectManager.MixedLegs = func() bool {
+		return kd.connectMode == ModeDirectOut || kd.connectMode == ModeDirectIn
 	}
 	if kd.BridgeAddr != "" {
 		kd.ReconnectManager.BridgeAddr = kd.effectiveBridgeAddr()
@@ -223,7 +229,17 @@ func (kd *KeibiDrop) StopConnectionResilience() {
 func (kd *KeibiDrop) hasActiveTransfers() bool {
 	kd.activeDownloadsMu.Lock()
 	defer kd.activeDownloadsMu.Unlock()
-	return len(kd.activeDownloads) > 0
+	return len(kd.activeDownloads) > 0 || kd.activeFetches.Load() > 0
+}
+
+// noteFetch counts on-demand block fetches in flight for hasActiveTransfers.
+// Wired into every stream provider by openStreamProvider.
+func (kd *KeibiDrop) noteFetch(active bool) {
+	if active {
+		kd.activeFetches.Add(1)
+		return
+	}
+	kd.activeFetches.Add(-1)
 }
 
 // rekeyCooldown bounds how often a proactive rekey may fire, so a stuck reconnect
@@ -304,6 +320,15 @@ func (kd *KeibiDrop) onRekeyNeeded() bool {
 func (kd *KeibiDrop) onDisconnect() {
 	logger := kd.logger.With("event", "disconnect")
 
+	// A re-fired verdict (see HealthMonitor.handleFailure) after the reconnect
+	// manager took over would restart its loop: leave it alone.
+	kd.mu.Lock()
+	owner := kd.ReconnectManager
+	kd.mu.Unlock()
+	if owner != nil && owner.State() != session.ReconnectStateConnected {
+		return
+	}
+
 	// Do not tear down during transfers: file data starves heartbeat RPCs, so failures
 	// are normal then. A stuck transfer holds the count forever, and an unbounded
 	// deferral starves the reconnect it waits on. After the cap, reconnect anyway.
@@ -363,8 +388,12 @@ func (kd *KeibiDrop) onReconnected() {
 	kd.mu.Unlock()
 
 	if rm != nil && sess != nil {
-		rm.CachedPeerIP = kd.PeerIPv6IP
+		rm.CachedPeerIP = kd.peerDirectIP()
 		rm.CachedPeerPort = sess.PeerPort
+	}
+	if rm != nil {
+		// Before the QUIC lane restarts below: it picks its path from the mode.
+		kd.setModeAfterReconnect(rm.LastTransport())
 	}
 
 	if rk != nil {

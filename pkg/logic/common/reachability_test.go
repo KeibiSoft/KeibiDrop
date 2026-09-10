@@ -198,3 +198,39 @@ func TestReachability_HintTravelsInTheRegistration(t *testing.T) {
 	kd.peerInboundBlocked.Store(true)
 	require.True(t, kd.PeerInboundBlocked())
 }
+
+// The relay reports the address it dialed back. Over IPv4 that is the public address a
+// peer can dial, which this host cannot see behind a NAT; a dial-back over IPv6 says
+// nothing about IPv4.
+func TestReachability_ProbeLearnsThePublicIPv4(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		body          string
+		wantIP        string
+		wantReachable bool
+	}{
+		{"reachable over IPv4", `{"reachable":true,"ip":"203.0.113.7","port":26001}`, "203.0.113.7", true},
+		{"blocked over IPv4", `{"reachable":false,"ip":"203.0.113.7","port":26001}`, "203.0.113.7", false},
+		{"dialed back over IPv6", `{"reachable":true,"ip":"2001:db8::1","port":26001}`, "", false},
+		{"older relay without the address", `{"reachable":true}`, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			kd := probeKD(t, srv.URL)
+			kd.ProbeInboundReachability(context.Background())
+
+			require.Equal(t, tc.wantIP, kd.PublicIPv4())
+			require.Equal(t, tc.wantReachable, kd.inbound4Reachable.Load())
+			if tc.wantIP == "" {
+				require.Nil(t, kd.listen4Hint())
+			} else {
+				require.Equal(t, tc.wantIP, kd.listen4Hint().IP)
+				require.Equal(t, !tc.wantReachable, kd.listen4Hint().InboundBlocked)
+			}
+		})
+	}
+}

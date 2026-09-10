@@ -62,6 +62,15 @@ type FileStreamProvider interface {
 	StreamFile(ctx context.Context, path string, startOffset uint64) (StreamFileReceiver, error)
 }
 
+// BulkReadOpener marks providers with a second read lane for predicted fetches.
+// The read-ahead window fetches on it, so a miss a reader waits on never queues
+// behind a window fetch on one stream, and with a direct QUIC lane up the miss
+// keeps that lane while the window rides TCP. Callers type-assert and fetch the
+// window through OpenRemoteFile when a provider (test fake) lacks it.
+type BulkReadOpener interface {
+	OpenRemoteFileBulk(ctx context.Context, inode uint64, path string) (RemoteFileStream, error)
+}
+
 type RemoteFileStream interface {
 	// ReadAt sends offset and size and receives exactly those bytes.
 	ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error)

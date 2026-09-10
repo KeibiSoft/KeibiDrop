@@ -86,6 +86,13 @@ type Session struct {
 	// in-band key-update capability. Gates whether the ratchet turns on.
 	PeerSupportsKeyUpdate bool
 
+	// Leg shape hints, advisory (see PeerHandshakeMessage). Own* are set by the engine
+	// before its outbound handshake; Peer* are learned from the peer's inbound handshake.
+	OwnInboundBlocked  bool
+	OwnMixedLegs       bool
+	PeerInboundBlocked bool
+	PeerMixedLegs      bool
+
 	// Internal timeout deadline
 	Deadline time.Time
 

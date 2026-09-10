@@ -407,6 +407,51 @@ fn is_fuse_present() -> bool {
     }
 }
 
+/// The raw last error from the Go layer, without the connect-flow rewording.
+fn get_last_error_raw() -> String {
+    unsafe {
+        let ptr = bindings::KD_GetLastErrorAndClear();
+        if ptr.is_null() {
+            "unknown error".to_string()
+        } else {
+            CStr::from_ptr(ptr).to_string_lossy().to_string()
+        }
+    }
+}
+
+/// One plain sentence for a failed engine start, naming the usual causes.
+fn engine_start_message(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    if lower.contains("address already in use") {
+        return format!(
+            "A network port is already taken ({}). Another copy of KeibiDrop is probably running on this computer. Close it, then press Retry.",
+            raw
+        );
+    }
+    if lower.contains("fuse") || lower.contains("winfsp") {
+        return format!(
+            "The folder driver is not ready ({}). Install macFUSE or WinFsp, or turn off Files as a folder, then press Retry.",
+            raw
+        );
+    }
+    format!("The engine did not start ({}). Press Retry, or Quit and open KeibiDrop again.", raw)
+}
+
+/// "12.3 MB/s in, 0.4 MB/s out", or empty while the link is idle.
+fn throughput_label(recv_bps: u64, sent_bps: u64) -> String {
+    fn rate(bps: u64) -> String {
+        if bps >= 1_000_000 {
+            format!("{:.1} MB/s", bps as f64 / 1e6)
+        } else {
+            format!("{} kB/s", bps / 1000)
+        }
+    }
+    if recv_bps < 10_000 && sent_bps < 10_000 {
+        return String::new();
+    }
+    format!("{} in, {} out", rate(recv_bps), rate(sent_bps))
+}
+
 /// Retrieve and clear the last error from the Go FFI layer.
 fn get_last_error() -> String {
     unsafe {
@@ -510,6 +555,61 @@ fn refresh_tokens_status(app: &MainWindow) {
         } else {
             String::new()
         }));
+    }
+}
+
+/// A system notification: Notification Center on macOS, a toast on Windows,
+/// the desktop notifier on Linux. Off the UI thread, and a failure is silent:
+/// the notifier is a courtesy, never a dependency.
+fn system_notify(body: &str) {
+    let body = body.to_string();
+    std::thread::spawn(move || {
+        let _ = std::panic::catch_unwind(|| {
+            #[cfg(target_os = "macos")]
+            {
+                let script = format!(
+                    "display notification \"{}\" with title \"KeibiDrop\"",
+                    body.replace('\\', "\\\\").replace('\"', "\\\"")
+                );
+                let _ = Command::new("osascript").arg("-e").arg(&script).output();
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = notify_rust::Notification::new()
+                    .summary("KeibiDrop")
+                    .body(&body)
+                    .timeout(notify_rust::Timeout::Milliseconds(4000))
+                    .show();
+            }
+        });
+    });
+}
+
+/// True at most once per `every` for the reminder called `name`, paced by a
+/// stamp file in the config directory so the pace survives restarts. With no
+/// config directory every call is due.
+fn reminder_due(cfg_dir: &Option<std::path::PathBuf>, name: &str, every: std::time::Duration) -> bool {
+    let Some(dir) = cfg_dir else { return true };
+    let stamp = dir.join(format!(".reminder_{}", name));
+    if let Ok(modified) = std::fs::metadata(&stamp).and_then(|m| m.modified()) {
+        if modified.elapsed().map(|age| age < every).unwrap_or(false) {
+            return false;
+        }
+    }
+    let _ = std::fs::write(&stamp, "");
+    true
+}
+
+/// The engine's one line about the link, as the state timer shows it.
+fn engine_state_text() -> String {
+    unsafe {
+        let p = bindings::KD_SessionStateLine();
+        if p.is_null() {
+            return String::new();
+        }
+        let line = CStr::from_ptr(p).to_string_lossy().to_string();
+        libc::free(p as *mut libc::c_void);
+        line.split('\t').nth(1).unwrap_or("").to_string()
     }
 }
 
@@ -757,6 +857,19 @@ fn maybe_offer_fuse(weak: &slint::Weak<MainWindow>, pending: &Arc<AtomicBool>) {
 }
 
 fn main() {
+    // "keibidrop --version" prints and exits; any other argument starts the window.
+    if env::args().skip(1).any(|a| a == "--version" || a == "-V") {
+        let v = unsafe {
+            let p = bindings::KD_GetVersion();
+            if p.is_null() {
+                "unknown".to_string()
+            } else {
+                CStr::from_ptr(p).to_string_lossy().to_string()
+            }
+        };
+        println!("keibidrop {}", v);
+        return;
+    }
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
@@ -841,6 +954,7 @@ fn main() {
 
     // The FUSE offer shows once ever: after the first successful save,
     // never again once the marker file exists.
+    let reminder_dir = cfg_dir.clone();
     let fuse_offer_marker = cfg_dir.map(|d| d.join(".fuse_offer_done"));
     let fuse_offer_pending = Arc::new(AtomicBool::new(
         fuse_offer_marker.as_ref().map(|m| !m.exists()).unwrap_or(false),
@@ -884,9 +998,15 @@ fn main() {
             -1, // push_on_write: -1 = use engine config (single source of truth)
         );
 
-        if result != 0 {
-            eprintln!("Failed to initialize KeibiDrop, error code: {}", result);
-        }
+        // A failed start used to leave the placeholder code on screen, which reads
+        // as "the app is broken" (BUGS 18). Keep the cause for the connect screen.
+        let engine_error = if result != 0 {
+            let raw = get_last_error_raw();
+            eprintln!("Failed to initialize KeibiDrop, error code: {}: {}", result, raw);
+            Some(engine_start_message(&raw))
+        } else {
+            None
+        };
 
         // Retrieve our fingerprint
         let my_fp = {
@@ -916,6 +1036,19 @@ fn main() {
 
         app.set_my_code(slint::SharedString::from(my_fp.clone()));
         app.set_mount_path(slint::SharedString::from(to_mount.clone()));
+        if let Some(msg) = &engine_error {
+            app.set_my_code(slint::SharedString::default());
+            app.set_engine_error(slint::SharedString::from(msg.as_str()));
+        }
+        app.on_engine_quit(|| std::process::exit(0));
+        app.on_engine_retry(|| {
+            // A clean restart of this executable is the reliable retry: the engine
+            // is not re-entrant after a failed start.
+            if let Ok(exe) = env::current_exe() {
+                let _ = std::process::Command::new(exe).spawn();
+            }
+            std::process::exit(0);
+        });
 
         // Version display
         let version_ptr = bindings::KD_GetVersion();
@@ -1962,7 +2095,14 @@ fn main() {
             let c_name = CString::new(name_str.clone()).unwrap();
             let res = bindings::KD_SaveCurrentPeerAsContact(c_name.as_ptr() as *mut i8);
             if res == 0 {
-                show_toast(&weak_save_contact, &format!("Saved as '{}'", name_str));
+                // The engine arms auto-connect for a first saved contact (BUGS 10).
+                let auto = config_auto_connect_peer();
+                let saved_msg = if auto.eq_ignore_ascii_case(&name_str) {
+                    format!("Saved as '{}'. Reconnects to {} on its own.", name_str, name_str)
+                } else {
+                    format!("Saved as '{}'", name_str)
+                };
+                show_toast(&weak_save_contact, &saved_msg);
                 if let Some(app) = weak_save_contact.upgrade() {
                     app.set_peer_already_saved(true);
                 }
@@ -2347,6 +2487,39 @@ fn main() {
             timer
         };
 
+        // Session state timer: one line of truth for the connected screens,
+        // polled every second from the engine (the same words kd status shows).
+        let _state_timer = {
+            let timer = slint::Timer::default();
+            let weak_state = app.as_weak();
+            timer.start(
+                slint::TimerMode::Repeated,
+                std::time::Duration::from_secs(1),
+                move || {
+                    let Some(app) = weak_state.upgrade() else { return };
+                    if app.get_current_screen() == 0 {
+                        return;
+                    }
+                    let p = bindings::KD_SessionStateLine();
+                    if p.is_null() {
+                        return;
+                    }
+                    let line = CStr::from_ptr(p).to_string_lossy().to_string();
+                    libc::free(p as *mut libc::c_void);
+                    let mut parts = line.split('\t');
+                    let state = parts.next().unwrap_or("").to_string();
+                    let text = parts.next().unwrap_or("").to_string();
+                    let _mount_ready = parts.next().unwrap_or("");
+                    let recv: u64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                    let sent: u64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                    app.set_session_state(slint::SharedString::from(state));
+                    app.set_session_state_text(slint::SharedString::from(text));
+                    app.set_throughput_text(slint::SharedString::from(throughput_label(recv, sent)));
+                },
+            );
+            timer
+        };
+
         // Event polling timer: runs on UI thread, independent of file watcher.
         // This ensures disconnect/health events are always processed even when
         // the file watcher thread has stopped or hasn't started yet.
@@ -2357,6 +2530,9 @@ fn main() {
             let disconnecting_evt = disconnecting.clone();
             let watcher_running_evt = watcher_running.clone();
             let arrived_files = arrived_files.clone();
+            let reminder_dir_evt = reminder_dir.clone();
+            // One "away" notification per outage, cleared by the reconnect.
+            let away_notified = std::rc::Rc::new(std::cell::Cell::new(false));
             timer.start(
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_millis(200),
@@ -2403,6 +2579,33 @@ fn main() {
                             }
                         }
 
+                        // The volume went away under a live session; the engine
+                        // remounts it and says when it is back. The peer's session
+                        // is untouched either way.
+                        if evt.starts_with("mount_gone:") {
+                            show_toast(&weak_evt, "The folder was unmounted. Remounting it now.");
+                            system_notify("The folder was unmounted. Bringing it back.");
+                        } else if evt.starts_with("mount_back:") {
+                            show_toast(&weak_evt, "The folder is back.");
+                            system_notify("The folder is back.");
+                        } else if let Some(reason) = evt.strip_prefix("mount_failed:") {
+                            show_toast(&weak_evt, "The folder could not be remounted.");
+                            system_notify(&format!(
+                                "The folder could not be remounted ({}). Files still arrive in the save folder.",
+                                reason
+                            ));
+                        } else if let Some(free_mb) = evt.strip_prefix("disk_low:") {
+                            // The engine says it once per crossing; reads that
+                            // need bytes from the peer fail until space is freed.
+                            show_toast(&weak_evt, "The save folder's disk is almost full.");
+                            system_notify(&format!(
+                                "The save folder's disk is almost full ({} MB free). Reads from the peer stop until space is freed.",
+                                free_mb
+                            ));
+                        } else if evt.starts_with("disk_ok:") {
+                            show_toast(&weak_evt, "The save folder's disk has space again.");
+                        }
+
                         // File arrival notifications
                         if evt.starts_with("file_arrived:") {
                             let parts: Vec<&str> = evt.splitn(3, ':').collect();
@@ -2414,10 +2617,22 @@ fn main() {
                             }
                         }
 
-                        if let Some(notice) = evt.strip_prefix("relay_busy:") {
-                            // Server-supplied copy: the relay decides the
-                            // upsell wording, the client just shows it.
+                        if let Some(notice) = evt
+                            .strip_prefix("relay_busy:")
+                            .or_else(|| evt.strip_prefix("relay_slow:"))
+                        {
+                            // Server-supplied copy for relay_busy, the engine's
+                            // for relay_slow: the client just shows it. The
+                            // toast is short-lived; the system notification is
+                            // the reminder, at most once per six hours.
                             show_toast(&weak_evt, notice);
+                            if reminder_due(
+                                &reminder_dir_evt,
+                                "relay",
+                                std::time::Duration::from_secs(6 * 3600),
+                            ) {
+                                system_notify(notice);
+                            }
                             if let Some(app) = weak_evt.upgrade() {
                                 refresh_tokens_status(&app);
                             }
@@ -2478,9 +2693,21 @@ fn main() {
                                     format!("Resuming {} download(s)...", count),
                                 ));
                             }
+                        } else if evt.starts_with("reconnecting:") {
+                            if !away_notified.replace(true) {
+                                let text = engine_state_text();
+                                system_notify(if text.is_empty() {
+                                    "The other side is away. Reconnecting."
+                                } else {
+                                    &text
+                                });
+                            }
                         } else if evt.starts_with("reconnected:") {
                             if let Some(app) = weak_evt.upgrade() {
                                 app.set_status_message(slint::SharedString::from("Reconnected"));
+                            }
+                            if away_notified.replace(false) {
+                                system_notify("Reconnected.");
                             }
                         }
 
@@ -2502,6 +2729,12 @@ fn main() {
                             } else {
                                 "Connection lost"
                             };
+                            away_notified.set(false);
+                            system_notify(if evt.starts_with("peer_disconnected:") {
+                                "The other side disconnected."
+                            } else {
+                                "Gave up reconnecting. Connect again from the app."
+                            });
 
                             // Update UI immediately (we're on the UI thread)
                             if let Some(app) = weak_evt.upgrade() {
@@ -2556,30 +2789,7 @@ fn main() {
                         };
                         files.clear();
                         drop(files);
-
-                        std::thread::spawn(move || {
-                            let _ = std::panic::catch_unwind(|| {
-                                #[cfg(target_os = "macos")]
-                                {
-                                    let script = format!(
-                                        "display notification \"{}\" with title \"KeibiDrop\"",
-                                        body.replace('\"', "\\\"")
-                                    );
-                                    let _ = Command::new("osascript")
-                                        .arg("-e")
-                                        .arg(&script)
-                                        .output();
-                                }
-                                #[cfg(not(target_os = "macos"))]
-                                {
-                                    let _ = notify_rust::Notification::new()
-                                        .summary("KeibiDrop")
-                                        .body(&body)
-                                        .timeout(notify_rust::Timeout::Milliseconds(4000))
-                                        .show();
-                                }
-                            });
-                        });
+                        system_notify(&body);
                     }
                 },
             );

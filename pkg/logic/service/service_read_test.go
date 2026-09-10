@@ -136,7 +136,7 @@ func TestRead_FUSEMode_FileNotFoundAnywhere(t *testing.T) {
 }
 
 // TestRead_HostileSizeNeverExceedsBuffer verifies the real Read call site
-// (T4: clampReadSize) does not panic when a peer requests a Size far larger
+// (clampReadSize) does not panic when a peer requests a Size far larger
 // than the serve buffer, and that the response never exceeds the buffer.
 // ReadRequest.Size is uint32, so int(rec.Size) cannot go negative on this
 // amd64 host; only the size>bufLen bound is reachable here. The negative-wrap

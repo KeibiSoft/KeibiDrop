@@ -227,7 +227,7 @@ Mount an evidence share read only across NAT and extract the artifact set you ne
 ### Post-production handoff
 
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=6DEEfoms-j8">
+  <a href="https://www.youtube.com/watch?v=k8b_6quIqx0">
     <img src="demo-photos/resolve-nas-demo.gif" alt="DaVinci Resolve playing a clip that lives on a NAS 400 km away, then jumping to the next clip, which is there when the playhead lands on it. Click to watch the two minute demo on YouTube." width="700">
   </a>
   <br><sub><b>How to edit in DaVinci Resolve, Premiere Pro or Final Cut while traveling.</b> Your footage stays on the studio NAS, you open it on demand from the app, no waiting for a download or an upload. Click for the two minute demo.</sub>

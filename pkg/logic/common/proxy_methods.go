@@ -34,23 +34,35 @@ func mapReadErr(err error) error {
 type ImplFileStreamProvider struct {
 	cli  bindings.KeibiServiceClient // Bulk channel (TCP): StreamFile prefetch.
 	fast bindings.KeibiServiceClient // Interactive channel (QUIC): on-demand reads and chunk hashes. Nil = use cli.
+	// onFetch reports an on-demand block fetch in flight (true) and done (false).
+	// Nil when nobody listens. The health monitor uses it to defer a disconnect
+	// verdict while a block is streaming.
+	onFetch func(active bool)
 }
 
 func NewImplStreamProvider(cli bindings.KeibiServiceClient) *ImplFileStreamProvider {
 	return &ImplFileStreamProvider{cli: cli}
 }
 
-// NewImplStreamProviderDual routes bulk prefetch to TCP, on-demand reads and chunk
-// hashes to QUIC. A cache miss then does not queue behind a running prefetch.
+// NewImplStreamProviderDual routes bulk prefetch and the read-ahead window to TCP,
+// the reads a blocked reader waits on and chunk hashes to QUIC. A cache miss then
+// does not queue behind a running prefetch or behind the window.
 func NewImplStreamProviderDual(bulk, fast bindings.KeibiServiceClient) *ImplFileStreamProvider {
 	return &ImplFileStreamProvider{cli: bulk, fast: fast}
 }
 
+// WithFetchHook installs the fetch-in-flight callback and returns the provider.
+func (sp *ImplFileStreamProvider) WithFetchHook(h func(active bool)) *ImplFileStreamProvider {
+	sp.onFetch = h
+	return sp
+}
+
 type ImplRemoteFileStream struct {
-	stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse]
-	handle uint64
-	path   string
-	mu     sync.Mutex // Serializes Send+Recv pairs. gRPC streams are not concurrency-safe.
+	stream  grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse]
+	handle  uint64
+	path    string
+	mu      sync.Mutex // Serializes Send+Recv pairs. gRPC streams are not concurrency-safe.
+	onFetch func(active bool)
 }
 
 func NewImplRemoteFileStream(stream grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse], inode uint64, path string) *ImplRemoteFileStream {
@@ -65,6 +77,10 @@ func (rfs *ImplRemoteFileStream) ReadAt(ctx context.Context, offset int64, size 
 	// Without this lock the stream framing corrupts.
 	rfs.mu.Lock()
 	defer rfs.mu.Unlock()
+	if rfs.onFetch != nil {
+		rfs.onFetch(true)
+		defer rfs.onFetch(false)
+	}
 
 	err := rfs.stream.Send(&bindings.ReadRequest{Handle: rfs.handle, Path: rfs.path, Offset: uint64(offset), Size: uint32(size)})
 	if err != nil {
@@ -129,7 +145,24 @@ func (sp *ImplFileStreamProvider) OpenRemoteFile(ctx context.Context, inode uint
 		return nil, err
 	}
 
-	return NewImplRemoteFileStream(stream, inode, path), nil
+	rfs := NewImplRemoteFileStream(stream, inode, path)
+	rfs.onFetch = sp.onFetch
+	return rfs, nil
+}
+
+// OpenRemoteFileBulk opens a read stream for predicted fetches: TCP first, QUIC when
+// TCP is dead. The read-ahead window fetches on it (types.BulkReadOpener), so the
+// miss lane carries only the reads a blocked reader waits on.
+func (sp *ImplFileStreamProvider) OpenRemoteFileBulk(ctx context.Context, inode uint64, path string) (types.RemoteFileStream, error) {
+	stream, err := preferBulk(sp, func(c bindings.KeibiServiceClient) (grpc.BidiStreamingClient[bindings.ReadRequest, bindings.ReadResponse], error) {
+		return c.Read(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	rfs := NewImplRemoteFileStream(stream, inode, path)
+	rfs.onFetch = sp.onFetch
+	return rfs, nil
 }
 
 // StreamFile starts a push-based download via the server-streaming StreamFile RPC.

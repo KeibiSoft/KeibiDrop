@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -66,6 +65,7 @@ type KeibiDrop struct {
 	session *session.Session
 
 	PeerIPv6IP     string
+	PeerIPv4IP     string   // The peer's public IPv4 from its registration; "" when it has none.
 	PeerLocalAddrs []string // LAN IPs from the relay registration, for same-network direct connect.
 
 	LocalIPv6IP string
@@ -128,6 +128,27 @@ type KeibiDrop struct {
 	// connectCancelled makes a pending CreateRoom or JoinRoom wait return, so a
 	// disconnect frees the daemon instead of holding it until Timeout.
 	connectCancelled atomic.Bool
+	// activeFetches counts on-demand block fetches in flight. A 16 MiB block on
+	// a slow link holds the wire for seconds and can starve a heartbeat, so a
+	// failed heartbeat during one is deferred like one during a pull.
+	activeFetches atomic.Int64
+	// connectStatus is the last connect_status text emitted while a create or
+	// join waits for the peer. SessionState shows it; the wait clears it.
+	connectStatus atomic.Value
+	// relayThrottled marks a session whose free relay lane held a reader for
+	// seconds; relaySlowSignalled latches the one reminder per session.
+	relayThrottled     atomic.Bool
+	relaySlowSignalled atomic.Bool
+	// diskLow mirrors the filesystem's free-space guard for the state line.
+	diskLow atomic.Bool
+	// mountFailed holds why the folder could not be remounted (a string), or
+	// "" while it is mounted or a remount is still due. mountLoop sets it.
+	mountFailed atomic.Value
+	// Throughput over the last sample interval, fed by throughput().
+	tpMu                   sync.Mutex
+	tpAt                   time.Time
+	tpSent, tpRecv         uint64
+	tpRateSent, tpRateRecv uint64
 
 	// Signals for loop management.
 	signals      chan TaskSignal
@@ -199,11 +220,23 @@ type KeibiDrop struct {
 	// it expires instead of pinning the node to the relay.
 	inboundBlocked     atomic.Bool
 	peerInboundBlocked atomic.Bool
-	inboundBlockedOn   atomic.Value // string
-	probedOn           atomic.Value // string: the local address the relay probe last ran on
-	probedAt           atomic.Int64 // Unix nano of that probe, so the verdict expires.
-	probedReachable    atomic.Bool  // The relay reached the listener on that probe.
-	parkedBridgeIn     net.Conn     // Creator's bridge inbound leg kept open between rounds; see bridgeInbound.
+	// peerMixedLegs is the creator's MixedLegs capability from its registration.
+	peerMixedLegs atomic.Bool
+	// connectMode is the mode the session was made with. The reconnect order follows
+	// it, so a session that fell back to the bridge retries its shape next outage.
+	connectMode      string
+	inboundBlockedOn atomic.Value // string
+	probedOn         atomic.Value // string: the local address the relay probe last ran on
+	probedAt         atomic.Int64 // Unix nano of that probe, so the verdict expires.
+	probedReachable  atomic.Bool  // The relay reached the listener on that probe.
+	// publicIPv4 is the address the relay dialed back on the last probe that went
+	// over IPv4, with its verdict. A NAS with a forwarded port and no IPv6 route
+	// is reached through it (dial_addrs.go).
+	publicIPv4          atomic.Value // string
+	inbound4Reachable   atomic.Bool
+	peerInbound4Blocked atomic.Bool  // The peer's IPv4 hint says nothing reaches it.
+	peerDialedIP        atomic.Value // string: the peer address that answered the direct dial.
+	parkedBridgeIn      net.Conn     // Creator's bridge inbound leg kept open between rounds; see bridgeInbound.
 
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc
@@ -434,9 +467,17 @@ type PeerRegistration struct {
 	Fingerprint string            `json:"fingerprint"`
 	PublicKeys  map[string]string `json:"public_keys"` // base64 encoded
 	Listen      *ConnectionHint   `json:"listen"`
-	Reverse     *ConnectionHint   `json:"reverse,omitempty"`
-	LocalAddrs  []string          `json:"local_addrs,omitempty"` // LAN IPs (192.168.x.x, fe80::x) for same-network detection
-	Timestamp   int64             `json:"timestamp"`
+	// Listen4 is the same listener at the public IPv4 the relay saw this peer on,
+	// with the relay's verdict on it. Omitted before a probe answered over IPv4;
+	// older peers omit it always.
+	Listen4    *ConnectionHint `json:"listen4,omitempty"`
+	Reverse    *ConnectionHint `json:"reverse,omitempty"`
+	LocalAddrs []string        `json:"local_addrs,omitempty"` // LAN IPs (192.168.x.x, fe80::x) for same-network detection
+	Timestamp  int64           `json:"timestamp"`
+	// MixedLegs is a capability: this peer keeps a direct leg a joiner opened when the
+	// joiner's inbound is blocked, and bridges only its own outbound. A joiner reads
+	// it before deciding to keep its leg; older peers omit it, which decodes as false.
+	MixedLegs bool `json:"mixed_legs,omitempty"`
 }
 
 type ConnectionHint struct {
@@ -676,6 +717,8 @@ func (kd *KeibiDrop) Run() {
 			kd.session = nil
 			kd.mu.Unlock()
 			kd.PeerIPv6IP = ""
+			kd.PeerIPv4IP = ""
+			kd.peerDialedIP.Store("")
 
 			// Permanent shutdown: close the listener and exit.
 			select {
@@ -718,6 +761,7 @@ func (kd *KeibiDrop) Run() {
 			kd.session = newSess
 			kd.mu.Unlock()
 			kd.rollSessionWire(oldSess)
+			kd.resetRelaySignals()
 			kd.SyncTracker = synctracker.NewSyncTracker()
 			kd.lastSharedPeerFP = prevPeerFP
 			kd.lastSharedFiles = prevLocal
@@ -790,26 +834,8 @@ func (kd *KeibiDrop) Run() {
 					// ADD_FILE notifies that raced this publish landed only in
 					// SyncTracker. Fold them into the tree before serving.
 					kd.BackfillRemoteFilesIntoFS()
-					if kd.FS.IsMounted() {
-						logger.Info("FUSE already mounted, waiting for disconnect")
-						<-kd.ctx.Done()
-					} else {
-						logger.Info("Mounting filesystem", "mount", kd.ToMount, "save", kd.ToSave)
-						mountDone := make(chan struct{})
-						go func() {
-							if err := kd.FS.Mount(filepath.Clean(kd.ToMount), false, filepath.Clean(kd.ToSave)); err != nil {
-								logger.Error("Filesystem mount failed", "error", err)
-							} else {
-								logger.Info("Filesystem mount session ended")
-							}
-							close(mountDone)
-						}()
-						select {
-						case <-mountDone:
-						case <-kd.ctx.Done():
-							logger.Info("Context cancelled while FUSE mounted")
-						}
-					}
+					// A host from an earlier session is watched, not mounted over.
+					kd.mountLoop(kd.ctx, logger)
 				} else {
 					logger.Warn("No FS to mount")
 					<-kd.ctx.Done()

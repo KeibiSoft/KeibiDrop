@@ -13,6 +13,9 @@ on:
 
 permissions:
   contents: write
+  # The Windows build signs through Azure Artifact Signing with a federated
+  # (OIDC) credential, no stored secret: azure/login needs an id token.
+  id-token: write
 
 jobs:
   build:
@@ -43,6 +46,11 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: Build ${{ matrix.name }}
+    # The Azure federated credential is bound to this environment name (the
+    # subject repo:KeibiSoft/KeibiDrop:environment:release), so every tag can
+    # sign without a credential per tag. GitHub creates the environment on
+    # first use; it carries no protection rules.
+    environment: release
 
     steps:
       - uses: actions/checkout@v7
@@ -171,6 +179,49 @@ jobs:
           if [ -f "rust/target/release/keibidrop-rust" ]; then
             codesign --force --options runtime --sign "$IDENTITY" --timestamp "rust/target/release/keibidrop-rust"
           fi
+
+      # Windows: Azure Artifact Signing (Trusted Signing). The three steps are
+      # skipped until the repository variable AZURE_SIGNING_PROFILE exists,
+      # which the setup script sets once the identity validation completed, so
+      # a release before that still ships unsigned as before. Setup:
+      # first_launch/WINDOWS-SIGNING-AZURE.html and azure-signing-setup.sh
+      # (private); the "Windows signing check" workflow proves the chain.
+      - name: Azure login for Artifact Signing (Windows)
+        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign binaries (Windows, Azure Artifact Signing)
+        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\kd.exe
+            ${{ github.workspace }}\keibidrop-cli.exe
+            ${{ github.workspace }}\kdmcp.exe
+            ${{ github.workspace }}\rust\target\release\keibidrop-rust.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the Windows signatures
+        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
+        shell: pwsh
+        run: |
+          $files = @("kd.exe", "keibidrop-cli.exe", "kdmcp.exe", "rust\target\release\keibidrop-rust.exe")
+          $bad = 0
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature -FilePath $f
+            Write-Host "$f : $($sig.Status) $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne "Valid") { $bad++ }
+          }
+          if ($bad -gt 0) { throw "$bad file(s) are not validly signed" }
 
       # After signing, so the standalone download and the bundle carry the
       # signature. lipo drops it again, and the mcpb job re-signs the join.

@@ -30,6 +30,12 @@ type FS struct {
 
 	OnLocalChange      func(event types.FileEvent)
 	OpenStreamProvider func() types.FileStreamProvider
+	// OnSlowFetch fires when one demand fetch held a reader for longer than
+	// SlowFetchNotice. The session decides what that means for its link.
+	OnSlowFetch func(waited time.Duration)
+	// OnLowDisk fires once per crossing when the save folder's disk drops under
+	// LowDiskFloor (low true) or has space again (low false).
+	OnLowDisk func(low bool, free uint64)
 
 	// Collab sync options (set from env before Mount).
 	PrefetchOnOpen    bool   // If true, Open() fetches the whole file and writes it to local disk.
@@ -204,6 +210,8 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	root.TieBreakPeerWins.Store(fs.TieBreakPeerWins.Load())
 	root.warmDisabled = os.Getenv("KEIBIDROP_WARM_SIBLINGS") == "0"
 	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
+	root.SetOnSlowFetch(fs.OnSlowFetch)
+	root.SetOnLowDisk(fs.OnLowDisk)
 	fs.ctxMu.Lock()
 	ctx := fs.ctx
 	fs.ctxMu.Unlock()
@@ -238,6 +246,10 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 		}
 		return fmt.Errorf("FUSE mount failed for %s: %s", cleanMountPoint, hint)
 	}
+	// The host returned: the volume is gone, whether by Unmount or from outside
+	// (a Finder eject, diskutil). Drop the root like Unmount does, so IsMounted
+	// reports the truth and the run loop can mount again.
+	fs.root.Store(nil)
 	fs.logger.Warn("FUSE Mount completed", "mountPoint", cleanMountPoint)
 	return nil
 }
@@ -290,6 +302,8 @@ func (fs *FS) RefreshCallbacks() {
 		return
 	}
 	root.SetCallbacks(fs.OnLocalChange, fs.OpenStreamProvider)
+	root.SetOnSlowFetch(fs.OnSlowFetch)
+	root.SetOnLowDisk(fs.OnLowDisk)
 	fs.ctxMu.Lock()
 	ctx := fs.ctx
 	fs.ctxMu.Unlock()

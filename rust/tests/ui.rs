@@ -34,6 +34,15 @@ fn one(app: &MainWindow, label: &str) -> ElementHandle {
     first
 }
 
+// The last element with this label. The help panel is drawn after the screens,
+// so its button is the last match when a screen shows a twin (screen 0 has its
+// own "Feedback" button).
+fn last(app: &MainWindow, label: &str) -> ElementHandle {
+    ElementHandle::find_by_accessible_label(app, label)
+        .last()
+        .unwrap_or_else(|| panic!("no element labeled {:?}", label))
+}
+
 // The one checkbox with this label; skips the row's plain-text twin.
 fn toggle(app: &MainWindow, label: &str) -> ElementHandle {
     ElementHandle::find_by_accessible_label(app, label)
@@ -141,7 +150,7 @@ fn update_notice_only_when_a_version_is_set() {
 fn help_report_button_opens_feedback() {
     let app = app();
     app.set_help_visible(true);
-    one(&app, "Report a problem").invoke_accessible_default_action();
+    last(&app, "Feedback").invoke_accessible_default_action();
     assert!(app.get_feedback_visible(), "feedback overlay did not open");
     assert!(!app.get_help_visible(), "help panel stayed open");
 }
@@ -154,7 +163,7 @@ fn feedback_send_passes_message_and_contact() {
     app.set_feedback_contact("a@b.co".into());
     let got = Rc::new(RefCell::new(None::<(String, String)>));
     let g = got.clone();
-    app.on_send_feedback(move |m, c| {
+    app.on_send_feedback(move |m, c, _rating| {
         *g.borrow_mut() = Some((m.to_string(), c.to_string()));
     });
     one(&app, "Send").invoke_accessible_default_action();
@@ -171,7 +180,7 @@ fn feedback_send_disabled_on_empty_message() {
     app.set_feedback_visible(true);
     let fired = Rc::new(Cell::new(false));
     let f = fired.clone();
-    app.on_send_feedback(move |_, _| f.set(true));
+    app.on_send_feedback(move |_, _, _| f.set(true));
     one(&app, "Send").invoke_accessible_default_action();
     assert!(!fired.get(), "send fired with an empty message");
 }

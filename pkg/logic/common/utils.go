@@ -108,6 +108,8 @@ func (kd *KeibiDrop) registerRoomToRelay() error {
 		LocalAddrs: GetLocalAddrs(),
 		PublicKeys: pkMap,
 		Timestamp:  time.Now().UnixNano(),
+		MixedLegs:  true,
+		Listen4:    kd.listen4Hint(),
 	}
 
 	// Serialize and encrypt the registration.
@@ -196,7 +198,8 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		logger.Warn("Not found")
+		// Normal while the peer has not registered yet; the caller logs the wait once.
+		logger.Debug("Not found")
 		return ErrNotFound
 	}
 
@@ -296,6 +299,16 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	if peerReg.Listen.InboundBlocked {
 		logger.Info("Peer advertises a blocked inbound; its direct dial will be skipped")
 	}
+	kd.peerMixedLegs.Store(peerReg.MixedLegs)
+	kd.PeerIPv4IP = ""
+	kd.peerInbound4Blocked.Store(false)
+	if l4 := peerReg.Listen4; l4 != nil {
+		if ip := net.ParseIP(l4.IP); ip != nil && ip.To4() != nil {
+			kd.PeerIPv4IP = ip.String()
+			kd.peerInbound4Blocked.Store(l4.InboundBlocked)
+			logger.Info("Peer advertises an IPv4 address", "ip", kd.PeerIPv4IP, "inbound_blocked", l4.InboundBlocked)
+		}
+	}
 	if isValidIPv6(peerReg.Listen.IP) {
 		kd.PeerIPv6IP = peerReg.Listen.IP
 	} else if peerReg.Listen.IP != "" {
@@ -393,6 +406,8 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	if fs == nil {
 		fs = filesystem.NewFS(logger)
 		fs.OnRootReady = kd.BackfillRemoteFilesIntoFS // Announces that beat the mount sit in the tracker.
+		fs.OnSlowFetch = kd.noteSlowFetch
+		fs.OnLowDisk = kd.noteLowDisk
 		kd.FS = fs
 	}
 
@@ -697,6 +712,9 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 	return nil
 }
 
+// quicReadsOff keeps on-demand reads on TCP with a direct QUIC lane up (see openStreamProvider).
+var quicReadsOff = os.Getenv("KEIBIDROP_QUIC_READS") == "0"
+
 // openStreamProvider is the FUSE OpenStreamProvider callback. It snapshots the session under
 // kd.mu and returns nil if the session (or its gRPC client) is gone, so a goroutine waking from
 // PrefetchSem during teardown can't deref a nil session. Callers handle the nil return.
@@ -709,15 +727,21 @@ func (kd *KeibiDrop) openStreamProvider() types.FileStreamProvider {
 	if s == nil || s.GRPCClient == nil {
 		return nil
 	}
-	// With a DIRECT QUIC control channel up, split prefetch (StreamFile) on TCP from
-	// on-demand reads and chunk hashes on QUIC. Providers are per open, so a later
-	// channel is picked up. A relayed lane carries control only: a 16 MiB read
-	// through the UDP relay starved the 2 s heartbeat ping, the lane was demoted
-	// mid-read, and the first block of every session cost 4 to 8 s (2026-09-06).
-	if qcc != nil && !relayed {
-		return NewImplStreamProviderDual(s.GRPCClient, bindings.NewKeibiServiceClient(qcc))
+	// With a DIRECT QUIC control channel up, split the predicted traffic (StreamFile
+	// prefetch and the read-ahead window, StreamPool.ReadAtBulk) on TCP from the
+	// reads a blocked reader waits on and chunk hashes on QUIC: a cache miss must
+	// not queue behind bulk bytes on a congested wire (designed and measured in
+	// 0.4.0, 512 KiB miss reads at p50 about 7 ms under bulk). Providers are per
+	// open, so a later channel is picked up. A relayed lane carries control only: a
+	// 16 MiB read through the UDP relay starved the 2 s heartbeat ping, the lane was
+	// demoted mid-read, and the first block of every session cost 4 to 8 s
+	// (2026-09-06). KEIBIDROP_QUIC_READS=0 keeps every read on TCP with the lane up,
+	// for A/B: on an uncongested direct leg from an Intel Mac the lane moved bulk
+	// bytes slower than TCP (BUGS 28), which is why the window no longer rides it.
+	if qcc != nil && !relayed && !quicReadsOff {
+		return NewImplStreamProviderDual(s.GRPCClient, bindings.NewKeibiServiceClient(qcc)).WithFetchHook(kd.noteFetch)
 	}
-	return NewImplStreamProvider(s.GRPCClient)
+	return NewImplStreamProvider(s.GRPCClient).WithFetchHook(kd.noteFetch)
 }
 
 // connectGRPCClientWithRetry waits until the gRPC server is ready and then creates the client.

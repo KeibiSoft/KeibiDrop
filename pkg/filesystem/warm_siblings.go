@@ -214,6 +214,9 @@ func (d *Dir) warmSiblings(dirPath, triggerPath string) {
 		}
 	}()
 
+	if !d.fetchAllowed() {
+		return // Under the floor nothing is warmed; each reader meets the guard itself.
+	}
 	provider := d.OpenStreamProvider()
 	br, hasBatch := provider.(types.BatchReader)
 	if provider == nil || !hasBatch {
@@ -342,6 +345,7 @@ func (d *Dir) landWarmFile(c *warmClaim, data []byte) {
 		c.bm.SetHash(chunk, xxh3.Hash(data[begin:end]))
 	}
 	c.f.Download.UpdateProgress(0, len(data))
+	c.f.noteLanded()
 
 	c.f.metaMu.Lock()
 	if c.f.Bitmap == c.bm && c.bm.IsComplete() {

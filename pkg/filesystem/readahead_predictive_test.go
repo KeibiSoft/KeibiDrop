@@ -126,9 +126,10 @@ func TestReadAhead_SparseTrigger(t *testing.T) {
 	if calls*10 >= numReads {
 		t.Fatalf("read-ahead fires per-read: %d calls vs %d reads (must be <<)", calls, numReads)
 	}
-	// And still correct: each block fetched exactly once.
-	if prov.reads.Load() != int64(blocks) {
-		t.Fatalf("fetches=%d want %d", prov.reads.Load(), blocks)
+	// And still correct: every byte fetched exactly once (the first block as a
+	// probe unit and one tail fetch, the rest through the window).
+	if b := prov.bytesIn.Load(); b != int64(fileSize) {
+		t.Fatalf("bytes fetched=%d want %d", b, fileSize)
 	}
 }
 
@@ -155,8 +156,10 @@ func TestReadAhead_NoDoubleFetchWithPrefetch(t *testing.T) {
 	}
 	waitFor(t, 3*time.Second, func() bool { return inflightEmpty(f) })
 
-	if reads := prov.reads.Load(); reads != int64(blocks) {
-		t.Fatalf("fetches = %d, want %d (one per block; prefetch must not duplicate)", reads, blocks)
+	// Block 0 arrives as a probe unit and one tail fetch, the rest through the
+	// window: the invariant is that no byte is fetched twice.
+	if b := prov.bytesIn.Load(); b != int64(fileSize) {
+		t.Fatalf("bytes fetched = %d, want %d (every byte once; prefetch must not duplicate)", b, fileSize)
 	}
 }
 
@@ -358,6 +361,7 @@ type delayProvider struct {
 	content []byte
 	delay   time.Duration
 	reads   atomic.Int64
+	bytesIn atomic.Int64
 }
 
 func (p *delayProvider) OpenRemoteFile(_ context.Context, _ uint64, _ string) (types.RemoteFileStream, error) {
@@ -370,12 +374,20 @@ func (p *delayProvider) StreamFile(_ context.Context, _ string, _ uint64) (types
 type delayStream struct{ p *delayProvider }
 
 func (s *delayStream) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
+	// A link costs a round trip plus bytes: delay is the time of a whole block,
+	// a smaller fetch takes its share of it, and nothing takes under a fifth
+	// (the round trip). A probe unit is then cheaper than a block, as on a wire.
+	wait := time.Duration(float64(s.p.delay) * float64(size) / float64(ReadAheadBlock))
+	if wait < s.p.delay/5 {
+		wait = s.p.delay / 5
+	}
 	select {
-	case <-time.After(s.p.delay):
+	case <-time.After(wait):
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 	s.p.reads.Add(1)
+	s.p.bytesIn.Add(size)
 	content := s.p.content
 	if offset > int64(len(content)) {
 		offset = int64(len(content))
@@ -655,16 +667,16 @@ func TestReadAhead_LatencyHidingSpeedup(t *testing.T) {
 			}
 		}
 		waitFor(t, 10*time.Second, func() bool { return inflightEmpty(f) })
-		return stalls, prov.reads.Load()
+		return stalls, prov.bytesIn.Load()
 	}
 
 	offStalls, offReads := run(0)
 	onStalls, onReads := run(4)
-	t.Logf("paced %gMB/s, fetch delay %v: OFF stalls=%d (%d fetches); ON(window=4) stalls=%d (%d fetches)",
+	t.Logf("paced %gMB/s, fetch delay %v: OFF stalls=%d (%d bytes fetched); ON(window=4) stalls=%d (%d bytes fetched)",
 		paceMBps, delay, offStalls, offReads, onStalls, onReads)
 
-	if onReads != int64(blocks) || offReads != int64(blocks) {
-		t.Fatalf("expected exactly %d fetches each (no duplicates): off=%d on=%d", blocks, offReads, onReads)
+	if onReads != int64(fileSize) || offReads != int64(fileSize) {
+		t.Fatalf("expected every byte fetched once (%d): off=%d on=%d", fileSize, offReads, onReads)
 	}
 	// Timing-robust assertions. CI under -race is noisy and inflates BOTH stall counts
 	// (a slow cached read can miss the play budget, and an OFF cold stall cascades into
