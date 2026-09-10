@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	Version    = "0.4.6" // Last release. Build ldflags overwrite both values from the tag.
+	Version    = "0.4.7" // Last release. Build ldflags overwrite both values from the tag.
 	CommitHash = "dev"
 )
 
