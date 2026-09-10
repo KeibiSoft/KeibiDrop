@@ -24,10 +24,12 @@ import (
 )
 
 // TestConnect_TimingGap_JoinerAfterCreatorP2PTimeout reproduces issue #146:
-// the creator registers and times out on P2P (15s), then the joiner starts.
-// Before the fix, the joiner wasted 15s on a phantom P2P connection to the
-// creator's stale listener, then both peers got stuck.
-// After the fix, the joiner's P2P dial is refused and both fall back to bridge.
+// the creator registers and its first direct window (15s) closes with nobody in
+// it, then the joiner starts. Originally the joiner wasted 15s on a phantom P2P
+// connection to the creator's stale listener and both peers got stuck; the
+// first fix refused the dial and sent both to the bridge for the whole session.
+// Since BUGS 33 (2026-09-09) the creator's listener stays open between rounds
+// and an empty window marks nothing, so the late joiner connects direct, fast.
 //
 // This test uses explicit CreateRoom/JoinRoom (not Connect) to control which
 // peer is creator and which is joiner, avoiding fingerprint tiebreak randomness.
@@ -97,7 +99,7 @@ func TestConnect_TimingGap_JoinerAfterCreatorP2PTimeout(t *testing.T) {
 	bobStart := time.Now()
 	bobReady := testkit.Go(func() error { return kdBob.JoinRoom() })
 
-	// Both should connect via bridge within 30s.
+	// Both connect direct: the creator's next round takes the dial.
 	testkit.Run(t, func() error {
 		return fp.Steps(
 			func() error {
@@ -116,8 +118,9 @@ func TestConnect_TimingGap_JoinerAfterCreatorP2PTimeout(t *testing.T) {
 	bobDuration := time.Since(bobStart)
 	t.Logf("Bob connected in %s (mode: %s)", bobDuration, kdBob.ConnectionMode)
 
-	require.Equal("bridge", kdAlice.ConnectionMode, "Alice should be on bridge")
-	require.Equal("bridge", kdBob.ConnectionMode, "Bob should be on bridge")
+	require.Equal("direct", kdAlice.ConnectionMode, "the creator keeps accepting after an empty window")
+	require.Equal("direct", kdBob.ConnectionMode, "a late joiner is not sent to the bridge")
+	require.Less(bobDuration, 10*time.Second, "no phantom dial, no window to wait out")
 
 	// Cleanup
 	kdAlice.StopConnectionResilience()
