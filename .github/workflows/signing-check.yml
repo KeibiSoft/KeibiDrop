@@ -1,5 +1,5 @@
 # Proves the Windows signing chain before a release tag: the OIDC login from
-# environment "release", then a real signature on a freshly built kd.exe with
+# environment "release", then a real signature on a freshly built kdmcp.exe with
 # the same action and inputs release.yml uses. Run it from the Actions tab.
 name: Windows signing check
 
@@ -39,30 +39,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # kd embeds cgofuse, which needs the WinFsp headers, the same way the
-      # release job builds it.
-      - name: Install WinFsp
-        if: vars.AZURE_SIGNING_PROFILE != ''
-        shell: pwsh
-        run: |
-          choco install winfsp -y
-          $winfspDir = "C:\Program Files (x86)\WinFsp"
-          echo "CPATH=$winfspDir\inc\fuse" >> $env:GITHUB_ENV
-          echo "CGO_LDFLAGS=-L$winfspDir\lib" >> $env:GITHUB_ENV
-
-      - name: Build kd.exe
+      # kdmcp needs no cgo, so the check builds it rather than the daemon: the
+      # point here is the signing path (endpoint, profile, role), not the build.
+      - name: Build kdmcp.exe
         if: vars.AZURE_SIGNING_PROFILE != ''
         shell: bash
-        run: go build -trimpath -o kd.exe ./cmd/kd
+        env:
+          CGO_ENABLED: "0"
+        run: go build -trimpath -o kdmcp.exe ./cmd/kdmcp
 
-      - name: Sign kd.exe (Azure Artifact Signing)
+      - name: Sign kdmcp.exe (Azure Artifact Signing)
         if: vars.AZURE_SIGNING_PROFILE != ''
         uses: azure/artifact-signing-action@v2
         with:
           endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
           signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.AZURE_SIGNING_PROFILE }}
-          files: ${{ github.workspace }}\kd.exe
+          files: ${{ github.workspace }}\kdmcp.exe
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
@@ -71,10 +64,10 @@ jobs:
         if: vars.AZURE_SIGNING_PROFILE != ''
         shell: pwsh
         run: |
-          $sig = Get-AuthenticodeSignature -FilePath kd.exe
-          Write-Host "kd.exe : $($sig.Status)"
+          $sig = Get-AuthenticodeSignature -FilePath kdmcp.exe
+          Write-Host "kdmcp.exe : $($sig.Status)"
           Write-Host "signer : $($sig.SignerCertificate.Subject)"
           Write-Host "issuer : $($sig.SignerCertificate.Issuer)"
           Write-Host "expires: $($sig.SignerCertificate.NotAfter)"
-          if ($sig.Status -ne "Valid") { throw "kd.exe is not validly signed: $($sig.Status)" }
-          Write-Host "::notice::kd.exe carries a valid signature from $($sig.SignerCertificate.Subject). Releases will be signed the same way."
+          if ($sig.Status -ne "Valid") { throw "kdmcp.exe is not validly signed: $($sig.Status)" }
+          Write-Host "::notice::kdmcp.exe carries a valid signature from $($sig.SignerCertificate.Subject). Releases sign the four Windows executables the same way."
