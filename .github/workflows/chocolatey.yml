@@ -8,6 +8,12 @@
 # The package downloads the Windows zip from the GitHub release and carries
 # that zip's checksum, so both come from the release here, never from a
 # build artifact, and the download address is checked before the push.
+#
+# Three things are checked before anything reaches the feed: the download
+# address answers, the checksum matches the released zip, and the iconUrl is
+# pinned to this version's tag on jsdelivr. The last one exists because a
+# release tagged before a packaging fix builds from the tag's tree and ships
+# the old metadata; the repush above is the cure and this check is the alarm.
 name: Chocolatey
 
 on:
@@ -75,6 +81,36 @@ jobs:
           fi
           if [ -z "$PACKED" ] || [ "$RELEASED" != "$PACKED" ]; then
             echo "::error::the checksum in the package does not match the zip on the release"
+            exit 1
+          fi
+
+      - name: Check the icon address
+        shell: bash
+        run: |
+          # Moderation rejects an iconUrl on raw.githubusercontent.com and wants
+          # it pinned to the release tag on jsdelivr. A package built from a tag
+          # cut before that template change carries the old address and is only
+          # caught two days later by a human, so it is checked here instead.
+          NUSPEC=dist/keibidrop.nuspec
+          # Plain BRE on both sides: \? is a GNU extension and is not portable.
+          ICON=$(grep -o '<iconUrl>[^<]*</iconUrl>' "$NUSPEC" | sed -e 's|<iconUrl>||' -e 's|</iconUrl>||')
+          WANT="https://cdn.jsdelivr.net/gh/$GITHUB_REPOSITORY@v$SEMVER/"
+          echo "iconUrl: $ICON"
+          case "$ICON" in
+            *raw.githubusercontent.com*)
+              echo "::error::iconUrl is on raw.githubusercontent.com, which moderation refuses: $ICON"
+              echo "::error::the template is fixed on main; repush this version with: gh workflow run chocolatey.yml -f tag=v$SEMVER"
+              exit 1 ;;
+          esac
+          case "$ICON" in
+            "$WANT"*) ;;
+            *)
+              echo "::error::iconUrl must be pinned to this version's tag under $WANT"
+              echo "::error::got $ICON"
+              exit 1 ;;
+          esac
+          if ! curl -fsSL -o /dev/null "$ICON"; then
+            echo "::error::the iconUrl does not answer: $ICON"
             exit 1
           fi
 
