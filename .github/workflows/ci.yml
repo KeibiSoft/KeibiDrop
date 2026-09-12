@@ -136,7 +136,7 @@ jobs:
         run: rustup target add x86_64-apple-darwin
 
       - name: Build Rust UI
-        if: runner.os != 'Windows' && matrix.cross != true
+        if: matrix.cross != true
         run: make build-rust
 
       - name: Build Rust UI (cross-compile x86_64)
