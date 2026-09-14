@@ -856,6 +856,47 @@ fn maybe_offer_fuse(weak: &slint::Weak<MainWindow>, pending: &Arc<AtomicBool>) {
     });
 }
 
+/// Restarts the process with Slint's software renderer and never returns.
+///
+/// A Windows RDP session, a virtual machine without a GPU driver, and old
+/// integrated cards all answer with the generic OpenGL 1.1 context, which has
+/// no shaders, so femtovg cannot start and no window ever opens. The software
+/// renderer is compiled in and needs no GPU, but Slint picks a backend once per
+/// process, so reaching it takes a fresh one. KD_RENDERER_FALLBACK holds the
+/// retry to a single round.
+fn restart_with_software_renderer(err: slint::PlatformError) -> ! {
+    unsafe {
+        bindings::KD_Stop();
+    }
+
+    if std::env::var_os("KD_RENDERER_FALLBACK").is_some() {
+        eprintln!("KeibiDrop cannot open a window, even with software rendering: {err}");
+        std::process::exit(1);
+    }
+
+    eprintln!("Hardware rendering is unavailable ({err}). Restarting with software rendering.");
+
+    let exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("KeibiDrop cannot restart itself: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let code = std::process::Command::new(exe)
+        .args(std::env::args_os().skip(1))
+        .env("KD_RENDERER_FALLBACK", "1")
+        .env("SLINT_BACKEND", "winit-software")
+        .status()
+        .map(|status| status.code().unwrap_or(1))
+        .unwrap_or_else(|e| {
+            eprintln!("KeibiDrop cannot restart itself: {e}");
+            1
+        });
+    std::process::exit(code);
+}
+
 fn main() {
     // "keibidrop --version" prints and exits; any other argument starts the window.
     if env::args().skip(1).any(|a| a == "--version" || a == "-V") {
@@ -1020,7 +1061,10 @@ fn main() {
         println!("Our fingerprint: {}", my_fp);
 
         // Build UI
-        let app = MainWindow::new().expect("Failed to create MainWindow");
+        let app = match MainWindow::new() {
+            Ok(app) => app,
+            Err(e) => restart_with_software_renderer(e),
+        };
 
         // Set window icon from embedded PNG
         app.window().with_winit_window(|winit_win| {
@@ -2797,7 +2841,9 @@ fn main() {
         };
 
         // Run UI loop
-        app.run().unwrap();
+        if let Err(e) = app.run() {
+            restart_with_software_renderer(e);
+        }
 
         // Cleanup
         bindings::KD_Stop();
