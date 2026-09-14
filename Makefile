@@ -41,6 +41,19 @@ build-static-rust-bridge:
 build-rust: protoc build-static-rust-bridge
 	cd rust && cargo build --release
 
+# Windows needs the GNU toolchain for the Rust half. build-static-rust-bridge
+# above produces a Go c-archive, and Go emits Windows objects for the MinGW
+# linker, so MSVC link.exe rejects the .pdata unwind records inside go.o with
+# LNK1223. Targeting x86_64-pc-windows-gnu hands the archive to the ld that
+# produced it. The result is copied to the normal release path so
+# package-windows and the signing step find it where they already look.
+RUST_WINDOWS_TARGET := x86_64-pc-windows-gnu
+
+build-rust-windows: protoc build-static-rust-bridge
+	cd rust && cargo build --release --target $(RUST_WINDOWS_TARGET)
+	mkdir -p rust/target/release
+	cp rust/target/$(RUST_WINDOWS_TARGET)/release/keibidrop-rust.exe rust/target/release/keibidrop-rust.exe
+
 build-all: build-rust build-cli build-kd build-kdmcp
 
 # Cross-compile for macOS arm64 (from Intel) or x86_64 (from arm64)
@@ -542,7 +555,7 @@ android-deploy: build-android
 	adb shell am force-stop com.keibisoft.keibidrop
 	adb shell am start -n com.keibisoft.keibidrop/.MainActivity
 
-.PHONY: build-cli build-kd build-kdmcp build-static-rust-bridge build-rust build-all \
+.PHONY: build-cli build-kd build-kdmcp build-static-rust-bridge build-rust build-rust-windows build-all \
         test test-race lint sec install-proto protoc rust-bindings slint-preview \
         package-macos package-tar package-deb package-windows package-choco package-mcpb \
         checksums clean-dist clean \

@@ -135,9 +135,20 @@ jobs:
         if: matrix.cross == true
         run: rustup target add x86_64-apple-darwin
 
+      - name: Add Rust Windows GNU target
+        if: runner.os == 'Windows'
+        run: rustup target add x86_64-pc-windows-gnu
+
       - name: Build Rust UI
-        if: matrix.cross != true
+        if: matrix.cross != true && runner.os != 'Windows'
         run: make build-rust
+
+      # See build-rust-windows in the Makefile for why Windows takes the GNU
+      # toolchain rather than the default MSVC one.
+      - name: Build Rust UI (Windows)
+        if: matrix.cross != true && runner.os == 'Windows'
+        shell: bash
+        run: make build-rust-windows
 
       - name: Build Rust UI (cross-compile x86_64)
         if: matrix.cross == true && runner.os == 'macOS'
