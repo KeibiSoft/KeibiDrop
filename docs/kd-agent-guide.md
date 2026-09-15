@@ -132,13 +132,39 @@ Every command returns a single JSON line:
 
 ```json
 {"ok":true,"data":{"fingerprint":"abc123..."}}
-{"ok":false,"error":"daemon not running (socket: /tmp/kd.sock)"}
+{"ok":false,"error":"daemon not running (socket: /tmp/kd.sock)","code":"not_connected"}
 ```
 
 - `ok: true` — command succeeded, result in `data`
-- `ok: false` — command failed, reason in `error`
-- Exit code is 0 even when a command fails; it is 1 only when the daemon
-  socket is unreachable. Always check the `ok` field, not the exit code.
+- `ok: false` — command failed, reason in `error`, classified in `code`
+- Branch on `code`, never on the text in `error`. New codes may be added;
+  existing ones do not change.
+
+## Exit Codes
+
+The process exit code carries the same classification as `code`, so a script
+can branch on `$?` without parsing the JSON. Only success exits 0.
+
+| Exit | `code` | Meaning |
+|---|---|---|
+| 0 | `ok` | Success |
+| 1 | `internal` | An error the daemon did not classify, or a response the client could not read |
+| 2 | `not_connected` | No session, or the client cannot reach the daemon socket |
+| 3 | `timeout` | A command with a timeout did not finish in time |
+| 4 | `not_found` | The file or target does not exist |
+| 5 | `invalid_argument` | A missing or malformed argument |
+| 6 | `busy` | Already running, or already mounted |
+| 7 | `refused` | Fingerprint mismatch, or the listener is closed |
+| 8 | `unsupported` | Unknown command or unknown show target |
+
+```bash
+kd pull no-such-file /tmp/x ; echo "exit=$?"
+# {"ok":false,"error":"file not found: no-such-file","code":"not_found"}
+# exit=4
+```
+
+The table is defined in [cmd/kd/agent.go](../cmd/kd/agent.go) and a test covers
+it, so the numbers do not change.
 
 ## Command Reference
 
