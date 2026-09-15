@@ -11,6 +11,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -117,5 +118,28 @@ func TestGaveUp_LeavesSessionWithoutAutoConnect(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("a give-up without auto-connect must not end the session")
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// A lost heartbeat starts a reconnect; it does not end the session. The event
+// has to say so, because the desktop event loop ends the session on a
+// "peer_disconnected:" event: it unmounts, tells the peer to disconnect and
+// quits. Found in the cold install test of 2026-09-15, where a healthy session
+// died 12 seconds after connecting while reconnect attempt 1 of 10 was in
+// flight.
+func TestOnDisconnect_EmitsReconnectingNotPeerDisconnected(t *testing.T) {
+	kd := newEventTestKD()
+	events := collectEvents(kd)
+
+	kd.onDisconnect()
+
+	require.NotEmpty(t, *events, "a lost heartbeat pushed no event to the surface")
+	got := (*events)[0]
+	require.Equal(t, "reconnecting:health_timeout", got)
+	for _, e := range *events {
+		require.False(t, strings.HasPrefix(e, "peer_disconnected:"),
+			"a health timeout emitted %q, which ends the session on the desktop", e)
+		require.False(t, strings.HasPrefix(e, "gave_up:"),
+			"a health timeout emitted %q before any reconnect attempt ran", e)
 	}
 }

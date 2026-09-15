@@ -250,6 +250,23 @@ fn invite_link_button_clears_the_contacts_panel() {
     assert!(!overlap, "the two copy actions overlap each other");
 }
 
+// Caught in the cold install test of 2026-09-15: the button stopped short of
+// the input above it, which reads as a misaligned control. Card 2's content
+// column runs to x=795, the right edge of the input and of the Add/Copy button.
+#[test]
+fn invite_button_ends_at_the_card_content_edge() {
+    const CONTENT_RIGHT: f32 = 795.0;
+    let app = app();
+    let btn = one(&app, "Copy invite link");
+    let right = btn.absolute_position().x + btn.size().width;
+    assert!(
+        (right - CONTENT_RIGHT).abs() < 1.0,
+        "invite button ends at x={}, the card content edge is x={}",
+        right,
+        CONTENT_RIGHT
+    );
+}
+
 #[test]
 fn invite_link_button_hidden_in_local_mode() {
     let app = app();

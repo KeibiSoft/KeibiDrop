@@ -17,7 +17,24 @@ use keibidrop_rust::*; // ui.slint components (MainWindow), compiled in lib.rs
 
 // The invite link carries the code in the fragment, so it never reaches the web
 // server's log. NormalizePeerCode on the Go side accepts this form everywhere.
-const INVITE_LINK_BASE: &str = "https://keibidrop.com/join#";
+const INVITE_LINK_BASE: &str = "https://keibidrop.com/join.html#";
+
+/// Whether an engine event ends the session, so the UI unmounts, tells the peer
+/// to disconnect and returns to the connect screen.
+///
+/// A lost heartbeat does not. The engine starts a reconnect the moment it
+/// reports one, and ending the session here kills that reconnect and takes the
+/// peer down too. Found in the cold install test of 2026-09-15: a healthy
+/// session died 12 seconds after connecting, both sides, with "Connection lost"
+/// on screen while reconnect attempt 1 of 10 was still in flight. The engine
+/// now calls this "reconnecting:health_timeout"; the old name is refused here
+/// as well, so an older engine cannot trigger it either.
+fn event_ends_the_session(evt: &str) -> bool {
+    if evt == "peer_disconnected:health_timeout" {
+        return false;
+    }
+    evt.starts_with("peer_disconnected:") || evt.starts_with("gave_up:")
+}
 
 fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
@@ -2811,8 +2828,7 @@ fn main() {
                             }
                         }
 
-                        let is_disconnect = evt.starts_with("peer_disconnected:")
-                            || evt.starts_with("gave_up:");
+                        let is_disconnect = event_ends_the_session(&evt);
                         if is_disconnect {
                             println!(
                                 "[Event] Disconnect detected ({}), cleaning up...",
@@ -2904,5 +2920,38 @@ fn main() {
         // Cleanup
         bindings::KD_Stop();
         println!("KeibiDrop stopped.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::event_ends_the_session;
+
+    #[test]
+    fn a_health_timeout_does_not_end_the_session() {
+        // The engine is already reconnecting when it reports this.
+        assert!(!event_ends_the_session("reconnecting:health_timeout"));
+        assert!(!event_ends_the_session("peer_disconnected:health_timeout"));
+    }
+
+    #[test]
+    fn a_real_disconnect_ends_the_session() {
+        assert!(event_ends_the_session("peer_disconnected:"));
+        assert!(event_ends_the_session("gave_up:"));
+        assert!(event_ends_the_session("gave_up:10_attempts"));
+    }
+
+    #[test]
+    fn unrelated_events_are_left_alone() {
+        for e in [
+            "reconnecting:",
+            "reconnected:",
+            "resuming_downloads:3",
+            "connection_mode:lan",
+            "tokens_added",
+            "",
+        ] {
+            assert!(!event_ends_the_session(e), "{e} ended the session");
+        }
     }
 }

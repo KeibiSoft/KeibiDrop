@@ -146,9 +146,10 @@ component DataRectangle inherits Rectangle {
     }
 
     if root.secondaryText != "": Rectangle {
-        x: 324px;
+        // Directly under the primary button in InputArea, same width.
+        x: 339px;
         y: 114px;
-        width: 150px;
+        width: 142px;
         height: 28px;
         border-radius: 7px;
         border-width: 0.5px;
@@ -1070,9 +1071,10 @@ export component MainWindow inherits Window {
             wrap: word-wrap;
         }
         if root.engine_error != "": Rectangle {
-            x: 261px;
+            // Line up with the card boxes, which start after the number badge.
+            x: 314px;
             y: 459px;
-            width: 570px;
+            width: 517px;
             height: 178px;
             border-radius: 7px;
             background: rgba(239,68,68,0.08);
@@ -2014,18 +2016,18 @@ export component MainWindow inherits Window {
 
     // Feedback button (Screen 0 only: the first screen a new person sees)
     if root.current_screen == 0: SmallOutlineButton {
-        x: 700px;
+        x: 676px;
         y: 93px;
-        width: 72px;
+        width: 80px;
         text: "Feedback";
         clicked => { root.feedback_visible = true; }
     }
 
     // Saved Files button (Screen 0 only, when files exist)
     if root.current_screen == 0 && root.saved_file_list.length > 0: SmallOutlineButton {
-        x: 780px;
+        x: 764px;
         y: 93px;
-        width: 80px;
+        width: 96px;
         text: "Saved Files";
         clicked => { root.view_saved_files() }
     }
