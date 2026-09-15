@@ -1153,27 +1153,9 @@ func (kd *KeibiDrop) CreateRoom() error {
 
 	// In local mode, exchange public keys before the PQC handshake.
 	if kd.IsLocalMode {
-		// Snapshot under kd.mu: a prior bridge-fallback timeout or a concurrent Shutdown
-		// can leave the listener nil here. Accept on a nil interface panics.
-		kd.mu.Lock()
-		ln := kd.listener
-		kd.mu.Unlock()
-		if ln == nil {
-			logger.Warn("Listener not open for local key exchange")
-			return ErrListenerNotOpen
-		}
-		keyConn, err := ln.Accept()
-		if err != nil {
-			logger.Error("Failed to accept key exchange connection", "error", err)
+		if err := kd.acceptLocalKeyExchange(logger); err != nil {
 			return err
 		}
-		if err := session.ExchangePublicKeysLocal(kd.session, keyConn, false); err != nil {
-			keyConn.Close()
-			logger.Error("Failed local key exchange", "error", err)
-			return err
-		}
-		keyConn.Close()
-		logger.Info("Local key exchange complete (create side)")
 	}
 
 	// Rendezvous loop. One round is [direct accept window] then [one bridge attempt].
@@ -1233,9 +1215,18 @@ func (kd *KeibiDrop) CreateRoom() error {
 // that speaks wins. It reports whether the session is connected. A false with no error
 // means nobody arrived, and the caller re-arms for another round while its budget lasts.
 func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool, error) {
+	// On the internet the relay's probe of the public address says whether the
+	// joiner's dial can arrive. In local mode the joiner dials the LAN address it
+	// discovered, which the probe never tested: a home router with no port forward
+	// is blocked to the relay and open to the peer on the same subnet (2026-09-15:
+	// the creator went bridge-only on that verdict while the joiner's LAN dial sat
+	// in its backlog, and neither side connected).
+	inboundBlocked := !kd.IsLocalMode && kd.InboundBlocked()
+	noPublicAddr := !kd.IsLocalMode && kd.LocalIPv6IP == "" && kd.PublicIPv4() == ""
+
 	// A previous round closed the listener on its way out. Re-arm it, so this round
 	// can take a direct joiner.
-	if kd.listener == nil && kd.BridgeAddr != "" && round > 0 && !kd.InboundBlocked() {
+	if kd.listener == nil && kd.BridgeAddr != "" && round > 0 && !inboundBlocked {
 		addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
 		if newLn, lnErr := net.Listen("tcp", addr); lnErr == nil {
 			kd.listener = newLn
@@ -1250,10 +1241,10 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 		return false, fmt.Errorf("create-room: inbound listener not open and no bridge configured")
 	case kd.listener == nil:
 		logger.Warn("Inbound listener not open (prior bridge fallback), using bridge")
-	case kd.LocalIPv6IP == "" && kd.PublicIPv4() == "" && kd.BridgeAddr != "":
+	case noPublicAddr && kd.BridgeAddr != "":
 		logger.Info("No public address known, skipping direct P2P, using bridge")
 		direct = false
-	case kd.InboundBlocked() && kd.BridgeAddr != "":
+	case inboundBlocked && kd.BridgeAddr != "":
 		// Nothing reaches our listener, so the joiner's dial cannot arrive.
 		logger.Info("Inbound is blocked on this network, skipping direct P2P, using bridge")
 		direct = false
