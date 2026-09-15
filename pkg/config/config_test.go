@@ -129,3 +129,60 @@ func TestDirectoriesToEnsure_SkipsMountPathOnWindows(t *testing.T) {
 		)
 	})
 }
+
+// One default pair meant the second surface to start could not bind. The app
+// keeps the old pair.
+func TestUseAgentPorts_MovesOnlyTheUnchosenDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	UseAgentPorts(&cfg)
+
+	require.Equal(t, AgentInboundPort, cfg.InboundPort)
+	require.Equal(t, AgentOutboundPort, cfg.OutboundPort)
+	require.NotEqual(t, InboundPort, cfg.InboundPort, "agent and app still share the inbound port")
+	require.NotEqual(t, OutboundPort, cfg.OutboundPort, "agent and app still share the outbound port")
+	require.True(t, ValidPeerPort(cfg.InboundPort))
+	require.True(t, ValidPeerPort(cfg.OutboundPort))
+}
+
+// No two surfaces may fall back to the same pair.
+func TestSurfacePorts_NoTwoSurfacesShareADefault(t *testing.T) {
+	pairs := map[string][2]int{
+		"app":   {InboundPort, OutboundPort},
+		"agent": {AgentInboundPort, AgentOutboundPort},
+		"mcp":   {MCPInboundPort, MCPOutboundPort},
+	}
+
+	seen := map[int]string{}
+	for surface, pair := range pairs {
+		for _, port := range pair {
+			if other, taken := seen[port]; taken {
+				t.Fatalf("%s and %s both default to port %d", surface, other, port)
+			}
+			seen[port] = surface
+			require.True(t, ValidPeerPort(port), "%s port %d is outside 26000-27000", surface, port)
+		}
+	}
+}
+
+// A NAS that forwards 26500 keeps something listening there.
+func TestUseAgentPorts_LeavesAChosenPortAlone(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.InboundPort = 26500
+	cfg.OutboundPort = 26501
+	UseAgentPorts(&cfg)
+
+	require.Equal(t, 26500, cfg.InboundPort)
+	require.Equal(t, 26501, cfg.OutboundPort)
+}
+
+// The environment is the documented knob, so what it asks for has to survive.
+func TestUseAgentPorts_EnvironmentWins(t *testing.T) {
+	t.Setenv("KD_INBOUND_PORT", "26431")
+	t.Setenv("KD_OUTBOUND_PORT", "26432")
+
+	cfg := DefaultConfig()
+	UseAgentPorts(&cfg)
+
+	require.Equal(t, InboundPort, cfg.InboundPort)
+	require.Equal(t, OutboundPort, cfg.OutboundPort)
+}

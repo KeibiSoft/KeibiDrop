@@ -764,10 +764,7 @@ func (kd *KeibiDrop) connectGRPCClientWithRetry(timeout time.Duration) error {
 		if outboundConn := s.OutboundConn(); s != nil && outboundConn != nil {
 			// outboundConn is snapshotted under socketsMu, so the dialer closure is
 			// safe even if kd.session is nil'd later by the Stop handler.
-
-			dialer := func(ctx context.Context, _ string) (net.Conn, error) {
-				return outboundConn, nil
-			}
+			dialer := oneShotDialer(outboundConn)
 
 			conn, err := grpc.Dial( //nolint:staticcheck // SA1019: custom dialer over hijacked conn
 				"keibipipe",

@@ -32,6 +32,16 @@ The daemon runs in the foreground and prints its fingerprint as JSON on startup.
 ./kd connect                         # both peers run this (auto role)
 ```
 
+Send a person a link instead of a code. `kd invite` returns the same code as
+addresses they can open: `invite_link` is a page with the download and the code
+on it, `web_link` opens the browser peer, `app_link` opens an installed app.
+`kd register` takes any of them.
+
+```bash
+./kd invite | jq -r .data.invite_link
+./kd register "https://keibidrop.com/join.html#<their-code>"
+```
+
 ### Reconnect with a saved contact
 
 ```bash
@@ -88,8 +98,8 @@ All set before `kd start`:
 | Variable | Description | Default |
 |---|---|---|
 | `KD_RELAY` | Relay server URL | `https://keibidroprelay.keibisoft.com` |
-| `KD_INBOUND_PORT` | TCP listen port (range 26000-27000) | `26431` |
-| `KD_OUTBOUND_PORT` | TCP outbound port (range 26000-27000) | `26432` |
+| `KD_INBOUND_PORT` | TCP listen port (range 26000-27000) | `26441` |
+| `KD_OUTBOUND_PORT` | TCP outbound port (range 26000-27000) | `26442` |
 | `KD_SAVE_PATH` | Where to save received files | |
 | `KD_MOUNT_PATH` | FUSE mount point (directory) | |
 | `KD_NO_FUSE` | Set to any value to disable FUSE | |
@@ -177,7 +187,8 @@ it, so the numbers do not change.
 | `kd status` | Full status | `{"ok":true,"data":{"running":true,"connection_status":"healthy",...}}` |
 | `kd version` | Version and commit hash | `{"ok":true,"data":{"version":"...","commit":"..."}}` |
 | **Connection** | | |
-| `kd register <fp>` | Register peer fingerprint (or LAN address in local mode) | `{"ok":true,"data":{"registered":"..."}}` |
+| `kd register <fp>` | Register peer fingerprint, invite link or LAN address | `{"ok":true,"data":{"registered":"..."}}` |
+| `kd invite [origin]` | This peer's code as links a person can open | `{"ok":true,"data":{"code":"...","invite_link":"...","web_link":"...","app_link":"..."}}` |
 | `kd discover` | Discover peers on local network (10s scan) | `{"ok":true,"data":{"my_name":"...","peers":[{"name":"...","addr":"..."}]}}` |
 | `kd connect` | Connect (auto role via fingerprint tiebreak) | `{"ok":true,"data":{"status":"connected","peer_ip":"...","mode":"..."}}` |
 | `kd create` | Create room (blocks until peer joins) | `{"ok":true,"data":{"status":"connected","peer_ip":"..."}}` |

@@ -106,12 +106,34 @@ func TestBridgeLegHolder_WinnerClosesAndRefusesLater(t *testing.T) {
 	a, b := net.Pipe()
 	defer b.Close()
 	require.True(t, h.set(a))
-	h.closeForWinner()
+	require.True(t, h.open())
+	h.closeForWinner(nil)
 	_, err := a.Write([]byte{1})
 	require.Error(t, err, "the held leg is closed by the winner")
+	require.False(t, h.open())
 	c, d := net.Pipe()
 	defer d.Close()
 	require.False(t, h.set(c), "a leg dialed after the win is refused")
+	_ = c.Close()
+}
+
+// The held leg is the winner when the joiner spoke on it: the round names it
+// and the holder must leave it open, since it is the session's inbound now.
+func TestBridgeLegHolder_SparesTheLegThatWon(t *testing.T) {
+	h := &bridgeLegHolder{}
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	require.True(t, h.set(a))
+	h.closeForWinner(a)
+	go func() { _, _ = b.Write([]byte{1}) }()
+	_ = a.SetReadDeadline(time.Now().Add(time.Second))
+	_, err := a.Read(make([]byte, 1))
+	require.NoError(t, err, "the winning leg stays open after the round")
+	require.False(t, h.open(), "the round is over all the same")
+	c, d := net.Pipe()
+	defer d.Close()
+	require.False(t, h.set(c))
 	_ = c.Close()
 }
 

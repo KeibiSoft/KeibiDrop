@@ -353,6 +353,57 @@ func GetLocalAddrs() []string {
 // chat app strips the fragment.
 const invitePathMarker = "join/"
 
+// InviteBase is the page an invite link points at. The code goes in the
+// fragment, so it never reaches the web server's log. The page is join.html;
+// /join is not a route.
+const InviteBase = "https://keibidrop.com/join.html#"
+
+// InviteWebBase is the browser peer. It reads the same fragment.
+const InviteWebBase = "https://web.keibidrop.com/#"
+
+// InviteSchemeBase opens an installed app instead of the page. No release
+// registers the scheme with the OS yet.
+const InviteSchemeBase = "kd://join/"
+
+// InviteLinks is one peer code as the addresses that carry it. Every surface
+// answers with these field names.
+type InviteLinks struct {
+	Code string `json:"code"`
+	// Page is the one to send a person. It carries the download too.
+	Page string `json:"invite_link"`
+	Web  string `json:"web_link"`
+	App  string `json:"app_link"`
+}
+
+// InviteLinksFor builds every form of one code.
+func InviteLinksFor(code string) InviteLinks {
+	return InviteLinks{
+		Code: strings.TrimSpace(code),
+		Page: InviteLink(code, ""),
+		Web:  InviteLink(code, InviteWebBase),
+		App:  InviteLink(code, InviteSchemeBase),
+	}
+}
+
+// InviteLink wraps a peer code in a page address. base is empty for InviteBase,
+// or an origin of your own. This is the only place a link is built and
+// NormalizePeerCode is the inverse.
+func InviteLink(code, base string) string {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return ""
+	}
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = InviteBase
+	}
+	// A base given by hand usually stops at the page.
+	if !strings.HasSuffix(base, "#") && !strings.HasSuffix(base, "/") {
+		base += "#"
+	}
+	return base + code
+}
+
 // NormalizePeerCode takes a peer code as it arrives from a chat message: the
 // bare code, or the invite link that carries it in a fragment
 // (https://keibidrop.com/join#<code>) or in the path. A string that is neither

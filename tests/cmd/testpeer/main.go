@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
 )
 
@@ -39,10 +40,9 @@ func main() {
 	useFUSE := os.Getenv("USE_FUSE") == "1"
 	logFile := os.Getenv("LOG_FILE")
 
-	wr := os.Stderr
+	var wr io.Writer = os.Stderr
 	if logFile != "" {
-		f, err := os.OpenFile(filepath.Clean(logFile),
-			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		f, err := config.OpenLogFile(logFile)
 		if err == nil {
 			wr = f
 			defer f.Close()

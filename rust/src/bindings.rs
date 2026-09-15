@@ -8280,6 +8280,9 @@ extern "C" {
     pub fn KD_Fingerprint() -> *mut ::std::os::raw::c_char;
 }
 extern "C" {
+    pub fn KD_InviteLink(code: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
     pub fn KD_PrepareDisconnect();
 }
 extern "C" {

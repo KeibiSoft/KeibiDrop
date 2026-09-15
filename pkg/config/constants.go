@@ -8,8 +8,16 @@
 
 package config
 
+// The desktop app's default port pair.
 const InboundPort = 26431
 const OutboundPort = 26432
+
+// One pair per surface. The app, the agent and the MCP server get installed on
+// the same machine, and one pair meant the second to start could not bind.
+const AgentInboundPort = 26441
+const AgentOutboundPort = 26442
+const MCPInboundPort = 26451
+const MCPOutboundPort = 26452
 
 // Peer connection ports must fall in this range. Handshake and relay
 // registration reject anything outside it.

@@ -1278,12 +1278,13 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 	}
 
 	// stopLegs ends whatever leg did not win. The winner's conn is already in the
-	// session; the other leg is closed, not parked: this round is over for good.
-	stopLegs := func() {
+	// session, and is named so the bridge holder spares it when it is the bridge
+	// leg; the other leg is closed, not parked: this round is over for good.
+	stopLegs := func(winner net.Conn) {
 		if acceptor != nil {
 			acceptor.stop()
 		}
-		bridgeLeg.closeForWinner()
+		bridgeLeg.closeForWinner(winner)
 	}
 
 	for pending := legs; pending > 0; {
@@ -1316,7 +1317,7 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 				logger.Warn("Inbound handshake failed, accepting again", "error", hsErr)
 				continue
 			}
-			stopLegs()
+			stopLegs(nil)
 			return kd.finishDirectInbound(logger, a.conn)
 		default: // a joiner spoke on the bridge leg
 			if err := session.PerformInboundHandshakeWait(kd.session, a.conn, bridgeRoundWait); err != nil {
@@ -1326,7 +1327,7 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 				pending--
 				continue
 			}
-			stopLegs()
+			stopLegs(a.conn)
 			return kd.finishBridgeInbound(logger)
 		}
 	}

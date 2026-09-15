@@ -271,7 +271,7 @@ func TestToolCatalogue(t *testing.T) {
 	}
 
 	for _, required := range []string{
-		"kd_create_share", "kd_join", "kd_status", "kd_list_files",
+		"kd_invite", "kd_create_share", "kd_join", "kd_status", "kd_list_files",
 		"kd_send_file", "kd_pull_file", "kd_transfer_status", "kd_disconnect",
 		"kd_feedback",
 	} {

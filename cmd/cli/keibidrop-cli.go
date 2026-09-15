@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -486,7 +487,8 @@ func (c *cliContext) completer(d prompt.Document) []prompt.Suggest {
 		{Text: "show", Description: "Show local or peer info"},
 		{Text: "show relay", Description: "Show the connected relay URL"},
 		{Text: "show peer", Description: "Show the peer fingerprint"},
-		{Text: "show fingerprint", Description: "Show our fingerprint"},
+		{Text: "show fingerprint", Description: "Show our fingerprint and invite link"},
+		{Text: "show invite", Description: "Our code as links a person can open"},
 		{Text: "show config", Description: "Show full configuration"},
 		{Text: "register", Description: "Register peer fingerprint"},
 		{Text: "discover", Description: "Discover peers on local network"},
@@ -560,13 +562,14 @@ help                         Show this help message
 version                      Show banner and version
 feedback [--stars 1-5] [words]  Tell the developers how it went. Either part is enough
 status                       Full connection and session status
-show fingerprint             Show your fingerprint
+show fingerprint             Show your fingerprint and invite link
+show invite                  Your code as links a person can open
 show ip                      Show your IP
 show peer fingerprint        Show peer's fingerprint
 show peer ip                 Show peer's IP
 show relay                   Show the currently connected relay URL
 show config                  Show full configuration
-register <fingerprint>       Register a peer's fingerprint
+register <fingerprint>       Register a peer's fingerprint, or an invite link
 discover                     Discover peers on local network
 connect                      Connect (auto role via fingerprint)
 create                       Create a room
@@ -607,6 +610,18 @@ func handleShow(kd *common.KeibiDrop, what string) {
 			return
 		}
 		fmt.Println("Your fingerprint:", fp)
+		fmt.Println("Invite link:     ", common.InviteLink(fp, ""))
+
+	case "invite":
+		fp, err := kd.ExportFingerprint()
+		if err != nil {
+			fmt.Println("Error:", err)
+			return
+		}
+		links := common.InviteLinksFor(fp)
+		fmt.Println("Send this in a chat:", links.Page)
+		fmt.Println("Browser only:       ", links.Web)
+		fmt.Println("Installed app:      ", links.App)
 
 	case "ip":
 		fmt.Println("Your IP:", kd.LocalIPv6IP)
@@ -858,10 +873,9 @@ func main() {
 	}
 	fmt.Println("Connecting to relay:", relayURL.String())
 
-	wr := os.Stderr
+	var wr io.Writer = os.Stderr
 	if cfg.LogFile != "" {
-		f, err := os.OpenFile(filepath.Clean(cfg.LogFile),
-			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		f, err := config.OpenLogFile(cfg.LogFile)
 		if err != nil {
 			slog.Warn("Failed to open log file, defaulting to stderr",
 				"path", cfg.LogFile, "error", err)

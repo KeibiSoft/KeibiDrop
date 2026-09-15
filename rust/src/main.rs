@@ -15,9 +15,23 @@ use slint::winit_030::WinitWindowAccessor;
 use slint::winit_030::WinitWindowEventResult;
 use keibidrop_rust::*; // ui.slint components (MainWindow), compiled in lib.rs
 
-// The invite link carries the code in the fragment, so it never reaches the web
-// server's log. NormalizePeerCode on the Go side accepts this form everywhere.
-const INVITE_LINK_BASE: &str = "https://keibidrop.com/join.html#";
+// The engine builds the link, in pkg/logic/common. This file held its own copy
+// of the address and it pointed at a page the site does not serve.
+fn invite_link(code: &str) -> String {
+    let c_code = match CString::new(code) {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    unsafe {
+        let p = bindings::KD_InviteLink(c_code.as_ptr() as *mut i8);
+        if p.is_null() {
+            return String::new();
+        }
+        let link = CStr::from_ptr(p).to_string_lossy().to_string();
+        libc::free(p as *mut libc::c_void);
+        link
+    }
+}
 
 /// Whether an engine event ends the session, so the UI unmounts, tells the peer
 /// to disconnect and returns to the connect screen.
@@ -1375,7 +1389,14 @@ fn main() {
                 );
                 return;
             }
-            let link = format!("{}{}", INVITE_LINK_BASE, code);
+            let link = invite_link(&code);
+            if link.is_empty() {
+                show_toast(
+                    &weak_toast_invite,
+                    "Could not build the link. Send your code instead.",
+                );
+                return;
+            }
             match invite_ctx.as_mut().map(|c| c.set_contents(link)) {
                 Some(Ok(())) => show_toast(
                     &weak_toast_invite,
