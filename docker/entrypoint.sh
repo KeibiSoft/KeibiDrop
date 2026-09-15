@@ -35,6 +35,11 @@ export KD_NO_FUSE="${KD_NO_FUSE:-true}"
 export KD_SCAN_SHARED_ON_START="${KD_SCAN_SHARED_ON_START:-true}"
 # Files that land in /shares mid-session are announced on the next pass.
 export KD_RESCAN_SHARED_SECONDS="${KD_RESCAN_SHARED_SECONDS:-30}"
+# kd on its own moves to 26441 so it cannot collide with the desktop app on one
+# machine. Nothing shares this container, and these are the ports the README,
+# the compose file and the Unraid template tell people to forward, so pin them.
+export KD_INBOUND_PORT="${KD_INBOUND_PORT:-26431}"
+export KD_OUTBOUND_PORT="${KD_OUTBOUND_PORT:-26432}"
 
 say() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
