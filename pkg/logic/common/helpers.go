@@ -349,6 +349,25 @@ func GetLocalAddrs() []string {
 	return addrs
 }
 
+// invitePathMarker is the path form of the invite link, for the case where a
+// chat app strips the fragment.
+const invitePathMarker = "join/"
+
+// NormalizePeerCode takes a peer code as it arrives from a chat message: the
+// bare code, or the invite link that carries it in a fragment
+// (https://keibidrop.com/join#<code>) or in the path. A string that is neither
+// comes back trimmed, so ValidateFingerprint reports the real error.
+// The code alphabet is base64 RawURL, which has no "#" and no "/".
+func NormalizePeerCode(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.LastIndex(s, "#"); i >= 0 {
+		s = s[i+1:]
+	} else if i := strings.Index(s, invitePathMarker); i >= 0 {
+		s = s[i+len(invitePathMarker):]
+	}
+	return strings.TrimSpace(s)
+}
+
 func ValidateFingerprint(fp string) error {
 	if fp == "" {
 		return ErrEmptyFingerprint

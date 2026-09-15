@@ -8,6 +8,7 @@
 package common
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -161,4 +162,50 @@ func TestParsePeerDirectAddressForms(t *testing.T) {
 			require.Equal(t, c.port, port)
 		})
 	}
+}
+
+// A peer code is 64 bytes in base64 RawURL, so 86 characters.
+func testPeerCode() string {
+	raw := make([]byte, 64)
+	for i := range raw {
+		raw[i] = byte(i)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func TestNormalizePeerCode(t *testing.T) {
+	code := testPeerCode()
+	require.Len(t, code, 86)
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bare code", code, code},
+		{"invite link", "https://keibidrop.com/join#" + code, code},
+		{"invite link with page suffix", "https://keibidrop.com/join.html#" + code, code},
+		{"path form", "https://keibidrop.com/join/" + code, code},
+		{"pasted with spaces", "  " + code + "  ", code},
+		{"pasted from a chat, trailing newline", "https://keibidrop.com/join#" + code + "\n", code},
+		{"link with spaces around it", "  https://keibidrop.com/join#" + code + " ", code},
+		{"not a code, left for the validator", "hello", "hello"},
+		{"empty", "   ", ""},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, NormalizePeerCode(c.in))
+		})
+	}
+}
+
+// Every surface (app, kd, kdmcp, CLI, mobile) reaches the validator through
+// AddPeerFingerprint, so the link form must validate exactly like the code.
+func TestNormalizePeerCode_ValidatesLikeTheBareCode(t *testing.T) {
+	code := testPeerCode()
+
+	require.NoError(t, ValidateFingerprint(NormalizePeerCode("https://keibidrop.com/join#"+code)))
+	require.NoError(t, ValidateFingerprint(NormalizePeerCode(code)))
+	require.Error(t, ValidateFingerprint(NormalizePeerCode("https://keibidrop.com/join#not-a-code")))
 }

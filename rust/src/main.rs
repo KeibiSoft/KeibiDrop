@@ -15,6 +15,10 @@ use slint::winit_030::WinitWindowAccessor;
 use slint::winit_030::WinitWindowEventResult;
 use keibidrop_rust::*; // ui.slint components (MainWindow), compiled in lib.rs
 
+// The invite link carries the code in the fragment, so it never reaches the web
+// server's log. NormalizePeerCode on the Go side accepts this form everywhere.
+const INVITE_LINK_BASE: &str = "https://keibidrop.com/join#";
+
 fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
@@ -611,6 +615,42 @@ fn engine_state_text() -> String {
         libc::free(p as *mut libc::c_void);
         line.split('\t').nth(1).unwrap_or("").to_string()
     }
+}
+
+// Registers whatever is in the peer code field and reports whether it took.
+// Add and Connect both call it, so pasting a code and pressing Connect is
+// enough; nobody has to find Add first.
+fn add_peer_code_from_field(app: &MainWindow) -> bool {
+    let peer_code_shared = app.get_peer_code();
+    let peer_code = peer_code_shared.as_str();
+    if peer_code.trim().is_empty() {
+        return false;
+    }
+    let is_local = app.get_local_mode();
+    let c_code = match CString::new(peer_code) {
+        Ok(c) => c,
+        Err(_) => {
+            app.set_peer_code_added(false);
+            app.set_peer_code_error(true);
+            return false;
+        }
+    };
+    let result = unsafe {
+        if is_local {
+            bindings::KD_SetPeerDirectAddress(c_code.as_ptr() as *mut i8)
+        } else {
+            bindings::KD_AddPeerFingerprint(c_code.as_ptr() as *mut i8)
+        }
+    };
+    if result != 0 {
+        println!("Peer code rejected, error code: {}", result);
+        app.set_peer_code_added(false);
+        app.set_peer_code_error(true);
+        return false;
+    }
+    app.set_peer_code_error(false);
+    app.set_peer_code_added(true);
+    true
 }
 
 fn show_toast(weak: &slint::Weak<MainWindow>, msg: &str) {
@@ -1273,27 +1313,7 @@ fn main() {
         let weak = app.as_weak();
         app.on_add_peer_code(move || {
             if let Some(app) = weak.upgrade() {
-                let peer_code_shared = app.get_peer_code();
-                let peer_code = peer_code_shared.as_str();
-                let is_local = app.get_local_mode();
-                println!("Peer code entered: {} (local={})", peer_code, is_local);
-
-                let result = if is_local {
-                    let c_addr = CString::new(peer_code).expect("CString::new failed");
-                    bindings::KD_SetPeerDirectAddress(c_addr.as_ptr() as *mut i8)
-                } else {
-                    let c_fp = CString::new(peer_code).expect("CString::new failed");
-                    bindings::KD_AddPeerFingerprint(c_fp.as_ptr() as *mut i8)
-                };
-
-                if result != 0 {
-                    println!("Received error code: {}", result);
-                    app.set_peer_code_added(false);
-                    app.set_peer_code_error(true);
-                } else {
-                    app.set_peer_code_error(false);
-                    app.set_peer_code_added(true);
-                }
+                add_peer_code_from_field(&app);
             }
         });
 
@@ -1316,6 +1336,37 @@ fn main() {
                 _ => show_toast(
                     &weak_toast_copy,
                     "Could not copy. Select the code and copy it manually.",
+                ),
+            }
+        });
+
+        // Handle Copy invite link: the same code inside a page that also carries
+        // the download and says what to send back. Its own clipboard handle
+        // because the one above is owned by that closure.
+        let weak_invite = app.as_weak();
+        let weak_toast_invite = app.as_weak();
+        let mut invite_ctx = ClipboardContext::new().ok();
+        app.on_copy_invite_link(move || {
+            let code = match weak_invite.upgrade() {
+                Some(app) => app.get_my_code().to_string(),
+                None => return,
+            };
+            if code.is_empty() {
+                show_toast(
+                    &weak_toast_invite,
+                    "No code yet. Wait for the app to finish starting.",
+                );
+                return;
+            }
+            let link = format!("{}{}", INVITE_LINK_BASE, code);
+            match invite_ctx.as_mut().map(|c| c.set_contents(link)) {
+                Some(Ok(())) => show_toast(
+                    &weak_toast_invite,
+                    "Invite link copied. Send it in any chat.",
+                ),
+                _ => show_toast(
+                    &weak_toast_invite,
+                    "Could not copy. Send your code instead.",
                 ),
             }
         });
@@ -1378,6 +1429,11 @@ fn main() {
         app.on_connect_pressed(move || {
             if let Some(app) = weak_connect.upgrade() {
                 if app.get_room_action() != 0 {
+                    return;
+                }
+                // Register the pasted code first. A bad code shows its error and
+                // nothing connects.
+                if !app.get_peer_code_added() && !add_peer_code_from_field(&app) {
                     return;
                 }
             }

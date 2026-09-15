@@ -12,6 +12,10 @@ set -euo pipefail
 TAG="${1:?Usage: $0 <tag> (e.g. v0.2.0-beta.1)}"
 VERSION="${TAG#v}"
 
+# Every repo path below resolves from the script, not from the caller's
+# directory. Run from anywhere with SITE_DIR set and the README still moves.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 sedi() { local expr="$1"; shift; sed -i '' "$expr" "$@" 2>/dev/null || sed -i "$expr" "$@"; }
 
 echo "==> Updating packages for $TAG (version $VERSION)"
@@ -88,9 +92,9 @@ echo "  To publish: snapcraft && snapcraft upload keibidrop_*.snap --release=edg
 # files hold it as text, so they move here and a plain go build, cargo
 # metadata and the tree itself all say the released version.
 echo "==> Updating version literals..."
-sedi "s/^\tVersion    = \"[^\"]*\"/\tVersion    = \"$VERSION\"/" pkg/logic/common/ascii_art.go
-perl -0pi -e 's/^version = "[^"]*"/version = "'"$VERSION"'"/m' rust/Cargo.toml
-perl -0pi -e 's/(name = "keibidrop-rust"\nversion = ")[^"]*"/${1}'"$VERSION"'"/' rust/Cargo.lock
+sedi "s/^\tVersion    = \"[^\"]*\"/\tVersion    = \"$VERSION\"/" "$REPO/pkg/logic/common/ascii_art.go"
+perl -0pi -e 's/^version = "[^"]*"/version = "'"$VERSION"'"/m' "$REPO/rust/Cargo.toml"
+perl -0pi -e 's/(name = "keibidrop-rust"\nversion = ")[^"]*"/${1}'"$VERSION"'"/' "$REPO/rust/Cargo.lock"
 echo "  Updated pkg/logic/common/ascii_art.go, rust/Cargo.toml, rust/Cargo.lock"
 
 # ── keibidrop.com and README ──────────────────────────────
@@ -98,11 +102,18 @@ echo "  Updated pkg/logic/common/ascii_art.go, rust/Cargo.toml, rust/Cargo.lock"
 # every page with buttons, the README and latest-version.txt move together.
 # latest-version.txt drives the in-app update notice: it changes only here,
 # after the release assets exist.
-SITE="${SITE_DIR:-../../KeibiSoft/keibidrop.com}"
+SITE="${SITE_DIR:-$REPO/../../KeibiSoft/keibidrop.com}"
 if [ -f "$SITE/latest-version.txt" ]; then
   PREV=$(tr -d '[:space:]' < "$SITE/latest-version.txt")
   echo "==> Updating keibidrop.com and README from $PREV to $VERSION..."
-  for f in "$SITE"/index.html "$SITE"/install.html "$SITE"/how-to-use.html "$SITE"/guides/*.html README.md; do
+  # One list for the bump and for the check below. A page is included only if
+  # it exists, so a page added later does not abort the run.
+  VERSIONED=()
+  for f in "$SITE"/index.html "$SITE"/install.html "$SITE"/how-to-use.html \
+           "$SITE"/join.html "$SITE"/guides/*.html "$REPO/README.md"; do
+    [ -f "$f" ] && VERSIONED+=("$f")
+  done
+  for f in "${VERSIONED[@]}"; do
     sedi "s#/v$PREV/#/v$VERSION/#g; s#keibidrop-$PREV-#keibidrop-$VERSION-#g; s#keibidrop_${PREV}_#keibidrop_${VERSION}_#g" "$f"
   done
   sedi "s/\"softwareVersion\": \"$PREV\"/\"softwareVersion\": \"$VERSION\"/" "$SITE/index.html"
@@ -110,8 +121,23 @@ if [ -f "$SITE/latest-version.txt" ]; then
     sedi "s/darwin-amd64\.tar\.gz/darwin-amd64.dmg/g" "$SITE/install.html"
     echo "  Intel Mac line now points at the DMG"
   fi
+  # A file that was not at PREV takes no substitution and used to drift away
+  # silently, one release at a time. Name it instead. README.md sat at 0.4.6
+  # through the whole of 0.4.7 that way.
+  STALE=""
+  for f in "${VERSIONED[@]}"; do
+    others=$(grep -oE "releases/download/v[0-9]+\.[0-9]+\.[0-9]+" "$f" |
+             sed "s#releases/download/v##" | sort -u | grep -v "^$VERSION\$" || true)
+    if [ -n "$others" ]; then
+      STALE="$STALE $f($(echo "$others" | tr '\n' ',' | sed 's/,$//'))"
+    fi
+  done
+  if [ -n "$STALE" ]; then
+    echo "  CHECK BY HAND, a download link does not name $VERSION:$STALE"
+  fi
+
   printf '%s\n' "$VERSION" > "$SITE/latest-version.txt"
-  echo "  Updated buttons on 7 pages, README, softwareVersion, latest-version.txt"
+  echo "  Updated ${#VERSIONED[@]} versioned files (site pages + README), softwareVersion, latest-version.txt"
   echo "  By hand: the $VERSION entry on $SITE/docs/releases.html (and its meta description), then cd $SITE/.. && make push-kd && make indexnow SINCE=$(date +%F)"
 else
   echo "  SKIP: site not found at $SITE (set SITE_DIR)"

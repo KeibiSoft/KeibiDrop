@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -613,7 +612,7 @@ func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
 		return ErrNilPointer
 	}
 
-	fp = strings.TrimSpace(fp)
+	fp = NormalizePeerCode(fp)
 
 	err := ValidateFingerprint(fp)
 	if err != nil {
