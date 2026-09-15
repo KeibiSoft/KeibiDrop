@@ -89,6 +89,7 @@ func TestSafeSendPathContainment(t *testing.T) {
 			}
 			if terr == nil {
 				t.Fatalf("expected refusal with %s, got path %q", tc.wantCode, got)
+				return
 			}
 			if terr.Code != tc.wantCode {
 				t.Fatalf("expected code %s, got %s (%s)", tc.wantCode, terr.Code, terr.Message)
