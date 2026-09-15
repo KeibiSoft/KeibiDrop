@@ -63,8 +63,14 @@ func DefaultConfig() Config {
 		RescanSharedSeconds: 30, // A serving box picks up files that land mid-session.
 		UpdateCheck:         true,
 	}
-	switch runtime.GOOS {
-	case "darwin":
+	switch {
+	case os.Getenv("KEIBIDROP_CONFIG_DIR") != "":
+		// A second instance on one machine (make run-bob, the test harness)
+		// lives in its own config dir, so its log goes there too. Derived from
+		// the platform home, every instance without a log_file of its own
+		// appended to the same file, lines interleaved.
+		cfg.LogFile = filepath.Join(ConfigDir(), "keibidrop.log")
+	case runtime.GOOS == "darwin":
 		cfg.LogFile = filepath.Join(home, "Library", "Logs", "KeibiDrop", "keibidrop.log")
 	default:
 		cfg.LogFile = filepath.Join(home, ".local", "share", "keibidrop", "keibidrop.log")
@@ -121,6 +127,25 @@ func Load() (Config, error) {
 
 	return cfg, nil
 }
+
+// UseSurfacePorts moves a config off the app's default port pair on to another
+// surface's. Every surface reads the same config.toml, which the app writes with
+// its own defaults, so a port still equal to the app default counts as unchosen.
+// Anything else, and KD_INBOUND_PORT or KD_OUTBOUND_PORT, is left alone.
+func UseSurfacePorts(cfg *Config, inbound, outbound int) {
+	if cfg.InboundPort == InboundPort && envFirst("INBOUND_PORT", "KD_INBOUND_PORT") == "" {
+		cfg.InboundPort = inbound
+	}
+	if cfg.OutboundPort == OutboundPort && envFirst("OUTBOUND_PORT", "KD_OUTBOUND_PORT") == "" {
+		cfg.OutboundPort = outbound
+	}
+}
+
+// UseAgentPorts is UseSurfacePorts for the kd agent.
+func UseAgentPorts(cfg *Config) { UseSurfacePorts(cfg, AgentInboundPort, AgentOutboundPort) }
+
+// UseMCPPorts is UseSurfacePorts for the MCP server.
+func UseMCPPorts(cfg *Config) { UseSurfacePorts(cfg, MCPInboundPort, MCPOutboundPort) }
 
 // EnsureDirectories creates save_path, the log directory, and, except on Windows, mount_path.
 // WinFSP creates the mount point itself and rejects an existing path; libfuse and macFUSE require it.

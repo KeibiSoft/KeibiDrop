@@ -117,13 +117,23 @@ func (a *directAcceptor) stop() {
 
 // bridgeLegHolder is the round's current bridge leg, shared between the leg's
 // goroutine (which may replace a closed room with a fresh dial) and the round
-// (which closes it once another leg won).
+// (which ends the leg's part once a winner is known). The held leg is the very
+// conn the round receives through arrivals, so when that leg is the winner the
+// round names it and the holder leaves it alone: it is the session's inbound
+// from then on. Closing it regardless was the cold install failure of
+// 2026-09-15: the bridge read EOF from the creator and dropped the joiner's
+// outbound with it, before the joiner's gRPC client existed.
 type bridgeLegHolder struct {
 	mu   sync.Mutex
 	conn net.Conn
 	won  bool
 }
 
+// errRoundWon ends a bridge watcher whose round was decided by another leg.
+var errRoundWon = errors.New("round already won")
+
+// set registers the leg the watcher waits on. False once the round is won: the
+// watcher closes the leg and stops.
 func (h *bridgeLegHolder) set(c net.Conn) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -134,14 +144,23 @@ func (h *bridgeLegHolder) set(c net.Conn) bool {
 	return true
 }
 
-// closeForWinner closes the current leg and refuses any later one.
-func (h *bridgeLegHolder) closeForWinner() {
+// open reports whether the round is still undecided, so a watcher whose leg
+// closed knows whether a fresh dial can still matter.
+func (h *bridgeLegHolder) open() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return !h.won
+}
+
+// closeForWinner ends the bridge leg's part in the round: the held leg is closed
+// unless it is the winner itself, and any leg dialed later is refused.
+func (h *bridgeLegHolder) closeForWinner(winner net.Conn) {
 	h.mu.Lock()
 	h.won = true
 	c := h.conn
 	h.conn = nil
 	h.mu.Unlock()
-	if c != nil {
+	if c != nil && c != winner {
 		_ = c.Close()
 	}
 }
@@ -155,6 +174,10 @@ func (kd *KeibiDrop) watchBridgeLeg(logger *slog.Logger, holder *bridgeLegHolder
 	leg := parked
 	for attempt := 0; attempt < 2; attempt++ {
 		if leg == nil {
+			if !holder.open() {
+				arrivals <- roundArrival{via: "bridge", err: errRoundWon}
+				return
+			}
 			c, err := kd.dialBridgeDir("pair1", logger)
 			if err != nil {
 				arrivals <- roundArrival{via: "bridge", err: err}
@@ -162,12 +185,14 @@ func (kd *KeibiDrop) watchBridgeLeg(logger *slog.Logger, holder *bridgeLegHolder
 			}
 			leg = c
 		}
-		if !holder.set(leg) {
-			_ = leg.Close() // Another leg won while we dialed.
-			arrivals <- roundArrival{via: "bridge", err: errors.New("round already won")}
+		// The holder keeps the conn the round will receive, so the round can
+		// tell its winner apart from a leg that lost.
+		pc := newPeekConn(leg)
+		if !holder.set(pc) {
+			_ = pc.Close() // Another leg won while we dialed.
+			arrivals <- roundArrival{via: "bridge", err: errRoundWon}
 			return
 		}
-		pc := newPeekConn(leg)
 		err := pc.peek(time.Until(deadline))
 		if err == nil {
 			arrivals <- roundArrival{conn: pc, via: "bridge"}
@@ -178,10 +203,10 @@ func (kd *KeibiDrop) watchBridgeLeg(logger *slog.Logger, holder *bridgeLegHolder
 			return
 		}
 		// The bridge closed the room (it expires unpaired rooms) or the winner
-		// closed us. One fresh leg, then give the round up.
-		_ = leg.Close()
+		// closed us. One fresh leg while the round is open, then give it up.
+		_ = pc.Close()
 		leg = nil
-		if attempt == 0 {
+		if attempt == 0 && holder.open() {
 			logger.Info("Bridge leg closed before a joiner spoke, dialing a fresh one", "error", err)
 		}
 	}

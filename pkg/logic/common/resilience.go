@@ -346,9 +346,12 @@ func (kd *KeibiDrop) onDisconnect() {
 
 	logger.Warn("Connection lost, initiating reconnection")
 
-	// Push the event to the UI, so it reacts immediately.
+	// Push the event to the UI, so it reacts immediately. This is a
+	// "reconnecting" event and not a "peer_disconnected" one: the reconnect
+	// manager below is about to retry, and a surface that reads this as the
+	// end of the session tears down the reconnect it is waiting for.
 	if kd.OnEvent != nil {
-		kd.OnEvent("peer_disconnected:health_timeout")
+		kd.OnEvent("reconnecting:health_timeout")
 	}
 
 	// Snapshot the resilience handles under kd.mu. Teardown nils them. Call their

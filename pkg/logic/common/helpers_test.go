@@ -8,6 +8,7 @@
 package common
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -161,4 +162,93 @@ func TestParsePeerDirectAddressForms(t *testing.T) {
 			require.Equal(t, c.port, port)
 		})
 	}
+}
+
+// A peer code is 64 bytes in base64 RawURL, so 86 characters.
+func testPeerCode() string {
+	raw := make([]byte, 64)
+	for i := range raw {
+		raw[i] = byte(i)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func TestNormalizePeerCode(t *testing.T) {
+	code := testPeerCode()
+	require.Len(t, code, 86)
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bare code", code, code},
+		{"invite link", "https://keibidrop.com/join#" + code, code},
+		{"invite link with page suffix", "https://keibidrop.com/join.html#" + code, code},
+		{"web app link", "https://web.keibidrop.com/#" + code, code},
+		{"app scheme", "kd://join/" + code, code},
+		{"path form", "https://keibidrop.com/join/" + code, code},
+		{"pasted with spaces", "  " + code + "  ", code},
+		{"pasted from a chat, trailing newline", "https://keibidrop.com/join#" + code + "\n", code},
+		{"link with spaces around it", "  https://keibidrop.com/join#" + code + " ", code},
+		{"not a code, left for the validator", "hello", "hello"},
+		{"empty", "   ", ""},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, NormalizePeerCode(c.in))
+		})
+	}
+}
+
+// Every surface (app, kd, kdmcp, CLI, mobile) reaches the validator through
+// AddPeerFingerprint, so the link form must validate exactly like the code.
+func TestNormalizePeerCode_ValidatesLikeTheBareCode(t *testing.T) {
+	code := testPeerCode()
+
+	require.NoError(t, ValidateFingerprint(NormalizePeerCode("https://keibidrop.com/join#"+code)))
+	require.NoError(t, ValidateFingerprint(NormalizePeerCode(code)))
+	require.Error(t, ValidateFingerprint(NormalizePeerCode("https://keibidrop.com/join#not-a-code")))
+}
+
+// One place builds a link, one place reads it. A round trip catches a change to
+// either one alone.
+func TestInviteLink_RoundTrips(t *testing.T) {
+	code := testPeerCode()
+
+	bases := []struct {
+		name string
+		base string
+	}{
+		{"default", ""},
+		{"web app", "https://web.keibidrop.com/#"},
+		{"self hosted, page only", "https://files.example.org/join.html"},
+		{"self hosted, trailing slash", "https://files.example.org/join/"},
+		{"app scheme", InviteSchemeBase},
+	}
+
+	for _, b := range bases {
+		t.Run(b.name, func(t *testing.T) {
+			link := InviteLink(code, b.base)
+			require.Contains(t, link, code)
+			require.Equal(t, code, NormalizePeerCode(link))
+			require.NoError(t, ValidateFingerprint(NormalizePeerCode(link)))
+		})
+	}
+}
+
+// keibidrop.com serves join.html and has no /join route, so a link to /join
+// gives the invited person a 404.
+func TestInviteLink_DefaultNamesTheDeployedPage(t *testing.T) {
+	code := testPeerCode()
+
+	require.Equal(t, "https://keibidrop.com/join.html#"+code, InviteLink(code, ""))
+	require.Equal(t, InviteBase+code, InviteLink(code, ""))
+}
+
+// A link with no code is not an invite. Callers get an empty string to test.
+func TestInviteLink_EmptyCodeGivesEmptyLink(t *testing.T) {
+	require.Empty(t, InviteLink("", ""))
+	require.Empty(t, InviteLink("   ", "https://web.keibidrop.com/#"))
 }

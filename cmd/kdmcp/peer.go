@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -93,6 +94,8 @@ func newPeer(ctx context.Context) (*peer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	// A third pair, so this runs alongside the app and kd.
+	config.UseMCPPorts(&cfg)
 	_ = config.WriteDefault()
 	if err := config.EnsureDirectories(cfg); err != nil {
 		return nil, fmt.Errorf("directories: %w", err)
@@ -106,10 +109,9 @@ func newPeer(ctx context.Context) (*peer, error) {
 	// Stdout is the JSON-RPC channel. Every log byte goes to the log file, or
 	// to stderr when there is none; writing to stdout would corrupt the
 	// protocol stream.
-	logWriter := os.Stderr
+	var logWriter io.Writer = os.Stderr
 	if cfg.LogFile != "" {
-		if f, err := os.OpenFile(filepath.Clean(cfg.LogFile),
-			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		if f, err := config.OpenLogFile(cfg.LogFile); err == nil {
 			logWriter = f
 		}
 	}
@@ -385,6 +387,8 @@ func (h *handler) invoke(name string, args json.RawMessage) (any, *toolError) {
 	switch name {
 	case "kd_setup":
 		return p.setup()
+	case "kd_invite":
+		return p.invite(args)
 	case "kd_create_share":
 		return p.createShare()
 	case "kd_accept_peer":
@@ -476,6 +480,7 @@ func (p *peer) setup() (any, *toolError) {
 		"ready":        true,
 		"version":      buildVersion(),
 		"my_code":      p.code(),
+		"invite_link":  common.InviteLinksFor(p.code()).Page,
 		"mode":         mode,
 		"fuse":         p.kd.IsFUSE,
 		"mount_path":   p.cfg.MountPath,
@@ -528,6 +533,33 @@ func (p *peer) integrityModes() map[string]any {
 	return m
 }
 
+// invite hands out the same code createShare returns, wrapped in addresses a
+// person can open.
+func (p *peer) invite(args json.RawMessage) (any, *toolError) {
+	var a struct {
+		Origin string `json:"origin"`
+	}
+	if len(args) > 0 {
+		_ = json.Unmarshal(args, &a)
+	}
+
+	links := common.InviteLinksFor(p.code())
+	if strings.TrimSpace(a.Origin) != "" {
+		links.Page = common.InviteLink(p.code(), a.Origin)
+	}
+
+	// Embedded, so the field names stay the ones the engine defines.
+	return struct {
+		common.InviteLinks
+		Next string `json:"next"`
+	}{
+		InviteLinks: links,
+		Next: "Send invite_link to the person you are pairing with. They open it and send " +
+			"their own code back. Pass theirs to kd_accept_peer, which takes a link or a " +
+			"bare code, then poll kd_status.",
+	}, nil
+}
+
 func (p *peer) createShare() (any, *toolError) {
 	// This mints nothing and starts nothing: the code IS this peer's identity
 	// fingerprint, which exists from process start. Connecting begins once the
@@ -537,10 +569,12 @@ func (p *peer) createShare() (any, *toolError) {
 	return map[string]any{
 		"code":         p.code(),
 		"fingerprint":  p.code(),
+		"invite_link":  common.InviteLink(p.code(), ""),
 		"expires_hint": "codes are this peer's identity; they last as long as the process",
 		"next": "Give code to the other peer and ask for theirs, then call kd_accept_peer " +
 			"with it. KeibiDrop authenticates both directions, so neither side connects " +
-			"on one code alone.",
+			"on one code alone. Send invite_link when the other peer is a person: the same " +
+			"code on a page with the download on it. kd_accept_peer takes either form.",
 	}, nil
 }
 

@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/discovery"
 	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
@@ -69,10 +71,9 @@ type contactSnapshot struct {
 // Initialize sets up the KeibiDrop engine. Call once before Start.
 // savePath is the app sandbox directory for received files. Mobile has no FUSE.
 func (api *API) Initialize(logFilePath string, relayURL string, inboundPort int, outboundPort int, savePath string) error {
-	wr := os.Stderr
+	var wr io.Writer = os.Stderr
 	if logFilePath != "" {
-		f, err := os.OpenFile(filepath.Clean(logFilePath),
-			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		f, err := config.OpenLogFile(logFilePath)
 		if err != nil {
 			slog.Warn("Failed to open log file, defaulting to stderr",
 				"path", logFilePath, "error", err)

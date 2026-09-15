@@ -32,6 +32,16 @@ The daemon runs in the foreground and prints its fingerprint as JSON on startup.
 ./kd connect                         # both peers run this (auto role)
 ```
 
+Send a person a link instead of a code. `kd invite` returns the same code as
+addresses they can open: `invite_link` is a page with the download and the code
+on it, `web_link` opens the browser peer, `app_link` opens an installed app.
+`kd register` takes any of them.
+
+```bash
+./kd invite | jq -r .data.invite_link
+./kd register "https://keibidrop.com/join.html#<their-code>"
+```
+
 ### Reconnect with a saved contact
 
 ```bash
@@ -88,8 +98,8 @@ All set before `kd start`:
 | Variable | Description | Default |
 |---|---|---|
 | `KD_RELAY` | Relay server URL | `https://keibidroprelay.keibisoft.com` |
-| `KD_INBOUND_PORT` | TCP listen port (range 26000-27000) | `26431` |
-| `KD_OUTBOUND_PORT` | TCP outbound port (range 26000-27000) | `26432` |
+| `KD_INBOUND_PORT` | TCP listen port (range 26000-27000) | `26441` |
+| `KD_OUTBOUND_PORT` | TCP outbound port (range 26000-27000) | `26442` |
 | `KD_SAVE_PATH` | Where to save received files | |
 | `KD_MOUNT_PATH` | FUSE mount point (directory) | |
 | `KD_NO_FUSE` | Set to any value to disable FUSE | |
@@ -132,13 +142,39 @@ Every command returns a single JSON line:
 
 ```json
 {"ok":true,"data":{"fingerprint":"abc123..."}}
-{"ok":false,"error":"daemon not running (socket: /tmp/kd.sock)"}
+{"ok":false,"error":"daemon not running (socket: /tmp/kd.sock)","code":"not_connected"}
 ```
 
 - `ok: true` — command succeeded, result in `data`
-- `ok: false` — command failed, reason in `error`
-- Exit code is 0 even when a command fails; it is 1 only when the daemon
-  socket is unreachable. Always check the `ok` field, not the exit code.
+- `ok: false` — command failed, reason in `error`, classified in `code`
+- Branch on `code`, never on the text in `error`. New codes may be added;
+  existing ones do not change.
+
+## Exit Codes
+
+The process exit code carries the same classification as `code`, so a script
+can branch on `$?` without parsing the JSON. Only success exits 0.
+
+| Exit | `code` | Meaning |
+|---|---|---|
+| 0 | `ok` | Success |
+| 1 | `internal` | An error the daemon did not classify, or a response the client could not read |
+| 2 | `not_connected` | No session, or the client cannot reach the daemon socket |
+| 3 | `timeout` | A command with a timeout did not finish in time |
+| 4 | `not_found` | The file or target does not exist |
+| 5 | `invalid_argument` | A missing or malformed argument |
+| 6 | `busy` | Already running, or already mounted |
+| 7 | `refused` | Fingerprint mismatch, or the listener is closed |
+| 8 | `unsupported` | Unknown command or unknown show target |
+
+```bash
+kd pull no-such-file /tmp/x ; echo "exit=$?"
+# {"ok":false,"error":"file not found: no-such-file","code":"not_found"}
+# exit=4
+```
+
+The table is defined in [cmd/kd/agent.go](../cmd/kd/agent.go) and a test covers
+it, so the numbers do not change.
 
 ## Command Reference
 
@@ -151,7 +187,8 @@ Every command returns a single JSON line:
 | `kd status` | Full status | `{"ok":true,"data":{"running":true,"connection_status":"healthy",...}}` |
 | `kd version` | Version and commit hash | `{"ok":true,"data":{"version":"...","commit":"..."}}` |
 | **Connection** | | |
-| `kd register <fp>` | Register peer fingerprint (or LAN address in local mode) | `{"ok":true,"data":{"registered":"..."}}` |
+| `kd register <fp>` | Register peer fingerprint, invite link or LAN address | `{"ok":true,"data":{"registered":"..."}}` |
+| `kd invite [origin]` | This peer's code as links a person can open | `{"ok":true,"data":{"code":"...","invite_link":"...","web_link":"...","app_link":"..."}}` |
 | `kd discover` | Discover peers on local network (10s scan) | `{"ok":true,"data":{"my_name":"...","peers":[{"name":"...","addr":"..."}]}}` |
 | `kd connect` | Connect (auto role via fingerprint tiebreak) | `{"ok":true,"data":{"status":"connected","peer_ip":"...","mode":"..."}}` |
 | `kd create` | Create room (blocks until peer joins) | `{"ok":true,"data":{"status":"connected","peer_ip":"..."}}` |

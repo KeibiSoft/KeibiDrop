@@ -15,6 +15,41 @@ use slint::winit_030::WinitWindowAccessor;
 use slint::winit_030::WinitWindowEventResult;
 use keibidrop_rust::*; // ui.slint components (MainWindow), compiled in lib.rs
 
+// The engine builds the link, in pkg/logic/common. This file held its own copy
+// of the address and it pointed at a page the site does not serve.
+fn invite_link(code: &str) -> String {
+    let c_code = match CString::new(code) {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    unsafe {
+        let p = bindings::KD_InviteLink(c_code.as_ptr() as *mut i8);
+        if p.is_null() {
+            return String::new();
+        }
+        let link = CStr::from_ptr(p).to_string_lossy().to_string();
+        libc::free(p as *mut libc::c_void);
+        link
+    }
+}
+
+/// Whether an engine event ends the session, so the UI unmounts, tells the peer
+/// to disconnect and returns to the connect screen.
+///
+/// A lost heartbeat does not. The engine starts a reconnect the moment it
+/// reports one, and ending the session here kills that reconnect and takes the
+/// peer down too. Found in the cold install test of 2026-09-15: a healthy
+/// session died 12 seconds after connecting, both sides, with "Connection lost"
+/// on screen while reconnect attempt 1 of 10 was still in flight. The engine
+/// now calls this "reconnecting:health_timeout"; the old name is refused here
+/// as well, so an older engine cannot trigger it either.
+fn event_ends_the_session(evt: &str) -> bool {
+    if evt == "peer_disconnected:health_timeout" {
+        return false;
+    }
+    evt.starts_with("peer_disconnected:") || evt.starts_with("gave_up:")
+}
+
 fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
@@ -611,6 +646,42 @@ fn engine_state_text() -> String {
         libc::free(p as *mut libc::c_void);
         line.split('\t').nth(1).unwrap_or("").to_string()
     }
+}
+
+// Registers whatever is in the peer code field and reports whether it took.
+// Add and Connect both call it, so pasting a code and pressing Connect is
+// enough; nobody has to find Add first.
+fn add_peer_code_from_field(app: &MainWindow) -> bool {
+    let peer_code_shared = app.get_peer_code();
+    let peer_code = peer_code_shared.as_str();
+    if peer_code.trim().is_empty() {
+        return false;
+    }
+    let is_local = app.get_local_mode();
+    let c_code = match CString::new(peer_code) {
+        Ok(c) => c,
+        Err(_) => {
+            app.set_peer_code_added(false);
+            app.set_peer_code_error(true);
+            return false;
+        }
+    };
+    let result = unsafe {
+        if is_local {
+            bindings::KD_SetPeerDirectAddress(c_code.as_ptr() as *mut i8)
+        } else {
+            bindings::KD_AddPeerFingerprint(c_code.as_ptr() as *mut i8)
+        }
+    };
+    if result != 0 {
+        println!("Peer code rejected, error code: {}", result);
+        app.set_peer_code_added(false);
+        app.set_peer_code_error(true);
+        return false;
+    }
+    app.set_peer_code_error(false);
+    app.set_peer_code_added(true);
+    true
 }
 
 fn show_toast(weak: &slint::Weak<MainWindow>, msg: &str) {
@@ -1273,27 +1344,7 @@ fn main() {
         let weak = app.as_weak();
         app.on_add_peer_code(move || {
             if let Some(app) = weak.upgrade() {
-                let peer_code_shared = app.get_peer_code();
-                let peer_code = peer_code_shared.as_str();
-                let is_local = app.get_local_mode();
-                println!("Peer code entered: {} (local={})", peer_code, is_local);
-
-                let result = if is_local {
-                    let c_addr = CString::new(peer_code).expect("CString::new failed");
-                    bindings::KD_SetPeerDirectAddress(c_addr.as_ptr() as *mut i8)
-                } else {
-                    let c_fp = CString::new(peer_code).expect("CString::new failed");
-                    bindings::KD_AddPeerFingerprint(c_fp.as_ptr() as *mut i8)
-                };
-
-                if result != 0 {
-                    println!("Received error code: {}", result);
-                    app.set_peer_code_added(false);
-                    app.set_peer_code_error(true);
-                } else {
-                    app.set_peer_code_error(false);
-                    app.set_peer_code_added(true);
-                }
+                add_peer_code_from_field(&app);
             }
         });
 
@@ -1316,6 +1367,44 @@ fn main() {
                 _ => show_toast(
                     &weak_toast_copy,
                     "Could not copy. Select the code and copy it manually.",
+                ),
+            }
+        });
+
+        // Handle Copy invite link: the same code inside a page that also carries
+        // the download and says what to send back. Its own clipboard handle
+        // because the one above is owned by that closure.
+        let weak_invite = app.as_weak();
+        let weak_toast_invite = app.as_weak();
+        let mut invite_ctx = ClipboardContext::new().ok();
+        app.on_copy_invite_link(move || {
+            let code = match weak_invite.upgrade() {
+                Some(app) => app.get_my_code().to_string(),
+                None => return,
+            };
+            if code.is_empty() {
+                show_toast(
+                    &weak_toast_invite,
+                    "No code yet. Wait for the app to finish starting.",
+                );
+                return;
+            }
+            let link = invite_link(&code);
+            if link.is_empty() {
+                show_toast(
+                    &weak_toast_invite,
+                    "Could not build the link. Send your code instead.",
+                );
+                return;
+            }
+            match invite_ctx.as_mut().map(|c| c.set_contents(link)) {
+                Some(Ok(())) => show_toast(
+                    &weak_toast_invite,
+                    "Invite link copied. Send it in any chat.",
+                ),
+                _ => show_toast(
+                    &weak_toast_invite,
+                    "Could not copy. Send your code instead.",
                 ),
             }
         });
@@ -1378,6 +1467,11 @@ fn main() {
         app.on_connect_pressed(move || {
             if let Some(app) = weak_connect.upgrade() {
                 if app.get_room_action() != 0 {
+                    return;
+                }
+                // Register the pasted code first. A bad code shows its error and
+                // nothing connects.
+                if !app.get_peer_code_added() && !add_peer_code_from_field(&app) {
                     return;
                 }
             }
@@ -2755,8 +2849,7 @@ fn main() {
                             }
                         }
 
-                        let is_disconnect = evt.starts_with("peer_disconnected:")
-                            || evt.starts_with("gave_up:");
+                        let is_disconnect = event_ends_the_session(&evt);
                         if is_disconnect {
                             println!(
                                 "[Event] Disconnect detected ({}), cleaning up...",
@@ -2848,5 +2941,38 @@ fn main() {
         // Cleanup
         bindings::KD_Stop();
         println!("KeibiDrop stopped.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::event_ends_the_session;
+
+    #[test]
+    fn a_health_timeout_does_not_end_the_session() {
+        // The engine is already reconnecting when it reports this.
+        assert!(!event_ends_the_session("reconnecting:health_timeout"));
+        assert!(!event_ends_the_session("peer_disconnected:health_timeout"));
+    }
+
+    #[test]
+    fn a_real_disconnect_ends_the_session() {
+        assert!(event_ends_the_session("peer_disconnected:"));
+        assert!(event_ends_the_session("gave_up:"));
+        assert!(event_ends_the_session("gave_up:10_attempts"));
+    }
+
+    #[test]
+    fn unrelated_events_are_left_alone() {
+        for e in [
+            "reconnecting:",
+            "reconnected:",
+            "resuming_downloads:3",
+            "connection_mode:lan",
+            "tokens_added",
+            "",
+        ] {
+            assert!(!event_ends_the_session(e), "{e} ended the session");
+        }
     }
 }

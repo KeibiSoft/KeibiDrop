@@ -108,8 +108,10 @@ component DataRectangle inherits Rectangle {
     in property <string> buttonText;
     in property <bool> readOnly;
     in property <string> helperText: "";
+    in property <string> secondaryText: ""; // empty hides the second action
 
     callback process_code;
+    callback secondary_action;
 
     width: 517px;
     height: 100%;
@@ -134,12 +136,49 @@ component DataRectangle inherits Rectangle {
 
     if root.helperText != "": Text {
         x: 43px;
-        y: 120px;
-        width: parent.width - 86px;
+        y: root.secondaryText != "" ? 114px : 120px;
+        // A secondary button shares this row when one is set.
+        width: root.secondaryText != "" ? 265px : parent.width - 86px;
         text: root.helperText;
         color: #6A6A6A;
         font-size: 12px;
         wrap: word-wrap;
+    }
+
+    if root.secondaryText != "": Rectangle {
+        // Directly under the primary button in InputArea, same width.
+        x: 339px;
+        y: 114px;
+        width: 142px;
+        height: 28px;
+        border-radius: 7px;
+        border-width: 0.5px;
+        border-color: #3b82f6;
+        background: sec-touch.pressed ? rgba(59,130,246,0.25)
+                  : sec-touch.has-hover ? rgba(59,130,246,0.15)
+                  : transparent;
+        animate background { duration: 150ms; }
+
+        accessible-role: button;
+        accessible-label: root.secondaryText;
+        accessible-action-default => { root.secondary_action(); }
+
+        Text {
+            accessible-role: none; // the Rectangle above carries the label
+            text: root.secondaryText;
+            color: #60a5fa;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: parent.width;
+            height: parent.height;
+        }
+
+        sec-touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.secondary_action(); }
+        }
     }
 }
 
@@ -167,9 +206,11 @@ component CodeRectangle inherits Rectangle {
     in property <string> buttonText;
     in property <bool> readOnly;
     in property <string> helperText: "";
+    in property <string> secondaryText: "";
     out property <string> codeData;
 
     callback process_code;
+    callback secondary_action;
 
     width: 517px;
     height: 170px;
@@ -186,7 +227,9 @@ component CodeRectangle inherits Rectangle {
         buttonText: parent.buttonText;
         readOnly: parent.readOnly;
         helperText: parent.helperText;
+        secondaryText: parent.secondaryText;
         process_code => { parent.process_code() }
+        secondary_action => { parent.secondary_action() }
     }
 }
 
@@ -197,8 +240,10 @@ component SectionElement inherits Rectangle {
     in property <bool> readOnly;
     in property <int> sectionNumber;
     in property <string> helperText: "";
+    in property <string> secondaryText: "";
 
     callback process_code;
+    callback secondary_action;
 
     height: 178px;
     width: 570px;
@@ -218,7 +263,9 @@ component SectionElement inherits Rectangle {
         readOnly: parent.readOnly;
         buttonText: parent.buttonText;
         helperText: parent.helperText;
+        secondaryText: parent.secondaryText;
         process_code => { parent.process_code() }
+        secondary_action => { parent.secondary_action() }
     }
 }
 
@@ -817,6 +864,7 @@ export component MainWindow inherits Window {
     // Callbacks
     callback add_peer_code();
     callback copy_my_code();
+    callback copy_invite_link(); // one page that carries the download and this code
     callback create_room_pressed();
     callback join_room_pressed();
     callback connect_pressed();
@@ -1002,14 +1050,31 @@ export component MainWindow inherits Window {
                 : (root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY");
             readOnly: true;
             buttonText: "Copy my code";
-            helperText: root.local_mode ? "" : "Send this code to your peer via Telegram, Signal, Email or Carrier Pigeon.";
+            helperText: root.local_mode
+                ? ""
+                : "Send the invite link to someone who does not have the app yet. It opens one page with the download and this code.";
+            // The invite link carries this code to the other person.
+            secondaryText: root.local_mode ? "" : "Copy invite link";
             process_code => { root.copy_my_code() }
+            secondary_action => { root.copy_invite_link() }
             sectionNumber: 2;
         }
+
+        // Waiting for the other side: name what is missing rather than spinning.
+        if !root.local_mode && root.room_action != 0: Text {
+            x: 868px;
+            y: 560px;
+            width: 260px;
+            text: "Waiting for the other side. They need your code too.";
+            color: #aaa;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
         if root.engine_error != "": Rectangle {
-            x: 261px;
+            // Line up with the card boxes, which start after the number badge.
+            x: 314px;
             y: 459px;
-            width: 570px;
+            width: 517px;
             height: 178px;
             border-radius: 7px;
             background: rgba(239,68,68,0.08);
@@ -1051,7 +1116,8 @@ export component MainWindow inherits Window {
             y: 459px;
             text: root.room_action != 0 ? "Connecting..." : "Connect";
             active: root.room_action != 0;
-            enabled: root.room_action == 0 && root.next_enabled && root.peer_code_added;
+            // A typed code is enough: Connect registers it first (see on_connect_pressed).
+            enabled: root.room_action == 0 && root.next_enabled && (root.peer_code_added || root.peer_code != "");
             clicked => { root.connect_pressed() }
         }
 
@@ -1950,18 +2016,18 @@ export component MainWindow inherits Window {
 
     // Feedback button (Screen 0 only: the first screen a new person sees)
     if root.current_screen == 0: SmallOutlineButton {
-        x: 700px;
+        x: 676px;
         y: 93px;
-        width: 72px;
+        width: 80px;
         text: "Feedback";
         clicked => { root.feedback_visible = true; }
     }
 
     // Saved Files button (Screen 0 only, when files exist)
     if root.current_screen == 0 && root.saved_file_list.length > 0: SmallOutlineButton {
-        x: 780px;
+        x: 764px;
         y: 93px;
-        width: 80px;
+        width: 96px;
         text: "Saved Files";
         clicked => { root.view_saved_files() }
     }

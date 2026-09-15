@@ -211,3 +211,103 @@ fn fuse_offer_buttons_fire_accept_and_decline() {
     one(&app, "Turn on").invoke_accessible_default_action();
     assert!(accepted.get(), "action button did not fire accepted");
 }
+
+#[test]
+fn invite_link_button_fires_and_fits_the_window() {
+    let app = app();
+    let fired = Rc::new(Cell::new(false));
+    let f = fired.clone();
+    app.on_copy_invite_link(move || f.set(true));
+    let btn = one(&app, "Copy invite link");
+    assert_on_screen(&btn, "invite link button");
+    btn.invoke_accessible_default_action();
+    assert!(fired.get(), "invite button did not fire copy_invite_link");
+}
+
+// The connect screen is absolutely positioned, so a new element can land on
+// top of an existing one and no test would notice. The first placement of this
+// button sat at y=645 and covered the contacts panel, which starts at y=656.
+#[test]
+fn invite_link_button_clears_the_contacts_panel() {
+    const CONTACTS_TOP: f32 = 656.0;
+    let app = app();
+    let btn = one(&app, "Copy invite link");
+    let bottom = btn.absolute_position().y + btn.size().height;
+    assert!(
+        bottom <= CONTACTS_TOP,
+        "invite button ends at y={} and covers the contacts panel at y={}",
+        bottom,
+        CONTACTS_TOP
+    );
+
+    let copy = one(&app, "Copy my code");
+    let a = (btn.absolute_position(), btn.size());
+    let b = (copy.absolute_position(), copy.size());
+    let overlap = a.0.x < b.0.x + b.1.width
+        && b.0.x < a.0.x + a.1.width
+        && a.0.y < b.0.y + b.1.height
+        && b.0.y < a.0.y + a.1.height;
+    assert!(!overlap, "the two copy actions overlap each other");
+}
+
+// Caught in the cold install test of 2026-09-15: the button stopped short of
+// the input above it, which reads as a misaligned control. Card 2's content
+// column runs to x=795, the right edge of the input and of the Add/Copy button.
+#[test]
+fn invite_button_ends_at_the_card_content_edge() {
+    const CONTENT_RIGHT: f32 = 795.0;
+    let app = app();
+    let btn = one(&app, "Copy invite link");
+    let right = btn.absolute_position().x + btn.size().width;
+    assert!(
+        (right - CONTENT_RIGHT).abs() < 1.0,
+        "invite button ends at x={}, the card content edge is x={}",
+        right,
+        CONTENT_RIGHT
+    );
+}
+
+#[test]
+fn invite_link_button_hidden_in_local_mode() {
+    let app = app();
+    app.set_local_mode(true);
+    assert_eq!(
+        ElementHandle::find_by_accessible_label(&app, "Copy invite link").count(),
+        0,
+        "invite link offered on the LAN path, where no code is needed"
+    );
+}
+
+#[test]
+fn connect_takes_a_typed_code_without_add() {
+    let app = app();
+    let fired = Rc::new(Cell::new(false));
+    let f = fired.clone();
+    app.on_connect_pressed(move || f.set(true));
+
+    // Nothing typed and nothing added: Connect stays inert.
+    one(&app, "Connect").invoke_accessible_default_action();
+    assert!(!fired.get(), "Connect fired with no code at all");
+
+    // Typed but not added through the Add button: Connect still works.
+    app.set_peer_code("a-code-from-a-chat".into());
+    one(&app, "Connect").invoke_accessible_default_action();
+    assert!(fired.get(), "Connect ignored a typed code");
+}
+
+#[test]
+fn waiting_line_names_what_is_missing() {
+    let app = app();
+    let waiting = "Waiting for the other side. They need your code too.";
+    assert_eq!(
+        ElementHandle::find_by_accessible_label(&app, waiting).count(),
+        0,
+        "waiting line shown before connecting"
+    );
+    app.set_room_action(1);
+    assert_eq!(
+        ElementHandle::find_by_accessible_label(&app, waiting).count(),
+        1,
+        "no waiting line while connecting"
+    );
+}

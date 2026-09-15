@@ -359,6 +359,17 @@ func storePeerKeysFromExchange(session *Session, logger *slog.Logger, msg keyExc
 	}
 	session.PeerPubKeys = peerKeys
 	session.PeerPort = msg.Port
+	// Pin the peer's fingerprint here, not at the PQC handshake. The bridge room
+	// token hashes ExpectedPeerFingerprint, and while it still read "TOFU" each
+	// side hashed its own fingerprint with that word: two rooms, never paired
+	// (2026-09-15, all three logged tokens reproduce from that input).
+	if session.ExpectedPeerFingerprint == "TOFU" {
+		fp, err := peerKeys.Fingerprint()
+		if err != nil {
+			return fmt.Errorf("fingerprint computation failed: %w", err)
+		}
+		session.ExpectedPeerFingerprint = fp
+	}
 	logger.Info("Local key exchange complete", "peer-port", msg.Port)
 	return nil
 }

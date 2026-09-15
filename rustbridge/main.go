@@ -136,9 +136,9 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		return -1
 	}
 
-	var logWriter = os.Stdout
+	var logWriter io.Writer = os.Stdout
 	if cfg.LogFile != "" {
-		if f, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		if f, err := config.OpenLogFile(cfg.LogFile); err == nil {
 			logWriter = f
 		}
 	}
@@ -357,6 +357,14 @@ func KD_Fingerprint() *C.char {
 	}
 	fp, _ := kd.ExportFingerprint()
 	return C.CString(fp)
+}
+
+// KD_InviteLink wraps a code in the invite page. It takes the code because the
+// app already holds it, which also makes it work before a session exists.
+//
+//export KD_InviteLink
+func KD_InviteLink(code *C.char) *C.char {
+	return C.CString(common.InviteLink(C.GoString(code), ""))
 }
 
 //export KD_PrepareDisconnect

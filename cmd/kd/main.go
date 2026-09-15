@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/url"
@@ -123,6 +124,8 @@ func runDaemon() {
 		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"config: %s"}`+"\n", err)
 		os.Exit(1)
 	}
+	// The app owns the default pair. The agent takes its own.
+	config.UseAgentPorts(&cfg)
 	_ = config.WriteDefault()
 	if err := config.EnsureDirectories(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, `{"ok":false,"error":"directories: %s"}`+"\n", err)
@@ -138,9 +141,9 @@ func runDaemon() {
 	isFuse := checkfuse.IsFUSEPresent() && !cfg.NoFUSE
 	isLocal := os.Getenv("KD_LOCAL") != ""
 
-	logWriter := os.Stderr
+	var logWriter io.Writer = os.Stderr
 	if cfg.LogFile != "" {
-		f, err := os.OpenFile(filepath.Clean(cfg.LogFile), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		f, err := config.OpenLogFile(cfg.LogFile)
 		if err == nil {
 			logWriter = f
 			defer f.Close()
@@ -331,7 +334,24 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		if err != nil {
 			return errResponse(err.Error())
 		}
-		return okResponse(map[string]string{"registered": req.Args[0]})
+		// The code, not the link that carried it.
+		return okResponse(map[string]string{"registered": common.NormalizePeerCode(req.Args[0])})
+
+	case "invite":
+		if kd.IsLocalMode {
+			return Response{OK: false, Error: "invite links are for the internet path; on a local network use discover",
+				Code: codeUnsupported}
+		}
+		fp, err := kd.ExportFingerprint()
+		if err != nil {
+			return errResponse(err.Error())
+		}
+		links := common.InviteLinksFor(fp)
+		// An origin points the page at a copy of your own.
+		if len(req.Args) > 0 && strings.TrimSpace(req.Args[0]) != "" {
+			links.Page = common.InviteLink(fp, req.Args[0])
+		}
+		return okResponse(links)
 
 	case "discover":
 		return cmdDiscover(kd)
@@ -810,6 +830,10 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 				return errResponse(err.Error())
 			}
 			data["fingerprint"] = fp
+			links := common.InviteLinksFor(fp)
+			data["invite_link"] = links.Page
+			data["web_link"] = links.Web
+			data["app_link"] = links.App
 		}
 	}
 	if showAll || what == "ip" {
@@ -833,12 +857,15 @@ func cmdShow(kd *common.KeibiDrop, args []string) Response {
 	}
 	if showAll || what == "config" {
 		cfg, _ := config.Load()
+		// The daemon shifted off the app's pair at startup. Report what it uses,
+		// not what the file says.
+		config.UseAgentPorts(&cfg)
 		data["config_path"] = config.ConfigPath()
 		data["relay"] = cfg.Relay
 		data["save_path"] = cfg.SavePath
 		data["mount_path"] = cfg.MountPath
 		data["log_file"] = cfg.LogFile
-		data["inbound_port"] = fmt.Sprintf("%d", cfg.InboundPort)
+		data["inbound_port"] = fmt.Sprintf("%d", kd.InboundPort())
 		data["outbound_port"] = fmt.Sprintf("%d", cfg.OutboundPort)
 		data["bridge_addr"] = cfg.BridgeAddr
 		data["no_fuse"] = fmt.Sprintf("%v", cfg.NoFUSE)
@@ -1183,7 +1210,9 @@ USAGE:
   kd start                       Start daemon (foreground). Configure via env vars.
   kd stop                        Shutdown daemon.
   kd show [what]                 Show info (fingerprint, ip, peer, relay, status, config, or all).
-  kd register <fingerprint>      Register peer's fingerprint.
+  kd register <fingerprint>      Register peer's fingerprint. Takes an invite link too.
+  kd invite [origin]             Your code as links a person can open. Give an
+                                 origin to point the page at a copy of your own.
   kd connect                     Connect (auto role via fingerprint tiebreak).
   kd create                      Advanced: force the creator role. connect picks it for you.
   kd join                        Advanced: force the joiner role. connect picks it for you.
@@ -1246,8 +1275,10 @@ EVENTS (kd poll-event pops one, non-blocking, "" when empty):
 
 ENVIRONMENT (for "kd start"):
   KD_RELAY                Relay URL        (default: https://keibidroprelay.keibisoft.com)
-  KD_INBOUND_PORT         Listen port      (default: 26431)
-  KD_OUTBOUND_PORT        Outbound port    (default: 26432)
+  KD_INBOUND_PORT         Listen port      (default: 26441)
+  KD_OUTBOUND_PORT        Outbound port    (default: 26442)
+                          The app uses 26431 and 26432. A port set in
+                          config.toml or here is used as given.
   KD_SAVE_PATH            Where to save received files
   KD_MOUNT_PATH           FUSE mount point
   KD_NO_FUSE              Set to disable FUSE (any value)

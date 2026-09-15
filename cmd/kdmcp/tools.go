@@ -55,6 +55,18 @@ func tools() []toolDef {
 			InputSchema: obj(nil),
 		},
 		{
+			Name:  "kd_invite",
+			Title: "Invite link for this peer",
+			Description: "This peer's code as links a person can open. Send invite_link: a page " +
+				"with the download and the code on it. web_link opens the browser peer, " +
+				"app_link opens an installed app. Same code in each, and kd_accept_peer " +
+				"takes any of them. Immediate, and it starts nothing: give the link to the " +
+				"person, then poll kd_status.",
+			InputSchema: obj(map[string]any{
+				"origin": str("Optional. Point invite_link at a page of your own instead of the public one."),
+			}),
+		},
+		{
 			Name:  "kd_create_share",
 			Title: "Create a share and wait for a peer",
 			Description: "Return this peer's code, immediately. Give it to the other peer and " +
