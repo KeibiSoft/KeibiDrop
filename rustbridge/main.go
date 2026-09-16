@@ -71,9 +71,17 @@ func sortedLocalKeys() []string {
 
 var kd *common.KeibiDrop
 
-// kdCtx is the engine's root context, kept so a later call can arm the
-// auto-connect watchdog for the rest of the process.
-var kdCtx context.Context
+// kdCtx is the process context: the presence heartbeat, the auto-connect
+// watchdog, the throughput sampler and the reachability probe run on it, and
+// a later call can arm the watchdog on it. Only KD_Stop ends it, through
+// kdCancel. It must never be the engine's session cancel: kd.Cancel is what
+// Stop() calls on every disconnect, and while it was this cancel the first
+// disconnect of a run ended all four loops (0.4.8, 2026-09-16: no heartbeat
+// and no redial for the rest of the process).
+var (
+	kdCtx    context.Context
+	kdCancel context.CancelFunc
+)
 
 // Last error string. The mutex makes access thread-safe.
 var (
@@ -157,9 +165,9 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		return -2
 	}
 	kd = instance
-	kd.Cancel = c
 	kd.OnEvent = pushEvent
 	kdCtx = ctx
+	kdCancel = c
 	kd.StartThroughputSampler(ctx)
 
 	if !cfg.Incognito {
@@ -394,6 +402,9 @@ func KD_Disconnect() {
 func KD_Stop() {
 	if kd != nil {
 		kd.Shutdown()
+	}
+	if kdCancel != nil {
+		kdCancel()
 	}
 }
 

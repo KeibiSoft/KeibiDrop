@@ -744,6 +744,11 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 }
 
 func (kd *KeibiDrop) JoinRoom() error {
+	releaseConnect, err := kd.beginConnect()
+	if err != nil {
+		return err
+	}
+	defer releaseConnect()
 	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "join-room")
 	kd.connectCancelled.Store(false)
@@ -1121,7 +1126,26 @@ func DecideLocalRole(myName, peerName, peerAddr string) bool {
 	return LocalConnectRole(myName, peerName, myAddr, peerIP)
 }
 
+// beginConnect admits one CreateRoom or JoinRoom at a time, from any frontend.
+// Each frontend guards its own button (room_action, OpInProgress, the mobile op
+// state), and none of them sees the engine's auto-connect dial. A click during
+// one reached CreateRoom again (2026-09-16, 0.4.8) and opened a second bridge
+// leg with the same pair1 token: the bridge paired the creator with itself and
+// the real joiner read EOF. The caller releases the slot when its connect
+// returns, after its own cleanup, so the next call starts from a clean room.
+func (kd *KeibiDrop) beginConnect() (release func(), err error) {
+	if !kd.connectInFlight.CompareAndSwap(false, true) {
+		return nil, ErrConnectInProgress
+	}
+	return func() { kd.connectInFlight.Store(false) }, nil
+}
+
 func (kd *KeibiDrop) CreateRoom() error {
+	releaseConnect, err := kd.beginConnect()
+	if err != nil {
+		return err
+	}
+	defer releaseConnect()
 	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "create-room")
 	kd.connectCancelled.Store(false)

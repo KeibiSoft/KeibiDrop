@@ -128,6 +128,9 @@ type KeibiDrop struct {
 	// connectCancelled makes a pending CreateRoom or JoinRoom wait return, so a
 	// disconnect frees the daemon instead of holding it until Timeout.
 	connectCancelled atomic.Bool
+	// connectInFlight is held by the one CreateRoom or JoinRoom that runs, from
+	// whichever frontend or the auto-connect loop. beginConnect owns it.
+	connectInFlight atomic.Bool
 	// activeFetches counts on-demand block fetches in flight. A 16 MiB block on
 	// a slow link holds the wire for seconds and can starve a heartbeat, so a
 	// failed heartbeat during one is deferred like one during a pull.
