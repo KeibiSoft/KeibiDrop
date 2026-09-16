@@ -6,8 +6,11 @@
 package common
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -308,6 +311,69 @@ func TestAutoConnectLoop_DefersWhileAnotherConnectRuns(t *testing.T) {
 	// Five refusals on the backoff would have cost 100+200+400+400+400 ms.
 	require.Less(t, time.Since(start), 500*time.Millisecond, "refusals must not grow the backoff")
 	require.Equal(t, int32(6), dials.Load())
+
+	cancel()
+	<-done
+}
+
+// TestStartAutoConnect_OneLoopThatAnnouncesItsEnd: a second arm while one
+// runs starts no second loop, and when the loop ends with its context it
+// says so and drops the armed flag, so the state line and a later re-arm see
+// the truth. On 0.4.8 the desktop app's first disconnect ended the loop
+// silently and the flag kept promising "will keep trying".
+func TestStartAutoConnect_OneLoopThatAnnouncesItsEnd(t *testing.T) {
+	var logs bytes.Buffer
+	kd := newAutoConnectTestKD(t)
+	kd.logger = testkit.Logger(&logs, slog.LevelDebug)
+	kd.AutoConnectPeer = "dataset-box"
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	require.NoError(t, kd.StartAutoConnect(ctx))
+	require.NoError(t, kd.StartAutoConnect(ctx), "a second arm is a no-op, not an error")
+	require.True(t, kd.AutoConnectArmed())
+
+	cancel()
+	waitFor(t, 2*time.Second, func() bool { return !kd.AutoConnectArmed() }, "the loop drops the armed flag when it ends")
+	out := logs.String()
+	require.Equal(t, 1, strings.Count(out, "Auto-connect armed"), "one loop per process")
+	require.Contains(t, out, "Auto-connect already armed")
+	require.Contains(t, out, "Auto-connect watchdog stopped")
+}
+
+// TestAutoConnectLoop_PausedUntilASessionExists: a person who cancelled the
+// watchdog's dial has spoken. The loop does not redial until a session exists
+// again, and then follows the next drop as before.
+func TestAutoConnectLoop_PausedUntilASessionExists(t *testing.T) {
+	kd := newBareKD()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var dials atomic.Int32
+	var running atomic.Bool
+	dial := func() error {
+		dials.Add(1)
+		running.Store(true)
+		return nil
+	}
+	kd.autoConnectArmed.Store(true)
+	kd.PauseAutoConnect()
+	require.True(t, kd.autoConnectPaused.Load())
+
+	done := make(chan struct{})
+	go func() {
+		kd.autoConnectLoop(ctx, fastTuning, dial, running.Load, func() bool { return false })
+		close(done)
+	}()
+
+	time.Sleep(30 * fastTuning.poll)
+	require.Zero(t, dials.Load(), "paused: no dial without a session")
+
+	// A manual connect made a session: the pause lifts, the drop is followed.
+	running.Store(true)
+	waitFor(t, 2*time.Second, func() bool { return !kd.autoConnectPaused.Load() }, "a session lifts the pause")
+	running.Store(false)
+	waitFor(t, 2*time.Second, func() bool { return dials.Load() == 1 }, "redial after the rearm grace")
 
 	cancel()
 	<-done

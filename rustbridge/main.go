@@ -1032,6 +1032,17 @@ func KD_SetAutoConnectPeer(peer *C.char) C.int {
 	return 0
 }
 
+// KD_PauseAutoConnect parks the auto-connect watchdog after the person
+// cancelled its dial from the connect screen. It resumes once a session
+// exists again.
+//
+//export KD_PauseAutoConnect
+func KD_PauseAutoConnect() {
+	if kd != nil {
+		kd.PauseAutoConnect()
+	}
+}
+
 // KD_SetNoFUSE persists the FUSE-off preference. No live mirror:
 // KD_SetFUSEMode owns the running mode.
 //

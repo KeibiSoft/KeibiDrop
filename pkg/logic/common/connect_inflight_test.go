@@ -15,7 +15,10 @@
 package common
 
 import (
+	"bytes"
+	"context"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +30,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
+	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 )
 
 // registerOnlyRelay answers the one call CreateRoom makes before its rounds,
@@ -88,18 +93,19 @@ func TestCreateRoom_SecondConnectWhileInFlightOpensNoSecondBridgeLeg(t *testing.
 	require.NoError(t, err, "the first create reaches the bridge")
 	defer leg.Close()
 
-	// The click. On 0.4.8 this ran a second create to completion.
-	secondErr := make(chan error, 1)
-	go func() { secondErr <- kd.Connect() }()
+	// The click, for the same peer. On 0.4.8 this ran a second create to
+	// completion. Now it joins the one in flight: it opens nothing of its own
+	// and returns with that create's result. The Create Room and Join Room
+	// buttons, and mobile's async ops, call the two rooms directly.
+	joinedErr := make(chan error, 3)
+	go func() { joinedErr <- kd.Connect() }()
+	go func() { joinedErr <- kd.CreateRoom() }()
+	go func() { joinedErr <- kd.JoinRoom() }()
 	select {
-	case err := <-secondErr:
-		require.ErrorIs(t, err, ErrConnectInProgress)
-	case <-time.After(3 * time.Second):
-		t.Fatal("the second Connect did not return: it is running a create of its own")
+	case err := <-joinedErr:
+		t.Fatalf("a same-peer call returned on its own instead of joining: %v", err)
+	case <-time.After(500 * time.Millisecond):
 	}
-	// The Create Room and Join Room buttons, and mobile's async ops, call these directly.
-	require.ErrorIs(t, kd.CreateRoom(), ErrConnectInProgress)
-	require.ErrorIs(t, kd.JoinRoom(), ErrConnectInProgress)
 
 	// The bridge holds one pair1 leg for this room, the first create's.
 	select {
@@ -108,24 +114,32 @@ func TestCreateRoom_SecondConnectWhileInFlightOpensNoSecondBridgeLeg(t *testing.
 		t.Fatal("a second pair1 leg reached the bridge: the room is paired with itself")
 	case <-time.After(500 * time.Millisecond):
 	}
-	require.True(t, kd.connectInFlight.Load(), "the refused calls must not release the first create's slot")
+	require.True(t, kd.connectInFlight.Load(), "the joined calls must not release the first create's slot")
 
-	// Cancel ends the create now, not at the end of its 10 s round, and the
-	// retry that follows a Cancel is admitted while the create unwinds.
+	// Cancel ends the create now, not at the end of its 10 s round; the joined
+	// calls get the same result; and the retry that follows a Cancel is
+	// admitted while the create unwinds.
 	kd.NotifyDisconnect()
 	retry := make(chan error, 1)
 	go func() {
-		release, err := kd.beginConnect()
-		if err == nil {
-			release()
+		p, joined, err := kd.beginConnect(originUser)
+		if err == nil && !joined {
+			kd.endConnect(p, nil)
 		}
 		retry <- err
 	}()
 	start := time.Now()
 	err = waitFirst()
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "cancelled")
+	require.ErrorIs(t, err, ErrConnectCancelled)
 	require.Less(t, time.Since(start), 2*time.Second, "the cancel must end the round at once")
+	for range 3 {
+		select {
+		case err := <-joinedErr:
+			require.ErrorIs(t, err, ErrConnectCancelled, "a joined call carries the create's result")
+		case <-time.After(3 * time.Second):
+			t.Fatal("a joined call never returned")
+		}
+	}
 	select {
 	case err := <-retry:
 		require.NoError(t, err, "a retry during the unwind takes the slot once it is free")
@@ -184,9 +198,10 @@ func TestJoinBridgeInbound_CancelEndsTheWait(t *testing.T) {
 	leg, err := net.Dial("tcp", ln.Addr().String())
 	require.NoError(t, err)
 
-	release, err := kd.beginConnect()
+	p, joined, err := kd.beginConnect(originUser)
 	require.NoError(t, err)
-	defer release()
+	require.False(t, joined)
+	defer kd.endConnect(p, nil)
 
 	waitLeg := joinOnce(func() error { return kd.joinBridgeInbound(leg) })
 	time.Sleep(100 * time.Millisecond)
@@ -214,4 +229,111 @@ func TestSessionCancel_LeavesTheFrontendContextAlive(t *testing.T) {
 	kd.cancelContext() // what Stop does once a session runs
 	require.NoError(t, parent.Err(), "the engine's session cancel must not end the frontend's context")
 	require.Error(t, kd.ctx.Err(), "the session context itself is cancelled")
+}
+
+// The 0.4.8 desktop app stored its process cancel in kd.Cancel. The engine
+// cannot stop that from outside (Cancel is the seam tests and the run loop
+// use), so it names it: a disconnect that ends the frontend's context logs
+// an error instead of going silent.
+func TestSessionCancel_ReportsAReplacedCancelThatEndsTheFrontendContext(t *testing.T) {
+	var logs bytes.Buffer
+	parent, parentCancel := context.WithCancel(t.Context())
+	defer parentCancel()
+	relay, err := url.Parse("http://127.0.0.1:54321")
+	require.NoError(t, err)
+	kd, err := NewKeibiDrop(parent, testkit.Logger(&logs, slog.LevelDebug), false, relay, 0, 0, t.TempDir(), t.TempDir(), false, false)
+	require.NoError(t, err)
+	t.Cleanup(kd.Shutdown)
+
+	kd.Cancel = parentCancel // the desktop app's mistake
+	kd.cancelContext()       // what Stop does once a session runs
+	require.Error(t, parent.Err())
+	require.Contains(t, logs.String(), "ended the frontend's process context")
+
+	// At app exit the frontend ends its own context; that is not the mistake.
+	logs.Reset()
+	kd.Shutdown()
+	require.NotContains(t, logs.String(), "ended the frontend's process context")
+}
+
+// otherPeerFingerprint is a valid fingerprint of a third party, for the
+// "another peer was asked for" cases.
+func otherPeerFingerprint(t *testing.T) string {
+	t.Helper()
+	s, err := session.InitSession(testkit.DiscardLogger(), 26046, 26045)
+	require.NoError(t, err)
+	fp, err := s.OwnKeys.Fingerprint()
+	require.NoError(t, err)
+	return fp
+}
+
+// A person who pastes another code while a connect is in flight has chosen:
+// the running connect is displaced at once, and the session now names the
+// new peer. Left alone, the old create's later rounds hashed the new peer
+// into their bridge token and the old peer never paired.
+func TestAddPeerFingerprint_AnotherPeerDisplacesTheConnectInFlight(t *testing.T) {
+	origWait := bridgeRoundWait
+	bridgeRoundWait = 10 * time.Second
+	defer func() { bridgeRoundWait = origWait }()
+
+	creator, _ := rendezvousPair(t)
+	bridge := newTokenBridge(t, creator)
+	kd, _ := rendezvousKD(t, creator, bridge.addr)
+	kd.RelayEndoint = registerOnlyRelay(t)
+	kd.relayClient = http.DefaultClient
+	kd.markInboundBlocked()
+
+	waitFirst := joinOnce(kd.CreateRoom)
+	t.Cleanup(func() {
+		kd.NotifyDisconnect()
+		_ = waitFirst()
+	})
+	leg, err := bridge.take(bridge.pair1, "pair1")
+	require.NoError(t, err)
+	defer leg.Close()
+
+	other := otherPeerFingerprint(t)
+	start := time.Now()
+	require.NoError(t, kd.AddPeerFingerprint(other))
+	err = waitFirst()
+	require.ErrorIs(t, err, ErrConnectCancelled)
+	require.Less(t, time.Since(start), 2*time.Second, "the new peer must end the old create at once")
+	require.Equal(t, other, kd.session.ExpectedPeerFingerprint)
+	require.False(t, kd.connectInFlight.Load())
+}
+
+// The watchdog never displaces a person: its dial for its own contact is
+// refused while a connect to someone else runs, and that connect is untouched.
+func TestWatchdogDial_NeverDisplacesAPersonsConnect(t *testing.T) {
+	origWait := bridgeRoundWait
+	bridgeRoundWait = 10 * time.Second
+	defer func() { bridgeRoundWait = origWait }()
+
+	creator, _ := rendezvousPair(t)
+	bridge := newTokenBridge(t, creator)
+	kd, _ := rendezvousKD(t, creator, bridge.addr)
+	kd.RelayEndoint = registerOnlyRelay(t)
+	kd.relayClient = http.DefaultClient
+	kd.markInboundBlocked()
+	person := creator.ExpectedPeerFingerprint
+
+	waitFirst := joinOnce(kd.CreateRoom)
+	t.Cleanup(func() {
+		kd.NotifyDisconnect()
+		_ = waitFirst()
+	})
+	leg, err := bridge.take(bridge.pair1, "pair1")
+	require.NoError(t, err)
+	defer leg.Close()
+
+	other := otherPeerFingerprint(t)
+	ab, err := identity.LoadAddressBook(t.TempDir(), nil)
+	require.NoError(t, err)
+	require.NoError(t, ab.Add("box", other))
+	kd.AddressBook = ab
+
+	require.ErrorIs(t, kd.watchdogDial(other), ErrConnectInProgress)
+	require.True(t, kd.connectInFlight.Load(), "the person's connect keeps its slot")
+	require.False(t, kd.connectAbortRequested(), "and was not cancelled")
+	require.Equal(t, person, kd.session.ExpectedPeerFingerprint, "and keeps its peer")
 }

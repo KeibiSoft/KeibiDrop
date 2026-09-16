@@ -66,13 +66,42 @@ func (kd *KeibiDrop) StartAutoConnect(ctx context.Context) error {
 		return err
 	}
 	logger := kd.logger.With("method", "auto-connect", "peer", target)
+	// One loop per process. A second arm (a saved contact while the startup
+	// arm runs) would dial beside the first; the running loop keeps its target
+	// for this session, as KD_SetAutoConnectPeer documents.
+	if !kd.autoConnectArmed.CompareAndSwap(false, true) {
+		logger.Info("Auto-connect already armed, keeping its target for this session")
+		return nil
+	}
 	logger.Info("Auto-connect armed")
-	kd.autoConnectArmed.Store(true)
+	kd.autoConnectPaused.Store(false)
 	go kd.autoConnectLoop(ctx, defaultAutoConnectTuning,
-		func() error { return kd.ConnectToContact(fp) },
+		func() error { return kd.watchdogDial(fp) },
 		kd.IsRunning,
 		kd.reconnectBusy)
 	return nil
+}
+
+// watchdogDial is the loop's connect. It never displaces a connect a person
+// or an agent started, and it joins one already running to its own peer.
+func (kd *KeibiDrop) watchdogDial(fp string) error {
+	if kd.AddressBook == nil || kd.AddressBook.Lookup(fp) == nil {
+		return fmt.Errorf("contact not found in address book")
+	}
+	if err := kd.setPeerFingerprint(fp, originWatchdog); err != nil {
+		return err
+	}
+	return kd.connect(originWatchdog)
+}
+
+// PauseAutoConnect parks the watchdog after a person cancelled its dial from
+// the connect screen. It resumes once a session exists again, so a drop after
+// a manual connect is still followed; a fresh StartAutoConnect arms unpaused.
+func (kd *KeibiDrop) PauseAutoConnect() {
+	if kd.autoConnectArmed.Load() {
+		kd.autoConnectPaused.Store(true)
+		kd.logger.Info("Auto-connect paused until the next session", "method", "auto-connect")
+	}
 }
 
 // reconnectBusy reports whether the reconnect machinery currently owns the
@@ -102,6 +131,13 @@ func (kd *KeibiDrop) reconnectBusy() bool {
 func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 	dial func() error, isRunning func() bool, busy func() bool) {
 	logger := kd.logger.With("method", "auto-connect")
+	// The loop ends only with its context. Say so, and let the armed flag
+	// follow: a dead loop that still read as armed made the state line promise
+	// "will keep trying" and refused a re-arm (0.4.8, 2026-09-16).
+	defer func() {
+		logger.Info("Auto-connect watchdog stopped", "reason", ctx.Err())
+		kd.autoConnectArmed.Store(false)
+	}()
 	backoff := tun.initialBackoff
 	hadSession := false
 	deferred := false // logged once per stretch of dials refused as in-flight
@@ -113,6 +149,13 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 			hadSession = true
 			idleSince = time.Time{}
 			backoff = tun.initialBackoff
+			kd.autoConnectPaused.Store(false)
+			if !sleepCtx(ctx, tun.poll) {
+				return
+			}
+		case kd.autoConnectPaused.Load():
+			// A person cancelled the dial. Their word stands until a session
+			// exists again.
 			if !sleepCtx(ctx, tun.poll) {
 				return
 			}

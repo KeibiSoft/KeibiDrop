@@ -34,6 +34,9 @@ func (kd *KeibiDrop) StartPresenceHeartbeat(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Contacts stop seeing this peer as online from here. Say so: a
+			// heartbeat that went silent read as a hang (0.4.8, 2026-09-16).
+			logger.Info("Presence heartbeat stopped", "reason", ctx.Err())
 			return
 		case <-ticker.C:
 			kd.sendPresenceForAll(logger)
