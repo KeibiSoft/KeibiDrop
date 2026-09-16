@@ -131,6 +131,11 @@ type KeibiDrop struct {
 	// connectInFlight is held by the one CreateRoom or JoinRoom that runs, from
 	// whichever frontend or the auto-connect loop. beginConnect owns it.
 	connectInFlight atomic.Bool
+	// connectAbortCtx ends the long waits of the connect in flight when a cancel
+	// arrives: NotifyDisconnect and CancelPendingConnect cancel it, beginConnect
+	// makes a fresh one per connect and release drops it. Under mu.
+	connectAbortCtx    context.Context
+	connectAbortCancel context.CancelFunc
 	// activeFetches counts on-demand block fetches in flight. A 16 MiB block on
 	// a slow link holds the wire for seconds and can starve a heartbeat, so a
 	// failed heartbeat during one is deferred like one during a pull.

@@ -670,6 +670,7 @@ func (kd *KeibiDrop) SetPeerDirectAddress(addr string) error {
 // not stay busy for Timeout after the operator gave up.
 func (kd *KeibiDrop) CancelPendingConnect() {
 	kd.connectCancelled.Store(true)
+	kd.abortConnect()
 }
 
 func (kd *KeibiDrop) waitForPeerFingerprint() error {
@@ -677,7 +678,7 @@ func (kd *KeibiDrop) waitForPeerFingerprint() error {
 		if kd.session.ExpectedPeerFingerprint != "" {
 			return nil
 		}
-		if kd.connectCancelled.Load() {
+		if kd.connectAbortRequested() {
 			return ErrConnectCancelled
 		}
 		time.Sleep(time.Second)
@@ -751,7 +752,6 @@ func (kd *KeibiDrop) JoinRoom() error {
 	defer releaseConnect()
 	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "join-room")
-	kd.connectCancelled.Store(false)
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -824,6 +824,8 @@ func (kd *KeibiDrop) JoinRoom() error {
 				case <-time.After(delay):
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-kd.connectAbortDone():
+					return ErrConnectCancelled
 				}
 			}
 		}
@@ -1126,6 +1128,10 @@ func DecideLocalRole(myName, peerName, peerAddr string) bool {
 	return LocalConnectRole(myName, peerName, myAddr, peerIP)
 }
 
+// connectRetryWait bounds how long a caller waits for a cancelled connect to
+// unwind before it is refused outright.
+const connectRetryWait = 60 * time.Second
+
 // beginConnect admits one CreateRoom or JoinRoom at a time, from any frontend.
 // Each frontend guards its own button (room_action, OpInProgress, the mobile op
 // state), and none of them sees the engine's auto-connect dial. A click during
@@ -1133,11 +1139,74 @@ func DecideLocalRole(myName, peerName, peerAddr string) bool {
 // leg with the same pair1 token: the bridge paired the creator with itself and
 // the real joiner read EOF. The caller releases the slot when its connect
 // returns, after its own cleanup, so the next call starts from a clean room.
+//
+// A live connect is never displaced. One that a cancel is unwinding frees the
+// slot shortly, and the retry that follows a Cancel lands here, so that caller
+// waits for the slot instead of failing.
 func (kd *KeibiDrop) beginConnect() (release func(), err error) {
-	if !kd.connectInFlight.CompareAndSwap(false, true) {
-		return nil, ErrConnectInProgress
+	deadline := time.Now().Add(connectRetryWait)
+	for !kd.connectInFlight.CompareAndSwap(false, true) {
+		if !kd.connectAbortRequested() || !time.Now().Before(deadline) {
+			kd.logger.Info("Connect refused: one is already in flight")
+			return nil, ErrConnectInProgress
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	return func() { kd.connectInFlight.Store(false) }, nil
+	ctx, cancel := context.WithCancel(context.Background())
+	kd.mu.Lock()
+	kd.connectAbortCtx, kd.connectAbortCancel = ctx, cancel
+	kd.mu.Unlock()
+	kd.connectAborted.Store(false)
+	kd.connectCancelled.Store(false)
+	return func() {
+		kd.mu.Lock()
+		kd.connectAbortCtx, kd.connectAbortCancel = nil, nil
+		kd.mu.Unlock()
+		cancel()
+		kd.connectInFlight.Store(false)
+	}, nil
+}
+
+// connectAbortRequested reports that a cancel reached the connect in flight.
+func (kd *KeibiDrop) connectAbortRequested() bool {
+	return kd.connectAborted.Load() || kd.connectCancelled.Load()
+}
+
+// abortConnect ends the blocking waits of the connect in flight. The flags
+// serve the polling waits; this serves the ones parked on a socket or a timer.
+func (kd *KeibiDrop) abortConnect() {
+	kd.mu.Lock()
+	cancel := kd.connectAbortCancel
+	kd.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// connectAbortDone is what a blocking wait selects on. Nil outside a connect,
+// and a nil channel never fires.
+func (kd *KeibiDrop) connectAbortDone() <-chan struct{} {
+	kd.mu.Lock()
+	defer kd.mu.Unlock()
+	if kd.connectAbortCtx == nil {
+		return nil
+	}
+	return kd.connectAbortCtx.Done()
+}
+
+// closeOnAbort closes c when a cancel arrives while a handshake waits on it, so
+// the wait returns at once instead of at its deadline. stop ends the watch.
+func (kd *KeibiDrop) closeOnAbort(c net.Conn) (stop func()) {
+	done := make(chan struct{})
+	abort := kd.connectAbortDone()
+	go func() {
+		select {
+		case <-abort:
+			_ = c.Close()
+		case <-done:
+		}
+	}()
+	return func() { close(done) }
 }
 
 func (kd *KeibiDrop) CreateRoom() error {
@@ -1148,7 +1217,6 @@ func (kd *KeibiDrop) CreateRoom() error {
 	defer releaseConnect()
 	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "create-room")
-	kd.connectCancelled.Store(false)
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -1190,7 +1258,6 @@ func (kd *KeibiDrop) CreateRoom() error {
 	// governs the whole connect flow.
 	{
 		budget := time.Now().Add(Timeout * time.Second)
-		kd.connectAborted.Store(false)
 		registered := time.Now()
 		for round := 0; ; round++ {
 			if kd.connectAborted.Load() {
@@ -1303,7 +1370,15 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 	}
 
 	for pending := legs; pending > 0; {
-		a := <-arrivals
+		var a roundArrival
+		select {
+		case a = <-arrivals:
+		case <-kd.connectAbortDone():
+			// A cancel arrived mid-round. The legs are closed rather than parked:
+			// this create is over and nobody reads them again.
+			stopLegs(nil)
+			return false, fmt.Errorf("create-room: cancelled")
+		}
 		switch {
 		case a.err != nil && a.via == "direct":
 			pending--
@@ -1518,9 +1593,11 @@ func (kd *KeibiDrop) IsPeerPersistent() bool {
 // so they can clean up immediately instead of waiting for health monitor timeout.
 func (kd *KeibiDrop) NotifyDisconnect() {
 	logger := kd.logger.With("method", "notify-disconnect")
-	// A create that is still waiting for its peer has no session yet, so kd.Stop returns
-	// early and cannot reach it. The rendezvous loop watches this flag instead.
+	// A create or join that is still waiting for its peer has no session yet, so
+	// kd.Stop returns early and cannot reach it. The polling waits watch this
+	// flag; abortConnect ends the ones parked on a socket or a timer.
 	kd.connectAborted.Store(true)
+	kd.abortConnect()
 	if kd.session == nil || kd.session.GRPCClient == nil {
 		logger.Warn("Skipping disconnect notification: no session or gRPC client")
 		return

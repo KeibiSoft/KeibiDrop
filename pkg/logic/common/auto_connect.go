@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -103,6 +104,7 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 	logger := kd.logger.With("method", "auto-connect")
 	backoff := tun.initialBackoff
 	hadSession := false
+	deferred := false // logged once per stretch of dials refused as in-flight
 	var idleSince time.Time
 
 	for ctx.Err() == nil {
@@ -137,6 +139,19 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 			kd.peerSaidGoodbye.Store(false)
 			logger.Info("Auto-connect dialing")
 			if err := dial(); err != nil {
+				if errors.Is(err, ErrConnectInProgress) {
+					// Another caller holds the connect (a click, an agent). Not a
+					// failed dial: poll again, and keep the backoff where it was.
+					if !deferred {
+						logger.Info("Auto-connect deferred: a connect is already in flight")
+						deferred = true
+					}
+					if !sleepCtx(ctx, tun.poll) {
+						return
+					}
+					continue
+				}
+				deferred = false
 				logger.Warn("Auto-connect attempt failed", "error", err, "retry_in", backoff)
 				if !sleepCtx(ctx, backoff) {
 					return
@@ -147,6 +162,7 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 				}
 				continue
 			}
+			deferred = false
 			idleSince = time.Time{}
 		}
 	}

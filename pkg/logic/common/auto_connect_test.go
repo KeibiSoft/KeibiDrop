@@ -271,3 +271,44 @@ func TestAutoConnectLoop_GoodbyeSurvivesPollsBeforeTheSessionEnds(t *testing.T) 
 	cancel()
 	<-done
 }
+
+// TestAutoConnectLoop_DefersWhileAnotherConnectRuns: a dial refused because a
+// connect is already in flight (a click, an agent) is not a failed dial. The
+// loop polls again at once and the backoff does not grow, so the redial after
+// that connect ends is not held for minutes.
+func TestAutoConnectLoop_DefersWhileAnotherConnectRuns(t *testing.T) {
+	kd := newBareKD()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tun := autoConnectTuning{
+		poll:           2 * time.Millisecond,
+		initialBackoff: 100 * time.Millisecond,
+		maxBackoff:     400 * time.Millisecond,
+		rearmGrace:     20 * time.Millisecond,
+	}
+	var dials atomic.Int32
+	var running atomic.Bool
+	dial := func() error {
+		if dials.Add(1) <= 5 {
+			return ErrConnectInProgress
+		}
+		running.Store(true)
+		return nil
+	}
+
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		kd.autoConnectLoop(ctx, tun, dial, running.Load, func() bool { return false })
+		close(done)
+	}()
+
+	waitFor(t, 2*time.Second, running.Load, "the dial after the refusals succeeds")
+	// Five refusals on the backoff would have cost 100+200+400+400+400 ms.
+	require.Less(t, time.Since(start), 500*time.Millisecond, "refusals must not grow the backoff")
+	require.Equal(t, int32(6), dials.Load())
+
+	cancel()
+	<-done
+}

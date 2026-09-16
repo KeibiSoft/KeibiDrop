@@ -744,8 +744,11 @@ fn humanize_error(msg: &str) -> String {
     if lower.contains("invalid fingerprint") || lower.contains("invalid length") {
         return "Invalid code format. Check that you copied the full code.".into();
     }
-    if lower.contains("context canceled") || lower.contains("canceled") {
+    if lower.contains("context canceled") || lower.contains("canceled") || lower.contains("cancelled") {
         return "Connection cancelled.".into();
+    }
+    if lower.contains("already in progress") {
+        return "Already connecting. Wait for it, or press Cancel first.".into();
     }
     msg.to_string()
 }
