@@ -256,6 +256,7 @@ func (kd *KeibiDrop) StartThroughputSampler(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
+				kd.logger.Info("Throughput sampler stopped", "reason", ctx.Err())
 				return
 			case <-t.C:
 				kd.throughput()

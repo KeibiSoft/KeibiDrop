@@ -48,6 +48,13 @@ func SupportedCiphers() []CipherSuite {
 
 // NegotiateCipher picks the best cipher both peers support.
 // It returns the first cipher from local that also appears in remote, or ChaCha20 when none matches.
+// IsKnownCipher reports whether c is a cipher suite this build understands. Used to validate a
+// peer-declared committed suite before adopting it, so a malformed or unknown value on the wire falls
+// back to negotiation rather than selecting an unsupported primitive.
+func IsKnownCipher(c CipherSuite) bool {
+	return c == CipherChaCha20 || c == CipherAES256
+}
+
 func NegotiateCipher(local, remote []CipherSuite) CipherSuite {
 	remoteSet := make(map[CipherSuite]bool, len(remote))
 	for _, c := range remote {

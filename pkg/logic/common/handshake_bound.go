@@ -36,8 +36,16 @@ func handshakeOrClose(s *session.Session, c net.Conn) error {
 // socket we dialed, not an accept loop, so the longer window pins nothing a
 // stranger can reach.
 func (kd *KeibiDrop) joinBridgeInbound(c net.Conn) error {
-	if err := session.PerformInboundHandshakeWait(kd.session, c, joinBridgeWait); err != nil {
+	// A cancel closes the leg under the wait, so the joiner returns at once
+	// instead of at joinBridgeWait, a full minute.
+	stop := kd.closeOnAbort(c)
+	err := session.PerformInboundHandshakeWait(kd.session, c, joinBridgeWait)
+	stop()
+	if err != nil {
 		c.Close()
+		if kd.connectAbortRequested() {
+			return ErrConnectCancelled
+		}
 		return err
 	}
 	return nil

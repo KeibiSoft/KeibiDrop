@@ -64,6 +64,7 @@ type PeerHandshakeMessage struct {
 	EncSeeds         map[string]string `json:"enc_seeds"`   // optional for key encapsulation
 	OutboundPort     int               `json:"port"`
 	SupportedCiphers []string          `json:"supported_ciphers"` // cipher negotiation
+	Cipher           string            `json:"cipher,omitempty"`  // the single suite this flight committed; the receiver adopts it (empty for legacy peers)
 	Persistent       bool              `json:"persistent,omitempty"`
 	KeyUpdate        bool              `json:"key_update,omitempty"` // in-band ratchet capability
 	// InboundBlocked says the sender's own listener is unreachable, so the receiver
@@ -216,7 +217,14 @@ func PerformInboundHandshakeWait(session *Session, conn net.Conn, firstByte time
 		return err
 	}
 
-	// Negotiate cipher suite: pick best cipher both peers support.
+	// Negotiate cipher suite. This inbound connection carries the PEER's outbound, encrypted with the one
+	// suite the peer committed. A peer that speaks the explicit cipher field names that suite, so we adopt
+	// it directly: exact, and it lets us decrypt even a suite our own preference list does not advertise
+	// (a wasm browser prefers ChaCha20-Poly1305 yet must read a native peer's AES-256-GCM, which it runs in
+	// software). A declared suite overrides any locally pre-set guess (e.g. a creator that optimistically
+	// pre-set AES before seeing the peer). A legacy peer (no cipher field) keeps the old behavior:
+	// NegotiateCipher over the advertised lists, with a pre-set/locked suite winning. An unknown declared
+	// value is ignored (falls back to negotiation) so a malformed field cannot select an unsupported cipher.
 	peerCiphers := make([]kbc.CipherSuite, len(msg.SupportedCiphers))
 	for i, c := range msg.SupportedCiphers {
 		peerCiphers[i] = kbc.CipherSuite(c)
@@ -224,15 +232,21 @@ func PerformInboundHandshakeWait(session *Session, conn net.Conn, firstByte time
 	if len(peerCiphers) == 0 {
 		peerCiphers = []kbc.CipherSuite{kbc.CipherChaCha20}
 	}
-	suite := kbc.NegotiateCipher(kbc.SupportedCiphers(), peerCiphers)
+	declared := kbc.CipherSuite(msg.Cipher)
+	var suite kbc.CipherSuite
 	session.CipherMu.Lock()
-	if session.CipherSuite == "" {
+	switch {
+	case kbc.IsKnownCipher(declared):
+		suite = declared
 		session.CipherSuite = suite
-	} else {
+	case session.CipherSuite == "":
+		suite = kbc.NegotiateCipher(kbc.SupportedCiphers(), peerCiphers)
+		session.CipherSuite = suite
+	default:
 		suite = session.CipherSuite
 	}
 	session.CipherMu.Unlock()
-	logger.Info("Cipher negotiated", "suite", suite, "peer-offered", msg.SupportedCiphers, "hardware-aes", kbc.HasHardwareAES())
+	logger.Info("Cipher negotiated", "suite", suite, "peer-declared", msg.Cipher, "peer-offered", msg.SupportedCiphers, "hardware-aes", kbc.HasHardwareAES())
 
 	// Bind the peer's advertised key-update capability into the key so a relay that strips the
 	// plaintext handshake bit derives a different key here (fail-closed).
@@ -436,19 +450,26 @@ func performOutboundHandshake(session *Session, conn net.Conn, directLeg bool) e
 	// Additional seed for the QUIC control channel, encapsulated to the SAME already-validated
 	// peer keys and carried in this SAME payload so the handshake gains no round trip. Derives
 	// an independent key, so the QUIC channel never shares key + nonce space with TCP.
-	quicSeed1 := kbc.GenerateSeed()
-	encQuicSeed1X25519, err := kbc.X25519Encapsulate(quicSeed1, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
-	if err != nil {
-		logger.Error("Failed to encapsulate x25519 quic seed", "error", err)
-		return err
+	// A peer that cannot hold up the QUIC end (a browser: no raw UDP, so no relayed UDP room)
+	// sends none, which is exactly how an older peer looks, and the far side stays TCP-only
+	// instead of re-registering UDP rooms every 30 s for nobody.
+	var encQuicSeed1X25519, encQuicSeed2MLKEM []byte
+	if !session.OwnNoQUIC {
+		quicSeed1 := kbc.GenerateSeed()
+		encQuicSeed1X25519, err = kbc.X25519Encapsulate(quicSeed1, session.OwnKeys.X25519Private, session.PeerPubKeys.X25519Public)
+		if err != nil {
+			logger.Error("Failed to encapsulate x25519 quic seed", "error", err)
+			return err
+		}
+		var quicSeed2 []byte
+		quicSeed2, encQuicSeed2MLKEM = session.PeerPubKeys.MlKemPublic.Encapsulate()
+		quicOutboundKey, kerr := kbc.DeriveKey(suite, quicSeed1, quicSeed2)
+		if kerr != nil {
+			logger.Error("Failed to derive quic outbound key", "error", kerr)
+			return kerr
+		}
+		session.SEKOutboundQUIC = quicOutboundKey
 	}
-	quicSeed2, encQuicSeed2MLKEM := session.PeerPubKeys.MlKemPublic.Encapsulate()
-	quicOutboundKey, err := kbc.DeriveKey(suite, quicSeed1, quicSeed2)
-	if err != nil {
-		logger.Error("Failed to derive quic outbound key", "error", err)
-		return err
-	}
-	session.SEKOutboundQUIC = quicOutboundKey
 
 	pubKeys := map[string]string{
 		"x25519": encodeBase64(session.OwnKeys.X25519Public.Bytes()),
@@ -456,10 +477,12 @@ func performOutboundHandshake(session *Session, conn net.Conn, directLeg bool) e
 	}
 
 	encSeeds := map[string]string{
-		"mlkem":       encodeBase64(encSeed2MLKEM),
-		"x25519":      encodeBase64(encSeed1X25519),
-		"mlkem_quic":  encodeBase64(encQuicSeed2MLKEM),
-		"x25519_quic": encodeBase64(encQuicSeed1X25519),
+		"mlkem":  encodeBase64(encSeed2MLKEM),
+		"x25519": encodeBase64(encSeed1X25519),
+	}
+	if !session.OwnNoQUIC {
+		encSeeds["mlkem_quic"] = encodeBase64(encQuicSeed2MLKEM)
+		encSeeds["x25519_quic"] = encodeBase64(encQuicSeed1X25519)
 	}
 
 	// Advertise our supported ciphers to the peer.
@@ -475,6 +498,7 @@ func performOutboundHandshake(session *Session, conn net.Conn, directLeg bool) e
 		EncSeeds:         encSeeds,
 		OutboundPort:     session.DefaultInboundPort,
 		SupportedCiphers: supportedStr,
+		Cipher:           string(suite), // the suite we committed for this outbound; the receiver adopts it
 		Persistent:       session.OwnIsPersistent,
 		KeyUpdate:        own,
 		InboundBlocked:   session.OwnInboundBlocked,
