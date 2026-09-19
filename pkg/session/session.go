@@ -93,6 +93,15 @@ type Session struct {
 	PeerInboundBlocked bool
 	PeerMixedLegs      bool
 
+	// OwnNoQUIC suppresses this side's QUIC control-channel seeds. A browser
+	// peer cannot be the far end of a relayed UDP room, and a desktop that
+	// receives the seeds brings up quic1/quic2 and re-probes them every 30 s
+	// for a counterpart that can never answer. Sending no seeds is the one
+	// signal that already means "stay on TCP" (quic_control.go), so a browser
+	// sets this and the desktop needs no new case. Phase 4 (WebTransport)
+	// removes it.
+	OwnNoQUIC bool
+
 	// Internal timeout deadline
 	Deadline time.Time
 

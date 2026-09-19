@@ -1441,8 +1441,28 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 	}
 	bridgeLeg := &bridgeLegHolder{}
 	if kd.BridgeAddr != "" {
-		go kd.watchBridgeLeg(logger, bridgeLeg, kd.takeParkedBridgeIn(), bridgeRoundWait, arrivals)
-		legs++
+		if park, skipReason := kd.shouldParkBridgeLeg(kd.session.ExpectedPeerFingerprint); park {
+			go kd.watchBridgeLeg(logger, bridgeLeg, kd.takeParkedBridgeIn(), bridgeRoundWait, arrivals)
+			legs++
+		} else {
+			kd.closeParkedBridgeIn()
+			skipped := kd.bridgeSkippedRounds.Add(1)
+			// Once every four rounds, so a minute of absence is one line.
+			if round%4 == 0 {
+				logger.Info(skipReason, "round", round, "legs_skipped", skipped)
+			}
+			if legs == 0 {
+				// The bridge was the only leg this round. Wait the round out
+				// rather than spinning the create loop, and ask the relay
+				// again next time round.
+				select {
+				case <-time.After(bridgeRoundWait):
+					return false, nil
+				case <-kd.connectAbortDone():
+					return false, fmt.Errorf("create-room: %w", ErrConnectCancelled)
+				}
+			}
+		}
 	}
 
 	// stopLegs ends whatever leg did not win. The winner's conn is already in the

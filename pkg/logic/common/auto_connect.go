@@ -22,6 +22,13 @@ type autoConnectTuning struct {
 	initialBackoff time.Duration // first retry delay after a failed dial
 	maxBackoff     time.Duration // backoff cap
 	rearmGrace     time.Duration // continuous downtime before a re-dial after a session existed
+
+	// absentPoll is how often presence is re-checked once the peer has been
+	// absent longer than maxBackoff, and absentDialEvery is the safety-net
+	// dial that runs anyway, so a peer whose presence stopped for a reason of
+	// its own is still found.
+	absentPoll      time.Duration
+	absentDialEvery time.Duration
 }
 
 // defaultAutoConnectTuning: the rearm grace stays above the ReconnectManager
@@ -32,6 +39,9 @@ var defaultAutoConnectTuning = autoConnectTuning{
 	initialBackoff: 5 * time.Second,
 	maxBackoff:     2 * time.Minute,
 	rearmGrace:     90 * time.Second,
+
+	absentPoll:      30 * time.Second,
+	absentDialEvery: 30 * time.Minute,
 }
 
 // ResolveContact maps a saved contact name (case-insensitive) or fingerprint
@@ -75,6 +85,7 @@ func (kd *KeibiDrop) StartAutoConnect(ctx context.Context) error {
 	}
 	logger.Info("Auto-connect armed")
 	kd.autoConnectPaused.Store(false)
+	kd.autoConnectTarget.Store(&fp)
 	go kd.autoConnectLoop(ctx, defaultAutoConnectTuning,
 		func() error { return kd.watchdogDial(fp) },
 		kd.IsRunning,
@@ -102,6 +113,20 @@ func (kd *KeibiDrop) PauseAutoConnect() {
 		kd.autoConnectPaused.Store(true)
 		kd.logger.Info("Auto-connect paused until the next session", "method", "auto-connect")
 	}
+}
+
+// peerKnownAbsent reports that the auto-connect target is a saved contact this
+// process has seen online and the relay has not seen for longer than it keeps
+// a heartbeat. It is the same rule the bridge-leg gate uses, so the daemon has
+// one definition of "absent" and both sides of the loop agree. Everything it
+// cannot be sure about reads as present, which is the old behaviour.
+func (kd *KeibiDrop) peerKnownAbsent() bool {
+	fp := kd.autoConnectTarget.Load()
+	if fp == nil || *fp == "" {
+		return false
+	}
+	park, _ := kd.shouldParkBridgeLeg(*fp)
+	return !park
 }
 
 // reconnectBusy reports whether the reconnect machinery currently owns the
@@ -142,12 +167,16 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 	hadSession := false
 	deferred := false // logged once per stretch of dials refused as in-flight
 	var idleSince time.Time
+	// absentSince is when the relay last stopped reporting the peer online, and
+	// lastAbsentDial when the safety net last ran.
+	var absentSince, lastAbsentDial time.Time
 
 	for ctx.Err() == nil {
 		switch {
 		case isRunning():
 			hadSession = true
 			idleSince = time.Time{}
+			absentSince, lastAbsentDial = time.Time{}, time.Time{}
 			backoff = tun.initialBackoff
 			kd.autoConnectPaused.Store(false)
 			if !sleepCtx(ctx, tun.poll) {
@@ -174,6 +203,37 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 				return
 			}
 		default:
+			// A dial at this point creates a room for the whole Timeout budget
+			// and parks a paid bridge leg every round inside it. For a contact
+			// the relay has not seen in over a minute that is ten minutes of
+			// ledger traffic for a session that cannot happen: the tm-1 NAS did
+			// it for nine days. Hold the dial while they are away, and keep a
+			// safety net so a peer whose presence stopped for its own reasons
+			// is still found.
+			if kd.peerKnownAbsent() {
+				now := time.Now()
+				if absentSince.IsZero() {
+					absentSince, lastAbsentDial = now, now
+					logger.Info("Peer is not present on the relay; holding the dial")
+				}
+				if now.Sub(lastAbsentDial) < tun.absentDialEvery {
+					wait := tun.poll
+					if now.Sub(absentSince) >= tun.maxBackoff {
+						wait = tun.absentPoll
+					}
+					if !sleepCtx(ctx, wait) {
+						return
+					}
+					continue
+				}
+				lastAbsentDial = now
+				logger.Info("Peer still absent; dialing anyway",
+					"absent_for", now.Sub(absentSince).Round(time.Second))
+			} else if !absentSince.IsZero() {
+				logger.Info("Peer is present again", "absent_for", time.Since(absentSince).Round(time.Second))
+				absentSince, lastAbsentDial = time.Time{}, time.Time{}
+			}
+
 			// The goodbye is consumed here, not on every running poll: a poll that
 			// landed between the peer's goodbye and the session's end cleared the
 			// flag and cost the full rearm grace (measured 2026-09-09 on the box:

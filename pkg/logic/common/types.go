@@ -128,6 +128,23 @@ type KeibiDrop struct {
 	// autoConnectPaused parks the watchdog after a person cancelled its dial,
 	// until a session exists again. PauseAutoConnect sets it.
 	autoConnectPaused atomic.Bool
+	// autoConnectTarget is the contact fingerprint the armed loop dials, read
+	// by peerKnownAbsent. Nil until StartAutoConnect resolves one.
+	autoConnectTarget atomic.Pointer[string]
+	// presenceSeen records, per contact fingerprint, the unix time the relay
+	// last reported that contact online. The bridge-leg gate needs it: a
+	// contact never seen present is one whose build or address book we know
+	// nothing about, and it must keep the old behaviour. Written by
+	// contactPresent, read by shouldParkBridgeLeg.
+	presenceSeen sync.Map // string -> int64 unix seconds
+	// bridgeSkippedRounds counts rounds that opened no bridge leg because the
+	// contact was absent, and bridgeLegsDiedTwice counts rounds where the
+	// bridge expired both legs before any joiner spoke. Both ride the round's
+	// own log line every fourth round, so a NAS that looks idle can be told
+	// apart from one that is stuck, without a new status field in four
+	// frontends.
+	bridgeSkippedRounds atomic.Uint64
+	bridgeLegsDiedTwice atomic.Uint64
 	// connectCancelled makes a pending CreateRoom or JoinRoom wait return, so a
 	// disconnect frees the daemon instead of holding it until Timeout.
 	connectCancelled atomic.Bool
