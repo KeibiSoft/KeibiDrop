@@ -54,10 +54,24 @@ func (kd *KeibiDrop) dropOutboundConn() {
 	}
 }
 
+// rpcSession is the session a file operation may use, or nil. It is read
+// under kd.mu, the lock the run loop nils and replaces kd.session under, so
+// the guard never races a teardown (KeibiDropWeb #41).
+func (kd *KeibiDrop) rpcSession() *session.Session {
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.GRPCClient == nil {
+		return nil
+	}
+	return s
+}
+
 // Add a file to be tracked.
 func (kd *KeibiDrop) AddFile(path string) error {
 	logger := kd.logger.With("method", "add-file")
-	if kd.session == nil || kd.session.GRPCClient == nil {
+	sess := kd.rpcSession()
+	if sess == nil {
 		logger.Error("Invalid session", "error", ErrInvalidSession)
 		return ErrInvalidSession
 	}
@@ -112,8 +126,8 @@ func (kd *KeibiDrop) AddFile(path string) error {
 		return err
 	}
 
-	if kd.sharedStore != nil && kd.dlRegistry != nil && kd.session != nil {
-		tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
+	if kd.sharedStore != nil && kd.dlRegistry != nil {
+		tag := kd.dlRegistry.peerTag(sess.ExpectedPeerFingerprint, kd.registryKey)
 		kd.persistSharedFile(tag, file)
 	}
 
@@ -166,7 +180,7 @@ func (kd *KeibiDrop) UnshareFile(name string) error {
 // Automatically sends ADD_DIR for any parent directories the peer may not have.
 func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 	logger := kd.logger.With("method", "add-file-as")
-	if kd.session == nil || kd.session.GRPCClient == nil {
+	if kd.rpcSession() == nil {
 		return ErrInvalidSession
 	}
 
@@ -239,7 +253,8 @@ func (kd *KeibiDrop) ListFiles() (remote []string, local []string) {
 
 func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	logger := kd.logger.With("method", "pull-file")
-	if kd.session == nil || kd.session.GRPCClient == nil {
+	sess := kd.rpcSession()
+	if sess == nil {
 		logger.Error("Invalid session", "error", ErrInvalidSession)
 		return ErrInvalidSession
 	}
@@ -327,8 +342,8 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		kd.activeDownloadsMu.Lock()
 		kd.activeBitmaps[remoteName] = bitmap
 		kd.activeDownloadsMu.Unlock()
-		if kd.dlRegistry != nil && kd.session != nil {
-			tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
+		if kd.dlRegistry != nil {
+			tag := kd.dlRegistry.peerTag(sess.ExpectedPeerFingerprint, kd.registryKey)
 			kd.dlRegistry.Register(bitmapPath, tag)
 		}
 		if kd.HealthMonitor != nil {
@@ -725,6 +740,12 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 	// Arm the in-band ratchet on both fresh conns before the gRPC readers start. Both
 	// handshakes are done, so the negotiated capability is known.
 	kd.session.ApplyKeyUpdateNegotiation()
+
+	// The presence gate may believe this peer's absence only if its build
+	// keeps posting presence while online, which the declared cipher marks.
+	if kd.session.PeerDeclaredCipher {
+		kd.presenceReliable.Store(kd.session.ExpectedPeerFingerprint, true)
+	}
 
 	kd.Start()
 

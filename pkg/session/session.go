@@ -92,6 +92,11 @@ type Session struct {
 	OwnMixedLegs       bool
 	PeerInboundBlocked bool
 	PeerMixedLegs      bool
+	// PeerDeclaredCipher is true when the peer's last inbound flight named
+	// the suite it committed (the cipher field, sent by 0.4.9 and newer
+	// builds). The presence gate reads it as the build marker: only those
+	// builds keep posting presence after a disconnect. Not on the wire.
+	PeerDeclaredCipher bool
 
 	// OwnNoQUIC suppresses this side's QUIC control-channel seeds. A browser
 	// peer cannot be the far end of a relayed UDP room, and a desktop that

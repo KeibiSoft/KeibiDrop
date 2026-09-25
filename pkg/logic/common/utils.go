@@ -33,6 +33,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
 
@@ -825,6 +826,21 @@ func (kd *KeibiDrop) handleNotifyDisconnect() {
 	kd.cancelContext()
 }
 
+// kdServerKeepalive is the server-side keepalive both gRPC servers run. The
+// inbound server's pings keep an idle leg alive across a bridge that reaps
+// silent conns (kdwsbridge: 120 s) for a browser peer, whose client sends no
+// pings of its own (KeibiDropWeb #14). A ping goes out only after Time with
+// nothing read, and any read resets the timer, so a transfer never pings and
+// connect time is untouched. Timeout is longer than the browser's own 20 s so
+// a stalled slow link is not cut here first. A var, so a test can shrink Time.
+var kdServerKeepalive = keepalive.ServerParameters{Time: 45 * time.Second, Timeout: 60 * time.Second}
+
+// kdServerKeepalivePolicy admits a client that pings every 30 s or slower
+// with no stream open, so a browser that adds client keepalive later is not
+// sent GOAWAY too_many_pings. Only a peer past the mutual handshake reaches
+// this server.
+var kdServerKeepalivePolicy = keepalive.EnforcementPolicy{MinTime: 30 * time.Second, PermitWithoutStream: true}
+
 // kdServerOptions is the single source of the tuned gRPC server options. The TCP server and
 // the QUIC control server both use it, so the two transports can't drift apart.
 func kdServerOptions() []grpc.ServerOption {
@@ -835,6 +851,8 @@ func kdServerOptions() []grpc.ServerOption {
 		grpc.InitialConnWindowSize(config.GRPCWindowSize),
 		grpc.WriteBufferSize(config.GRPCIOBufferSize),
 		grpc.ReadBufferSize(config.GRPCIOBufferSize),
+		grpc.KeepaliveParams(kdServerKeepalive),
+		grpc.KeepaliveEnforcementPolicy(kdServerKeepalivePolicy),
 	}
 }
 

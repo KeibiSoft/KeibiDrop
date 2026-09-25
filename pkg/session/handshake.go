@@ -233,6 +233,7 @@ func PerformInboundHandshakeWait(session *Session, conn net.Conn, firstByte time
 		peerCiphers = []kbc.CipherSuite{kbc.CipherChaCha20}
 	}
 	declared := kbc.CipherSuite(msg.Cipher)
+	session.PeerDeclaredCipher = kbc.IsKnownCipher(declared)
 	var suite kbc.CipherSuite
 	session.CipherMu.Lock()
 	switch {

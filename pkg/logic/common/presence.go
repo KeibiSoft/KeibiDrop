@@ -100,6 +100,9 @@ func (kd *KeibiDrop) lastSeenPresent(fingerprint string) (time.Time, bool) {
 //
 //   - not local mode (on a LAN the relay knows nothing worth asking);
 //   - the peer is a saved contact, so presence is even meaningful;
+//   - that contact's last handshake here declared a cipher, so it runs 0.4.9
+//     or newer: every desktop build before that lost its heartbeat at the
+//     first disconnect of a run and read as absent while it was online;
 //   - this process has seen that contact present at least once, so we know
 //     their build posts presence and has us in its address book;
 //   - and nothing has been seen for longer than the relay's own TTL.
@@ -113,6 +116,8 @@ func (kd *KeibiDrop) shouldParkBridgeLeg(peerFP string) (bool, string) {
 		return true, ""
 	case kd.AddressBook == nil || kd.AddressBook.Lookup(peerFP) == nil:
 		return true, "" // a first-time peer: unchanged
+	case !kd.presenceReliableFor(peerFP):
+		return true, "" // an older build: its absence proves nothing
 	case kd.RelayEndoint == nil || kd.Identity == nil:
 		return true, ""
 	}
@@ -131,6 +136,13 @@ func (kd *KeibiDrop) shouldParkBridgeLeg(peerFP string) (bool, string) {
 		return true, "" // one missed beat is not an absence
 	}
 	return false, "Peer not present on the relay; not parking a bridge leg"
+}
+
+// presenceReliableFor reports that the contact's build keeps posting presence
+// while it is online, so the relay's "not present" can be believed.
+func (kd *KeibiDrop) presenceReliableFor(fingerprint string) bool {
+	_, ok := kd.presenceReliable.Load(fingerprint)
+	return ok
 }
 
 // CheckContactPresence reports whether the relay saw the contact online recently.
