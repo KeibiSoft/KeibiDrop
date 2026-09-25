@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -21,6 +22,13 @@ type autoConnectTuning struct {
 	initialBackoff time.Duration // first retry delay after a failed dial
 	maxBackoff     time.Duration // backoff cap
 	rearmGrace     time.Duration // continuous downtime before a re-dial after a session existed
+
+	// absentPoll is how often presence is re-checked once the peer has been
+	// absent longer than maxBackoff, and absentDialEvery is the safety-net
+	// dial that runs anyway, so a peer whose presence stopped for a reason of
+	// its own is still found.
+	absentPoll      time.Duration
+	absentDialEvery time.Duration
 }
 
 // defaultAutoConnectTuning: the rearm grace stays above the ReconnectManager
@@ -31,6 +39,9 @@ var defaultAutoConnectTuning = autoConnectTuning{
 	initialBackoff: 5 * time.Second,
 	maxBackoff:     2 * time.Minute,
 	rearmGrace:     90 * time.Second,
+
+	absentPoll:      30 * time.Second,
+	absentDialEvery: 30 * time.Minute,
 }
 
 // ResolveContact maps a saved contact name (case-insensitive) or fingerprint
@@ -65,13 +76,57 @@ func (kd *KeibiDrop) StartAutoConnect(ctx context.Context) error {
 		return err
 	}
 	logger := kd.logger.With("method", "auto-connect", "peer", target)
+	// One loop per process. A second arm (a saved contact while the startup
+	// arm runs) would dial beside the first; the running loop keeps its target
+	// for this session, as KD_SetAutoConnectPeer documents.
+	if !kd.autoConnectArmed.CompareAndSwap(false, true) {
+		logger.Info("Auto-connect already armed, keeping its target for this session")
+		return nil
+	}
 	logger.Info("Auto-connect armed")
-	kd.autoConnectArmed.Store(true)
+	kd.autoConnectPaused.Store(false)
+	kd.autoConnectTarget.Store(&fp)
 	go kd.autoConnectLoop(ctx, defaultAutoConnectTuning,
-		func() error { return kd.ConnectToContact(fp) },
+		func() error { return kd.watchdogDial(fp) },
 		kd.IsRunning,
 		kd.reconnectBusy)
 	return nil
+}
+
+// watchdogDial is the loop's connect. It never displaces a connect a person
+// or an agent started, and it joins one already running to its own peer.
+func (kd *KeibiDrop) watchdogDial(fp string) error {
+	if kd.AddressBook == nil || kd.AddressBook.Lookup(fp) == nil {
+		return fmt.Errorf("contact not found in address book")
+	}
+	if err := kd.setPeerFingerprint(fp, originWatchdog); err != nil {
+		return err
+	}
+	return kd.connect(originWatchdog)
+}
+
+// PauseAutoConnect parks the watchdog after a person cancelled its dial from
+// the connect screen. It resumes once a session exists again, so a drop after
+// a manual connect is still followed; a fresh StartAutoConnect arms unpaused.
+func (kd *KeibiDrop) PauseAutoConnect() {
+	if kd.autoConnectArmed.Load() {
+		kd.autoConnectPaused.Store(true)
+		kd.logger.Info("Auto-connect paused until the next session", "method", "auto-connect")
+	}
+}
+
+// peerKnownAbsent reports that the auto-connect target is a saved contact this
+// process has seen online and the relay has not seen for longer than it keeps
+// a heartbeat. It is the same rule the bridge-leg gate uses, so the daemon has
+// one definition of "absent" and both sides of the loop agree. Everything it
+// cannot be sure about reads as present, which is the old behaviour.
+func (kd *KeibiDrop) peerKnownAbsent() bool {
+	fp := kd.autoConnectTarget.Load()
+	if fp == nil || *fp == "" {
+		return false
+	}
+	park, _ := kd.shouldParkBridgeLeg(*fp)
+	return !park
 }
 
 // reconnectBusy reports whether the reconnect machinery currently owns the
@@ -101,16 +156,35 @@ func (kd *KeibiDrop) reconnectBusy() bool {
 func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 	dial func() error, isRunning func() bool, busy func() bool) {
 	logger := kd.logger.With("method", "auto-connect")
+	// The loop ends only with its context. Say so, and let the armed flag
+	// follow: a dead loop that still read as armed made the state line promise
+	// "will keep trying" and refused a re-arm (0.4.8, 2026-09-16).
+	defer func() {
+		logger.Info("Auto-connect watchdog stopped", "reason", ctx.Err())
+		kd.autoConnectArmed.Store(false)
+	}()
 	backoff := tun.initialBackoff
 	hadSession := false
+	deferred := false // logged once per stretch of dials refused as in-flight
 	var idleSince time.Time
+	// absentSince is when the relay last stopped reporting the peer online, and
+	// lastAbsentDial when the safety net last ran.
+	var absentSince, lastAbsentDial time.Time
 
 	for ctx.Err() == nil {
 		switch {
 		case isRunning():
 			hadSession = true
 			idleSince = time.Time{}
+			absentSince, lastAbsentDial = time.Time{}, time.Time{}
 			backoff = tun.initialBackoff
+			kd.autoConnectPaused.Store(false)
+			if !sleepCtx(ctx, tun.poll) {
+				return
+			}
+		case kd.autoConnectPaused.Load():
+			// A person cancelled the dial. Their word stands until a session
+			// exists again.
 			if !sleepCtx(ctx, tun.poll) {
 				return
 			}
@@ -129,6 +203,37 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 				return
 			}
 		default:
+			// A dial at this point creates a room for the whole Timeout budget
+			// and parks a paid bridge leg every round inside it. For a contact
+			// the relay has not seen in over a minute that is ten minutes of
+			// ledger traffic for a session that cannot happen: the tm-1 NAS did
+			// it for nine days. Hold the dial while they are away, and keep a
+			// safety net so a peer whose presence stopped for its own reasons
+			// is still found.
+			if kd.peerKnownAbsent() {
+				now := time.Now()
+				if absentSince.IsZero() {
+					absentSince, lastAbsentDial = now, now
+					logger.Info("Peer is not present on the relay; holding the dial")
+				}
+				if now.Sub(lastAbsentDial) < tun.absentDialEvery {
+					wait := tun.poll
+					if now.Sub(absentSince) >= tun.maxBackoff {
+						wait = tun.absentPoll
+					}
+					if !sleepCtx(ctx, wait) {
+						return
+					}
+					continue
+				}
+				lastAbsentDial = now
+				logger.Info("Peer still absent; dialing anyway",
+					"absent_for", now.Sub(absentSince).Round(time.Second))
+			} else if !absentSince.IsZero() {
+				logger.Info("Peer is present again", "absent_for", time.Since(absentSince).Round(time.Second))
+				absentSince, lastAbsentDial = time.Time{}, time.Time{}
+			}
+
 			// The goodbye is consumed here, not on every running poll: a poll that
 			// landed between the peer's goodbye and the session's end cleared the
 			// flag and cost the full rearm grace (measured 2026-09-09 on the box:
@@ -137,6 +242,19 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 			kd.peerSaidGoodbye.Store(false)
 			logger.Info("Auto-connect dialing")
 			if err := dial(); err != nil {
+				if errors.Is(err, ErrConnectInProgress) {
+					// Another caller holds the connect (a click, an agent). Not a
+					// failed dial: poll again, and keep the backoff where it was.
+					if !deferred {
+						logger.Info("Auto-connect deferred: a connect is already in flight")
+						deferred = true
+					}
+					if !sleepCtx(ctx, tun.poll) {
+						return
+					}
+					continue
+				}
+				deferred = false
 				logger.Warn("Auto-connect attempt failed", "error", err, "retry_in", backoff)
 				if !sleepCtx(ctx, backoff) {
 					return
@@ -147,6 +265,7 @@ func (kd *KeibiDrop) autoConnectLoop(ctx context.Context, tun autoConnectTuning,
 				}
 				continue
 			}
+			deferred = false
 			idleSince = time.Time{}
 		}
 	}

@@ -210,5 +210,13 @@ func (kd *KeibiDrop) watchBridgeLeg(logger *slog.Logger, holder *bridgeLegHolder
 			logger.Info("Bridge leg closed before a joiner spoke, dialing a fresh one", "error", err)
 		}
 	}
+	n := kd.bridgeLegsDiedTwice.Add(1)
+	// Two dead legs in one round means the bridge is expiring them faster than
+	// the round reads them: the tm-1 shape, where every round cost a park, an
+	// expiry and two ledger writes. The presence gate is what stops it; this
+	// counter is how an operator sees that it is happening at all.
+	if n%4 == 1 {
+		logger.Info("Bridge legs are expiring before a joiner arrives", "rounds_so_far", n)
+	}
 	arrivals <- roundArrival{via: "bridge", err: errors.New("bridge leg closed twice this round")}
 }

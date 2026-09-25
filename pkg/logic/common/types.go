@@ -125,9 +125,42 @@ type KeibiDrop struct {
 	// one, so the auto-connect loop redials without the rearm grace.
 	peerSaidGoodbye  atomic.Bool
 	autoConnectArmed atomic.Bool // StartAutoConnect started its loop; a give-up then ends the session so the loop redials.
+	// autoConnectPaused parks the watchdog after a person cancelled its dial,
+	// until a session exists again. PauseAutoConnect sets it.
+	autoConnectPaused atomic.Bool
+	// autoConnectTarget is the contact fingerprint the armed loop dials, read
+	// by peerKnownAbsent. Nil until StartAutoConnect resolves one.
+	autoConnectTarget atomic.Pointer[string]
+	// presenceSeen records, per contact fingerprint, the unix time the relay
+	// last reported that contact online. The bridge-leg gate needs it: a
+	// contact never seen present is one whose build or address book we know
+	// nothing about, and it must keep the old behaviour. Written by
+	// contactPresent, read by shouldParkBridgeLeg.
+	presenceSeen sync.Map // string -> int64 unix seconds
+	// presenceReliable holds the contacts whose last handshake here declared a
+	// cipher (0.4.9 and newer). Older desktop builds stop posting presence after
+	// a disconnect, so the gate reads absence only for these. Written by
+	// finishConnect, read by shouldParkBridgeLeg.
+	presenceReliable sync.Map // string -> bool
+	// bridgeSkippedRounds counts rounds that opened no bridge leg because the
+	// contact was absent, and bridgeLegsDiedTwice counts rounds where the
+	// bridge expired both legs before any joiner spoke. Both ride the round's
+	// own log line every fourth round, so a NAS that looks idle can be told
+	// apart from one that is stuck, without a new status field in four
+	// frontends.
+	bridgeSkippedRounds atomic.Uint64
+	bridgeLegsDiedTwice atomic.Uint64
 	// connectCancelled makes a pending CreateRoom or JoinRoom wait return, so a
 	// disconnect frees the daemon instead of holding it until Timeout.
 	connectCancelled atomic.Bool
+	// connectInFlight is held by the one CreateRoom or JoinRoom that runs, from
+	// whichever frontend or the auto-connect loop. beginConnect owns it.
+	connectInFlight atomic.Bool
+	// inflight is the connect that holds connectInFlight: its peer, the abort
+	// context a cancel ends its long waits through (NotifyDisconnect and
+	// CancelPendingConnect cancel it), and its result for callers that joined
+	// it. Under mu; nil between connects.
+	inflight *inflightConnect
 	// activeFetches counts on-demand block fetches in flight. A 16 MiB block on
 	// a slow link holds the wire for seconds and can starve a heartbeat, so a
 	// failed heartbeat during one is deferred like one during a pull.
@@ -155,7 +188,8 @@ type KeibiDrop struct {
 	running      atomic.Bool
 	stopDone     chan struct{} // Closed when the Stop handler completes.
 	ctx          context.Context
-	Cancel       context.CancelFunc // Exported so the FFI layer can call it for app exit.
+	Cancel       context.CancelFunc // The session cancel: Stop calls it on every disconnect. Never store a process cancel here; the 0.4.8 desktop app did, and its first disconnect ended every loop on that context. cancelContext reports it when it happens.
+	parentCtx    context.Context    // The context the frontend built the engine from, kept to report that mistake.
 	shutdown     chan struct{}      // Shutdown closes it to exit Run permanently.
 	shutdownOnce sync.Once
 	mu           sync.Mutex
@@ -303,6 +337,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 	}
 
 	// Wrap the incoming context, so Cancel is always available for disconnect handling.
+	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
 
 	kd := &KeibiDrop{
@@ -318,6 +353,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		// running stays false until Start.
 		ctx:             ctx,
 		Cancel:          cancel,
+		parentCtx:       parent,
 		shutdown:        make(chan struct{}),
 		mu:              sync.Mutex{},
 		refreshSession:  refreshSession,
@@ -650,9 +686,20 @@ func (kd *KeibiDrop) Stop() {
 func (kd *KeibiDrop) cancelContext() {
 	kd.mu.Lock()
 	cancel := kd.Cancel
+	parent := kd.parentCtx
 	kd.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if cancel == nil {
+		return
+	}
+	// A disconnect ends the session only. The 0.4.8 desktop app stored its
+	// process cancel in Cancel, and the first disconnect of every run ended the
+	// presence heartbeat, the auto-connect watchdog and the samplers without a
+	// line in the log. Name it when this call is what ends that context; a
+	// frontend that ended it itself at exit is not the mistake.
+	parentAlive := parent != nil && parent.Err() == nil
+	cancel()
+	if parentAlive && parent.Err() != nil {
+		kd.logger.Error("The session cancel ended the frontend's process context; every loop on it is gone until restart")
 	}
 }
 

@@ -3664,10 +3664,9 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		wasLocalNewer := existing.LocalNewer
 		existing.metaMu.Unlock()
 		sizeChanged := oldSize != stat.Size
-		// Snapshot the incoming size now, BEFORE `existing.stat = stat` aliases this
-		// struct into existing.stat: the size-changed branch reads it for os.Truncate
-		// AFTER releasing RemoteFilesLock, where Getattr can mutate existing.stat
-		// (the same struct) in place. The local copy keeps that read race-free.
+		// Copy the size before `existing.stat = stat` aliases it: Getattr
+		// mutates existing.stat under metaMu, so later size reads use this
+		// copy, never stat.Size.
 		newSize := stat.Size
 
 		// Reject stale ADD_FILE only when the incoming mtime is older than
@@ -3773,7 +3772,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			existing.metaMu.Lock()
 			existing.NotLocalSynced = true
 			existing.metaMu.Unlock()
-			existing.Download.Reset(uint64(stat.Size))
+			existing.Download.Reset(uint64(newSize))
 			if existing.PrefetchCancel != nil {
 				existing.PrefetchCancel()
 				existing.PrefetchCancel = nil
@@ -3783,7 +3782,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			// Swap under metaMu: Release reads the pointer under the same lock.
 			existing.metaMu.Lock()
 			oldBitmap := existing.Bitmap
-			existing.Bitmap = NewChunkBitmap(stat.Size)
+			existing.Bitmap = NewChunkBitmap(newSize)
 			newBitmap := existing.Bitmap
 			existing.metaMu.Unlock()
 			if conflictRel != "" {
@@ -3830,7 +3829,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 				existing.metaMu.Lock()
 				existing.NotLocalSynced = true
 				existing.metaMu.Unlock()
-				existing.Download.Reset(uint64(stat.Size))
+				existing.Download.Reset(uint64(newSize))
 				if existing.PrefetchCancel != nil {
 					existing.PrefetchCancel()
 					existing.PrefetchCancel = nil
@@ -3839,7 +3838,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 				// still match their stored hashes. Capture for async reconcile.
 				existing.metaMu.Lock()
 				oldBitmap = existing.Bitmap
-				existing.Bitmap = NewChunkBitmap(stat.Size)
+				existing.Bitmap = NewChunkBitmap(newSize)
 				newBitmap = existing.Bitmap
 				existing.metaMu.Unlock()
 				if conflictRel != "" {
@@ -3858,9 +3857,9 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 				// to decode. Attach one, resumed from a sidecar when present; the
 				// copy's bytes are fetched once more and cached from then on. A
 				// local write that outranked the announce keeps its authority.
-				bm := NewChunkBitmap(stat.Size)
+				bm := NewChunkBitmap(newSize)
 				if bm != nil && existing.RealPathOfFile != "" {
-					if loaded, loadErr := LoadChunkBitmap(BitmapPath(existing.RealPathOfFile), stat.Size); loadErr == nil {
+					if loaded, loadErr := LoadChunkBitmap(BitmapPath(existing.RealPathOfFile), newSize); loadErr == nil {
 						bm = loaded
 					}
 				}

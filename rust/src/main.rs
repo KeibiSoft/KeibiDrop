@@ -744,8 +744,11 @@ fn humanize_error(msg: &str) -> String {
     if lower.contains("invalid fingerprint") || lower.contains("invalid length") {
         return "Invalid code format. Check that you copied the full code.".into();
     }
-    if lower.contains("context canceled") || lower.contains("canceled") {
+    if lower.contains("context canceled") || lower.contains("canceled") || lower.contains("cancelled") {
         return "Connection cancelled.".into();
+    }
+    if lower.contains("already in progress") {
+        return "Already connecting. Wait for it, or press Cancel first.".into();
     }
     msg.to_string()
 }
@@ -803,26 +806,7 @@ fn connect_room(
             "Room {} successfully",
             if create { "created" } else { "joined" }
         );
-
-        // Wire health/reconnect events into the Go event channel.
-        bindings::KD_SetupEventCallbacks();
-
-        // Start file watcher
-        running.store(true, Ordering::Relaxed);
-        start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder.clone());
-
-        let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
-        let peer_already_contact = bindings::KD_IsPeerAlreadyContact() != 0;
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(app) = weak.upgrade() {
-                app.set_room_action(0);
-                app.set_status_message(slint::SharedString::default());
-                app.set_error_message(slint::SharedString::default());
-                app.set_peer_is_persistent(peer_persistent);
-                app.set_peer_already_saved(peer_already_contact);
-                app.set_current_screen(target_screen);
-            }
-        });
+        finish_connect_ui(weak, running, downloads, save_path, current_folder, target_screen);
     });
 }
 
@@ -892,23 +876,39 @@ fn connect_room_auto(
         }
 
         println!("Connected successfully");
-        bindings::KD_SetupEventCallbacks();
-        running.store(true, Ordering::Relaxed);
-        start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder.clone());
+        finish_connect_ui(weak, running, downloads, save_path, current_folder, target_screen);
+    });
+}
 
-        let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
-        let peer_already_contact = bindings::KD_IsPeerAlreadyContact() != 0;
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(app) = weak.upgrade() {
-                app.set_room_action(0);
-                app.set_status_message(slint::SharedString::default());
-                app.set_connect_status(slint::SharedString::default());
-                app.set_error_message(slint::SharedString::default());
-                app.set_peer_is_persistent(peer_persistent);
-                app.set_peer_already_saved(peer_already_contact);
-                app.set_current_screen(target_screen);
-            }
-        });
+/// The post-connect tail every session gets, whoever started it: wire the
+/// engine's events, start the file watcher, land on the connected screen.
+/// The connect screen's mirror runs it for a session the engine started on
+/// its own (auto-connect), which used to leave the screen where it was.
+unsafe fn finish_connect_ui(
+    weak: slint::Weak<MainWindow>,
+    running: Arc<AtomicBool>,
+    downloads: Arc<Mutex<HashMap<String, DownloadInfo>>>,
+    save_path: String,
+    current_folder: Arc<Mutex<String>>,
+    target_screen: i32,
+) {
+    // Wire health/reconnect events into the Go event channel.
+    bindings::KD_SetupEventCallbacks();
+    running.store(true, Ordering::Relaxed);
+    start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder);
+
+    let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
+    let peer_already_contact = bindings::KD_IsPeerAlreadyContact() != 0;
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = weak.upgrade() {
+            app.set_room_action(0);
+            app.set_status_message(slint::SharedString::default());
+            app.set_connect_status(slint::SharedString::default());
+            app.set_error_message(slint::SharedString::default());
+            app.set_peer_is_persistent(peer_persistent);
+            app.set_peer_already_saved(peer_already_contact);
+            app.set_current_screen(target_screen);
+        }
     });
 }
 
@@ -1412,6 +1412,13 @@ fn main() {
         // Create/Join Room setup
         let watcher_running = Arc::new(AtomicBool::new(false));
         let disconnecting = Arc::new(AtomicBool::new(false));
+        // The engine's own connects (auto-connect on start, the redial after a
+        // give-up) never set room_action, so the connect screen showed an idle
+        // Connect button while the engine dialed and did not change when it
+        // connected (2026-09-16: that button opened a second bridge leg). The
+        // state timer mirrors the engine on the connect screen; this says the
+        // mirror owns room_action right now.
+        let engine_connecting = std::rc::Rc::new(std::cell::Cell::new(false));
         let watcher_running_disconnect = watcher_running.clone();
         let disconnecting_disconnect = disconnecting.clone();
 
@@ -1490,7 +1497,13 @@ fn main() {
 
         // Handle Cancel (abort room creation/join)
         let weak_cancel = app.as_weak();
+        let engine_connecting_cancel = engine_connecting.clone();
         app.on_cancel_connect_pressed(move || {
+            // Cancelling the engine's own dial parks the watchdog until the
+            // next session: the person's word stands over the retry loop.
+            if engine_connecting_cancel.replace(false) {
+                bindings::KD_PauseAutoConnect();
+            }
             if let Some(app) = weak_cancel.upgrade() {
                 app.set_room_action(0);
                 app.set_status_message(slint::SharedString::default());
@@ -2630,14 +2643,18 @@ fn main() {
         let _state_timer = {
             let timer = slint::Timer::default();
             let weak_state = app.as_weak();
+            let engine_connecting_state = engine_connecting.clone();
+            let tail_spawned = std::rc::Rc::new(std::cell::Cell::new(false));
+            let disconnecting_state = disconnecting.clone();
+            let watcher_running_state = watcher_running.clone();
+            let downloads_state = downloads.clone();
+            let to_save_state = to_save.clone();
+            let current_folder_state = current_folder.clone();
             timer.start(
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_secs(1),
                 move || {
                     let Some(app) = weak_state.upgrade() else { return };
-                    if app.get_current_screen() == 0 {
-                        return;
-                    }
                     let p = bindings::KD_SessionStateLine();
                     if p.is_null() {
                         return;
@@ -2650,6 +2667,51 @@ fn main() {
                     let _mount_ready = parts.next().unwrap_or("");
                     let recv: u64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
                     let sent: u64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                    if app.get_current_screen() == 0 {
+                        // The connect screen mirrors a connect the engine runs on
+                        // its own. The manual paths own room_action while they
+                        // run and land the screen themselves.
+                        let disconnecting_now = disconnecting_state.load(Ordering::Relaxed);
+                        match state.as_str() {
+                            "waiting_for_peer" if !disconnecting_now => {
+                                if app.get_room_action() == 0 && !engine_connecting_state.get() {
+                                    engine_connecting_state.set(true);
+                                    app.set_room_action(1);
+                                    app.set_error_message(slint::SharedString::default());
+                                    app.set_status_message(slint::SharedString::default());
+                                }
+                                if engine_connecting_state.get() {
+                                    app.set_connect_status(slint::SharedString::from(text.clone()));
+                                }
+                            }
+                            "connected" if !disconnecting_now => {
+                                // The engine's session, or one it finished before
+                                // this tick. Land it once.
+                                if (engine_connecting_state.get() || app.get_room_action() == 0)
+                                    && !tail_spawned.replace(true)
+                                {
+                                    engine_connecting_state.set(false);
+                                    let target = if app.get_fuse_mode() { 2 } else { 1 };
+                                    let weak = weak_state.clone();
+                                    let running = watcher_running_state.clone();
+                                    let downloads = downloads_state.clone();
+                                    let save_path = to_save_state.clone();
+                                    let current_folder = current_folder_state.clone();
+                                    std::thread::spawn(move || {
+                                        finish_connect_ui(weak, running, downloads, save_path, current_folder, target);
+                                    });
+                                }
+                            }
+                            _ => {
+                                if engine_connecting_state.replace(false) {
+                                    app.set_room_action(0);
+                                    app.set_connect_status(slint::SharedString::default());
+                                }
+                                tail_spawned.set(false);
+                            }
+                        }
+                        return;
+                    }
                     app.set_session_state(slint::SharedString::from(state));
                     app.set_session_state_text(slint::SharedString::from(text));
                     app.set_throughput_text(slint::SharedString::from(throughput_label(recv, sent)));

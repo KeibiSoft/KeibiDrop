@@ -35,6 +35,7 @@ var (
 	ErrFilesystemAlreadyMounted      = errors.New("filesystem already mounted")
 	ErrNilFilesystem                 = errors.New("filesystem not mounted")
 	ErrAlreadyRunning                = errors.New("already running")
+	ErrConnectInProgress             = errors.New("a connect is already in progress")
 	ErrInvalidSession                = errors.New("invalid session")
 	ErrServerAtCapacity              = errors.New("relay server at capacity, please try again in 5 minutes")
 	ErrIdenticalFingerprints         = errors.New("own and peer fingerprints are identical")

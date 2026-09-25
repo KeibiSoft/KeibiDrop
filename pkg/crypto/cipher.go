@@ -46,8 +46,14 @@ func SupportedCiphers() []CipherSuite {
 	return []CipherSuite{CipherChaCha20}
 }
 
-// NegotiateCipher picks the best cipher both peers support.
-// It returns the first cipher from local that also appears in remote, or ChaCha20 when none matches.
+// IsKnownCipher reports whether this build implements c. A peer-declared
+// suite that fails it falls back to negotiation.
+func IsKnownCipher(c CipherSuite) bool {
+	return c == CipherChaCha20 || c == CipherAES256
+}
+
+// NegotiateCipher returns the first suite in local that remote also
+// supports, or ChaCha20 when there is none.
 func NegotiateCipher(local, remote []CipherSuite) CipherSuite {
 	remoteSet := make(map[CipherSuite]bool, len(remote))
 	for _, c := range remote {

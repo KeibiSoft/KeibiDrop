@@ -54,10 +54,23 @@ func (kd *KeibiDrop) dropOutboundConn() {
 	}
 }
 
+// rpcSession returns the session a file operation may use, or nil. It reads
+// kd.session under kd.mu, which the run loop holds when it nils the session.
+func (kd *KeibiDrop) rpcSession() *session.Session {
+	kd.mu.Lock()
+	s := kd.session
+	kd.mu.Unlock()
+	if s == nil || s.GRPCClient == nil {
+		return nil
+	}
+	return s
+}
+
 // Add a file to be tracked.
 func (kd *KeibiDrop) AddFile(path string) error {
 	logger := kd.logger.With("method", "add-file")
-	if kd.session == nil || kd.session.GRPCClient == nil {
+	sess := kd.rpcSession()
+	if sess == nil {
 		logger.Error("Invalid session", "error", ErrInvalidSession)
 		return ErrInvalidSession
 	}
@@ -112,8 +125,8 @@ func (kd *KeibiDrop) AddFile(path string) error {
 		return err
 	}
 
-	if kd.sharedStore != nil && kd.dlRegistry != nil && kd.session != nil {
-		tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
+	if kd.sharedStore != nil && kd.dlRegistry != nil {
+		tag := kd.dlRegistry.peerTag(sess.ExpectedPeerFingerprint, kd.registryKey)
 		kd.persistSharedFile(tag, file)
 	}
 
@@ -166,7 +179,7 @@ func (kd *KeibiDrop) UnshareFile(name string) error {
 // Automatically sends ADD_DIR for any parent directories the peer may not have.
 func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 	logger := kd.logger.With("method", "add-file-as")
-	if kd.session == nil || kd.session.GRPCClient == nil {
+	if kd.rpcSession() == nil {
 		return ErrInvalidSession
 	}
 
@@ -239,7 +252,8 @@ func (kd *KeibiDrop) ListFiles() (remote []string, local []string) {
 
 func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 	logger := kd.logger.With("method", "pull-file")
-	if kd.session == nil || kd.session.GRPCClient == nil {
+	sess := kd.rpcSession()
+	if sess == nil {
 		logger.Error("Invalid session", "error", ErrInvalidSession)
 		return ErrInvalidSession
 	}
@@ -327,8 +341,8 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 		kd.activeDownloadsMu.Lock()
 		kd.activeBitmaps[remoteName] = bitmap
 		kd.activeDownloadsMu.Unlock()
-		if kd.dlRegistry != nil && kd.session != nil {
-			tag := kd.dlRegistry.peerTag(kd.session.ExpectedPeerFingerprint, kd.registryKey)
+		if kd.dlRegistry != nil {
+			tag := kd.dlRegistry.peerTag(sess.ExpectedPeerFingerprint, kd.registryKey)
 			kd.dlRegistry.Register(bitmapPath, tag)
 		}
 		if kd.HealthMonitor != nil {
@@ -606,6 +620,16 @@ func (kd *KeibiDrop) ExportFingerprint() (string, error) {
 }
 
 func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
+	return kd.setPeerFingerprint(fp, originUser)
+}
+
+// setPeerFingerprint records the peer to connect to. While a connect to
+// another peer is in flight, a person's or an agent's new peer displaces it:
+// left alone, the later rounds of that connect hash the new peer into their
+// bridge token and the old peer never pairs. The watchdog's peer never
+// displaces anyone and is refused instead. The check and the write share
+// kd.mu with beginConnect, which snapshots the peer under the same lock.
+func (kd *KeibiDrop) setPeerFingerprint(fp string, o connectOrigin) error {
 	logger := kd.logger.With("method", "add-peer-fingerprint")
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
@@ -620,7 +644,20 @@ func (kd *KeibiDrop) AddPeerFingerprint(fp string) error {
 		return err
 	}
 
+	kd.mu.Lock()
+	cur := kd.inflight
+	displace := cur != nil && cur.peerFP != fp && !kd.connectAbortRequested()
+	if displace && o == originWatchdog {
+		kd.mu.Unlock()
+		return ErrConnectInProgress
+	}
+	if displace {
+		logger.Info("New peer displaces the connect in flight")
+		kd.connectCancelled.Store(true)
+		cur.abortCancel()
+	}
 	kd.session.ExpectedPeerFingerprint = fp
+	kd.mu.Unlock()
 
 	return nil
 }
@@ -670,6 +707,7 @@ func (kd *KeibiDrop) SetPeerDirectAddress(addr string) error {
 // not stay busy for Timeout after the operator gave up.
 func (kd *KeibiDrop) CancelPendingConnect() {
 	kd.connectCancelled.Store(true)
+	kd.abortConnect()
 }
 
 func (kd *KeibiDrop) waitForPeerFingerprint() error {
@@ -677,7 +715,7 @@ func (kd *KeibiDrop) waitForPeerFingerprint() error {
 		if kd.session.ExpectedPeerFingerprint != "" {
 			return nil
 		}
-		if kd.connectCancelled.Load() {
+		if kd.connectAbortRequested() {
 			return ErrConnectCancelled
 		}
 		time.Sleep(time.Second)
@@ -701,6 +739,12 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 	// Arm the in-band ratchet on both fresh conns before the gRPC readers start. Both
 	// handshakes are done, so the negotiated capability is known.
 	kd.session.ApplyKeyUpdateNegotiation()
+
+	// Only 0.4.9 and newer builds keep posting presence after a disconnect,
+	// and they declare a cipher. See presenceReliable.
+	if kd.session.PeerDeclaredCipher {
+		kd.presenceReliable.Store(kd.session.ExpectedPeerFingerprint, true)
+	}
 
 	kd.Start()
 
@@ -743,10 +787,11 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 	return nil
 }
 
-func (kd *KeibiDrop) JoinRoom() error {
+func (kd *KeibiDrop) JoinRoom() error { return kd.runConnect(originUser, kd.joinRoom) }
+
+func (kd *KeibiDrop) joinRoom() error {
 	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "join-room")
-	kd.connectCancelled.Store(false)
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -819,6 +864,8 @@ func (kd *KeibiDrop) JoinRoom() error {
 				case <-time.After(delay):
 				case <-ctx.Done():
 					return ctx.Err()
+				case <-kd.connectAbortDone():
+					return ErrConnectCancelled
 				}
 			}
 		}
@@ -1074,7 +1121,9 @@ connected:
 // deterministic fingerprint comparison and calls CreateRoom or JoinRoom.
 // Lower fingerprint = creator (registers to relay, accepts inbound).
 // Higher fingerprint = joiner (fetches from relay, dials out).
-func (kd *KeibiDrop) Connect() error {
+func (kd *KeibiDrop) Connect() error { return kd.connect(originUser) }
+
+func (kd *KeibiDrop) connect(o connectOrigin) error {
 	logger := kd.logger.With("method", "connect")
 	if kd.session == nil {
 		return ErrNilPointer
@@ -1090,10 +1139,10 @@ func (kd *KeibiDrop) Connect() error {
 	if ownFP < peerFP {
 		logger.Info("Fingerprint tiebreak: I am creator", "own", ownFP[:8], "peer", peerFP[:8])
 		kd.emitConnectStatus("Waiting for peer to connect...")
-		return kd.CreateRoom()
+		return kd.runConnect(o, kd.createRoom)
 	}
 	logger.Info("Fingerprint tiebreak: I am joiner", "own", ownFP[:8], "peer", peerFP[:8])
-	return kd.JoinRoom()
+	return kd.runConnect(o, kd.joinRoom)
 }
 
 // LocalConnectRole picks who creates (listens) vs joins (dials) in local mode.
@@ -1121,10 +1170,159 @@ func DecideLocalRole(myName, peerName, peerAddr string) bool {
 	return LocalConnectRole(myName, peerName, myAddr, peerIP)
 }
 
-func (kd *KeibiDrop) CreateRoom() error {
+// connectRetryWait bounds how long a caller waits for a connect that a cancel
+// is unwinding before it is refused outright.
+const connectRetryWait = 60 * time.Second
+
+// inflightConnect is the one CreateRoom or JoinRoom while it runs: the peer it
+// dials, the abort context a cancel ends its long waits through, and its
+// result for the callers that joined it.
+type inflightConnect struct {
+	peerFP      string
+	abortCtx    context.Context
+	abortCancel context.CancelFunc
+	done        chan struct{} // closed when the connect returns; err is set first
+	err         error
+}
+
+// connectOrigin says who asked for a connect. A person or an agent may
+// displace the watchdog's dial with a different peer; the watchdog never
+// displaces anyone.
+type connectOrigin bool
+
+const (
+	originUser     connectOrigin = false
+	originWatchdog connectOrigin = true
+)
+
+// runConnect runs body as the one connect in flight, from any frontend. Each
+// frontend guards its own button (room_action, OpInProgress, the mobile op
+// state), and none of them sees the engine's auto-connect dial. A click during
+// one reached CreateRoom again (2026-09-16, 0.4.8) and opened a second bridge
+// leg with the same pair1 token: the bridge paired the creator with itself and
+// the real joiner read EOF.
+//
+// A second caller for the same peer joins the connect in flight and gets its
+// result. A person or an agent asking for another peer displaces it: their
+// choice wins over the watchdog. A caller that lands while a cancel unwinds
+// the connect waits for the slot instead of failing.
+func (kd *KeibiDrop) runConnect(o connectOrigin, body func() error) error {
+	p, joined, err := kd.beginConnect(o)
+	if err != nil {
+		return err
+	}
+	if joined {
+		<-p.done
+		return p.err
+	}
+	err = body()
+	kd.endConnect(p, err)
+	return err
+}
+
+// beginConnect takes the connect slot, or returns the connect to join.
+func (kd *KeibiDrop) beginConnect(o connectOrigin) (p *inflightConnect, joined bool, err error) {
+	deadline := time.Now().Add(connectRetryWait)
+	for {
+		kd.mu.Lock()
+		cur := kd.inflight
+		want := ""
+		if kd.session != nil {
+			want = kd.session.ExpectedPeerFingerprint
+		}
+		if cur == nil {
+			ctx, cancel := context.WithCancel(context.Background())
+			p = &inflightConnect{peerFP: want, abortCtx: ctx, abortCancel: cancel, done: make(chan struct{})}
+			kd.inflight = p
+			kd.mu.Unlock()
+			kd.connectInFlight.Store(true)
+			kd.connectAborted.Store(false)
+			kd.connectCancelled.Store(false)
+			return p, false, nil
+		}
+		kd.mu.Unlock()
+		switch {
+		case kd.connectAbortRequested():
+			// A cancel is unwinding it; the slot frees shortly.
+		case want != "" && cur.peerFP == want:
+			kd.logger.Info("Connect joins the one already in flight to the same peer")
+			return cur, true, nil
+		case o == originUser && want != "":
+			kd.logger.Info("Connect displaces the one in flight: another peer was asked for")
+			kd.connectCancelled.Store(true)
+			kd.abortConnect()
+		default:
+			kd.logger.Info("Connect refused: one is already in flight")
+			return nil, false, ErrConnectInProgress
+		}
+		if !time.Now().Before(deadline) {
+			kd.logger.Info("Connect refused: the one in flight did not unwind in time")
+			return nil, false, ErrConnectInProgress
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// endConnect frees the slot and hands the result to the callers that joined.
+func (kd *KeibiDrop) endConnect(p *inflightConnect, err error) {
+	kd.mu.Lock()
+	if kd.inflight == p {
+		kd.inflight = nil
+	}
+	kd.mu.Unlock()
+	p.err = err
+	close(p.done)
+	p.abortCancel()
+	kd.connectInFlight.Store(false)
+}
+
+// connectAbortRequested reports that a cancel reached the connect in flight.
+func (kd *KeibiDrop) connectAbortRequested() bool {
+	return kd.connectAborted.Load() || kd.connectCancelled.Load()
+}
+
+// abortConnect ends the blocking waits of the connect in flight. The flags
+// serve the polling waits; this serves the ones parked on a socket or a timer.
+func (kd *KeibiDrop) abortConnect() {
+	kd.mu.Lock()
+	p := kd.inflight
+	kd.mu.Unlock()
+	if p != nil {
+		p.abortCancel()
+	}
+}
+
+// connectAbortDone is what a blocking wait selects on. Nil outside a connect,
+// and a nil channel never fires.
+func (kd *KeibiDrop) connectAbortDone() <-chan struct{} {
+	kd.mu.Lock()
+	defer kd.mu.Unlock()
+	if kd.inflight == nil {
+		return nil
+	}
+	return kd.inflight.abortCtx.Done()
+}
+
+// closeOnAbort closes c when a cancel arrives while a handshake waits on it, so
+// the wait returns at once instead of at its deadline. stop ends the watch.
+func (kd *KeibiDrop) closeOnAbort(c net.Conn) (stop func()) {
+	done := make(chan struct{})
+	abort := kd.connectAbortDone()
+	go func() {
+		select {
+		case <-abort:
+			_ = c.Close()
+		case <-done:
+		}
+	}()
+	return func() { close(done) }
+}
+
+func (kd *KeibiDrop) CreateRoom() error { return kd.runConnect(originUser, kd.createRoom) }
+
+func (kd *KeibiDrop) createRoom() error {
 	defer kd.clearConnectStatus()
 	logger := kd.logger.With("method", "create-room")
-	kd.connectCancelled.Store(false)
 	if kd.session == nil {
 		logger.Warn("Nil pointer deference")
 		return ErrNilPointer
@@ -1166,11 +1364,10 @@ func (kd *KeibiDrop) CreateRoom() error {
 	// governs the whole connect flow.
 	{
 		budget := time.Now().Add(Timeout * time.Second)
-		kd.connectAborted.Store(false)
 		registered := time.Now()
 		for round := 0; ; round++ {
-			if kd.connectAborted.Load() {
-				return fmt.Errorf("create-room: cancelled")
+			if kd.connectAbortRequested() {
+				return fmt.Errorf("create-room: %w", ErrConnectCancelled)
 			}
 			done, err := kd.createRendezvousRound(logger, round)
 			if err != nil {
@@ -1264,8 +1461,28 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 	}
 	bridgeLeg := &bridgeLegHolder{}
 	if kd.BridgeAddr != "" {
-		go kd.watchBridgeLeg(logger, bridgeLeg, kd.takeParkedBridgeIn(), bridgeRoundWait, arrivals)
-		legs++
+		if park, skipReason := kd.shouldParkBridgeLeg(kd.session.ExpectedPeerFingerprint); park {
+			go kd.watchBridgeLeg(logger, bridgeLeg, kd.takeParkedBridgeIn(), bridgeRoundWait, arrivals)
+			legs++
+		} else {
+			kd.closeParkedBridgeIn()
+			skipped := kd.bridgeSkippedRounds.Add(1)
+			// Once every four rounds, so a minute of absence is one line.
+			if round%4 == 0 {
+				logger.Info(skipReason, "round", round, "legs_skipped", skipped)
+			}
+			if legs == 0 {
+				// The bridge was the only leg this round. Wait the round out
+				// rather than spinning the create loop, and ask the relay
+				// again next time round.
+				select {
+				case <-time.After(bridgeRoundWait):
+					return false, nil
+				case <-kd.connectAbortDone():
+					return false, fmt.Errorf("create-room: %w", ErrConnectCancelled)
+				}
+			}
+		}
 	}
 
 	// stopLegs ends whatever leg did not win. The winner's conn is already in the
@@ -1279,7 +1496,15 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 	}
 
 	for pending := legs; pending > 0; {
-		a := <-arrivals
+		var a roundArrival
+		select {
+		case a = <-arrivals:
+		case <-kd.connectAbortDone():
+			// A cancel arrived mid-round. The legs are closed rather than parked:
+			// this create is over and nobody reads them again.
+			stopLegs(nil)
+			return false, fmt.Errorf("create-room: %w", ErrConnectCancelled)
+		}
 		switch {
 		case a.err != nil && a.via == "direct":
 			pending--
@@ -1494,9 +1719,11 @@ func (kd *KeibiDrop) IsPeerPersistent() bool {
 // so they can clean up immediately instead of waiting for health monitor timeout.
 func (kd *KeibiDrop) NotifyDisconnect() {
 	logger := kd.logger.With("method", "notify-disconnect")
-	// A create that is still waiting for its peer has no session yet, so kd.Stop returns
-	// early and cannot reach it. The rendezvous loop watches this flag instead.
+	// A create or join that is still waiting for its peer has no session yet, so
+	// kd.Stop returns early and cannot reach it. The polling waits watch this
+	// flag; abortConnect ends the ones parked on a socket or a timer.
 	kd.connectAborted.Store(true)
+	kd.abortConnect()
 	if kd.session == nil || kd.session.GRPCClient == nil {
 		logger.Warn("Skipping disconnect notification: no session or gRPC client")
 		return
