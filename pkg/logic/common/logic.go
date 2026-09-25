@@ -54,9 +54,8 @@ func (kd *KeibiDrop) dropOutboundConn() {
 	}
 }
 
-// rpcSession is the session a file operation may use, or nil. It is read
-// under kd.mu, the lock the run loop nils and replaces kd.session under, so
-// the guard never races a teardown (KeibiDropWeb #41).
+// rpcSession returns the session a file operation may use, or nil. It reads
+// kd.session under kd.mu, which the run loop holds when it nils the session.
 func (kd *KeibiDrop) rpcSession() *session.Session {
 	kd.mu.Lock()
 	s := kd.session
@@ -741,8 +740,8 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 	// handshakes are done, so the negotiated capability is known.
 	kd.session.ApplyKeyUpdateNegotiation()
 
-	// The presence gate may believe this peer's absence only if its build
-	// keeps posting presence while online, which the declared cipher marks.
+	// Only 0.4.9 and newer builds keep posting presence after a disconnect,
+	// and they declare a cipher. See presenceReliable.
 	if kd.session.PeerDeclaredCipher {
 		kd.presenceReliable.Store(kd.session.ExpectedPeerFingerprint, true)
 	}

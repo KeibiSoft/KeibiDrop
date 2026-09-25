@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 KeibiSoft S.R.L.
-// The native gRPC servers ping an idle client. A browser peer sends no client
-// pings (an unmodified older native server would answer them with GOAWAY), so
-// its leg through a bridge that reaps silence stays alive only if our server
-// pings first (KeibiDropWeb #14). Counted on the wire: the HTTP/2 PING frames
-// the server writes while nothing else happens.
+// The native gRPC servers ping an idle client: a browser peer sends no client
+// pings and a bridge reaps a silent leg. The test counts the HTTP/2 PING
+// frames the server writes while the pair is idle.
 
 package common
 
@@ -118,7 +116,7 @@ func serverPingsWhileIdle(t *testing.T, idle time.Duration) (int, error) {
 }
 
 // With the keepalive on, an idle client is pinged. With grpc's default (two
-// hours) it is not, which is what an unmodified 0.4.8 server does.
+// hours, what a 0.4.8 server has) it is not.
 func TestServerKeepalive_PingsAnIdleClient(t *testing.T) {
 	old := kdServerKeepalive
 	t.Cleanup(func() { kdServerKeepalive = old })
@@ -146,8 +144,8 @@ func TestServerKeepalive_PingsAnIdleClient(t *testing.T) {
 	})
 }
 
-// The interval sits inside the bridge's idle reap (kdwsbridge: 120 s) with
-// room for one lost ping, and a client that pings on its own is tolerated.
+// Two intervals fit the bridge's 120 s idle reap (kdwsbridge), and a client
+// that pings on its own is accepted.
 func TestServerKeepalive_FitsTheBridgeWindow(t *testing.T) {
 	testkit.Run(t, func() error {
 		return fp.All(

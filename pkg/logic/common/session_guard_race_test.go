@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // The file entry points guard on kd.session, which the run loop nils under
-// kd.mu at a teardown (types.go). A guard that reads it without the lock is a
-// data race the detector reports (KeibiDropWeb #41, seen in the browser
-// control test). The error the caller gets is unchanged.
+// kd.mu at teardown. A guard that reads it without the lock is a data race.
 
 package common
 
@@ -20,7 +18,7 @@ func TestFileGuardsDoNotRaceTeardown(t *testing.T) {
 	kd := newBareKD()
 	absent := filepath.Join(t.TempDir(), "absent")
 
-	// The teardown's write, and the fresh session that follows it, on repeat.
+	// Teardown write, then a fresh session, on repeat.
 	stop := make(chan struct{})
 	flip := testkit.Go(func() error {
 		for i := 0; ; i++ {

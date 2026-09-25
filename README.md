@@ -10,7 +10,7 @@
   <a href="https://keibidrop.com">Website</a> · <a href="https://github.com/KeibiSoft/KeibiDrop/releases">Download</a> · <a href="https://keibisoft.com/blog.html">Blog</a>
 </p>
 
-<h2 align="center">Work on shared files instantly.<br>No more upload or download waiting.</h2>
+<h2 align="center">Open files on another computer<br>without downloading them first.</h2>
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=9Wt0NMx2_I8">

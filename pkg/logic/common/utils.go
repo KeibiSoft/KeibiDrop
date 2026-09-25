@@ -826,19 +826,15 @@ func (kd *KeibiDrop) handleNotifyDisconnect() {
 	kd.cancelContext()
 }
 
-// kdServerKeepalive is the server-side keepalive both gRPC servers run. The
-// inbound server's pings keep an idle leg alive across a bridge that reaps
-// silent conns (kdwsbridge: 120 s) for a browser peer, whose client sends no
-// pings of its own (KeibiDropWeb #14). A ping goes out only after Time with
-// nothing read, and any read resets the timer, so a transfer never pings and
-// connect time is untouched. Timeout is longer than the browser's own 20 s so
-// a stalled slow link is not cut here first. A var, so a test can shrink Time.
+// kdServerKeepalive is the keepalive of both gRPC servers. The inbound server
+// pings an idle client, so a browser peer (no client pings) survives a bridge
+// that reaps silent conns after 120 s. A ping goes out only after Time with
+// nothing read, so a transfer never pings. Timeout stays above the browser's
+// 20 s, so a stalled link is not cut here first. A var: tests shrink Time.
 var kdServerKeepalive = keepalive.ServerParameters{Time: 45 * time.Second, Timeout: 60 * time.Second}
 
-// kdServerKeepalivePolicy admits a client that pings every 30 s or slower
-// with no stream open, so a browser that adds client keepalive later is not
-// sent GOAWAY too_many_pings. Only a peer past the mutual handshake reaches
-// this server.
+// kdServerKeepalivePolicy accepts a client that pings every 30 s or slower with
+// no stream open, so a browser that adds client pings is not sent GOAWAY.
 var kdServerKeepalivePolicy = keepalive.EnforcementPolicy{MinTime: 30 * time.Second, PermitWithoutStream: true}
 
 // kdServerOptions is the single source of the tuned gRPC server options. The TCP server and

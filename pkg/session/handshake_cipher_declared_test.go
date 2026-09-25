@@ -47,7 +47,7 @@ func TestInboundAdoptsDeclaredCipher(t *testing.T) {
 	alice := declaredCipherFixture(t, string(kbc.CipherChaCha20), kbc.CipherAES256)
 	require.Equal(t, kbc.CipherChaCha20, alice.CipherSuite,
 		"a peer that names its committed suite is believed; that is how a ChaCha20-only browser is read")
-	require.True(t, alice.PeerDeclaredCipher, "the declaration is the build marker the presence gate reads")
+	require.True(t, alice.PeerDeclaredCipher, "a declared cipher marks a 0.4.9 or newer build")
 }
 
 // A legacy peer sends no cipher field, and the old negotiation stands: a
@@ -56,7 +56,7 @@ func TestInboundWithoutDeclaredCipherIsUnchanged(t *testing.T) {
 	t.Run("pre-set suite wins", func(t *testing.T) {
 		alice := declaredCipherFixture(t, "", kbc.CipherAES256)
 		require.Equal(t, kbc.CipherAES256, alice.CipherSuite)
-		require.False(t, alice.PeerDeclaredCipher, "a legacy peer is not marked as declaring")
+		require.False(t, alice.PeerDeclaredCipher, "no cipher field, no marker")
 	})
 	t.Run("negotiated from the lists", func(t *testing.T) {
 		alice := declaredCipherFixture(t, "", "")
@@ -72,7 +72,7 @@ func TestInboundIgnoresUnknownDeclaredCipher(t *testing.T) {
 	alice := declaredCipherFixture(t, "aes-128-siv-totally-made-up", "")
 	require.Equal(t, kbc.CipherChaCha20, alice.CipherSuite)
 	require.True(t, kbc.IsKnownCipher(alice.CipherSuite))
-	require.False(t, alice.PeerDeclaredCipher, "an unknown value is not a declaration")
+	require.False(t, alice.PeerDeclaredCipher, "an unknown value sets no marker")
 }
 
 // The outbound flight declares what it committed, so the other side can adopt it.

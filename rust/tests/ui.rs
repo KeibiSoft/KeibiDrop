@@ -311,3 +311,138 @@ fn waiting_line_names_what_is_missing() {
         "no waiting line while connecting"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Direct transfer (no FUSE): two peers connect for the first time, one file
+// from the peer is on the card, the person clicks Save. The card's button has
+// no accessible label, so it is driven the way a mouse drives it: pointer
+// press and release at its centre. save_file is the boundary the Rust side
+// owns (main.rs on_save_file marks the download and calls the engine in a
+// thread). The card itself changes only when the file watcher thread rebuilds
+// the list model, which it does every 500 ms (main.rs start_file_watcher).
+
+use slint::platform::{PointerEventButton, WindowEvent};
+
+fn remote_file(name: &str) -> keibidrop_rust::FileInfo {
+    keibidrop_rust::FileInfo {
+        name: name.into(),
+        size_bytes: 160_423,
+        downloading: false,
+        uploading: false,
+        progress: 0.0,
+        saved: false,
+        paused: false,
+        file_type: "image".into(),
+        is_local: false,
+    }
+}
+
+// What the watcher thread does on every tick: a new model, same rows.
+fn set_files(app: &MainWindow, names: &[&str]) {
+    let rows: Vec<keibidrop_rust::FileInfo> = names.iter().map(|n| remote_file(n)).collect();
+    app.set_file_list(slint::ModelRc::new(slint::VecModel::from(rows)));
+}
+
+fn connected_no_fuse(app: &MainWindow) {
+    app.set_fuse_mode(false);
+    app.set_current_screen(1);
+    set_files(app, &["signal.jpeg"]);
+}
+
+// The card's action button: the wide one. Pause is 60px and hidden until a
+// download runs; Save/Open is 80px.
+fn save_button(app: &MainWindow) -> ElementHandle {
+    let card = ElementHandle::find_by_element_type_name(app, "FileCard")
+        .next()
+        .expect("no FileCard on the connected screen");
+    card.query_descendants()
+        .match_type_name("OutlineButton")
+        .find_all()
+        .into_iter()
+        .find(|b| b.size().width > 70.0)
+        .expect("no Save button in the card")
+}
+
+fn button_text(el: &ElementHandle) -> String {
+    el.query_descendants()
+        .match_type_name("Text")
+        .find_first()
+        .and_then(|t| t.accessible_label())
+        .map(|s| s.to_string())
+        .unwrap_or_default()
+}
+
+fn centre(el: &ElementHandle) -> slint::LogicalPosition {
+    let p = el.absolute_position();
+    let s = el.size();
+    slint::LogicalPosition::new(p.x + s.width / 2.0, p.y + s.height / 2.0)
+}
+
+fn press(app: &MainWindow, at: slint::LogicalPosition) {
+    app.window().dispatch_event(WindowEvent::PointerMoved { position: at });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at,
+        button: PointerEventButton::Left,
+    });
+}
+
+fn release(app: &MainWindow, at: slint::LogicalPosition) {
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at,
+        button: PointerEventButton::Left,
+    });
+}
+
+fn record_saves(app: &MainWindow) -> Rc<RefCell<Vec<String>>> {
+    let saves = Rc::new(RefCell::new(Vec::<String>::new()));
+    let seen = saves.clone();
+    app.on_save_file(move |name| seen.borrow_mut().push(name.to_string()));
+    saves
+}
+
+#[test]
+fn first_save_click_fires_once_and_the_card_gives_no_cue() {
+    let app = app();
+    connected_no_fuse(&app);
+    let saves = record_saves(&app);
+
+    let btn = save_button(&app);
+    assert_eq!(button_text(&btn), "Save");
+    let at = centre(&btn);
+    press(&app, at);
+    release(&app, at);
+
+    assert_eq!(saves.borrow().as_slice(), ["signal.jpeg"], "one click, one save");
+    // Until the watcher thread rebuilds the list, the card is unchanged.
+    assert_eq!(button_text(&save_button(&app)), "Save", "no cue on the card after the click");
+}
+
+#[test]
+fn save_click_across_a_list_rebuild() {
+    let app = app();
+    connected_no_fuse(&app);
+    let saves = record_saves(&app);
+
+    let at = centre(&save_button(&app));
+    press(&app, at);
+    // The watcher tick lands between press and release: same rows, new model.
+    set_files(&app, &["signal.jpeg"]);
+    release(&app, at);
+
+    eprintln!("RECORD save_file calls with a rebuild mid-click: {:?}", saves.borrow());
+    assert_eq!(saves.borrow().as_slice(), ["signal.jpeg"], "a click that spans a list rebuild");
+}
+
+#[test]
+fn save_click_after_a_list_rebuild() {
+    let app = app();
+    connected_no_fuse(&app);
+    let saves = record_saves(&app);
+
+    // A tick before the click: the card is a new instance, the click is whole.
+    set_files(&app, &["signal.jpeg"]);
+    let at = centre(&save_button(&app));
+    press(&app, at);
+    release(&app, at);
+    assert_eq!(saves.borrow().as_slice(), ["signal.jpeg"]);
+}

@@ -137,13 +137,10 @@ type KeibiDrop struct {
 	// nothing about, and it must keep the old behaviour. Written by
 	// contactPresent, read by shouldParkBridgeLeg.
 	presenceSeen sync.Map // string -> int64 unix seconds
-	// presenceReliable marks the contacts whose last handshake in this
-	// process declared a cipher, which only 0.4.9 and newer builds send. The
-	// gate trusts absence only for them: every desktop build before 0.4.9
-	// stopped posting presence at its first disconnect of a run (its
-	// heartbeat ran on the cancel Stop() calls), so for those "absent" can
-	// mean "online, heartbeat dead". Written by finishConnect, read by
-	// shouldParkBridgeLeg.
+	// presenceReliable holds the contacts whose last handshake here declared a
+	// cipher (0.4.9 and newer). Older desktop builds stop posting presence after
+	// a disconnect, so the gate reads absence only for these. Written by
+	// finishConnect, read by shouldParkBridgeLeg.
 	presenceReliable sync.Map // string -> bool
 	// bridgeSkippedRounds counts rounds that opened no bridge leg because the
 	// contact was absent, and bridgeLegsDiedTwice counts rounds where the

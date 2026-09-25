@@ -62,16 +62,13 @@ func newPresenceKD(t *testing.T) (*KeibiDrop, *presenceRelay) {
 	kd.Identity = &identity.DeviceIdentity{Fingerprint: "FP-SELF-0001"}
 	kd.RelayEndoint = u
 	kd.relayClient = &http.Client{Timeout: 2 * time.Second}
-	// The contact's last handshake declared a cipher (a 0.4.9 or newer build),
-	// so its absence may be believed. The older build has its own test.
+	// The contact runs 0.4.9 or newer: its last handshake declared a cipher.
 	kd.presenceReliable.Store(gatePeerFP, true)
 	return kd, rel
 }
 
-// A contact whose build declared no cipher (0.4.8 or older) keeps a leg every
-// round and every dial, however long the relay has not seen it: those desktop
-// builds stopped posting presence at their first disconnect of a run while
-// they were still online, so their absence proves nothing.
+// A contact whose build declared no cipher (0.4.8 or older) keeps its leg and
+// its dials however long the relay has not seen it.
 func TestPresenceGate_OlderBuildIsNeverAbsent(t *testing.T) {
 	kd, rel := autoConnectPresenceKD(t)
 	kd.presenceReliable.Delete(gatePeerFP)
@@ -83,8 +80,8 @@ func TestPresenceGate_OlderBuildIsNeverAbsent(t *testing.T) {
 	rel.present.Store(false)
 	kd.presenceSeen.Store(gatePeerFP, time.Now().Add(-24*time.Hour).Unix())
 	park, _ = kd.shouldParkBridgeLeg(gatePeerFP)
-	require.True(t, park, "an older build may be online with a dead heartbeat; it gets its leg")
-	require.False(t, kd.peerKnownAbsent(), "and the watchdog keeps dialing it")
+	require.True(t, park, "a pre-0.4.9 build keeps its leg")
+	require.False(t, kd.peerKnownAbsent(), "a pre-0.4.9 build keeps its dials")
 }
 
 // A contact that has been seen online and then goes quiet past the relay's own
