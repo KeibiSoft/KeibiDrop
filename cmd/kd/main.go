@@ -388,12 +388,21 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		return cmdCreateOrJoin(kd, "join")
 
 	case "create":
+		if req.TimeoutS > 0 {
+			return runBoundedConnect(kd, timeoutOrDefault(req, defaultConnectTimeout), kd.CreateRoom)
+		}
 		return cmdCreateOrJoin(kd, "create")
 
 	case "join":
+		if req.TimeoutS > 0 {
+			return runBoundedConnect(kd, timeoutOrDefault(req, defaultConnectTimeout), kd.JoinRoom)
+		}
 		return cmdCreateOrJoin(kd, "join")
 
 	case "connect":
+		if req.TimeoutS > 0 && !kd.IsLocalMode {
+			return runBoundedConnect(kd, timeoutOrDefault(req, defaultConnectTimeout), kd.Connect)
+		}
 		return cmdConnect(kd)
 
 	// Agent surface. These are additive: the verbs above keep their exact
@@ -933,7 +942,20 @@ func cmdDiscover(kd *common.KeibiDrop) Response {
 	})
 }
 
+// noPeerRegistered answers a connect verb that has nothing to dial. Without it
+// the daemon waits the full connect timeout for a code that never comes.
+func noPeerRegistered(kd *common.KeibiDrop) *Response {
+	if fp, _ := kd.GetPeerFingerprint(); fp != "" || kd.IsLocalMode {
+		return nil
+	}
+	r := errResponse("no peer registered. usage: kd register <code>, then kd connect")
+	return &r
+}
+
 func cmdCreateOrJoin(kd *common.KeibiDrop, mode string) Response {
+	if r := noPeerRegistered(kd); r != nil {
+		return *r
+	}
 	if kd.OpInProgress.Add(1) != 1 {
 		kd.OpInProgress.Add(-1)
 		return errResponse("create/join already in progress")
@@ -957,6 +979,9 @@ func cmdCreateOrJoin(kd *common.KeibiDrop, mode string) Response {
 }
 
 func cmdConnect(kd *common.KeibiDrop) Response {
+	if r := noPeerRegistered(kd); r != nil {
+		return *r
+	}
 	if kd.OpInProgress.Add(1) != 1 {
 		kd.OpInProgress.Add(-1)
 		return errResponse("operation already in progress")

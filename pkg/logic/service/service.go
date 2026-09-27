@@ -168,9 +168,11 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	case bindings.NotifyType_ADD_DIR:
 		logger.Info("Mkdir called")
 
-		if kd.FS() == nil {
-			logger.Warn("Nil FS")
-			return nil, ErrGRPCFailedPrecondition
+		// Without a mount there is no tree to add a folder to; files under it
+		// still arrive with their paths. Same rule as ADD_FILE.
+		if kd.FS() == nil || kd.FS().Root() == nil {
+			logger.Debug("No filesystem, directory not mirrored")
+			return &bindings.NotifyResponse{}, nil
 		}
 
 		if kd.FS().Root() == nil {
