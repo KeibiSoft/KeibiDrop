@@ -323,6 +323,9 @@ func runConnectWithTimeout(kd *common.KeibiDrop, d time.Duration) Response {
 
 // runBoundedConnect runs one connect verb under a deadline. connect-timeout
 // always comes here; create, join and connect come here when --timeout is given.
+// connectAbortGrace bounds the wait for an aborted connect to release its slot.
+const connectAbortGrace = 5 * time.Second
+
 func runBoundedConnect(kd *common.KeibiDrop, d time.Duration, connect func() error) Response {
 	if r := noPeerRegistered(kd); r != nil {
 		return *r
@@ -334,8 +337,10 @@ func runBoundedConnect(kd *common.KeibiDrop, d time.Duration, connect func() err
 
 	errCh := make(chan error, 1)
 	go func() {
-		defer kd.OpInProgress.Add(-1)
-		errCh <- connect()
+		err := connect()
+		// Release the slot before the answer is read, so the next verb never sees busy.
+		kd.OpInProgress.Add(-1)
+		errCh <- err
 	}()
 
 	timer := time.NewTimer(d)
@@ -353,6 +358,12 @@ func runBoundedConnect(kd *common.KeibiDrop, d time.Duration, connect func() err
 		})
 	case <-timer.C:
 		kd.NotifyDisconnect()
+		// The aborted connect hands its slot back once it wakes; wait for that,
+		// bounded, so a retry right after the timeout is not answered with busy.
+		select {
+		case <-errCh:
+		case <-time.After(connectAbortGrace):
+		}
 		return errCoded(codeTimeout,
 			fmt.Sprintf("connect timed out after %s waiting for the peer", d))
 	}
