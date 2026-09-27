@@ -1143,8 +1143,12 @@ func clientExitCode(cmd string, args []string) int {
 	sock := socketPath()
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
+		if cmd == "version" {
+			printVersion(true)
+			return 0
+		}
 		fmt.Fprintf(os.Stderr,
-			`{"ok":false,"error":"daemon not running (socket: %s)","code":%q}`+"\n",
+			`{"ok":false,"error":"daemon not running (socket: %s). Start it with: kd start","code":%q}`+"\n",
 			sock, codeNotConnected)
 		return exitNotConnected
 	}
@@ -1237,7 +1241,7 @@ USAGE:
   kd tokens add <code>           Paste a prepaid relay token code.
   kd tokens balance              Refresh balances from the relay.
   kd feedback [--stars 1-5] [words]  Tell the developers how it went. Either part is enough.
-  kd version                     Show version and commit hash.
+  kd version                     Show version and commit hash. Works without the daemon; --version too.
   kd export-logs [dest]          Export sanitized logs.
   kd sanitize-logs [dest]        Alias for export-logs.
   kd config-path                 Show config file path.
@@ -1331,9 +1335,24 @@ func main() {
 		runFeedback(os.Args[2:])
 	case "help", "--help", "-h":
 		printHelp()
+	case "--version", "-v":
+		// An install check runs before any daemon exists.
+		printVersion(false)
 	default:
 		runClient(cmd, os.Args[2:])
 	}
+}
+
+// printVersion answers with this binary's version and no daemon. With a daemon
+// up, the "version" verb answers with the daemon's, which can differ after an
+// upgrade; the "daemon" field says which one a script is reading.
+func printVersion(daemonDown bool) {
+	data := map[string]string{"version": common.Version, "commit": common.CommitHash}
+	if daemonDown {
+		data["daemon"] = "not running"
+	}
+	b, _ := json.Marshal(okResponse(data))
+	fmt.Println(string(b))
 }
 
 // runFeedback needs no daemon: it posts straight to the endpoint.

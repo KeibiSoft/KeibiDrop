@@ -1700,6 +1700,7 @@ fn main() {
         let downloads_save = downloads.clone();
         let save_path_save = to_save.clone();
         let weak_save_offer = app.as_weak();
+        let weak_save_ui = app.as_weak();
         let offer_save = fuse_offer_pending.clone();
         app.on_save_file(move |filename| {
             let name = filename.to_string();
@@ -1730,6 +1731,12 @@ fn main() {
                         paused: false,
                     },
                 );
+            }
+            // The card flips now, not at the next watcher tick: a small file is
+            // done before the tick and the person saw no cue for the click.
+            if let Some(app) = weak_save_ui.upgrade() {
+                mark_row_downloading(&app.get_file_list(), &name);
+                app.set_any_downloading(true);
             }
 
             // Download in background thread

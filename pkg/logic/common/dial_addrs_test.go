@@ -74,3 +74,22 @@ func TestListen4Hint_CarriesTheRelayVerdict(t *testing.T) {
 	kd.inbound4Reachable.Store(false)
 	require.True(t, kd.listen4Hint().InboundBlocked)
 }
+
+func TestQUICLaneIP_FollowsTheFamilyThatAnsweredTheTCPDial(t *testing.T) {
+	kd := newBareKD()
+	kd.PeerIPv6IP = "2001:db8::2"
+	kd.PeerIPv4IP = "203.0.113.9"
+	require.Equal(t, "2001:db8::2", kd.quicLaneIP(), "no direct dial yet: the advertised address, as before")
+
+	// 2026-09-25: the IPv6 dial found no route, the IPv4 dial reached the peer,
+	// and the lane kept dialing the IPv6 for the whole session.
+	kd.peerDialedIP.Store("203.0.113.9")
+	require.Equal(t, "203.0.113.9", kd.quicLaneIP(), "the lane follows the family that answered")
+
+	kd.peerDialedIP.Store("2001:db8::2")
+	require.Equal(t, "2001:db8::2", kd.quicLaneIP())
+
+	kd.peerDialedIP.Store("")
+	kd.PeerIPv6IP = ""
+	require.Equal(t, "", kd.quicLaneIP(), "bridge session, no advertised address: no lane dial, as before")
+}
