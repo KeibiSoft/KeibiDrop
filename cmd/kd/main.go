@@ -388,12 +388,21 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		return cmdCreateOrJoin(kd, "join")
 
 	case "create":
+		if req.TimeoutS > 0 {
+			return runBoundedConnect(kd, timeoutOrDefault(req, defaultConnectTimeout), kd.CreateRoom)
+		}
 		return cmdCreateOrJoin(kd, "create")
 
 	case "join":
+		if req.TimeoutS > 0 {
+			return runBoundedConnect(kd, timeoutOrDefault(req, defaultConnectTimeout), kd.JoinRoom)
+		}
 		return cmdCreateOrJoin(kd, "join")
 
 	case "connect":
+		if req.TimeoutS > 0 && !kd.IsLocalMode {
+			return runBoundedConnect(kd, timeoutOrDefault(req, defaultConnectTimeout), kd.Connect)
+		}
 		return cmdConnect(kd)
 
 	// Agent surface. These are additive: the verbs above keep their exact
@@ -933,7 +942,20 @@ func cmdDiscover(kd *common.KeibiDrop) Response {
 	})
 }
 
+// noPeerRegistered answers a connect verb that has nothing to dial. Without it
+// the daemon waits the full connect timeout for a code that never comes.
+func noPeerRegistered(kd *common.KeibiDrop) *Response {
+	if fp, _ := kd.GetPeerFingerprint(); fp != "" || kd.IsLocalMode {
+		return nil
+	}
+	r := errResponse("no peer registered. usage: kd register <code>, then kd connect")
+	return &r
+}
+
 func cmdCreateOrJoin(kd *common.KeibiDrop, mode string) Response {
+	if r := noPeerRegistered(kd); r != nil {
+		return *r
+	}
 	if kd.OpInProgress.Add(1) != 1 {
 		kd.OpInProgress.Add(-1)
 		return errResponse("create/join already in progress")
@@ -957,6 +979,9 @@ func cmdCreateOrJoin(kd *common.KeibiDrop, mode string) Response {
 }
 
 func cmdConnect(kd *common.KeibiDrop) Response {
+	if r := noPeerRegistered(kd); r != nil {
+		return *r
+	}
 	if kd.OpInProgress.Add(1) != 1 {
 		kd.OpInProgress.Add(-1)
 		return errResponse("operation already in progress")
@@ -1143,8 +1168,12 @@ func clientExitCode(cmd string, args []string) int {
 	sock := socketPath()
 	conn, err := net.Dial("unix", sock)
 	if err != nil {
+		if cmd == "version" {
+			printVersion(true)
+			return 0
+		}
 		fmt.Fprintf(os.Stderr,
-			`{"ok":false,"error":"daemon not running (socket: %s)","code":%q}`+"\n",
+			`{"ok":false,"error":"daemon not running (socket: %s). Start it with: kd start","code":%q}`+"\n",
 			sock, codeNotConnected)
 		return exitNotConnected
 	}
@@ -1237,7 +1266,7 @@ USAGE:
   kd tokens add <code>           Paste a prepaid relay token code.
   kd tokens balance              Refresh balances from the relay.
   kd feedback [--stars 1-5] [words]  Tell the developers how it went. Either part is enough.
-  kd version                     Show version and commit hash.
+  kd version                     Show version and commit hash. Works without the daemon; --version too.
   kd export-logs [dest]          Export sanitized logs.
   kd sanitize-logs [dest]        Alias for export-logs.
   kd config-path                 Show config file path.
@@ -1331,9 +1360,23 @@ func main() {
 		runFeedback(os.Args[2:])
 	case "help", "--help", "-h":
 		printHelp()
+	case "--version", "-v":
+		// An install check runs before any daemon exists.
+		printVersion(false)
 	default:
 		runClient(cmd, os.Args[2:])
 	}
+}
+
+// printVersion answers with this binary's version and no daemon. The "daemon"
+// field tells a script which of the two versions it is reading.
+func printVersion(daemonDown bool) {
+	data := map[string]string{"version": common.Version, "commit": common.CommitHash}
+	if daemonDown {
+		data["daemon"] = "not running"
+	}
+	b, _ := json.Marshal(okResponse(data))
+	fmt.Println(string(b))
 }
 
 // runFeedback needs no daemon: it posts straight to the endpoint.

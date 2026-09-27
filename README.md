@@ -266,6 +266,7 @@ Build it with `make build-kdmcp`, then `kdmcp install` prints the config snippet
 - [Website](https://keibidrop.com)
 - [Documentation](https://keibidrop.com/docs/)
 - [Compared with sshfs](https://keibidrop.com/compare/sshfs.html) - measured on a 200 ms link
+- [Compared with sixteen tools](https://keibidrop.com/compare/) - LucidLink, Strada, Syncthing, Resilio Sync, rclone, WeTransfer, LocalSend, PairDrop, KDE Connect and more, one table each
 - [Technical deep dive](https://keibisoft.com/tools/keibidrop.html)
 - [Blog posts](https://keibisoft.com/blog.html) (53 posts on FUSE, crypto, performance)
 - [FAQ](https://keibisoft.com/tools/keibidrop-faq.html)

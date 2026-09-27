@@ -401,7 +401,7 @@ fn record_saves(app: &MainWindow) -> Rc<RefCell<Vec<String>>> {
 }
 
 #[test]
-fn first_save_click_fires_once_and_the_card_gives_no_cue() {
+fn first_save_click_fires_once_and_leaves_the_card_to_the_handler() {
     let app = app();
     connected_no_fuse(&app);
     let saves = record_saves(&app);
@@ -413,8 +413,23 @@ fn first_save_click_fires_once_and_the_card_gives_no_cue() {
     release(&app, at);
 
     assert_eq!(saves.borrow().as_slice(), ["signal.jpeg"], "one click, one save");
-    // Until the watcher thread rebuilds the list, the card is unchanged.
-    assert_eq!(button_text(&save_button(&app)), "Save", "no cue on the card after the click");
+    // The .slint layer changes nothing by itself; the cue is the handler's job
+    // (main.rs on_save_file calls mark_row_downloading), pinned below.
+    assert_eq!(button_text(&save_button(&app)), "Save", "the card waits for the handler");
+}
+
+#[test]
+fn marking_a_row_downloading_shows_the_cue_at_once() {
+    let app = app();
+    connected_no_fuse(&app);
+    assert_eq!(button_text(&save_button(&app)), "Save");
+
+    assert!(keibidrop_rust::mark_row_downloading(&app.get_file_list(), "signal.jpeg"));
+    assert_eq!(button_text(&save_button(&app)), "0%", "progress shows on the click itself");
+    let card = ElementHandle::find_by_element_type_name(&app, "FileCard").next().unwrap();
+    assert!(card.query_descendants().match_type_name("SmallSpinner").find_first().is_some(), "spinner on the card");
+
+    assert!(!keibidrop_rust::mark_row_downloading(&app.get_file_list(), "missing.bin"), "unknown name touches nothing");
 }
 
 #[test]

@@ -318,6 +318,15 @@ const defaultConnectTimeout = 60 * time.Second
 // Driving the underlying room primitives directly means picking that role by
 // hand, and two peers that pick the same one wait for each other forever.
 func runConnectWithTimeout(kd *common.KeibiDrop, d time.Duration) Response {
+	return runBoundedConnect(kd, d, kd.Connect)
+}
+
+// runBoundedConnect runs one connect verb under a deadline. connect-timeout
+// always comes here; create, join and connect come here when --timeout is given.
+func runBoundedConnect(kd *common.KeibiDrop, d time.Duration, connect func() error) Response {
+	if r := noPeerRegistered(kd); r != nil {
+		return *r
+	}
 	if kd.OpInProgress.Add(1) != 1 {
 		kd.OpInProgress.Add(-1)
 		return errCoded(codeBusy, "a connect is already in progress")
@@ -326,7 +335,7 @@ func runConnectWithTimeout(kd *common.KeibiDrop, d time.Duration) Response {
 	errCh := make(chan error, 1)
 	go func() {
 		defer kd.OpInProgress.Add(-1)
-		errCh <- kd.Connect()
+		errCh <- connect()
 	}()
 
 	timer := time.NewTimer(d)

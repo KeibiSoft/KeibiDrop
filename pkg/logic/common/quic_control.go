@@ -402,14 +402,24 @@ func (kd *KeibiDrop) StartQUICControlChannel() {
 	}
 
 	// Dial the peer's UDP control endpoint in the background, so connect never waits.
-	if kd.PeerIPv6IP == "" || len(s.SEKOutboundQUIC) == 0 {
+	peerIP := kd.quicLaneIP()
+	if peerIP == "" || len(s.SEKOutboundQUIC) == 0 {
 		return
 	}
-	peerAddr := net.JoinHostPort(kd.PeerIPv6IP, strconv.Itoa(s.PeerPort))
+	peerAddr := net.JoinHostPort(peerIP, strconv.Itoa(s.PeerPort))
 	kd.mu.Lock()
 	kd.quicPeerAddr = peerAddr // Generation marker for the maintainer's self-heal redial.
 	kd.mu.Unlock()
 	go kd.ensureQUICMaintainer(ctx, gen, peerAddr)
+}
+
+// quicLaneIP is the address the UDP control lane dials: the family that answered
+// the direct TCP dial when one did, else the advertised address.
+func (kd *KeibiDrop) quicLaneIP() string {
+	if dialed, _ := kd.peerDialedIP.Load().(string); dialed != "" {
+		return kd.peerDirectIP()
+	}
+	return kd.PeerIPv6IP
 }
 
 // quicReprobeInterval sets how often a session with QUIC down re-probes UDP. The probe

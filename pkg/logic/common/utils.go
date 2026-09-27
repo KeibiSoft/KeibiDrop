@@ -11,6 +11,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -193,15 +194,17 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 
 	resp, err := GetJSONWithURL(kd.relayClient, fetchUrl, map[string]string{"Authorization": "Bearer " + lookupToken}, RegisterErrorMapper)
 	if err != nil {
+		// The mapper returns the response with the error; close it for connection reuse.
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if errors.Is(err, ErrNotFound) {
+			// Normal while the peer has not registered yet; the caller logs the wait once.
+			logger.Debug("Not found")
+			return ErrNotFound
+		}
 		logger.Error("Failed to fetch", "error", err)
-		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
 		return err
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		// Normal while the peer has not registered yet; the caller logs the wait once.
-		logger.Debug("Not found")
-		return ErrNotFound
 	}
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {

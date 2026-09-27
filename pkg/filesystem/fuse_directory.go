@@ -1159,6 +1159,10 @@ func (d *Dir) Mkdir(path string, mode uint32) (errCode int) {
 	if d.ReadOnlyMount() {
 		return -winfuse.EROFS
 	}
+	// A file manager's trash folder: refused, so the delete happens in place.
+	if types.IsOSTrashPath(path) {
+		return -winfuse.EPERM
+	}
 	return d.mkdirInternal(path, mode, true)
 }
 
@@ -1649,6 +1653,10 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	}
 	if e := checkPath(newpath); e != 0 {
 		return e
+	}
+	// Into a trash folder that already exists on disk: same refusal as Mkdir.
+	if types.IsOSTrashPath(newpath) {
+		return -winfuse.EPERM
 	}
 	// d.logger.Info("FUSE rename", "old", oldpath, "new", newpath)
 	// d.logger.Warn("FUSE Rename called",
