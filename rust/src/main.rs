@@ -73,6 +73,7 @@ fn is_hidden_file(name: &str) -> bool {
         || name == "Thumbs.db"
         || name.contains(".fuse_hidden")
         || name.contains("/.fseventsd")
+        || name.ends_with(".kdbitmap")
 }
 
 /// Per-file download state tracked on the Rust side.
@@ -1732,8 +1733,7 @@ fn main() {
                     },
                 );
             }
-            // The card flips now, not at the next watcher tick: a small file is
-            // done before the tick and the person saw no cue for the click.
+            // Flip the card now; a small file can finish before the watcher's next tick.
             if let Some(app) = weak_save_ui.upgrade() {
                 mark_row_downloading(&app.get_file_list(), &name);
                 app.set_any_downloading(true);

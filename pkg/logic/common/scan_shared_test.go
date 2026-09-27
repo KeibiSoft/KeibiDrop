@@ -372,3 +372,18 @@ func TestWaitForPeerFingerprint_CancelledByDisconnect(t *testing.T) {
 		t.Fatal("wait did not return after CancelPendingConnect")
 	}
 }
+
+// A trash folder in the save dir and a download's bitmap sidecar are not files to share.
+func TestScanAndShareSaveDir_SkipsOSTrashAndSidecars(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".Trashes", "501", "gone.png"), []byte("trashed"))
+	writeFile(t, filepath.Join(dir, ".Trash-1000", "files", "gone2"), []byte("trashed"))
+	writeFile(t, filepath.Join(dir, "part.png.kdbitmap"), []byte{0xff})
+	writeFile(t, filepath.Join(dir, "ok.txt"), []byte("mine"))
+
+	kd, cli := newScanTestKD(t, dir)
+	n, err := kd.ScanAndShareSaveDir(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.Equal(t, []string{"ok.txt"}, cli.paths())
+}

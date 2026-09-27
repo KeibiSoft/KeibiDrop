@@ -1343,9 +1343,8 @@ func main() {
 	}
 }
 
-// printVersion answers with this binary's version and no daemon. With a daemon
-// up, the "version" verb answers with the daemon's, which can differ after an
-// upgrade; the "daemon" field says which one a script is reading.
+// printVersion answers with this binary's version and no daemon. The "daemon"
+// field tells a script which of the two versions it is reading.
 func printVersion(daemonDown bool) {
 	data := map[string]string{"version": common.Version, "commit": common.CommitHash}
 	if daemonDown {

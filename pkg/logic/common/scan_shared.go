@@ -146,6 +146,10 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 			}
 			path := filepath.Join(dir, entry.Name())
 			if entry.IsDir() {
+				// A trash folder or another internal tree is neither walked nor shared.
+				if rel, err := filepath.Rel(root, path); err == nil && service.IsInternalPath(filepath.ToSlash(rel)) {
+					continue
+				}
 				queue = append(queue, path)
 				continue
 			}

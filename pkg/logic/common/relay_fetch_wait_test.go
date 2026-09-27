@@ -20,11 +20,8 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 )
 
-// A joiner polls the relay once a second until the creator registers, and
-// every poll answered 404. Before 2026-09-27 each poll logged at ERROR
-// ("Failed to fetch ... not found"), one line a second for as long as the
-// person waited, because the HTTP helper mapped the 404 to ErrNotFound before
-// the fetch reached its own quiet branch.
+// A joiner polls once a second until the creator registers, and each poll is a 404.
+// That wait is not an error and must not log as one.
 func TestGetRoomFromRelay_NotYetRegisteredIsAQuietWait(t *testing.T) {
 	var polls atomic.Int32
 	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

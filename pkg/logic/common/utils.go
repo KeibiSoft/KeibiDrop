@@ -194,14 +194,12 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 
 	resp, err := GetJSONWithURL(kd.relayClient, fetchUrl, map[string]string{"Authorization": "Bearer " + lookupToken}, RegisterErrorMapper)
 	if err != nil {
-		// The mapper hands back the response with the error; close it so the
-		// connection goes back to the pool.
+		// The mapper returns the response with the error; close it for connection reuse.
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
 		if errors.Is(err, ErrNotFound) {
-			// Normal while the peer has not registered yet: one poll a second
-			// until it does. The caller logs the wait once.
+			// Normal while the peer has not registered yet; the caller logs the wait once.
 			logger.Debug("Not found")
 			return ErrNotFound
 		}

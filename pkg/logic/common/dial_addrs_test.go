@@ -81,8 +81,7 @@ func TestQUICLaneIP_FollowsTheFamilyThatAnsweredTheTCPDial(t *testing.T) {
 	kd.PeerIPv4IP = "203.0.113.9"
 	require.Equal(t, "2001:db8::2", kd.quicLaneIP(), "no direct dial yet: the advertised address, as before")
 
-	// 2026-09-25: the IPv6 dial found no route, the IPv4 dial reached the peer,
-	// and the lane kept dialing the IPv6 for the whole session.
+	// The IPv6 dial found no route and the IPv4 dial reached the peer.
 	kd.peerDialedIP.Store("203.0.113.9")
 	require.Equal(t, "203.0.113.9", kd.quicLaneIP(), "the lane follows the family that answered")
 
