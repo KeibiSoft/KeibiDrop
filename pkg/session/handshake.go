@@ -165,7 +165,7 @@ func PerformInboundHandshakeWait(session *Session, conn net.Conn, firstByte time
 
 	if session.ExpectedPeerFingerprint == "TOFU" {
 		logger.Info("Local mode: accepting peer fingerprint (TOFU)", "fingerprint", computed)
-		session.ExpectedPeerFingerprint = computed
+		session.SetExpectedPeerFingerprint(computed)
 	} else if subtle.ConstantTimeCompare([]byte(computed), []byte(session.ExpectedPeerFingerprint)) != 1 {
 		logger.Error("Fingerprint mismatch")
 		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computed, session.ExpectedPeerFingerprint)
@@ -383,7 +383,7 @@ func storePeerKeysFromExchange(session *Session, logger *slog.Logger, msg keyExc
 		if err != nil {
 			return fmt.Errorf("fingerprint computation failed: %w", err)
 		}
-		session.ExpectedPeerFingerprint = fp
+		session.SetExpectedPeerFingerprint(fp)
 	}
 	logger.Info("Local key exchange complete", "peer-port", msg.Port)
 	return nil

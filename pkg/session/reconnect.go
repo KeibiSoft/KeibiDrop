@@ -32,12 +32,6 @@ type ReconnectManager struct {
 	session *Session
 	logger  *slog.Logger
 
-	// The peer this session was made with, read once here: the loop must not
-	// read the session field a later register writes (a race the web fuzzer
-	// hit), and a reconnect follows the session's peer, never a new one.
-	ownFP  string
-	peerFP string
-
 	// State
 	state            atomic.Int32 // ReconnectState
 	attempts         atomic.Int32
@@ -86,15 +80,9 @@ type ReconnectManager struct {
 
 // NewReconnectManager creates a new reconnection manager with default settings.
 func NewReconnectManager(session *Session, logger *slog.Logger) *ReconnectManager {
-	ownFP, peerFP := "", ""
-	if session != nil {
-		ownFP, peerFP = session.OwnFingerprint, session.ExpectedPeerFingerprint
-	}
 	return &ReconnectManager{
 		session: session,
 		logger:  logger.With("component", "reconnect-manager"),
-		ownFP:   ownFP,
-		peerFP:  peerFP,
 		Backoff: []time.Duration{
 			1 * time.Second,
 			2 * time.Second,
@@ -123,7 +111,10 @@ func (r *ReconnectManager) IsReconnectInitiator() bool {
 	if r.session == nil {
 		return false
 	}
-	return r.ownFP < r.peerFP
+	// The peer is read under its lock: a register can write it while this
+	// loop runs (a race the web fuzzer hit). A TOFU handshake writes it after
+	// the manager exists, so it is never cached here.
+	return r.session.OwnFingerprint < r.session.PeerFingerprint()
 }
 
 // OnDisconnect is called when the health monitor detects a connection loss.
@@ -465,7 +456,7 @@ func (r *ReconnectManager) dialPeerDirect(logger *slog.Logger) error {
 	if r.RelayLookup == nil {
 		return fmt.Errorf("outbound failed and no relay lookup: %w", err)
 	}
-	ip, port, lookupErr := r.RelayLookup(r.peerFP)
+	ip, port, lookupErr := r.RelayLookup(r.session.PeerFingerprint())
 	if lookupErr != nil {
 		return fmt.Errorf("relay lookup failed: %w", lookupErr)
 	}

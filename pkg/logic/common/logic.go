@@ -656,7 +656,7 @@ func (kd *KeibiDrop) setPeerFingerprint(fp string, o connectOrigin) error {
 		kd.connectCancelled.Store(true)
 		cur.abortCancel()
 	}
-	kd.session.ExpectedPeerFingerprint = fp
+	kd.session.SetExpectedPeerFingerprint(fp)
 	kd.mu.Unlock()
 
 	return nil
@@ -692,7 +692,7 @@ func (kd *KeibiDrop) SetPeerDirectAddress(addr string) error {
 		kd.PeerIPv6IP = ip
 	}
 	kd.session.PeerPort = port
-	kd.session.ExpectedPeerFingerprint = "TOFU"
+	kd.session.SetExpectedPeerFingerprint("TOFU")
 	if kd.IsLocalMode {
 		kd.PeerLocalAddrs = []string{kd.PeerIPv6IP}
 	}
@@ -1310,7 +1310,7 @@ func (kd *KeibiDrop) supersedeLinklessSession() {
 	kd.Stop()
 	kd.mu.Lock()
 	if kd.session != nil && want != "" && kd.session.ExpectedPeerFingerprint == "" {
-		kd.session.ExpectedPeerFingerprint = want
+		kd.session.SetExpectedPeerFingerprint(want)
 	}
 	kd.mu.Unlock()
 }
