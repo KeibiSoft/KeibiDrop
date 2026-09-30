@@ -4,6 +4,8 @@
 // ABOUTME: The .kdbitmap sidecar of an on-demand cache copy: written as blocks land,
 // ABOUTME: kept when the copy completes, adopted at the next session before the announce.
 
+//go:build !android
+
 package filesystem
 
 import (

@@ -41,9 +41,10 @@ type FS struct {
 	PrefetchAutoMB     int
 	ReadAheadWindowMB  int // Unused on Android (no FUSE). Present so shared setup code compiles.
 	PushOnWrite        bool
-	AutoCache          bool // Unused on Android (no FUSE). Present so shared setup code compiles.
-	MountReadOnly      bool // Unused on Android (no FUSE mount to enforce EROFS). Present so shared setup code compiles.
-	PreserveMetadata   bool // Unused on Android (no FUSE writer path). Present so shared setup code compiles.
+	AutoCache          bool   // Unused on Android (no FUSE). Present so shared setup code compiles.
+	MountReadOnly      bool   // Unused on Android (no FUSE mount to enforce EROFS). Present so shared setup code compiles.
+	PreserveMetadata   bool   // Unused on Android (no FUSE writer path). Present so shared setup code compiles.
+	OnRootReady        func() // Unused on Android (no mount, so no root). Present so shared setup code compiles.
 }
 
 func NewFS(_ *slog.Logger) *FS { return &FS{} }
@@ -77,6 +78,17 @@ func (fs *FS) EnsurePeerScope(_ string) {}
 // delete-sharing concern it guards against does not apply here.
 func OpenShared(path string, flags int, mode uint32) (*os.File, error) {
 	return os.OpenFile(path, flags, os.FileMode(mode))
+}
+
+// SetTieBreakPeerWins is a no-op on Android: the tie-break only matters for a mounted tree.
+func (fs *FS) SetTieBreakPeerWins(_ bool) {}
+
+// UnsyncedConflictSiblings is empty on Android: conflict siblings exist only on a mount.
+func (d *Dir) UnsyncedConflictSiblings() [][2]string { return nil }
+
+// RenameShared is plain os.Rename on Android, for the same reason as OpenShared.
+func RenameShared(oldPath, newPath string) error {
+	return os.Rename(oldPath, newPath)
 }
 
 // PendingAnnounceSuperseded always returns false on Android: every call site

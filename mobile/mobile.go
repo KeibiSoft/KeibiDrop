@@ -623,17 +623,26 @@ func (api *API) GetLocalFileName(i int) string {
 // --- Connection status ---
 
 // GetConnectionStatus returns 0=disconnected, 2=connected, 3=reconnecting.
+// A reconnect in flight reads 3 even though the health monitor says
+// disconnected: the app ends a session it reads as disconnected for a
+// second, which killed every reconnect on the phone (a 20 s airplane-mode
+// cut on the emulator, 2026-09-30) until this read the reconnect state.
 func (api *API) GetConnectionStatus() int {
 	if api.kd == nil {
 		return 0
 	}
-	if api.kd.HealthMonitor == nil {
-		return 2 // no monitor = assume connected
+	switch api.kd.ReconnectionState() {
+	case "reconnecting", "waiting_for_peer":
+		return 3
 	}
-	switch api.kd.HealthMonitor.Health() {
-	case session.HealthHealthy:
+	// ConnectionStatus snapshots the monitor under the daemon's lock; teardown
+	// nils it under the same lock.
+	switch api.kd.ConnectionStatus() {
+	case "unknown":
+		return 2 // no monitor = assume connected
+	case session.HealthHealthy.String():
 		return 2 // connected
-	case session.HealthDegraded:
+	case session.HealthDegraded.String():
 		return 3 // reconnecting
 	default:
 		return 0 // disconnected
@@ -982,7 +991,11 @@ func (api *API) AddContact(name string, fingerprint string) error {
 	if err := api.kd.AddressBook.Add(name, fingerprint); err != nil {
 		return err
 	}
-	return api.kd.AddressBook.Save()
+	if err := api.kd.AddressBook.Save(); err != nil {
+		return err
+	}
+	api.kd.ContactAdded()
+	return nil
 }
 
 // RemoveContact removes a contact by fingerprint.

@@ -1248,6 +1248,7 @@ func KD_AddContact(name, fingerprint *C.char) C.int {
 		setLastError(err)
 		return -1
 	}
+	kd.ContactAdded()
 	return 0
 }
 

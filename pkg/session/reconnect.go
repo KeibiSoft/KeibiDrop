@@ -32,6 +32,12 @@ type ReconnectManager struct {
 	session *Session
 	logger  *slog.Logger
 
+	// The peer this session was made with, read once here: the loop must not
+	// read the session field a later register writes (a race the web fuzzer
+	// hit), and a reconnect follows the session's peer, never a new one.
+	ownFP  string
+	peerFP string
+
 	// State
 	state            atomic.Int32 // ReconnectState
 	attempts         atomic.Int32
@@ -80,9 +86,15 @@ type ReconnectManager struct {
 
 // NewReconnectManager creates a new reconnection manager with default settings.
 func NewReconnectManager(session *Session, logger *slog.Logger) *ReconnectManager {
+	ownFP, peerFP := "", ""
+	if session != nil {
+		ownFP, peerFP = session.OwnFingerprint, session.ExpectedPeerFingerprint
+	}
 	return &ReconnectManager{
 		session: session,
 		logger:  logger.With("component", "reconnect-manager"),
+		ownFP:   ownFP,
+		peerFP:  peerFP,
 		Backoff: []time.Duration{
 			1 * time.Second,
 			2 * time.Second,
@@ -111,7 +123,7 @@ func (r *ReconnectManager) IsReconnectInitiator() bool {
 	if r.session == nil {
 		return false
 	}
-	return r.session.OwnFingerprint < r.session.ExpectedPeerFingerprint
+	return r.ownFP < r.peerFP
 }
 
 // OnDisconnect is called when the health monitor detects a connection loss.
@@ -344,10 +356,12 @@ func (r *ReconnectManager) reconnectBridge(logger *slog.Logger, initiator bool) 
 
 		outConn, err := r.DialBridge("pair2")
 		if err != nil {
+			r.dropInboundLeg(inConn)
 			return fmt.Errorf("bridge dial (outbound): %w", err)
 		}
 		if err := PerformOutboundHandshakeOnConn(r.session, outConn); err != nil {
 			_ = outConn.Close()
+			r.dropInboundLeg(inConn)
 			return fmt.Errorf("bridge outbound handshake: %w", err)
 		}
 
@@ -366,15 +380,40 @@ func (r *ReconnectManager) reconnectBridge(logger *slog.Logger, initiator bool) 
 
 	inConn, err := r.DialBridge("pair2")
 	if err != nil {
+		r.dropOutboundLeg(outConn)
 		return fmt.Errorf("bridge dial (inbound): %w", err)
 	}
 	if err := PerformInboundHandshakeWait(r.session, inConn, inboundHandshakeTimeout); err != nil {
 		_ = inConn.Close()
+		r.dropOutboundLeg(outConn)
 		return fmt.Errorf("bridge inbound handshake: %w", err)
 	}
 
 	logger.Info("Both directions reconnected via bridge (responder)")
 	return nil
+}
+
+// dropOutboundLeg ends the leg an attempt built before its other half failed.
+// Left open, the leg stays parked at the bridge under the room token, and the
+// next attempt's fresh leg gets paired with it: the daemon then talks to
+// itself for a whole handshake bound (seen in the bridge journal, 2026-09-30).
+// The session also loses the half-built socket, so the next attempt starts
+// clean and no caller hands a dead socket to the transport.
+func (r *ReconnectManager) dropOutboundLeg(c net.Conn) {
+	_ = c.Close()
+	if r.session != nil {
+		r.session.SetOutboundConn(nil)
+		r.session.ResetOutboundCrypto()
+	}
+}
+
+// dropInboundLeg is dropOutboundLeg for the initiator's inbound half.
+func (r *ReconnectManager) dropInboundLeg(c net.Conn) {
+	_ = c.Close()
+	if r.session != nil {
+		r.session.SetInboundConn(nil)
+		r.session.ResetInboundCrypto()
+	}
 }
 
 // reconnectDirectInitiator dials the peer, then accepts the return leg.
@@ -426,7 +465,7 @@ func (r *ReconnectManager) dialPeerDirect(logger *slog.Logger) error {
 	if r.RelayLookup == nil {
 		return fmt.Errorf("outbound failed and no relay lookup: %w", err)
 	}
-	ip, port, lookupErr := r.RelayLookup(r.session.ExpectedPeerFingerprint)
+	ip, port, lookupErr := r.RelayLookup(r.peerFP)
 	if lookupErr != nil {
 		return fmt.Errorf("relay lookup failed: %w", lookupErr)
 	}
