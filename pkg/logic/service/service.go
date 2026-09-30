@@ -1091,6 +1091,14 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 	}
 	fileSize := uint64(finfo.Size())
 
+	// A start offset PAST EOF is an invalid request (for example a stale resume): reject it
+	// rather than return an empty stream a client could mistake for a successful zero-byte
+	// pull. An offset exactly AT EOF is the legitimate "already complete" case (streams nothing).
+	if req.StartOffset > fileSize {
+		logger.Warn("StreamFile start offset past EOF", "startOffset", req.StartOffset, "fileSize", fileSize)
+		return status.Errorf(codes.OutOfRange, "start_offset %d exceeds file size %d", req.StartOffset, fileSize)
+	}
+
 	// StreamFile sends at most BlockSize per frame; a larger buffer is waste.
 	buf := make([]byte, config.BlockSize)
 	chunkSize := uint64(config.BlockSize)

@@ -7,6 +7,8 @@
 // ABOUTME: Free-space guard for the save folder: no fetch starts under the floor,
 // ABOUTME: so a landing never runs the disk to zero mid-write.
 
+//go:build !android
+
 package filesystem
 
 import (

@@ -11,10 +11,12 @@ package mobile
 
 import (
 	"testing"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/internal/fp"
 	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/common"
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 )
 
@@ -80,4 +82,19 @@ func TestRefreshFileList_NilKd(t *testing.T) {
 			fp.Equal("GetLocalFileName(0) with nil kd", api.GetLocalFileName(0), ""),
 		)
 	})
+}
+
+// A reconnect in flight reads 3: the app ends a session it reads as 0 for a
+// second, which killed every reconnect on the phone while the health monitor
+// said disconnected for the whole attempt (airplane-mode cut, 2026-09-30).
+func TestGetConnectionStatus_ReconnectInFlightReadsReconnecting(t *testing.T) {
+	api, _ := buildAPIWithTracker(t)
+	rm := session.NewReconnectManager(nil, testkit.DiscardLogger())
+	rm.Backoff = []time.Duration{time.Hour} // parks on the first backoff
+	rm.OnDisconnect()
+	t.Cleanup(rm.Stop)
+	api.kd.ReconnectManager = rm
+	if got := api.GetConnectionStatus(); got != 3 {
+		t.Fatalf("GetConnectionStatus during a reconnect = %d, want 3", got)
+	}
 }

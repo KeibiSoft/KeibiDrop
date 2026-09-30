@@ -34,6 +34,10 @@ const (
 type Session struct {
 	// Known fingerprint of the expected peer, shared out-of-band.
 	ExpectedPeerFingerprint string
+	// peerFPMu guards ExpectedPeerFingerprint for the reconnect loop, which reads
+	// it from its own goroutine while a register or a TOFU handshake writes it.
+	// Writers go through SetExpectedPeerFingerprint; the loop reads PeerFingerprint.
+	peerFPMu sync.RWMutex
 
 	OwnKeys        *kbc.OwnKeys
 	OwnFingerprint string
@@ -214,6 +218,21 @@ func (s *Session) NegotiatedSuite() kbc.CipherSuite {
 		return kbc.SupportedCiphers()[0]
 	}
 	return s.CipherSuite
+}
+
+// SetExpectedPeerFingerprint writes the peer this session is for, under peerFPMu.
+func (s *Session) SetExpectedPeerFingerprint(fp string) {
+	s.peerFPMu.Lock()
+	s.ExpectedPeerFingerprint = fp
+	s.peerFPMu.Unlock()
+}
+
+// PeerFingerprint reads the peer this session is for, under peerFPMu. The
+// reconnect loop uses it; it follows a later register, as it always did.
+func (s *Session) PeerFingerprint() string {
+	s.peerFPMu.RLock()
+	defer s.peerFPMu.RUnlock()
+	return s.ExpectedPeerFingerprint
 }
 
 // ResetOutboundCrypto clears the outbound shared key and negotiated cipher suite so a fresh

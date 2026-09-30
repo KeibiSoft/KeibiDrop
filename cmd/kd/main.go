@@ -578,6 +578,7 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		if err := kd.AddressBook.Save(); err != nil {
 			return errResponse(err.Error())
 		}
+		kd.ContactAdded()
 		return okResponse(map[string]string{"added": name})
 
 	case "remove-contact":

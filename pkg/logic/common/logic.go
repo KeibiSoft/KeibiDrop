@@ -656,7 +656,7 @@ func (kd *KeibiDrop) setPeerFingerprint(fp string, o connectOrigin) error {
 		kd.connectCancelled.Store(true)
 		cur.abortCancel()
 	}
-	kd.session.ExpectedPeerFingerprint = fp
+	kd.session.SetExpectedPeerFingerprint(fp)
 	kd.mu.Unlock()
 
 	return nil
@@ -692,7 +692,7 @@ func (kd *KeibiDrop) SetPeerDirectAddress(addr string) error {
 		kd.PeerIPv6IP = ip
 	}
 	kd.session.PeerPort = port
-	kd.session.ExpectedPeerFingerprint = "TOFU"
+	kd.session.SetExpectedPeerFingerprint("TOFU")
 	if kd.IsLocalMode {
 		kd.PeerLocalAddrs = []string{kd.PeerIPv6IP}
 	}
@@ -787,7 +787,10 @@ func (kd *KeibiDrop) finishConnect(logger *slog.Logger) error {
 	return nil
 }
 
-func (kd *KeibiDrop) JoinRoom() error { return kd.runConnect(originUser, kd.joinRoom) }
+func (kd *KeibiDrop) JoinRoom() error {
+	kd.supersedeLinklessSession()
+	return kd.runConnect(originUser, kd.joinRoom)
+}
 
 func (kd *KeibiDrop) joinRoom() error {
 	defer kd.clearConnectStatus()
@@ -826,15 +829,21 @@ func (kd *KeibiDrop) joinRoom() error {
 		logger.Info("Local key exchange complete (join side)")
 	} else {
 		kd.emitConnectStatus("Waiting for peer...")
-		// Poll once a second while the peer is likely mid-click, then every three
-		// seconds. A joiner waiting for an absent peer cost the relay one request
-		// per second for the whole minute, once per redial (BUGS 16). Sixty
-		// seconds in total, as before.
+		// Quick polls for the first second: when both sides connect at once the
+		// first fetch lands before the creator has registered, and a one-second
+		// sleep was the whole connect time of a bridge pair (about 1 s against
+		// 70 ms once the registration is seen, measured 2026-09-30). Then once a
+		// second while the peer is likely mid-click, then every three seconds. A
+		// joiner waiting for an absent peer cost the relay one request per second
+		// for the whole minute, once per redial (BUGS 16). Sixty seconds in
+		// total, as before, and four more requests.
+		const relayFastRetryDelay = 200 * time.Millisecond
 		const relayRetryDelay = 1 * time.Second
 		const relaySlowRetryDelay = 3 * time.Second
-		const relayPhase1 = 15 // attempts at relayRetryDelay
+		const relayPhase0 = 5  // attempts at relayFastRetryDelay
+		const relayPhase1 = 14 // attempts at relayRetryDelay
 		const relayPhase2 = 15 // attempts at relaySlowRetryDelay
-		relayMaxRetries := relayPhase1 + relayPhase2
+		relayMaxRetries := relayPhase0 + relayPhase1 + relayPhase2
 		// Snapshot kd.ctx under kd.mu: Run's reconnect branch swaps it under the same lock.
 		kd.mu.Lock()
 		ctx := kd.ctx
@@ -851,13 +860,16 @@ func (kd *KeibiDrop) joinRoom() error {
 			if attempt == 0 {
 				logger.Info("Peer not on the relay yet, waiting for it")
 			}
-			if attempt == relayPhase1 {
+			if attempt == relayPhase0+relayPhase1 {
 				kd.emitConnectStatus("peer_not_ready")
 				logger.Info("Peer still not on the relay, polling every three seconds")
 			}
 			if attempt < relayMaxRetries {
-				delay := relayRetryDelay
-				if attempt >= relayPhase1 {
+				delay := relayFastRetryDelay
+				if attempt >= relayPhase0 {
+					delay = relayRetryDelay
+				}
+				if attempt >= relayPhase0+relayPhase1 {
 					delay = relaySlowRetryDelay
 				}
 				select {
@@ -1121,7 +1133,10 @@ connected:
 // deterministic fingerprint comparison and calls CreateRoom or JoinRoom.
 // Lower fingerprint = creator (registers to relay, accepts inbound).
 // Higher fingerprint = joiner (fetches from relay, dials out).
-func (kd *KeibiDrop) Connect() error { return kd.connect(originUser) }
+func (kd *KeibiDrop) Connect() error {
+	kd.supersedeLinklessSession()
+	return kd.connect(originUser)
+}
 
 func (kd *KeibiDrop) connect(o connectOrigin) error {
 	logger := kd.logger.With("method", "connect")
@@ -1263,6 +1278,43 @@ func (kd *KeibiDrop) beginConnect(o connectOrigin) (p *inflightConnect, joined b
 	}
 }
 
+// supersedeLinklessSession ends a session that is still marked running but
+// has no link: its reconnect is retrying, waiting for the peer, or gave up.
+// Before, a person's connect in that window answered "already running" until
+// the retry budget ran out, and a browser tab reloaded mid-reconnect could not
+// pair again without a disconnect first (KeibiDropWeb issue 67). It runs
+// before the role is picked, because Stop's teardown makes a new session and
+// an incognito identity changes its fingerprint. The peer the caller
+// registered carries over. A session with a live link is left alone, and the
+// watchdog never calls this: it defers to the reconnect instead.
+func (kd *KeibiDrop) supersedeLinklessSession() {
+	if !kd.running.Load() {
+		return
+	}
+	kd.mu.Lock()
+	rm := kd.ReconnectManager
+	hasFS := kd.FS != nil
+	want := ""
+	if kd.session != nil {
+		want = kd.session.ExpectedPeerFingerprint
+	}
+	kd.mu.Unlock()
+	if rm == nil || rm.State() == session.ReconnectStateConnected {
+		return
+	}
+	kd.logger.With("method", "connect").Info("Connect supersedes a session with no link",
+		"reconnect_state", rm.State().String())
+	if hasFS {
+		_ = kd.UnmountFilesystem()
+	}
+	kd.Stop()
+	kd.mu.Lock()
+	if kd.session != nil && want != "" && kd.session.ExpectedPeerFingerprint == "" {
+		kd.session.SetExpectedPeerFingerprint(want)
+	}
+	kd.mu.Unlock()
+}
+
 // endConnect frees the slot and hands the result to the callers that joined.
 func (kd *KeibiDrop) endConnect(p *inflightConnect, err error) {
 	kd.mu.Lock()
@@ -1318,7 +1370,10 @@ func (kd *KeibiDrop) closeOnAbort(c net.Conn) (stop func()) {
 	return func() { close(done) }
 }
 
-func (kd *KeibiDrop) CreateRoom() error { return kd.runConnect(originUser, kd.createRoom) }
+func (kd *KeibiDrop) CreateRoom() error {
+	kd.supersedeLinklessSession()
+	return kd.runConnect(originUser, kd.createRoom)
+}
 
 func (kd *KeibiDrop) createRoom() error {
 	defer kd.clearConnectStatus()
@@ -1704,7 +1759,11 @@ func (kd *KeibiDrop) SaveCurrentPeerAsContact(name string) error {
 		return err
 	}
 	kd.AddressBook.UpdateLastSeen(fp)
-	return kd.AddressBook.Save()
+	if err := kd.AddressBook.Save(); err != nil {
+		return err
+	}
+	kd.ContactAdded()
+	return nil
 }
 
 // IsPeerPersistent returns whether the currently connected peer has a stable identity.

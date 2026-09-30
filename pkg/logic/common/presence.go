@@ -44,6 +44,16 @@ func (kd *KeibiDrop) StartPresenceHeartbeat(ctx context.Context) {
 	}
 }
 
+// ContactAdded posts presence for every contact once, so a contact saved a
+// moment ago sees this peer online without waiting for the next heartbeat
+// tick (up to 30 s). The heartbeat keeps its own cadence.
+func (kd *KeibiDrop) ContactAdded() {
+	if kd.Identity == nil || kd.AddressBook == nil || kd.Incognito || kd.RelayEndoint == nil {
+		return
+	}
+	go kd.sendPresenceForAll(kd.logger.With("method", "presence-on-save"))
+}
+
 func (kd *KeibiDrop) sendPresenceForAll(logger interface{ Info(string, ...any) }) {
 	contacts := kd.AddressBook.List()
 	for _, c := range contacts {
