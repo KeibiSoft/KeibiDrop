@@ -793,7 +793,12 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	d.OpenFileHandlers[handleID] = &HandleEntry{FD: fd, File: fh}
 
 	if remoteHasUpdate {
+		// Under metaMu like every other write of this flag: prefetchFile
+		// clears it under metaMu, and the race detector caught the two
+		// crossing (TestRemotePrefetchStateRace, 2 of ~18 runs, 2026-10-02).
+		fh.metaMu.Lock()
 		fh.NotLocalSynced = true
+		fh.metaMu.Unlock()
 		fh.StreamPool = pool
 		fh.StreamCancel = streamCancel
 		if cacheFD != nil && fh.CacheFD == nil {
@@ -3053,6 +3058,28 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			f.StreamCancel = streamCancel
 			d.OpenMapLock.Unlock()
 			pool = newPool
+		}
+	}
+	// The same for the cache copy: a handle opened while the file was local
+	// (the author's own file, or a copy already complete) reads on after the
+	// peer's version lands. Without a cache fd every miss fetched a whole
+	// unit, served the slice and kept nothing: over the WAN a 1 MiB change
+	// cost 176 MiB through the author's open handle (2026-10-01). Open the
+	// save-folder file as OpenEx does for a remote open, so misses land once.
+	if ok && notLocalSynced && pool != nil && cacheFD == nil && bitmap != nil && !bitmap.IsComplete() && f.RealPathOfFile != "" {
+		if cfd, cfdErr := platOpen(f.RealPathOfFile, syscall.O_CREAT|syscall.O_WRONLY, 0600); cfdErr == nil {
+			mine := os.NewFile(uintptr(cfd), f.RealPathOfFile)
+			d.OpenMapLock.Lock()
+			if f.CacheFD == nil {
+				f.beginDiskWriter()
+				f.CacheFD = mine
+			} else {
+				_ = mine.Close() // another read attached one first
+			}
+			cacheFD = f.CacheFD
+			d.OpenMapLock.Unlock()
+		} else {
+			logger.Warn("Failed to open the cache fd for a handle that predates the peer's version", "error", cfdErr)
 		}
 	}
 

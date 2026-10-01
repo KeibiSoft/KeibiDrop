@@ -13,11 +13,14 @@
 package filesystem
 
 import (
+	"context"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/stretchr/testify/require"
 	winfuse "github.com/winfsp/cgofuse/fuse"
 	"github.com/zeebo/xxh3"
@@ -185,4 +188,50 @@ func TestRead_HeldVersionAtServeTime(t *testing.T) {
 	require.Equal(t, remote, base, "the write session starts at the version the process read, not at -1")
 	require.Equal(t, 0, d.Release("/big.bin", wfi.Fh))
 	require.Equal(t, 0, d.Release("/big.bin", rfi.Fh))
+}
+
+// A handle opened while the file was the author's own, read on after the
+// peer's version landed: the misses must land in the cache copy once, not
+// fetch a whole unit per read and keep nothing (WAN, 2026-10-01: 176 MiB for
+// a 1 MiB change through the author's open handle).
+func TestRead_HandleOpenedBeforePeerVersionCachesMisses(t *testing.T) {
+	const size = int64(20 * 1048576)
+	saveDir := t.TempDir()
+	d := newTestDir(saveDir)
+	d.SetCtx(context.Background())
+	prov := &fillProvider{size: size}
+	d.SetStreamProvider(func() types.FileStreamProvider { return prov })
+	d.SetOnLocalChange(func(types.FileEvent) {})
+
+	// The author's own file: created and written through the mount.
+	cfi := &winfuse.FileInfo_t{Flags: os.O_RDWR | os.O_CREATE}
+	require.Equal(t, 0, d.OpenEx("/own.bin", cfi))
+	own := make([]byte, size)
+	for i := range own {
+		own[i] = 'A'
+	}
+	for off := int64(0); off < size; off += 1048576 {
+		require.Equal(t, 1048576, d.Write("/own.bin", own[off:off+1048576], off, cfi.Fh))
+	}
+	require.Equal(t, 0, d.Release("/own.bin", cfi.Fh))
+
+	// A reader holds the file open when the peer's newer version lands.
+	rfi := &winfuse.FileInfo_t{Flags: os.O_RDONLY}
+	require.Equal(t, 0, d.OpenEx("/own.bin", rfi))
+	require.NoError(t, d.AddRemoteFile(d.logger, "/own.bin", "own.bin", remoteStat(size, time.Now().Add(time.Minute))))
+	d.RemoteFilesLock.RLock()
+	f := d.RemoteFiles["/own.bin"]
+	d.RemoteFilesLock.RUnlock()
+	require.NotNil(t, f)
+
+	buf := make([]byte, 4096)
+	require.Equal(t, 4096, d.Read("/own.bin", buf, 0, rfi.Fh))
+	require.Equal(t, fillByte(0), buf[0], "the peer's bytes, not the author's old ones")
+	f.CacheWg.Wait()
+	first := prov.reads.Load()
+	require.Positive(t, first)
+	require.Equal(t, 4096, d.Read("/own.bin", buf, 4096, rfi.Fh))
+	require.Equal(t, fillByte(4096), buf[0])
+	require.Equal(t, first, prov.reads.Load(), "the second read inside the landed unit must be served from the cache copy")
+	require.Equal(t, 0, d.Release("/own.bin", rfi.Fh))
 }
