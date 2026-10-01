@@ -466,6 +466,55 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		require.Less(delta, uint64(24*1048576), "reader refetched the full file: reconcile never fired")
 	})
 
+	// The crossing below in the order that used to lose a version, forced so it
+	// runs every time: the owner's swap lands on the reader (her mount reports
+	// its size; she never reads its bytes) before she renames her working copy
+	// of v1 over the target. The swap base must be the newest version she held
+	// (v1), not the announce she merely accepted, or the owner sees its own
+	// version declared as the base and replaces it with no conflict copy. Before
+	// the fix this failed 3 of 3; ConcurrentSwapSaveCrossing hit it only when
+	// the timing fell this way (CI, PR #81, 2026-10-01).
+	t.Run("SwapSaveAfterPeerSwapLanded", func(t *testing.T) {
+		listConflicts := func(p *testPeer) []string {
+			var out []string
+			for _, name := range listNames(t, p) {
+				if strings.Contains(name, "swapl.conflict-") {
+					out = append(out, strings.TrimSpace(name))
+				}
+			}
+			return out
+		}
+		require.Equal("OK", bob.send(t, "write_file swapl.txt both-see-this-v1", 10*time.Second))
+		WaitForFileOnMount(t, filepath.Join(aliceMount, "swapl.txt"), 60*time.Second)
+		waitConverged(t, alice, bob, "swapl.txt", 60*time.Second)
+
+		copyFile(t, bob, "swapl.txt", "swapl.txt.bwork")
+		copyFile(t, alice, "swapl.txt", "swapl.txt.awork")
+		require.Equal("OK", bob.send(t, "write_file swapl.txt.bwork owner-swap-version", 10*time.Second))
+		require.Equal("OK", alice.send(t, "write_file swapl.txt.awork reader-swap-version", 10*time.Second))
+
+		renameOver(t, bob, "swapl.txt.bwork", "swapl.txt")
+		WaitForCondition(t, 30*time.Second, 20*time.Millisecond, func() bool {
+			fi, err := os.Stat(filepath.Join(aliceMount, "swapl.txt"))
+			return err == nil && fi.Size() == int64(len("owner-swap-version"))
+		}, "waiting for Bob's swap to land on Alice")
+		renameOver(t, alice, "swapl.txt.awork", "swapl.txt")
+
+		waitConverged(t, alice, bob, "swapl.txt", 90*time.Second)
+		time.Sleep(5 * time.Second)
+		canonical := readFile(t, bob, "swapl.txt")
+		bobConflicts := listConflicts(bob)
+		t.Logf("canonical=%q aliceConflicts=%v bobConflicts=%v", canonical, listConflicts(alice), bobConflicts)
+		survived := map[string]bool{canonical: true}
+		for _, c := range bobConflicts {
+			survived[readFile(t, bob, c)] = true
+		}
+		require.True(survived["owner-swap-version"] && survived["reader-swap-version"], "both swap versions must survive, got %v", survived)
+		WaitForCondition(t, 60*time.Second, 500*time.Millisecond, func() bool {
+			return len(listConflicts(alice)) >= 1 && len(listConflicts(bob)) >= 1
+		}, "waiting for the conflict copy on both peers")
+	})
+
 	// Both sides swap-save the SAME file concurrently: each takes a working
 	// copy of v1, edits it, and renames it over the target, the two renames
 	// crossing on the wire. This is the double-app-save case (both machines

@@ -1674,11 +1674,11 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	cleanNewPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, newpath))
 	logger := d.logger.With("method", "rename", "old-path", cleanOldPath, "new-path", cleanNewPath)
 
-	// A rename onto a tracked file is an app swap-save. Declare the target's
-	// identity at swap time as the announce base: the receiver then preserves
-	// its bytes when they are provably newer. Identity at swap time can only
-	// overstate the true session base, so this never fires a false copy.
-	swapBase := d.targetIdentity(newpath)
+	// A rename onto a tracked file is an app swap-save. Declare the newest
+	// version of the target whose bytes this peer held, as an in-place edit
+	// does: the receiver then preserves its bytes when they are newer than
+	// anything the saving app could have read.
+	swapBase := d.swapBase(newpath)
 
 	// On Windows, rename fails when source or target has an open handle.
 	// Close all held handles on either path before the rename.
@@ -3278,6 +3278,39 @@ func (d *Dir) targetIdentity(path string) int64 {
 	}
 	f.metaMu.Unlock()
 	return id
+}
+
+// swapBase is the announce base of a swap-save onto path: the newest version
+// of the target whose bytes this peer held or announced, the rule an in-place
+// edit's EditBaseMtimeNs follows. targetIdentity overstates it when a peer's
+// swap was accepted here but never fetched: the receiver then saw its own
+// version declared as the base and replaced it without a conflict copy
+// (ConcurrentSwapSaveCrossing whenever the peer's swap landed first). -1 when
+// the target is a peer version this peer never held bytes of, as for an edit.
+func (d *Dir) swapBase(path string) int64 {
+	d.RemoteFilesLock.RLock()
+	f := d.RemoteFiles[path]
+	d.RemoteFilesLock.RUnlock()
+	if f == nil {
+		d.AfmLock.Lock()
+		f = d.AllFileMap[path]
+		d.AfmLock.Unlock()
+	}
+	if f == nil {
+		return 0
+	}
+	f.metaMu.Lock()
+	defer f.metaMu.Unlock()
+	base := max(f.HeldMtimeNs, f.LastAnnouncedMtimeNs)
+	if f.LocalNewer && f.stat != nil {
+		if m := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; m > base {
+			base = m
+		}
+	}
+	if base == 0 && f.RemoteMtimeNs > 0 {
+		base = -1
+	}
+	return base
 }
 
 // SwapWouldConflict reports whether a swap arriving for path with the given
