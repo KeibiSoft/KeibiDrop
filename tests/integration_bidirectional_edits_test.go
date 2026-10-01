@@ -635,6 +635,99 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		t.Logf("owner after convergence: header unchanged=%v, bytes at 20 MiB unchanged=%v, zero pairs in the 20 MiB sample=%d of 4096, conflict copies on the owner=%v",
 			before0 == after0, before3 == after3, zeros, siblings)
 		require.Equal(before3, after3, "the owner's bytes outside the reader's write were replaced (A6)")
+		// The reader read the header before patching: a turn-taking edit, no
+		// copy. Linux CI 2026-10-01 showed one: the held version used to be
+		// recorded by the cache writer after the read returned, and the write
+		// 5 ms later started its session at "never held" (base -1).
+		require.Empty(siblings, "a patch after a read must not preserve a copy on the owner")
+	})
+
+	// Stage 3 (swap-save-stamps 2026-10-01): a change moves only what differs,
+	// measured on the wire (wirebytes counts every lane: demand, read-ahead,
+	// prefetch). The files are 64 MiB so a 16 MiB demand unit cannot hide a
+	// whole-file refetch behind the bound, which is three quarters of the file.
+	wirebytes := func(t *testing.T, p *testPeer, rel string) uint64 {
+		t.Helper()
+		resp := p.send(t, "wirebytes "+rel, 5*time.Second)
+		require.True(strings.HasPrefix(resp, "WIREBYTES:"), "wirebytes failed: %s", resp)
+		n, err := strconv.ParseUint(strings.TrimPrefix(resp, "WIREBYTES:"), 10, 64)
+		require.NoError(err)
+		return n
+	}
+	const chunkCheapSize = 64 * 1048576
+	siblingsOf := func(t *testing.T, p *testPeer, stem string) []string {
+		t.Helper()
+		var out []string
+		for _, n := range listNames(t, p) {
+			if strings.Contains(n, stem+".conflict-") {
+				out = append(out, strings.TrimSpace(n))
+			}
+		}
+		return out
+	}
+
+	// The author's own file, a local file with no fingerprints, superseded by
+	// the reader's swap-save of a 1 MiB region: the author's read of the new
+	// version moves the changed unit, not the file. Before: the whole 64 MiB,
+	// because an author's copy had nothing to reconcile with.
+	t.Run("SupersededAuthorReconcile", func(t *testing.T) {
+		const name = "author.big"
+		writeRand(t, bob, name, chunkCheapSize)
+		WaitForFileOnMount(t, filepath.Join(aliceMount, name), 60*time.Second)
+		waitConverged(t, alice, bob, name, 180*time.Second)
+		w0 := wirebytes(t, bob, name)
+		copyFile(t, alice, name, name+".new")
+		writeRandAt(t, alice, name+".new", 20*1048576, 1048576)
+		renameOver(t, alice, name+".new", name)
+		waitConverged(t, bob, alice, name, 180*time.Second)
+		time.Sleep(time.Second)
+		moved := wirebytes(t, bob, name) - w0
+		t.Logf("superseded author: %d bytes on the wire for the reader's 1 MiB change in a 64 MiB file", moved)
+		require.Less(moved, uint64(chunkCheapSize*3/4), "the author refetched the file: reconcile from local bytes never fired")
+		require.Empty(siblingsOf(t, bob, "author"), "a turn-taking swap must not preserve a copy")
+	})
+
+	// Both peers change disjoint regions of a 64 MiB file at the same time. The
+	// later swap wins; the other version is preserved as a sibling on both
+	// peers. The loser's canonical is seeded from the sibling its bytes moved
+	// to and fetches only the two changed units; the winner's sibling is seeded
+	// from its canonical and fetches only those units when read. Before: two
+	// whole files moved.
+	t.Run("ConflictChunkCheap", func(t *testing.T) {
+		// Its own stem: ConcurrentEditConflictCopy leaves a clash.conflict-*
+		// sibling in the same tree, and the count below must see only ours.
+		const name = "clashbig.big"
+		writeRand(t, bob, name, chunkCheapSize)
+		WaitForFileOnMount(t, filepath.Join(aliceMount, name), 60*time.Second)
+		waitConverged(t, alice, bob, name, 180*time.Second)
+		copyFile(t, bob, name, name+".bob")
+		copyFile(t, alice, name, name+".alice")
+		writeRandAt(t, bob, name+".bob", 4*1048576, 1048576)
+		writeRandAt(t, alice, name+".alice", 36*1048576, 1048576)
+		w0Bob := wirebytes(t, bob, name)
+		// Both swaps declare base v0; the later stamp wins on both peers.
+		renameOver(t, bob, name+".bob", name)
+		renameOver(t, alice, name+".alice", name)
+		WaitForCondition(t, 120*time.Second, 500*time.Millisecond, func() bool {
+			return len(siblingsOf(t, alice, "clashbig")) == 1 && len(siblingsOf(t, bob, "clashbig")) == 1
+		}, "waiting for the conflict sibling on both peers")
+		sibling := siblingsOf(t, bob, "clashbig")[0]
+		waitConverged(t, alice, bob, name, 180*time.Second)
+		waitConverged(t, bob, alice, name, 180*time.Second)
+		waitConverged(t, alice, bob, sibling, 180*time.Second)
+		time.Sleep(time.Second)
+		require.NotEqual(fileMd5(t, bob, name), fileMd5(t, bob, sibling), "the two versions must both survive")
+		canonBob := wirebytes(t, bob, name) - w0Bob
+		canonAlice := wirebytes(t, alice, name)
+		sibAlice := wirebytes(t, alice, sibling)
+		sibBob := wirebytes(t, bob, sibling)
+		t.Logf("conflict on a 64 MiB file, 1 MiB changed on each side: canonical refetch bob=%d alice=%d, sibling fetch alice=%d bob=%d", canonBob, canonAlice, sibAlice, sibBob)
+		loserCanon, winnerSibling := canonBob, sibAlice
+		if canonAlice > canonBob {
+			loserCanon, winnerSibling = canonAlice, sibBob
+		}
+		require.Less(loserCanon, uint64(chunkCheapSize*3/4), "the loser refetched its canonical whole: seeding from the sibling never fired")
+		require.Less(winnerSibling, uint64(chunkCheapSize*3/4), "the winner fetched the sibling whole: seeding from the canonical never fired")
 	})
 }
 

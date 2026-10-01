@@ -2502,20 +2502,25 @@ func (bf *blockFetch) wait(ctx context.Context) (settled bool, err error) {
 	}
 }
 
+// noteHeld records that bytes of the announced version are in this process:
+// the session base reads HeldMtimeNs, so an announce can never claim a
+// version this peer never held.
+func (f *File) noteHeld() {
+	f.metaMu.Lock()
+	if f.RemoteMtimeNs > f.HeldMtimeNs {
+		f.HeldMtimeNs = f.RemoteMtimeNs
+	}
+	f.metaMu.Unlock()
+}
+
 // finishFetch settles the fetch and drops its unit registrations. The deletes
 // are conditional so a late or backstop call cannot evict a newer leader's
 // entry, and settle is idempotent, so calling this more than once is safe.
 func (f *File) finishFetch(bf *blockFetch, err error) {
 	if err == nil {
 		// Landed remote bytes: this peer now holds (part of) the announced
-		// version. The session base reads HeldMtimeNs, so an announce can
-		// never claim a version this peer never held. Off the cache-hit
-		// path: this runs only after a network fetch.
-		f.metaMu.Lock()
-		if f.RemoteMtimeNs > f.HeldMtimeNs {
-			f.HeldMtimeNs = f.RemoteMtimeNs
-		}
-		f.metaMu.Unlock()
+		// version. Off the cache-hit path: this runs only after a fetch.
+		f.noteHeld()
 	}
 	f.fetchMu.Lock()
 	for _, k := range bf.keys {
@@ -2598,6 +2603,7 @@ func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap 
 			f.finishFetch(bf, errBlockFetchIncomplete)
 			return
 		}
+		f.WireBytes.Add(uint64(len(data)))
 		if _, werr := markCached(cacheFD, bitmap, data, blockStart, remoteFileSize); werr != nil {
 			f.finishFetch(bf, werr)
 			return
@@ -2614,38 +2620,51 @@ const reconcileMinSize = int64(ReadAheadBlock)
 
 // maybeReconcileEdit is the eligibility gate the edit reset sites call. The site has
 // ALREADY done today's full reset (newBitmap is the fresh, valid "re-fetch everything"
-// state). This only ADDS a background optimization: when the pre-edit bitmap carried
-// per-chunk fingerprints and the file is large enough, spawn reconcileEditAsync to
-// re-mark the unchanged chunks present so reads serve them from cache instead of
+// state). This only ADDS a background optimization: when the file is large enough and
+// the pre-edit bytes are provable, either by the fingerprints the pre-edit bitmap
+// carried or by hashing a local file that holds them (seed), spawn reconcileEditAsync
+// to re-mark the unchanged chunks present so reads serve them from cache instead of
 // re-fetching. On any failure or ineligibility the full reset simply stands.
 //
 // oldBitmap/oldSize are captured at the call site BEFORE the reset (oldBitmap before
 // f.Bitmap is reassigned, oldSize before f.stat is overwritten). newBitmap is the live
-// post-reset f.Bitmap; newSize is the incoming notify size. Takes no RemoteFilesLock.
-func (d *Dir) maybeReconcileEdit(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64) {
-	if oldBitmap == nil || newBitmap == nil || !oldBitmap.HasHashes() || newSize < reconcileMinSize {
+// post-reset f.Bitmap; newSize is the incoming notify size. seed names the local file
+// whose bytes are the version the edit replaced, used when oldBitmap carries no
+// fingerprints: the file itself (an author's own copy, a copy adopted from a sidecar),
+// or the conflict sibling the bytes moved to; "" means none. Takes no RemoteFilesLock.
+func (d *Dir) maybeReconcileEdit(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64, seed string) {
+	if newBitmap == nil || newSize < reconcileMinSize {
+		return
+	}
+	if (oldBitmap == nil || !oldBitmap.HasHashes()) && seed == "" {
 		return
 	}
 	hasher, ok := d.OpenStreamProvider().(types.ChunkHasher)
 	if !ok || hasher == nil {
 		return // older peer / no RPC: full reset stands.
 	}
-	go d.reconcileEditAsync(path, f, oldBitmap, newBitmap, oldSize, newSize)
+	go d.reconcileEditAsync(path, f, oldBitmap, newBitmap, oldSize, newSize, seed)
 }
 
 // reconcileEditAsync runs in its own goroutine after a remote-edit full reset and marks
-// the chunks proven unchanged (our cached hash == the peer's new hash) present again on
-// the LIVE bitmap captured at spawn. It is lock-free with respect to RemoteFilesLock,
-// never waits on CacheWg, never writes the cache file, and never swaps f.Bitmap: the
-// hash-matched chunks' bytes are already in cache (in-place edits leave the cache; the
-// size-change site truncates, preserving the common prefix), so marking them present is
-// correct. On ANY error or non-match it does nothing extra and the full reset stands.
+// the chunks proven unchanged (our hash == the peer's new hash) present again on the
+// LIVE bitmap captured at spawn. With fingerprints in oldBitmap it is lock-free with
+// respect to RemoteFilesLock, never waits on CacheWg, never writes the cache file, and
+// never swaps f.Bitmap: the hash-matched chunks' bytes are already in cache (in-place
+// edits leave the cache; the size-change site truncates, preserving the common prefix),
+// so marking them present is correct. Without fingerprints it hashes seed from disk
+// (seedFromLocal). On ANY error or non-match it does nothing extra and the full reset
+// stands.
 //
 // newBitmap is a specific object: if a later edit swaps f.Bitmap again, this job's Set
 // calls land on an orphaned bitmap (harmless) and the newer edit spawns its own job.
 // This job never re-reads f.Bitmap.
-func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64) {
-	if oldBitmap == nil || newBitmap == nil {
+func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64, seed string) {
+	if newBitmap == nil {
+		return
+	}
+	hashed := oldBitmap != nil && oldBitmap.HasHashes()
+	if !hashed && seed == "" {
 		return
 	}
 	// Bound concurrency with the same semaphore prefetch uses; abort on unmount/disconnect.
@@ -2691,6 +2710,11 @@ func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *Chu
 		peerHashes[int(idx)] = h
 	}
 
+	if !hashed {
+		d.seedFromLocal(f, oldBitmap, newBitmap, seed, commonEnd, peerHashes)
+		return
+	}
+
 	decided, ok := reconcileBitmap(oldBitmap, oldSize, newSize, peerHashes)
 	if !ok {
 		return
@@ -2707,6 +2731,126 @@ func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *Chu
 		newBitmap.Set(c)
 		newBitmap.SetHash(c, h)
 	}
+}
+
+// seedFromLocal marks on the live bitmap every common-prefix chunk whose bytes
+// in the local file seed hash to the peer's fingerprint, copying the chunk into
+// the cache copy first when seed is another file: the conflict sibling the
+// loser's bytes moved to, or the canonical a sibling is seeded from. A chunk is
+// kept on an equal xxh3 only, so a torn read under a concurrent fetch, a short
+// file or a chunk the app rewrote costs a fetch, never wrong bytes. With
+// oldBitmap set only its present chunks are candidates; nil means the whole
+// file at seed was the replaced version. Runs in reconcileEditAsync's
+// goroutine, off the FUSE path: xxh3 at 20 GB/s, the disk read is the cost.
+func (d *Dir) seedFromLocal(f *File, oldBitmap, newBitmap *ChunkBitmap, seed string, commonEnd int64, peerHashes map[int]uint64) {
+	target := f.RealPathOfFile
+	if target == "" {
+		return
+	}
+	src, err := os.Open(seed) // #nosec G304 -- cache-internal path
+	if err != nil {
+		return
+	}
+	defer src.Close()
+	if st, serr := src.Stat(); serr != nil {
+		return
+	} else if st.Size() < commonEnd {
+		commonEnd = st.Size()
+	}
+	var dst *os.File
+	if filepath.Clean(target) != filepath.Clean(seed) {
+		dst, err = os.OpenFile(target, os.O_WRONLY|os.O_CREATE, 0o644) // #nosec G304
+		if err != nil {
+			return
+		}
+		defer dst.Close()
+		if st, serr := dst.Stat(); serr == nil && st.Size() < newBitmap.FileSize() {
+			_ = dst.Truncate(newBitmap.FileSize())
+		}
+	}
+	cs := int64(newBitmap.ChunkSizeBytes())
+	buf := make([]byte, cs)
+	marked := 0
+	for c := 0; (int64(c)+1)*cs <= commonEnd; c++ {
+		if d.Ctx().Err() != nil {
+			return
+		}
+		if oldBitmap != nil && !oldBitmap.Has(c) {
+			continue
+		}
+		want, known := peerHashes[c]
+		if !known || newBitmap.Has(c) {
+			continue
+		}
+		n, rerr := src.ReadAt(buf, int64(c)*cs)
+		if int64(n) != cs {
+			if rerr != nil && !errors.Is(rerr, io.EOF) {
+				return
+			}
+			continue
+		}
+		if xxh3.Hash(buf) != want {
+			continue
+		}
+		if dst != nil {
+			if _, werr := dst.WriteAt(buf, int64(c)*cs); werr != nil {
+				return
+			}
+		}
+		if newBitmap.Has(c) {
+			continue // a fetch landed the same bytes meanwhile and marked it.
+		}
+		newBitmap.Set(c)
+		newBitmap.SetHash(c, want)
+		marked++
+	}
+	if marked > 0 {
+		f.noteLanded()
+		d.logger.Debug("Reconcile seeded chunks from local bytes", "path", f.RelativePath, "seed", seed, "chunks", marked)
+	}
+}
+
+// conflictCanonical returns the path a conflict sibling was preserved from, the
+// inverse of conflictNames, or "" when relPath is not a sibling. Rel paths are
+// slash-only on all platforms: path.*, never filepath.
+func conflictCanonical(relPath string) string {
+	name := getNameFromPath(relPath)
+	i := strings.Index(name, ".conflict-")
+	if i < 0 {
+		return ""
+	}
+	ext := ""
+	if j := strings.IndexByte(name[i+len(".conflict-"):], '.'); j >= 0 {
+		ext = name[i+len(".conflict-")+j:]
+	}
+	return path.Join(path.Dir(relPath), name[:i]+ext)
+}
+
+// seedSiblingFromCanonical starts the reconcile that fills an announced
+// conflict sibling's cache copy from the canonical this peer holds: the sibling
+// is the other peer's version of the same file, so every chunk neither side
+// changed is on this disk already and only the chunks that differ are fetched.
+// Chunks are kept on an equal fingerprint only (seedFromLocal).
+func (d *Dir) seedSiblingFromCanonical(canon string, f *File, size int64) {
+	d.AfmLock.RLock()
+	cf := d.AllFileMap[canon]
+	d.AfmLock.RUnlock()
+	if cf == nil {
+		d.RemoteFilesLock.RLock()
+		cf = d.RemoteFiles[canon]
+		d.RemoteFilesLock.RUnlock()
+	}
+	if cf == nil || cf.RealPathOfFile == "" {
+		return
+	}
+	st, err := os.Stat(cf.RealPathOfFile)
+	if err != nil || st.Size() <= 0 {
+		return
+	}
+	f.metaMu.RLock()
+	bm := f.Bitmap
+	f.metaMu.RUnlock()
+	d.maybeReconcileEdit(f.RelativePath, f, nil, bm, st.Size(), size, cf.RealPathOfFile)
 }
 
 // maybeReadAhead is the predictive read-ahead detector, called on every read of a
@@ -3122,6 +3266,16 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 			time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond) // Backoff.
 		}
+		if readErr == nil && len(data) > 0 {
+			f.WireBytes.Add(uint64(len(data)))
+			// The bytes are in this process now: it holds (part of) the announced
+			// version from here, whatever the cache writer's timing. finishFetch
+			// notes the same after the async write; an open for write in between
+			// (a read-then-patch pipeline, 5 ms apart on Linux) must not start
+			// its session at "never held", or the owner preserves a copy for a
+			// plain turn-taking patch.
+			f.noteHeld()
+		}
 
 		if readErr != nil {
 			// Shutting down (unmount/disconnect cancelled FsCtx): stop quietly,
@@ -3199,6 +3353,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 					logger.Warn("Remote read stalled on the rest of the request, returning EIO", "error", rerr, "path", path)
 					return -winfuse.EIO
 				}
+				f.WireBytes.Add(uint64(len(rest)))
 				if _, werr := markCached(cacheFD, bitmap, rest, fetchEnd, remoteFileSize); werr != nil {
 					logger.Error("Cache write failed", "error", werr)
 					return -winfuse.EIO
@@ -4016,10 +4171,14 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			existing.Bitmap = NewChunkBitmap(newSize)
 			newBitmap := existing.Bitmap
 			existing.metaMu.Unlock()
+			// The bytes the edit replaced are on this disk: in place (the
+			// truncate below keeps the common prefix) or, after a conflict,
+			// at the sibling name. Reconcile proves chunks against them when
+			// the old bitmap carries no fingerprints (an author's own file).
+			seed := existing.RealPathOfFile
 			if conflictRel != "" {
-				// The local bytes moved to the conflict name: nothing cached
-				// remains, so reconcile must not claim proven chunks.
 				oldBitmap = nil
+				seed = conflictReal
 			}
 			d.RemoteFilesLock.Unlock()
 
@@ -4035,7 +4194,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 
 			// Truncate preserved the common prefix, so cached prefix bytes still match
 			// their stored hashes: re-mark the proven-unchanged chunks present async.
-			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, oldSize, newSize)
+			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, oldSize, newSize, seed)
 
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
@@ -4052,6 +4211,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			// on-demand, mirroring EditRemoteFile. Without this, a peer that
 			// already fully cached the file keeps serving stale content.
 			var oldBitmap, newBitmap *ChunkBitmap
+			var seed string
 			if fuseOpLog {
 				d.logger.Debug("oplog same-size verdict", "path", path, "reset", incomingMtime > existingMtime)
 			}
@@ -4072,8 +4232,10 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 				existing.Bitmap = NewChunkBitmap(newSize)
 				newBitmap = existing.Bitmap
 				existing.metaMu.Unlock()
+				seed = existing.RealPathOfFile
 				if conflictRel != "" {
 					oldBitmap = nil
+					seed = conflictReal
 				}
 			case existing.Bitmap != nil && !existing.Bitmap.IsComplete():
 				// Same mtime, still incomplete — keep fetching the rest on-demand.
@@ -4106,7 +4268,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			// the same-mtime keep-cache path); then re-mark unchanged chunks present.
 			// Same size here, so old==new==newSize (the unaliased snapshot, not
 			// existing.stat which Getattr may now be mutating).
-			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, newSize, newSize)
+			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, newSize, newSize, seed)
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
 			d.AfmLock.Unlock()
@@ -4150,6 +4312,11 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 	// Metadata-only on announce: registered with metadata + bitmap +
 	// NotLocalSynced=true above. Read streams chunks on-demand; prefetch (if
 	// enabled) starts when the file is Opened.
+	if canon := conflictCanonical(path); canon != "" {
+		// The peer's version of a file this peer holds: seed the sibling's
+		// copy from the canonical, so a read of it fetches only what differs.
+		d.seedSiblingFromCanonical(canon, f, stat.Size)
+	}
 	return nil
 }
 
@@ -4329,6 +4496,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 			break
 		}
 
+		f.WireBytes.Add(uint64(len(data)))
 		// Land chunk by chunk, skipping chunks already present: an on-demand
 		// read got them, or a local write holds them (fillForWrite), and
 		// a block written whole would put the peer's bytes over the app's.
@@ -4523,15 +4691,18 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	f.Bitmap = NewChunkBitmap(stat.Size)
 	newBitmap := f.Bitmap
 	f.metaMu.Unlock()
+	// The replaced bytes are on this disk, in place or at the sibling name
+	// after a conflict: reconcile proves chunks against them when the old
+	// bitmap carries no fingerprints.
+	seed := f.RealPathOfFile
 	if conflictRel != "" {
-		// The local bytes moved to the conflict name: nothing cached
-		// remains, so reconcile must not claim proven chunks.
 		oldBitmap = nil
+		seed = conflictReal
 	}
 	d.RemoteFilesLock.Unlock()
 	// Re-mark the proven-unchanged chunks present in the background (full reset stands
 	// on any failure or ineligibility).
-	d.maybeReconcileEdit(path, f, oldBitmap, newBitmap, oldSize, newSize)
+	d.maybeReconcileEdit(path, f, oldBitmap, newBitmap, oldSize, newSize, seed)
 	d.AfmLock.Lock()
 	d.AllFileMap[path] = f
 	d.AfmLock.Unlock()

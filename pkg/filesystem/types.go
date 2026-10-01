@@ -491,6 +491,11 @@ type File struct {
 
 	// Download resumption state.
 	Download DownloadState
+	// WireBytes counts the bytes received from the peer for this file on every
+	// lane (demand, read-ahead, prefetch, sibling warm). A test reads it to
+	// prove a change moved only what differs; Download.BytesDownloaded counts
+	// served and prefetched bytes and misses the read-ahead lane.
+	WireBytes atomic.Uint64
 
 	// Bitmap tracks which 512 KiB chunks are downloaded from the remote peer.
 	// It is nil for local-origin files and empty files (size=0).

@@ -130,7 +130,7 @@ func TestReconcileEditAsync_KeepsMatchingDropsChanged(t *testing.T) {
 	newBitmap := NewChunkBitmap(size)
 	f.Bitmap = newBitmap
 
-	d.reconcileEditAsync("/edited.bin", f, old, newBitmap, size, size)
+	d.reconcileEditAsync("/edited.bin", f, old, newBitmap, size, size, "")
 
 	// Await the async job by polling for chunk 0 becoming present.
 	waitFor(t, 3*time.Second, func() bool { return newBitmap.Has(0) })
@@ -179,7 +179,7 @@ func TestReconcileEditAsync_BoundaryAndGrownStayAbsent(t *testing.T) {
 	newBitmap := NewChunkBitmap(newSize)
 	f.Bitmap = newBitmap
 
-	d.reconcileEditAsync("/grown.bin", f, old, newBitmap, oldSize, newSize)
+	d.reconcileEditAsync("/grown.bin", f, old, newBitmap, oldSize, newSize, "")
 
 	// Whole common-prefix chunks 0..21 must become present.
 	waitFor(t, 3*time.Second, func() bool { return newBitmap.Has(21) })
@@ -208,7 +208,7 @@ func TestReconcileEditAsync_FallbackNotChunkHasher(t *testing.T) {
 	newBitmap := NewChunkBitmap(size)
 	f.Bitmap = newBitmap
 
-	d.reconcileEditAsync("/x.bin", f, old, newBitmap, size, size)
+	d.reconcileEditAsync("/x.bin", f, old, newBitmap, size, size, "")
 
 	// Give any (incorrectly spawned) job time to run, then assert nothing kept.
 	time.Sleep(100 * time.Millisecond)
@@ -231,7 +231,7 @@ func TestReconcileEditAsync_NilProvider_NoPanicFullReset(t *testing.T) {
 	newBitmap := NewChunkBitmap(size)
 	f.Bitmap = newBitmap
 
-	d.reconcileEditAsync("/x.bin", f, old, newBitmap, size, size)
+	d.reconcileEditAsync("/x.bin", f, old, newBitmap, size, size, "")
 
 	time.Sleep(100 * time.Millisecond)
 	if newBitmap.Have() != 0 {
@@ -251,7 +251,7 @@ func TestReconcileEditAsync_FallbackUnimplemented(t *testing.T) {
 	newBitmap := NewChunkBitmap(size)
 	f.Bitmap = newBitmap
 
-	d.reconcileEditAsync("/x.bin", f, old, newBitmap, size, size)
+	d.reconcileEditAsync("/x.bin", f, old, newBitmap, size, size, "")
 
 	time.Sleep(100 * time.Millisecond)
 	if newBitmap.Have() != 0 {
@@ -271,7 +271,7 @@ func TestMaybeReconcileEdit_GateBelowMinSizeSkips(t *testing.T) {
 	newBitmap := NewChunkBitmap(size)
 	f.Bitmap = newBitmap
 
-	d.maybeReconcileEdit("/tiny.bin", f, old, newBitmap, size, size)
+	d.maybeReconcileEdit("/tiny.bin", f, old, newBitmap, size, size, "")
 
 	time.Sleep(100 * time.Millisecond)
 	if newBitmap.Have() != 0 {
@@ -292,7 +292,7 @@ func TestMaybeReconcileEdit_GateNoOldHashesSkips(t *testing.T) {
 	newBitmap := NewChunkBitmap(size)
 	f.Bitmap = newBitmap
 
-	d.maybeReconcileEdit("/nohashes.bin", f, old, newBitmap, size, size)
+	d.maybeReconcileEdit("/nohashes.bin", f, old, newBitmap, size, size, "")
 
 	time.Sleep(100 * time.Millisecond)
 	if newBitmap.Have() != 0 {
@@ -336,7 +336,7 @@ func TestReconcileEditAsync_RaceWithConcurrentReader(t *testing.T) {
 		}
 	}()
 
-	d.reconcileEditAsync("/race.bin", f, old, newBitmap, size, size)
+	d.reconcileEditAsync("/race.bin", f, old, newBitmap, size, size, "")
 	wg.Wait()
 
 	waitFor(t, 3*time.Second, func() bool { return newBitmap.Has(reconcileChunks - 1) })

@@ -321,6 +321,24 @@ func main() {
 			}
 			fmt.Printf("DLBYTES:%d\n", n)
 
+		case "wirebytes":
+			// wirebytes <rel> — bytes received from the peer for a tracked file on
+			// every lane (demand, read-ahead, prefetch, warm). 0 when untracked.
+			if len(args) < 2 {
+				fmt.Println("ERR:usage: wirebytes <rel>")
+				continue
+			}
+			rel := "/" + strings.TrimPrefix(args[1], "/")
+			var n uint64
+			if kd.FS != nil && kd.FS.Root() != nil {
+				kd.FS.Root().RemoteFilesLock.RLock()
+				if f, ok := kd.FS.Root().RemoteFiles[rel]; ok {
+					n = f.WireBytes.Load()
+				}
+				kd.FS.Root().RemoteFilesLock.RUnlock()
+			}
+			fmt.Printf("WIREBYTES:%d\n", n)
+
 		case "md5":
 			// md5 <rel> — hash the file through our own mount (Windows has
 			// no md5sum; verbs drive the same FUSE surface as the shell).
