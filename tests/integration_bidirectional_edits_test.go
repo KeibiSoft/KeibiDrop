@@ -601,6 +601,13 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 			require.True(strings.HasPrefix(resp, "HEX:"), "read_at failed: %s", resp)
 			return resp
 		}
+		dlbytes := func(p *testPeer) uint64 {
+			resp := p.send(t, "dlbytes "+name, 5*time.Second)
+			require.True(strings.HasPrefix(resp, "DLBYTES:"), "dlbytes failed: %s", resp)
+			n, err := strconv.ParseUint(strings.TrimPrefix(resp, "DLBYTES:"), 10, 64)
+			require.NoError(err)
+			return n
+		}
 		writeRand(t, bob, name, 24*1048576)
 		WaitForFileOnMount(t, filepath.Join(aliceMount, name), 60*time.Second)
 		before0 := readAt(bob, 0, 4096)
@@ -611,6 +618,11 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		ex(t, alice, ".", "dd if=/dev/urandom of="+name+" bs=1048576 count=1 seek=1 conv=notrunc", 60*time.Second)
 		waitConverged(t, alice, bob, name, 120*time.Second)
 		time.Sleep(3 * time.Second)
+		// The transfer bill: the reader fetched one demand unit before the
+		// write and the fill brought the rest; the owner refetches only what
+		// the reader changed (plus the reconcile floor).
+		t.Logf("bytes moved: reader fetched %d of %d, owner refetched %d after the reader's 1 MiB patch",
+			dlbytes(alice), 24*1048576, dlbytes(bob))
 		after0 := readAt(bob, 0, 4096)
 		after3 := readAt(bob, 20*1048576, 4096)
 		var siblings []string
