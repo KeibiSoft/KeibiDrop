@@ -426,8 +426,16 @@ type File struct {
 	LastAnnouncedMtimeNs int64
 
 	// WasTruncatedToZero records an explicit Truncate(size=0) call. With
-	// HadEdits, it separates legitimate empty files from transient states.
+	// HadEdits, it separates legitimate empty files from transient states. A
+	// cache copy truncated to zero holds no unfetched bytes any more: every
+	// byte on disk from then on is the app's, so a write needs no fill.
 	WasTruncatedToZero bool
+
+	// AnnounceAfterFill is set by Release when the edited file still has
+	// chunks never fetched (A6, swap-save-stamps 2026-10-01): the announce
+	// would present the holes as content, so it waits for the background
+	// fill, which announces on completion. Guarded by metaMu.
+	AnnounceAfterFill bool
 
 	// LastNotifiedSize is the file size last sent to the peer in ADD_FILE. It
 	// prevents duplicate same-size notifications during a file copy.

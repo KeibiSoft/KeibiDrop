@@ -466,43 +466,57 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		require.Less(delta, uint64(24*1048576), "reader refetched the full file: reconcile never fired")
 	})
 
-	// The crossing below in the order that used to lose a version, forced so it
-	// runs every time: the owner's swap lands on the reader (her mount reports
-	// its size; she never reads its bytes) before she renames her working copy
-	// of v1 over the target. The swap base must be the newest version she held
-	// (v1), not the announce she merely accepted, or the owner sees its own
-	// version declared as the base and replaces it with no conflict copy. Before
-	// the fix this failed 3 of 3; ConcurrentSwapSaveCrossing hit it only when
-	// the timing fell this way (CI, PR #81, 2026-10-01).
-	t.Run("SwapSaveAfterPeerSwapLanded", func(t *testing.T) {
+	// The crossing in the order that used to lose a version, forced so it runs
+	// every time: the owner's swap lands on the reader (her mount reports its
+	// size; she never reads its bytes) before she renames her working copy of
+	// v1 over the target. Two things have to hold. The swap base must be the
+	// newest version she held (v1), not the announce she merely accepted, or
+	// the owner sees its own version declared as the base and replaces it with
+	// no conflict copy (gap A, fixed by swapBase). And her swap must carry a
+	// stamp above the version she accepted, whatever her working copy's mtime
+	// is, or the owner rejects it as older while she already applied his and
+	// the two diverge (gap B, main CI run 36870254753: equal coarse stamps on
+	// one Linux kernel, the rank decided). The two orders below pin the stamp
+	// relation of the working copies; the Linux tie is covered by the unit
+	// test of the rename stamp rule (pkg/filesystem swap_stamp_test.go).
+	orderedSwap := func(t *testing.T, name string, aliceFirst bool) {
 		listConflicts := func(p *testPeer) []string {
 			var out []string
-			for _, name := range listNames(t, p) {
-				if strings.Contains(name, "swapl.conflict-") {
-					out = append(out, strings.TrimSpace(name))
+			for _, n := range listNames(t, p) {
+				if strings.Contains(n, strings.TrimSuffix(name, ".txt")+".conflict-") {
+					out = append(out, strings.TrimSpace(n))
 				}
 			}
 			return out
 		}
-		require.Equal("OK", bob.send(t, "write_file swapl.txt both-see-this-v1", 10*time.Second))
-		WaitForFileOnMount(t, filepath.Join(aliceMount, "swapl.txt"), 60*time.Second)
-		waitConverged(t, alice, bob, "swapl.txt", 60*time.Second)
+		require.Equal("OK", bob.send(t, "write_file "+name+" both-see-this-v1", 10*time.Second))
+		WaitForFileOnMount(t, filepath.Join(aliceMount, name), 60*time.Second)
+		waitConverged(t, alice, bob, name, 60*time.Second)
 
-		copyFile(t, bob, "swapl.txt", "swapl.txt.bwork")
-		copyFile(t, alice, "swapl.txt", "swapl.txt.awork")
-		require.Equal("OK", bob.send(t, "write_file swapl.txt.bwork owner-swap-version", 10*time.Second))
-		require.Equal("OK", alice.send(t, "write_file swapl.txt.awork reader-swap-version", 10*time.Second))
+		copyFile(t, bob, name, name+".bwork")
+		copyFile(t, alice, name, name+".awork")
+		// 50 ms between the two working copies pins which one carries the
+		// older stamp on every platform (macOS stamps in ns, Linux in ticks).
+		if aliceFirst {
+			require.Equal("OK", alice.send(t, "write_file "+name+".awork reader-swap-version", 10*time.Second))
+			time.Sleep(50 * time.Millisecond)
+			require.Equal("OK", bob.send(t, "write_file "+name+".bwork owner-swap-version", 10*time.Second))
+		} else {
+			require.Equal("OK", bob.send(t, "write_file "+name+".bwork owner-swap-version", 10*time.Second))
+			time.Sleep(50 * time.Millisecond)
+			require.Equal("OK", alice.send(t, "write_file "+name+".awork reader-swap-version", 10*time.Second))
+		}
 
-		renameOver(t, bob, "swapl.txt.bwork", "swapl.txt")
+		renameOver(t, bob, name+".bwork", name)
 		WaitForCondition(t, 30*time.Second, 20*time.Millisecond, func() bool {
-			fi, err := os.Stat(filepath.Join(aliceMount, "swapl.txt"))
+			fi, err := os.Stat(filepath.Join(aliceMount, name))
 			return err == nil && fi.Size() == int64(len("owner-swap-version"))
 		}, "waiting for Bob's swap to land on Alice")
-		renameOver(t, alice, "swapl.txt.awork", "swapl.txt")
+		renameOver(t, alice, name+".awork", name)
 
-		waitConverged(t, alice, bob, "swapl.txt", 90*time.Second)
+		waitConverged(t, alice, bob, name, 90*time.Second)
 		time.Sleep(5 * time.Second)
-		canonical := readFile(t, bob, "swapl.txt")
+		canonical := readFile(t, bob, name)
 		bobConflicts := listConflicts(bob)
 		t.Logf("canonical=%q aliceConflicts=%v bobConflicts=%v", canonical, listConflicts(alice), bobConflicts)
 		survived := map[string]bool{canonical: true}
@@ -513,7 +527,11 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		WaitForCondition(t, 60*time.Second, 500*time.Millisecond, func() bool {
 			return len(listConflicts(alice)) >= 1 && len(listConflicts(bob)) >= 1
 		}, "waiting for the conflict copy on both peers")
-	})
+	}
+	// Alice's working copy carries the newer stamp: the gap A guard.
+	t.Run("SwapSaveAfterPeerSwapLanded", func(t *testing.T) { orderedSwap(t, "swapl.txt", false) })
+	// Alice's working copy carries the older stamp: the gap B case.
+	t.Run("SwapSaveAfterPeerSwapLandedOlder", func(t *testing.T) { orderedSwap(t, "swapo.txt", true) })
 
 	// Both sides swap-save the SAME file concurrently: each takes a working
 	// copy of v1, edits it, and renames it over the target, the two renames
@@ -569,6 +587,42 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		WaitForCondition(t, 60*time.Second, 500*time.Millisecond, func() bool {
 			return len(listConflicts(alice)) >= 1 && len(listConflicts(bob)) >= 1
 		}, "waiting for the crossing-swap conflict copy on both peers")
+	})
+
+	// Part 1 repro (A6, swap-save-stamps-2026-10-01): the reader reads a header
+	// of the owner's file (so its base is the held version, turn-taking), then
+	// patches one region in place without ever reading the rest. kd never
+	// fetched the rest, the write makes the file local-authoritative, and the
+	// announce carries the whole size: the owner adopts a file with holes.
+	t.Run("ReverseRegionEditUnread", func(t *testing.T) {
+		const name = "hole.big"
+		readAt := func(p *testPeer, off, n int) string {
+			resp := p.send(t, fmt.Sprintf("read_at %s %d %d", name, off, n), 30*time.Second)
+			require.True(strings.HasPrefix(resp, "HEX:"), "read_at failed: %s", resp)
+			return resp
+		}
+		writeRand(t, bob, name, 24*1048576)
+		WaitForFileOnMount(t, filepath.Join(aliceMount, name), 60*time.Second)
+		before0 := readAt(bob, 0, 4096)
+		before3 := readAt(bob, 20*1048576, 4096)
+		// The reader's app reads the header (one 16 MiB demand unit lands), then
+		// patches 1 MiB at 1 MiB; the last 8 MiB were never fetched.
+		_ = readAt(alice, 0, 4096)
+		ex(t, alice, ".", "dd if=/dev/urandom of="+name+" bs=1048576 count=1 seek=1 conv=notrunc", 60*time.Second)
+		waitConverged(t, alice, bob, name, 120*time.Second)
+		time.Sleep(3 * time.Second)
+		after0 := readAt(bob, 0, 4096)
+		after3 := readAt(bob, 20*1048576, 4096)
+		var siblings []string
+		for _, n := range listNames(t, bob) {
+			if strings.Contains(n, "hole.conflict-") {
+				siblings = append(siblings, strings.TrimSpace(n))
+			}
+		}
+		zeros := strings.Count(strings.TrimPrefix(after3, "HEX:4096:"), "00")
+		t.Logf("owner after convergence: header unchanged=%v, bytes at 20 MiB unchanged=%v, zero pairs in the 20 MiB sample=%d of 4096, conflict copies on the owner=%v",
+			before0 == after0, before3 == after3, zeros, siblings)
+		require.Equal(before3, after3, "the owner's bytes outside the reader's write were replaced (A6)")
 	})
 }
 
