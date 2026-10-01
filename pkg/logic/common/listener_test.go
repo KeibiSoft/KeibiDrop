@@ -166,9 +166,9 @@ func TestAcceptDeadlineExitsOnTimeout(t *testing.T) {
 	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
 	require.NoError(t, err, "NewKeibiDropWithIP failed")
 
-	_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(200 * time.Millisecond))
+	_ = kd.listener.(deadlineListener).SetDeadline(time.Now().Add(200 * time.Millisecond))
 	_, acceptErr := kd.listener.Accept()
-	_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
+	_ = kd.listener.(deadlineListener).SetDeadline(time.Time{})
 
 	require.Error(t, acceptErr, "Expected deadline error from Accept, got nil")
 	require.True(t, os.IsTimeout(acceptErr), "Expected timeout error, got: %v", acceptErr)

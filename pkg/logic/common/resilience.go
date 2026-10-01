@@ -91,9 +91,9 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		if ln == nil {
 			return nil, fmt.Errorf("accept-conn: inbound listener not open")
 		}
-		if tcpL, ok := ln.(*net.TCPListener); ok {
-			_ = tcpL.SetDeadline(time.Now().Add(timeout))
-			return tcpL.Accept()
+		if dl, ok := ln.(deadlineListener); ok {
+			_ = dl.SetDeadline(time.Now().Add(timeout))
+			return dl.Accept()
 		}
 		return ln.Accept()
 	}
