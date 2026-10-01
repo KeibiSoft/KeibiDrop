@@ -331,7 +331,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 	}
 
 	addr := net.JoinHostPort("", strconv.Itoa(inboundPort))
-	listener, err := net.Listen("tcp", addr)
+	listener, err := listenInbound("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +619,7 @@ func (kd *KeibiDrop) UpgradeListenerDualStack() error {
 		kd.listener.Close()
 	}
 	addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
-	ln, err := net.Listen("tcp", addr)
+	ln, err := listenInbound("tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -636,7 +636,7 @@ func (kd *KeibiDrop) DowngradeListenerIPv6Only() error {
 		kd.listener.Close()
 	}
 	addr := net.JoinHostPort("::", strconv.Itoa(kd.inboundPort))
-	ln, err := net.Listen("tcp6", addr)
+	ln, err := listenInbound("tcp6", addr)
 	if err != nil {
 		return err
 	}

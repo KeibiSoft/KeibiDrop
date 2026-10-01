@@ -925,9 +925,9 @@ func (kd *KeibiDrop) joinRoom() error {
 				}
 
 				// Accept inbound from peer (LAN, should be fast, 5s timeout).
-				_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(5 * time.Second))
+				_ = ln.(deadlineListener).SetDeadline(time.Now().Add(5 * time.Second))
 				inConn, err := ln.Accept()
-				_ = ln.(*net.TCPListener).SetDeadline(time.Time{}) // clear deadline
+				_ = ln.(deadlineListener).SetDeadline(time.Time{}) // clear deadline
 				if err != nil {
 					logger.Warn("LAN inbound accept failed", "error", err)
 					// Close outbound, fall through to direct/bridge.
@@ -1019,7 +1019,7 @@ func (kd *KeibiDrop) joinRoom() error {
 					return ErrListenerNotOpen
 				}
 
-				_ = ln.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+				_ = ln.(deadlineListener).SetDeadline(time.Now().Add(15 * time.Second))
 				// Same junk-connection tolerance as the create side: a relay
 				// probe or a scanner must not kill the return leg.
 				var inConn net.Conn
@@ -1035,7 +1035,7 @@ func (kd *KeibiDrop) joinRoom() error {
 					}
 					break
 				}
-				_ = ln.(*net.TCPListener).SetDeadline(time.Time{})
+				_ = ln.(deadlineListener).SetDeadline(time.Time{})
 
 				if acceptErr != nil {
 					logger.Warn("Inbound accept failed", "error", acceptErr)
@@ -1452,7 +1452,7 @@ func (kd *KeibiDrop) createRoom() error {
 	// Reopen listener if it was closed during bridge fallback.
 	if kd.listener == nil {
 		addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
-		newLn, lnErr := net.Listen("tcp", addr)
+		newLn, lnErr := listenInbound("tcp", addr)
 		if lnErr != nil {
 			return fmt.Errorf("reopen listener: %w", lnErr)
 		}
@@ -1480,7 +1480,7 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 	// can take a direct joiner.
 	if kd.listener == nil && kd.BridgeAddr != "" && round > 0 && !inboundBlocked {
 		addr := net.JoinHostPort("", strconv.Itoa(kd.inboundPort))
-		if newLn, lnErr := net.Listen("tcp", addr); lnErr == nil {
+		if newLn, lnErr := listenInbound("tcp", addr); lnErr == nil {
 			kd.listener = newLn
 		} else {
 			logger.Warn("Could not re-arm the inbound listener for this round", "error", lnErr)
@@ -1511,7 +1511,7 @@ func (kd *KeibiDrop) createRendezvousRound(logger *slog.Logger, round int) (bool
 	legs := 0
 	var acceptor *directAcceptor
 	if direct {
-		acceptor = startDirectAcceptor(kd.listener.(*net.TCPListener), arrivals, bridgeRoundWait)
+		acceptor = startDirectAcceptor(kd.listener.(deadlineListener), arrivals, bridgeRoundWait)
 		legs++
 	}
 	bridgeLeg := &bridgeLegHolder{}

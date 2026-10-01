@@ -29,7 +29,7 @@ func TestRendezvous_RoomSurvivesRoundsUntilTheJoinerArrives(t *testing.T) {
 	port := kd.inboundPort
 
 	// Round 0's window closes with nobody there, exactly as it did on the WAN.
-	require.NoError(t, kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(150*time.Millisecond)))
+	require.NoError(t, kd.listener.(deadlineListener).SetDeadline(time.Now().Add(150*time.Millisecond)))
 	_, acceptErr := kd.listener.Accept()
 	require.Error(t, acceptErr, "the first window must close empty")
 	kd.listener.Close()
@@ -40,7 +40,7 @@ func TestRendezvous_RoomSurvivesRoundsUntilTheJoinerArrives(t *testing.T) {
 
 	// A joiner arriving well after the old 38s door must still be accepted.
 	accepted := testkit.Go(func() error {
-		if err := kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		if err := kd.listener.(deadlineListener).SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 			return err
 		}
 		c, err := kd.listener.Accept()
@@ -52,6 +52,9 @@ func TestRendezvous_RoomSurvivesRoundsUntilTheJoinerArrives(t *testing.T) {
 
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
 	require.NoError(t, err, "the re-armed room must accept a late joiner")
+	// A joiner speaks first; the listener drops a connection that opens with nothing.
+	_, err = conn.Write(handshakeHello)
+	require.NoError(t, err)
 	require.NoError(t, conn.Close())
 	require.NoError(t, accepted())
 }
@@ -101,7 +104,7 @@ func newRendezvousKD(t *testing.T) *KeibiDrop {
 func rearmRendezvousListener(t *testing.T, kd *KeibiDrop) {
 	t.Helper()
 	addr := net.JoinHostPort("", fmt.Sprintf("%d", kd.inboundPort))
-	ln, err := net.Listen("tcp", addr)
+	ln, err := listenInbound("tcp", addr)
 	require.NoError(t, err, "the round must be able to re-arm the listener on the same port")
 	kd.listener = ln
 }

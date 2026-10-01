@@ -73,14 +73,14 @@ func isTimeout(err error) bool {
 // to the round through arrivals. It exits when the listener's deadline passes or
 // stop closes it.
 type directAcceptor struct {
-	ln       *net.TCPListener
+	ln       deadlineListener
 	arrivals chan<- roundArrival
 	quit     chan struct{}
 	done     chan struct{}
 	once     sync.Once
 }
 
-func startDirectAcceptor(ln *net.TCPListener, arrivals chan<- roundArrival, window time.Duration) *directAcceptor {
+func startDirectAcceptor(ln deadlineListener, arrivals chan<- roundArrival, window time.Duration) *directAcceptor {
 	a := &directAcceptor{ln: ln, arrivals: arrivals, quit: make(chan struct{}), done: make(chan struct{})}
 	_ = ln.SetDeadline(time.Now().Add(window))
 	go func() {
