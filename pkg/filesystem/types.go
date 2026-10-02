@@ -426,8 +426,16 @@ type File struct {
 	LastAnnouncedMtimeNs int64
 
 	// WasTruncatedToZero records an explicit Truncate(size=0) call. With
-	// HadEdits, it separates legitimate empty files from transient states.
+	// HadEdits, it separates legitimate empty files from transient states. A
+	// cache copy truncated to zero holds no unfetched bytes any more: every
+	// byte on disk from then on is the app's, so a write needs no fill.
 	WasTruncatedToZero bool
+
+	// AnnounceAfterFill is set by Release when the edited file still has
+	// chunks never fetched (A6, swap-save-stamps 2026-10-01): the announce
+	// would present the holes as content, so it waits for the background
+	// fill, which announces on completion. Guarded by metaMu.
+	AnnounceAfterFill bool
 
 	// LastNotifiedSize is the file size last sent to the peer in ADD_FILE. It
 	// prevents duplicate same-size notifications during a file copy.
@@ -483,13 +491,28 @@ type File struct {
 
 	// Download resumption state.
 	Download DownloadState
+	// WireBytes counts the bytes received from the peer for this file on every
+	// lane (demand, read-ahead, prefetch, sibling warm). A test reads it to
+	// prove a change moved only what differs; Download.BytesDownloaded counts
+	// served and prefetched bytes and misses the read-ahead lane.
+	WireBytes atomic.Uint64
 
 	// Bitmap tracks which 512 KiB chunks are downloaded from the remote peer.
 	// It is nil for local-origin files and empty files (size=0).
 	Bitmap *ChunkBitmap
 
+	// Ledger is the per-chunk version state of a cache copy (chunk_ledger.go):
+	// made at the first local write into one, restored from a v2 sidecar, nil
+	// for a local-origin file. Guarded by metaMu like Bitmap; reset with it.
+	Ledger *ChunkLedger
+
 	// PrefetchCancel cancels the background prefetch goroutine for this file.
 	PrefetchCancel context.CancelFunc
+	// fillActive is set while a prefetchFile goroutine runs. The gates that
+	// start a fill (Release, OpenEx, the announce resume) read it, so a fill
+	// that ended short of complete (the link dropped) can be started again:
+	// a cancel func left behind kept the deferred announce waiting for ever.
+	fillActive atomic.Bool
 
 	// sidecarTimer coalesces .kdbitmap writes after on-demand landings (sidecar.go).
 	sidecarMu    sync.Mutex

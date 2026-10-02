@@ -365,6 +365,34 @@ func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) {
 	}
 }
 
+// retargetPendingAdd points a queued temp ADD at the path a RENAME moved the
+// temp to, so it describes the swapped version: the rename's declared base
+// (the temp's own base, -1 for a fresh working copy, does not describe the
+// swap) and the rename's Attr, so the version goes out with ONE stamp. With
+// its own Attr the ADD carried the Go-clock stamp Write took after the
+// pwrite, above the RENAME's disk stamp by up to a kernel tick, and the
+// receiver reset its bitmap a second time for bytes it already had (gap C,
+// 2026-10-01). The Attr is copied: the RENAME request is sent on its own and
+// the flush-time refresh writes into the ADD's.
+func retargetPendingAdd(add, ren *bindings.NotifyRequest) {
+	add.Path = ren.Path
+	add.BaseMtimeNs = ren.BaseMtimeNs
+	if ren.Attr == nil {
+		return
+	}
+	add.Attr = &bindings.Attr{
+		Dev:              ren.Attr.Dev,
+		Ino:              ren.Attr.Ino,
+		Mode:             ren.Attr.Mode,
+		Size:             ren.Attr.Size,
+		AccessTime:       ren.Attr.AccessTime,
+		ModificationTime: ren.Attr.ModificationTime,
+		ChangeTime:       ren.Attr.ChangeTime,
+		BirthTime:        ren.Attr.BirthTime,
+		Flags:            ren.Attr.Flags,
+	}
+}
+
 // isDebouncedNotify reports whether a notify type is per-path debounced (ADD_FILE/EDIT_FILE).
 // Everything else is sent immediately and is what pendingNotifies tracks.
 func isDebouncedNotify(t bindings.NotifyType) bool {
@@ -591,14 +619,11 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 						deadline: time.Now().Add(200 * time.Millisecond),
 					}
 				case bindings.NotifyType_RENAME_FILE, bindings.NotifyType_RENAME_DIR:
-					// RENAME: send immediately. Re-target any pending ADD_FILE for the old path
-					// to the new path so the peer still downloads the content.
+					// RENAME: send at the next tick. Re-target any pending ADD_FILE for the old
+					// path to the new path so the peer still downloads the content.
 					if old, exists := pending[req.OldPath]; exists {
 						delete(pending, req.OldPath)
-						old.req.Path = req.Path // retarget to new path
-						// The temp's own base (-1 for a fresh working copy) does
-						// not describe the swap; the rename's declared base does.
-						old.req.BaseMtimeNs = req.BaseMtimeNs
+						retargetPendingAdd(old.req, req)
 						pending[req.Path] = old
 					}
 					immediate = append(immediate, req)

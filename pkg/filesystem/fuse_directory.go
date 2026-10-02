@@ -793,7 +793,12 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	d.OpenFileHandlers[handleID] = &HandleEntry{FD: fd, File: fh}
 
 	if remoteHasUpdate {
+		// Under metaMu like every other write of this flag: prefetchFile
+		// clears it under metaMu, and the race detector caught the two
+		// crossing (TestRemotePrefetchStateRace, 2 of ~18 runs, 2026-10-02).
+		fh.metaMu.Lock()
 		fh.NotLocalSynced = true
+		fh.metaMu.Unlock()
 		fh.StreamPool = pool
 		fh.StreamCancel = streamCancel
 		if cacheFD != nil && fh.CacheFD == nil {
@@ -825,7 +830,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	// sequential fill plus lag-free jumps; small files stay pure on-demand
 	// (instant open, fetch only what is read). The guard stops a second handle
 	// on the same file from starting a duplicate.
-	if remoteHasUpdate && shouldPrefetchOnOpen(d.PrefetchOnOpen, d.PrefetchAutoMB, remoteTotalSize) && fh.PrefetchCancel == nil {
+	if remoteHasUpdate && shouldPrefetchOnOpen(d.PrefetchOnOpen, d.PrefetchAutoMB, remoteTotalSize) && !fh.fillActive.Load() {
 		d.startPrefetch(logger, fh, path)
 	}
 
@@ -1434,6 +1439,31 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		// RDWR). Such an announce makes the owner drop its authority.
 		needsNotify := (hadEdits || (notRemoteSynced && localNewer)) && d.hasOnLocalChange()
 
+		// Chunks never fetched: the announce would present them as content.
+		// Start the fill and announce when it completes (prefetchFile).
+		f.metaMu.Lock()
+		deferToFill := (needsNotify || f.AnnounceAfterFill) && writeNeedsFillLocked(f)
+		if deferToFill {
+			f.AnnounceAfterFill = true
+			if f.Ledger != nil && f.stat != nil {
+				// The dirty records take the identity the announce will
+				// carry and reach the sidecar, durable, before the fill:
+				// a restart during the fill then restores the edit.
+				f.Ledger.SettleDirty(f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec)
+			}
+		}
+		f.metaMu.Unlock()
+		if deferToFill {
+			needsNotify = false
+			// Synchronous: the records are on disk when close returns, so a
+			// stop right after it loses nothing. One fsync of the written
+			// bytes, only for a partial edit of a copy with chunks missing.
+			f.flushSidecarSynced()
+			if !f.fillActive.Load() {
+				d.startPrefetch(logger, f, path)
+			}
+		}
+
 		if needsNotify {
 			cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 			stgo, lstatErr := platLstat(cleanPath)
@@ -1515,32 +1545,7 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 					})
 				}()
 			} else {
-				f.metaMu.Lock()
-				base := f.EditBaseMtimeNs
-				f.NotRemoteSynced = false
-				f.HadEdits = false
-				// Do not announce a time below the in-memory identity. Write
-				// sets f.stat.Mtim from the Go clock. The disk mtime comes
-				// from the coarse kernel tick and can be some ms older. The
-				// peer's acceptance compares against f.stat.Mtim. An announce
-				// below it makes two concurrent writers reject each other and
-				// never converge.
-				if f.stat != nil {
-					if memNs := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; memNs > stgo.Mtim.Sec*1e9+stgo.Mtim.Nsec {
-						stgo.Mtim = f.stat.Mtim
-					}
-				}
-				f.LastAnnouncedMtimeNs = stgo.Mtim.Sec*1e9 + stgo.Mtim.Nsec
-				if f.LastAnnouncedMtimeNs > f.HeldMtimeNs {
-					f.HeldMtimeNs = f.LastAnnouncedMtimeNs
-				}
-				f.metaMu.Unlock()
-				d.OnLocalChange(types.FileEvent{
-					Path:        path,
-					Action:      types.AddFile,
-					Attr:        types.StatToAttr(&stgo),
-					BaseMtimeNs: base,
-				})
+				d.announceLocalEdit(f, path, stgo)
 			}
 		}
 
@@ -1677,8 +1682,9 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	// A rename onto a tracked file is an app swap-save. Declare the newest
 	// version of the target whose bytes this peer held, as an in-place edit
 	// does: the receiver then preserves its bytes when they are newer than
-	// anything the saving app could have read.
-	swapBase := d.swapBase(newpath)
+	// anything the saving app could have read. swapSeen is the newest stamp
+	// this peer has seen for the target: the announce below must sit above it.
+	swapBase, swapSeen := d.swapStamps(newpath)
 
 	// On Windows, rename fails when source or target has an open handle.
 	// Close all held handles on either path before the rename.
@@ -1753,6 +1759,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 
 	// Update internal maps to reflect the rename.
 	var movedLocal *File
+	var movedMemNs int64 // the identity Write stamped, before refreshFileStat reads the disk
 	d.AfmLock.Lock()
 	if f, ok := d.AllFileMap[oldpath]; ok {
 		delete(d.AllFileMap, oldpath)
@@ -1761,6 +1768,11 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		f.RealPathOfFile = cleanNewPath
 		d.AllFileMap[newpath] = f
 		movedLocal = f
+		f.metaMu.Lock()
+		if f.LocalNewer && f.stat != nil {
+			movedMemNs = f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec
+		}
+		f.metaMu.Unlock()
 	}
 	d.AfmLock.Unlock()
 
@@ -1826,12 +1838,10 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 		// Stat of the renamed file, taken once right after the disk rename.
 		var attr *keibidrop.Attr
 		if renStatOK {
-			attr = types.StatToAttr(&renStat)
-			if movedLocal != nil {
-				movedLocal.metaMu.Lock()
-				movedLocal.LastAnnouncedMtimeNs = renStat.Mtim.Sec*1e9 + renStat.Mtim.Nsec
-				movedLocal.metaMu.Unlock()
+			if !isDirRename {
+				stampRenamedFile(movedLocal, &renStat, movedMemNs, swapSeen)
 			}
+			attr = types.StatToAttr(&renStat)
 		}
 
 		d.OnLocalChange(types.FileEvent{
@@ -1951,6 +1961,114 @@ func (d *Dir) Symlink(target string, newpath string) (errCode int) {
 
 // Truncate sets the file size. On Windows, open has no truncate flag, so
 // Open is followed at once by Truncate.
+// announceLocalEdit announces the edited file at path with the disk stat
+// stgo, clamped to the in-memory identity, and records the announce as this
+// peer's newest. Release calls it when the file is complete; the fill calls
+// it when the last missing chunk lands (AnnounceAfterFill).
+func (d *Dir) announceLocalEdit(f *File, path string, stgo winfuse.Stat_t) {
+	f.metaMu.Lock()
+	base := f.EditBaseMtimeNs
+	f.NotRemoteSynced = false
+	f.HadEdits = false
+	f.AnnounceAfterFill = false
+	if f.Ledger != nil {
+		f.Ledger.Clean() // announced: the peer judges these records from here
+	}
+	// Do not announce a time below the in-memory identity. Write
+	// sets f.stat.Mtim from the Go clock. The disk mtime comes
+	// from the coarse kernel tick and can be some ms older. The
+	// peer's acceptance compares against f.stat.Mtim. An announce
+	// below it makes two concurrent writers reject each other and
+	// never converge.
+	if f.stat != nil {
+		if memNs := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; memNs > stgo.Mtim.Sec*1e9+stgo.Mtim.Nsec {
+			stgo.Mtim = f.stat.Mtim
+		}
+	}
+	f.LastAnnouncedMtimeNs = stgo.Mtim.Sec*1e9 + stgo.Mtim.Nsec
+	if f.LastAnnouncedMtimeNs > f.HeldMtimeNs {
+		f.HeldMtimeNs = f.LastAnnouncedMtimeNs
+	}
+	f.metaMu.Unlock()
+	d.OnLocalChange(types.FileEvent{
+		Path:        path,
+		Action:      types.AddFile,
+		Attr:        types.StatToAttr(&stgo),
+		BaseMtimeNs: base,
+	})
+}
+
+// writeNeedsFill reports whether f is a cache copy with chunks still missing
+// that a write must not leave behind: a remote file not fully fetched and not
+// truncated to zero in this session.
+func writeNeedsFill(f *File) bool {
+	f.metaMu.RLock()
+	defer f.metaMu.RUnlock()
+	return writeNeedsFillLocked(f)
+}
+
+func writeNeedsFillLocked(f *File) bool {
+	return f.NotLocalSynced && !f.WasTruncatedToZero && f.Bitmap != nil && !f.Bitmap.IsComplete()
+}
+
+// fillForWrite lands the peer's bytes for every chunk of [offset, offset+n)
+// still missing, through the path a read miss uses, then waits for the cache
+// writes so the pwrite that follows is not overwritten by one of them. Bytes
+// past the remote size are new and need nothing. Cost: one unit fetch per
+// missing unit, the same stall a read of those bytes would take.
+func (d *Dir) fillForWrite(logger *slog.Logger, f *File, path string, fh uint64, offset int64, n int) int {
+	f.metaMu.RLock()
+	bm := f.Bitmap
+	f.metaMu.RUnlock()
+	if bm == nil {
+		return 0
+	}
+	size := bm.FileSize()
+	cs := int64(bm.ChunkSizeBytes())
+	end := min(offset+int64(n), size)
+	for pos := (offset / cs) * cs; pos < end; pos += cs {
+		c := int(pos / cs)
+		if bm.Has(c) {
+			continue
+		}
+		buf := make([]byte, min(cs, size-pos))
+		if rc := d.Read(path, buf, pos, fh); rc < 0 {
+			return rc
+		}
+		// The read lands its range through an async cache writer: wait for
+		// it before trusting the bitmap, and before the pwrite that follows.
+		f.CacheWg.Wait()
+		if !bm.Has(c) {
+			logger.Warn("Write into an unfetched chunk: the fill did not land it", "chunk", c)
+			return -winfuse.EIO
+		}
+	}
+	return 0
+}
+
+// rehashWritten refreshes the stored fingerprints of the chunks a local write
+// covered, from the bytes on disk. A chunk that cannot be read back keeps its
+// bit with a zero fingerprint: it is never cleared, or the fill would land
+// the peer's bytes over the app's.
+func rehashWritten(fd int, bm *ChunkBitmap, offset int64, n int) {
+	cs := int64(bm.ChunkSizeBytes())
+	size := bm.FileSize()
+	buf := make([]byte, cs)
+	for pos := (offset / cs) * cs; pos < offset+int64(n) && pos < size; pos += cs {
+		c := int(pos / cs)
+		if !bm.Has(c) {
+			continue
+		}
+		l := min(cs, size-pos)
+		got, err := platPread(fd, buf[:l], pos)
+		if err != nil || int64(got) != l {
+			bm.SetHash(c, 0)
+			continue
+		}
+		bm.SetHash(c, xxh3.Hash(buf[:l]))
+	}
+}
+
 func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 	if fuseOpLog {
 		d.logger.Debug("oplog Truncate", "path", path, "size", size, "fh", fh)
@@ -1997,6 +2115,13 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 			// A bare truncate is a content edit: claim authority so a
 			// crossing peer edit is judged against it and can be preserved.
 			f.LocalNewer = true
+		}
+		if size == 0 {
+			// Nothing unfetched survives a truncate to zero: later writes
+			// need no fill and the file is local from here on.
+			f.WasTruncatedToZero = true
+			f.NotLocalSynced = false
+			f.Ledger = nil
 		}
 		// HeldMtimeNs is NOT stamped here: it carries announce-clock values
 		// only (fetch watermark, own announces). The disk mtime after a
@@ -2233,6 +2358,24 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	if fuseOpLog {
 		d.logger.Debug("oplog Write hit", "path", path, "fh", fh, "offset", offset, "len", len(buff))
 	}
+	// A write into a cache copy with chunks never fetched: the chunks it
+	// touches take the peer's bytes first, through the path a read miss uses
+	// (A6, swap-save-stamps 2026-10-01). Without that the write landed beside
+	// holes, the file became local as a whole, and the announce presented the
+	// holes as content: the owner adopted zeros for 8 MiB a reader never
+	// read. Read takes OpenMapLock, so the fill runs outside it and the
+	// handle is looked up again.
+	if writeNeedsFill(f) {
+		d.OpenMapLock.RUnlock()
+		if rc := d.fillForWrite(logger, f, path, fh, offset, len(buff)); rc != 0 {
+			return rc
+		}
+		d.OpenMapLock.RLock()
+		if cur, still := d.OpenFileHandlers[fh]; !still || cur.File != f {
+			d.OpenMapLock.RUnlock()
+			return -winfuse.EIO
+		}
+	}
 	f.metaMu.Lock()
 	f.HadEdits = true
 	if !f.NotRemoteSynced {
@@ -2247,10 +2390,33 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 			f.EditBaseMtimeNs = -1
 		}
 	}
-	f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
+	// A copy with chunks still missing stays a cache copy: reads keep
+	// fetching the rest on demand and Release starts the fill. A complete
+	// copy is local from here on.
+	partial := writeNeedsFillLocked(f)
+	if !partial {
+		f.NotLocalSynced = false // Local write makes us authoritative - don't read from remote
+	}
 	f.NotRemoteSynced = true // File content changed - notify peer on Release with new size
 	f.LocalNewer = true
+	bm := f.Bitmap
+	// A write into a cache copy is a chunk-level change the peer has not
+	// judged: the ledger records it with the base it starts from, and the
+	// sidecar carries it across a restart (chunk_ledger.go).
+	var led *ChunkLedger
+	var ledBase int64
+	if partial && bm != nil {
+		if f.Ledger == nil {
+			f.Ledger = NewChunkLedger(bm.FileSize())
+		}
+		led = f.Ledger
+		ledBase = f.HeldMtimeNs
+	}
 	f.metaMu.Unlock()
+	var ledBases map[int]uint64
+	if led != nil {
+		ledBases = led.basesFor(bm, offset, len(buff))
+	}
 
 	startPwrite := time.Now()
 	n, err := platPwrite(entry.FD, buff, offset)
@@ -2268,6 +2434,14 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 			f.stat.Mtim = winfuse.NewTimespec(time.Now())
 		}
 		f.metaMu.Unlock()
+		if partial && bm != nil {
+			// The stored fingerprints must describe the disk, or the next
+			// reconcile keeps a chunk the app rewrote as the peer's bytes.
+			rehashWritten(entry.FD, bm, offset, n)
+			if led != nil {
+				led.markRange(offset, n, ledBases, ledBase)
+			}
+		}
 	}
 
 	d.OpenMapLock.RUnlock() // Release AFTER Pwrite to prevent race with Release
@@ -2304,7 +2478,9 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 		// Guard under metaMu: Read/OpenEx read these on the same *File via a
 		// different lock (metaMu). metaMu is innermost; RemoteFilesLock stays held.
 		rf.metaMu.Lock()
-		rf.NotLocalSynced = false
+		if !partial {
+			rf.NotLocalSynced = false
+		}
 		rf.LocalNewer = true
 		rf.metaMu.Unlock()
 	}
@@ -2364,20 +2540,25 @@ func (bf *blockFetch) wait(ctx context.Context) (settled bool, err error) {
 	}
 }
 
+// noteHeld records that bytes of the announced version are in this process:
+// the session base reads HeldMtimeNs, so an announce can never claim a
+// version this peer never held.
+func (f *File) noteHeld() {
+	f.metaMu.Lock()
+	if f.RemoteMtimeNs > f.HeldMtimeNs {
+		f.HeldMtimeNs = f.RemoteMtimeNs
+	}
+	f.metaMu.Unlock()
+}
+
 // finishFetch settles the fetch and drops its unit registrations. The deletes
 // are conditional so a late or backstop call cannot evict a newer leader's
 // entry, and settle is idempotent, so calling this more than once is safe.
 func (f *File) finishFetch(bf *blockFetch, err error) {
 	if err == nil {
 		// Landed remote bytes: this peer now holds (part of) the announced
-		// version. The session base reads HeldMtimeNs, so an announce can
-		// never claim a version this peer never held. Off the cache-hit
-		// path: this runs only after a network fetch.
-		f.metaMu.Lock()
-		if f.RemoteMtimeNs > f.HeldMtimeNs {
-			f.HeldMtimeNs = f.RemoteMtimeNs
-		}
-		f.metaMu.Unlock()
+		// version. Off the cache-hit path: this runs only after a fetch.
+		f.noteHeld()
 	}
 	f.fetchMu.Lock()
 	for _, k := range bf.keys {
@@ -2460,7 +2641,8 @@ func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap 
 			f.finishFetch(bf, errBlockFetchIncomplete)
 			return
 		}
-		if werr := markCached(cacheFD, bitmap, data, blockStart, remoteFileSize); werr != nil {
+		f.WireBytes.Add(uint64(len(data)))
+		if _, werr := markCached(cacheFD, bitmap, data, blockStart, remoteFileSize); werr != nil {
 			f.finishFetch(bf, werr)
 			return
 		}
@@ -2476,38 +2658,51 @@ const reconcileMinSize = int64(ReadAheadBlock)
 
 // maybeReconcileEdit is the eligibility gate the edit reset sites call. The site has
 // ALREADY done today's full reset (newBitmap is the fresh, valid "re-fetch everything"
-// state). This only ADDS a background optimization: when the pre-edit bitmap carried
-// per-chunk fingerprints and the file is large enough, spawn reconcileEditAsync to
-// re-mark the unchanged chunks present so reads serve them from cache instead of
+// state). This only ADDS a background optimization: when the file is large enough and
+// the pre-edit bytes are provable, either by the fingerprints the pre-edit bitmap
+// carried or by hashing a local file that holds them (seed), spawn reconcileEditAsync
+// to re-mark the unchanged chunks present so reads serve them from cache instead of
 // re-fetching. On any failure or ineligibility the full reset simply stands.
 //
 // oldBitmap/oldSize are captured at the call site BEFORE the reset (oldBitmap before
 // f.Bitmap is reassigned, oldSize before f.stat is overwritten). newBitmap is the live
-// post-reset f.Bitmap; newSize is the incoming notify size. Takes no RemoteFilesLock.
-func (d *Dir) maybeReconcileEdit(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64) {
-	if oldBitmap == nil || newBitmap == nil || !oldBitmap.HasHashes() || newSize < reconcileMinSize {
+// post-reset f.Bitmap; newSize is the incoming notify size. seed names the local file
+// whose bytes are the version the edit replaced, used when oldBitmap carries no
+// fingerprints: the file itself (an author's own copy, a copy adopted from a sidecar),
+// or the conflict sibling the bytes moved to; "" means none. Takes no RemoteFilesLock.
+func (d *Dir) maybeReconcileEdit(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64, seed string) {
+	if newBitmap == nil || newSize < reconcileMinSize {
+		return
+	}
+	if (oldBitmap == nil || !oldBitmap.HasHashes()) && seed == "" {
 		return
 	}
 	hasher, ok := d.OpenStreamProvider().(types.ChunkHasher)
 	if !ok || hasher == nil {
 		return // older peer / no RPC: full reset stands.
 	}
-	go d.reconcileEditAsync(path, f, oldBitmap, newBitmap, oldSize, newSize)
+	go d.reconcileEditAsync(path, f, oldBitmap, newBitmap, oldSize, newSize, seed)
 }
 
 // reconcileEditAsync runs in its own goroutine after a remote-edit full reset and marks
-// the chunks proven unchanged (our cached hash == the peer's new hash) present again on
-// the LIVE bitmap captured at spawn. It is lock-free with respect to RemoteFilesLock,
-// never waits on CacheWg, never writes the cache file, and never swaps f.Bitmap: the
-// hash-matched chunks' bytes are already in cache (in-place edits leave the cache; the
-// size-change site truncates, preserving the common prefix), so marking them present is
-// correct. On ANY error or non-match it does nothing extra and the full reset stands.
+// the chunks proven unchanged (our hash == the peer's new hash) present again on the
+// LIVE bitmap captured at spawn. With fingerprints in oldBitmap it is lock-free with
+// respect to RemoteFilesLock, never waits on CacheWg, never writes the cache file, and
+// never swaps f.Bitmap: the hash-matched chunks' bytes are already in cache (in-place
+// edits leave the cache; the size-change site truncates, preserving the common prefix),
+// so marking them present is correct. Without fingerprints it hashes seed from disk
+// (seedFromLocal). On ANY error or non-match it does nothing extra and the full reset
+// stands.
 //
 // newBitmap is a specific object: if a later edit swaps f.Bitmap again, this job's Set
 // calls land on an orphaned bitmap (harmless) and the newer edit spawns its own job.
 // This job never re-reads f.Bitmap.
-func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64) {
-	if oldBitmap == nil || newBitmap == nil {
+func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *ChunkBitmap, oldSize, newSize int64, seed string) {
+	if newBitmap == nil {
+		return
+	}
+	hashed := oldBitmap != nil && oldBitmap.HasHashes()
+	if !hashed && seed == "" {
 		return
 	}
 	// Bound concurrency with the same semaphore prefetch uses; abort on unmount/disconnect.
@@ -2553,6 +2748,11 @@ func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *Chu
 		peerHashes[int(idx)] = h
 	}
 
+	if !hashed {
+		d.seedFromLocal(f, oldBitmap, newBitmap, seed, commonEnd, peerHashes)
+		return
+	}
+
 	decided, ok := reconcileBitmap(oldBitmap, oldSize, newSize, peerHashes)
 	if !ok {
 		return
@@ -2569,6 +2769,126 @@ func (d *Dir) reconcileEditAsync(path string, f *File, oldBitmap, newBitmap *Chu
 		newBitmap.Set(c)
 		newBitmap.SetHash(c, h)
 	}
+}
+
+// seedFromLocal marks on the live bitmap every common-prefix chunk whose bytes
+// in the local file seed hash to the peer's fingerprint, copying the chunk into
+// the cache copy first when seed is another file: the conflict sibling the
+// loser's bytes moved to, or the canonical a sibling is seeded from. A chunk is
+// kept on an equal xxh3 only, so a torn read under a concurrent fetch, a short
+// file or a chunk the app rewrote costs a fetch, never wrong bytes. With
+// oldBitmap set only its present chunks are candidates; nil means the whole
+// file at seed was the replaced version. Runs in reconcileEditAsync's
+// goroutine, off the FUSE path: xxh3 at 20 GB/s, the disk read is the cost.
+func (d *Dir) seedFromLocal(f *File, oldBitmap, newBitmap *ChunkBitmap, seed string, commonEnd int64, peerHashes map[int]uint64) {
+	target := f.RealPathOfFile
+	if target == "" {
+		return
+	}
+	src, err := os.Open(seed) // #nosec G304 -- cache-internal path
+	if err != nil {
+		return
+	}
+	defer src.Close()
+	if st, serr := src.Stat(); serr != nil {
+		return
+	} else if st.Size() < commonEnd {
+		commonEnd = st.Size()
+	}
+	var dst *os.File
+	if filepath.Clean(target) != filepath.Clean(seed) {
+		dst, err = os.OpenFile(target, os.O_WRONLY|os.O_CREATE, 0o644) // #nosec G304
+		if err != nil {
+			return
+		}
+		defer dst.Close()
+		if st, serr := dst.Stat(); serr == nil && st.Size() < newBitmap.FileSize() {
+			_ = dst.Truncate(newBitmap.FileSize())
+		}
+	}
+	cs := int64(newBitmap.ChunkSizeBytes())
+	buf := make([]byte, cs)
+	marked := 0
+	for c := 0; (int64(c)+1)*cs <= commonEnd; c++ {
+		if d.Ctx().Err() != nil {
+			return
+		}
+		if oldBitmap != nil && !oldBitmap.Has(c) {
+			continue
+		}
+		want, known := peerHashes[c]
+		if !known || newBitmap.Has(c) {
+			continue
+		}
+		n, rerr := src.ReadAt(buf, int64(c)*cs)
+		if int64(n) != cs {
+			if rerr != nil && !errors.Is(rerr, io.EOF) {
+				return
+			}
+			continue
+		}
+		if xxh3.Hash(buf) != want {
+			continue
+		}
+		if dst != nil {
+			if _, werr := dst.WriteAt(buf, int64(c)*cs); werr != nil {
+				return
+			}
+		}
+		if newBitmap.Has(c) {
+			continue // a fetch landed the same bytes meanwhile and marked it.
+		}
+		newBitmap.Set(c)
+		newBitmap.SetHash(c, want)
+		marked++
+	}
+	if marked > 0 {
+		f.noteLanded()
+		d.logger.Debug("Reconcile seeded chunks from local bytes", "path", f.RelativePath, "seed", seed, "chunks", marked)
+	}
+}
+
+// conflictCanonical returns the path a conflict sibling was preserved from, the
+// inverse of conflictNames, or "" when relPath is not a sibling. Rel paths are
+// slash-only on all platforms: path.*, never filepath.
+func conflictCanonical(relPath string) string {
+	name := getNameFromPath(relPath)
+	i := strings.Index(name, ".conflict-")
+	if i < 0 {
+		return ""
+	}
+	ext := ""
+	if j := strings.IndexByte(name[i+len(".conflict-"):], '.'); j >= 0 {
+		ext = name[i+len(".conflict-")+j:]
+	}
+	return path.Join(path.Dir(relPath), name[:i]+ext)
+}
+
+// seedSiblingFromCanonical starts the reconcile that fills an announced
+// conflict sibling's cache copy from the canonical this peer holds: the sibling
+// is the other peer's version of the same file, so every chunk neither side
+// changed is on this disk already and only the chunks that differ are fetched.
+// Chunks are kept on an equal fingerprint only (seedFromLocal).
+func (d *Dir) seedSiblingFromCanonical(canon string, f *File, size int64) {
+	d.AfmLock.RLock()
+	cf := d.AllFileMap[canon]
+	d.AfmLock.RUnlock()
+	if cf == nil {
+		d.RemoteFilesLock.RLock()
+		cf = d.RemoteFiles[canon]
+		d.RemoteFilesLock.RUnlock()
+	}
+	if cf == nil || cf.RealPathOfFile == "" {
+		return
+	}
+	st, err := os.Stat(cf.RealPathOfFile)
+	if err != nil || st.Size() <= 0 {
+		return
+	}
+	f.metaMu.RLock()
+	bm := f.Bitmap
+	f.metaMu.RUnlock()
+	d.maybeReconcileEdit(f.RelativePath, f, nil, bm, st.Size(), size, cf.RealPathOfFile)
 }
 
 // maybeReadAhead is the predictive read-ahead detector, called on every read of a
@@ -2758,10 +3078,14 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 	// If the file is remote and has no stream pool but has incomplete chunks,
 	// try to create a pool on-demand so we can fetch the missing data.
-	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && f.StreamProvider != nil {
+	lazyProv := f.StreamProvider
+	if ok && lazyProv == nil {
+		lazyProv = d.OpenStreamProvider() // an entry made before the session (a restart) has none
+	}
+	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && lazyProv != nil {
 		// logger.Info("Creating on-demand stream pool for incomplete remote file")
 		streamCtx, streamCancel := context.WithCancel(d.Ctx())
-		newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, poolSizeForFile(remoteFileSize))
+		newPool, openErr := NewStreamPool(lazyProv, streamCtx, fh, path, poolSizeForFile(remoteFileSize))
 		if openErr != nil {
 			streamCancel()
 			logger.Warn("Failed to create on-demand stream pool", "error", openErr)
@@ -2771,6 +3095,28 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			f.StreamCancel = streamCancel
 			d.OpenMapLock.Unlock()
 			pool = newPool
+		}
+	}
+	// The same for the cache copy: a handle opened while the file was local
+	// (the author's own file, or a copy already complete) reads on after the
+	// peer's version lands. Without a cache fd every miss fetched a whole
+	// unit, served the slice and kept nothing: over the WAN a 1 MiB change
+	// cost 176 MiB through the author's open handle (2026-10-01). Open the
+	// save-folder file as OpenEx does for a remote open, so misses land once.
+	if ok && notLocalSynced && pool != nil && cacheFD == nil && bitmap != nil && !bitmap.IsComplete() && f.RealPathOfFile != "" {
+		if cfd, cfdErr := platOpen(f.RealPathOfFile, syscall.O_CREAT|syscall.O_WRONLY, 0600); cfdErr == nil {
+			mine := os.NewFile(uintptr(cfd), f.RealPathOfFile)
+			d.OpenMapLock.Lock()
+			if f.CacheFD == nil {
+				f.beginDiskWriter()
+				f.CacheFD = mine
+			} else {
+				_ = mine.Close() // another read attached one first
+			}
+			cacheFD = f.CacheFD
+			d.OpenMapLock.Unlock()
+		} else {
+			logger.Warn("Failed to open the cache fd for a handle that predates the peer's version", "error", cfdErr)
 		}
 	}
 
@@ -2984,6 +3330,16 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 			time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond) // Backoff.
 		}
+		if readErr == nil && len(data) > 0 {
+			f.WireBytes.Add(uint64(len(data)))
+			// The bytes are in this process now: it holds (part of) the announced
+			// version from here, whatever the cache writer's timing. finishFetch
+			// notes the same after the async write; an open for write in between
+			// (a read-then-patch pipeline, 5 ms apart on Linux) must not start
+			// its session at "never held", or the owner preserves a copy for a
+			// plain turn-taking patch.
+			f.noteHeld()
+		}
 
 		if readErr != nil {
 			// Shutting down (unmount/disconnect cancelled FsCtx): stop quietly,
@@ -3025,7 +3381,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			// landed, or it stopped before a unit another fetch owns or that had
 			// landed. Land ours, wait for theirs, serve the request from cache.
 			// Never a short read mid-file.
-			if werr := markCached(cacheFD, bitmap, data, fetchStart, remoteFileSize); werr != nil {
+			if _, werr := markCached(cacheFD, bitmap, data, fetchStart, remoteFileSize); werr != nil {
 				logger.Error("Cache write failed", "error", werr)
 				if isLeader {
 					asyncWriterScheduled = true
@@ -3061,7 +3417,8 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 					logger.Warn("Remote read stalled on the rest of the request, returning EIO", "error", rerr, "path", path)
 					return -winfuse.EIO
 				}
-				if werr := markCached(cacheFD, bitmap, rest, fetchEnd, remoteFileSize); werr != nil {
+				f.WireBytes.Add(uint64(len(rest)))
+				if _, werr := markCached(cacheFD, bitmap, rest, fetchEnd, remoteFileSize); werr != nil {
 					logger.Error("Cache write failed", "error", werr)
 					return -winfuse.EIO
 				}
@@ -3103,7 +3460,7 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 					// Backstop: release waiters even on panic (settle is idempotent).
 					defer f.finishFetch(leaderBf, errBlockFetchIncomplete)
 				}
-				if werr := markCached(cacheFD, bm, block, base, fsz); werr != nil {
+				if _, werr := markCached(cacheFD, bm, block, base, fsz); werr != nil {
 					logger.Error("Async cache write failed", "error", werr)
 					if leader {
 						f.finishFetch(leaderBf, werr)
@@ -3280,37 +3637,77 @@ func (d *Dir) targetIdentity(path string) int64 {
 	return id
 }
 
-// swapBase is the announce base of a swap-save onto path: the newest version
-// of the target whose bytes this peer held or announced, the rule an in-place
-// edit's EditBaseMtimeNs follows. targetIdentity overstates it when a peer's
-// swap was accepted here but never fetched: the receiver then saw its own
-// version declared as the base and replaced it without a conflict copy
-// (ConcurrentSwapSaveCrossing whenever the peer's swap landed first). -1 when
-// the target is a peer version this peer never held bytes of, as for an edit.
-func (d *Dir) swapBase(path string) int64 {
+// swapStamps returns two stamps for a swap-save onto path. base is the
+// announce base: the newest version of the target whose bytes this peer held
+// or announced, the rule an in-place edit's EditBaseMtimeNs follows.
+// targetIdentity overstates it when a peer's swap was accepted here but never
+// fetched: the receiver then saw its own version declared as the base and
+// replaced it without a conflict copy (ConcurrentSwapSaveCrossing whenever the
+// peer's swap landed first). -1 when the target is a peer version this peer
+// never held bytes of, as for an edit. seen is the newest stamp this peer has
+// seen for the target, held or not: the swap's own stamp must sit above it
+// (stampRenamedFile), or the peer whose version this peer accepted rejects
+// the save as older and nothing tells either side (gap B, 2026-10-01).
+func (d *Dir) swapStamps(path string) (base, seen int64) {
 	d.RemoteFilesLock.RLock()
 	f := d.RemoteFiles[path]
 	d.RemoteFilesLock.RUnlock()
 	if f == nil {
-		d.AfmLock.Lock()
+		d.AfmLock.RLock()
 		f = d.AllFileMap[path]
-		d.AfmLock.Unlock()
+		d.AfmLock.RUnlock()
 	}
 	if f == nil {
-		return 0
+		return 0, 0
 	}
 	f.metaMu.Lock()
 	defer f.metaMu.Unlock()
-	base := max(f.HeldMtimeNs, f.LastAnnouncedMtimeNs)
+	base = max(f.HeldMtimeNs, f.LastAnnouncedMtimeNs)
+	seen = max(f.RemoteMtimeNs, f.LastAnnouncedMtimeNs)
 	if f.LocalNewer && f.stat != nil {
-		if m := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec; m > base {
-			base = m
-		}
+		m := f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec
+		base = max(base, m)
+		seen = max(seen, m)
 	}
 	if base == 0 && f.RemoteMtimeNs > 0 {
 		base = -1
 	}
-	return base
+	return base, seen
+}
+
+// stampRenamedFile settles the one stamp a file rename announces and stores
+// it as the moved object's identity, so the in-memory stat, the last announce
+// and the wire agree. st is the disk stat of the renamed file; memNs is the
+// identity Write stamped on the moved object, when it is a dirty local file;
+// seen is the newest stamp this peer has seen for the target path.
+//
+// The disk mtime alone is wrong twice. The kernel stamps the working copy
+// with its coarse clock, below the in-memory stamp Write took after the pwrite
+// (up to one tick, 1 ms on Linux); the retargeted temp ADD then carried the
+// higher stamp and the receiver refetched bytes it already had (gap C). And a
+// working copy written before a peer version landed carries a time below that
+// version; the peer rejects the swap as older while this side has already
+// applied the peer's version, and the two diverge until the next edit (gap B,
+// main CI run 36870254753). A stamp above both is a fresh version stamp, the
+// clock condition every model in tests/model assumes. The disk is not touched:
+// the identity lives in memory as it does for an in-place edit (Release), and
+// every later announce clamps to it.
+func stampRenamedFile(moved *File, st *winfuse.Stat_t, memNs, seen int64) {
+	stamp := max(st.Mtim.Sec*1e9+st.Mtim.Nsec, memNs)
+	if stamp <= seen {
+		stamp = seen + 1
+	}
+	ts := winfuse.NewTimespec(time.Unix(0, stamp))
+	st.Mtim = ts
+	if moved == nil {
+		return
+	}
+	moved.metaMu.Lock()
+	if moved.stat != nil {
+		moved.stat.Mtim = ts
+	}
+	moved.LastAnnouncedMtimeNs = stamp
+	moved.metaMu.Unlock()
 }
 
 // SwapWouldConflict reports whether a swap arriving for path with the given
@@ -3690,6 +4087,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 	d.AfmLock.RLock()
 	local, hasLocal := d.AllFileMap[path]
 	d.AfmLock.RUnlock()
+	local, hasLocal = d.adoptForAnnounce(path, local, hasLocal)
 
 	d.RemoteFilesLock.Lock()
 	if _, ok := d.RemoteFiles[path]; !ok && hasLocal {
@@ -3703,6 +4101,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		oldSize := existing.stat.Size
 		existingStatMtime := existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
 		wasLocalNewer := existing.LocalNewer
+		announceAfterFill := existing.AnnounceAfterFill
 		existing.metaMu.Unlock()
 		sizeChanged := oldSize != stat.Size
 		// Copy the size before `existing.stat = stat` aliases it: Getattr
@@ -3754,6 +4153,11 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		if accepted {
 			existing.metaMu.Lock()
 			existing.LocalNewer = false // Remote has newer content.
+			// The peer's version replaces the local rewrite state: a later
+			// write into the new version fills its chunks again, and a
+			// pending announce of the old edit is moot.
+			existing.WasTruncatedToZero = false
+			existing.AnnounceAfterFill = false
 			existing.metaMu.Unlock()
 		}
 		existing.metaMu.Lock()
@@ -3769,6 +4173,12 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		existing.metaMu.Lock()
 		bmSnap := existing.Bitmap
 		existing.metaMu.Unlock()
+		if announceAfterFill && !accepted && bmSnap != nil && !bmSnap.IsComplete() && !existing.fillActive.Load() {
+			// An edit restored from the sidecar waits for its fill: the
+			// peer's announce of the version it started from says the bytes
+			// are fetchable again (CHUNK-LEDGER-DESIGN.md 3.3).
+			d.startPrefetch(logger, existing, path)
+		}
 		if sizeChanged && stat.Size < oldSize && bmSnap != nil && bmSnap.Have() > 0 && incomingMtime < existingMtime {
 			d.RemoteFilesLock.Unlock()
 			return nil
@@ -3783,6 +4193,13 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		// refuses the acceptance and rolls back, never silent last-writer-wins.
 		var conflictRel, conflictReal string
 		if conflict && existing.RealPathOfFile != "" {
+			if bmSnap != nil && !bmSnap.IsComplete() {
+				// The losing edit was made into a copy with chunks never
+				// fetched (A6): the copy keeps the holes. The fill could
+				// not complete before the peer's version landed.
+				logger.Warn("Conflict copy is incomplete: chunks never fetched", "path", path,
+					"missing", bmSnap.Total()-bmSnap.Have(), "of", bmSnap.Total())
+			}
 			var pErr error
 			conflictRel, conflictReal, pErr = d.preserveLoserBytes(logger, path, existing.RealPathOfFile)
 			if pErr != nil {
@@ -3824,12 +4241,17 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			existing.metaMu.Lock()
 			oldBitmap := existing.Bitmap
 			existing.Bitmap = NewChunkBitmap(newSize)
+			existing.Ledger = nil // a new version: the records of the old one are moot
 			newBitmap := existing.Bitmap
 			existing.metaMu.Unlock()
+			// The bytes the edit replaced are on this disk: in place (the
+			// truncate below keeps the common prefix) or, after a conflict,
+			// at the sibling name. Reconcile proves chunks against them when
+			// the old bitmap carries no fingerprints (an author's own file).
+			seed := existing.RealPathOfFile
 			if conflictRel != "" {
-				// The local bytes moved to the conflict name: nothing cached
-				// remains, so reconcile must not claim proven chunks.
 				oldBitmap = nil
+				seed = conflictReal
 			}
 			d.RemoteFilesLock.Unlock()
 
@@ -3845,7 +4267,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 
 			// Truncate preserved the common prefix, so cached prefix bytes still match
 			// their stored hashes: re-mark the proven-unchanged chunks present async.
-			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, oldSize, newSize)
+			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, oldSize, newSize, seed)
 
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
@@ -3862,6 +4284,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			// on-demand, mirroring EditRemoteFile. Without this, a peer that
 			// already fully cached the file keeps serving stale content.
 			var oldBitmap, newBitmap *ChunkBitmap
+			var seed string
 			if fuseOpLog {
 				d.logger.Debug("oplog same-size verdict", "path", path, "reset", incomingMtime > existingMtime)
 			}
@@ -3880,10 +4303,13 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 				existing.metaMu.Lock()
 				oldBitmap = existing.Bitmap
 				existing.Bitmap = NewChunkBitmap(newSize)
+				existing.Ledger = nil // a new version: the records of the old one are moot
 				newBitmap = existing.Bitmap
 				existing.metaMu.Unlock()
+				seed = existing.RealPathOfFile
 				if conflictRel != "" {
 					oldBitmap = nil
+					seed = conflictReal
 				}
 			case existing.Bitmap != nil && !existing.Bitmap.IsComplete():
 				// Same mtime, still incomplete — keep fetching the rest on-demand.
@@ -3916,7 +4342,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			// the same-mtime keep-cache path); then re-mark unchanged chunks present.
 			// Same size here, so old==new==newSize (the unaliased snapshot, not
 			// existing.stat which Getattr may now be mutating).
-			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, newSize, newSize)
+			d.maybeReconcileEdit(path, existing, oldBitmap, newBitmap, newSize, newSize, seed)
 			d.AfmLock.Lock()
 			d.AllFileMap[path] = existing
 			d.AfmLock.Unlock()
@@ -3960,6 +4386,11 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 	// Metadata-only on announce: registered with metadata + bitmap +
 	// NotLocalSynced=true above. Read streams chunks on-demand; prefetch (if
 	// enabled) starts when the file is Opened.
+	if canon := conflictCanonical(path); canon != "" {
+		// The peer's version of a file this peer holds: seed the sibling's
+		// copy from the canonical, so a read of it fetches only what differs.
+		d.seedSiblingFromCanonical(canon, f, stat.Size)
+	}
 	return nil
 }
 
@@ -3973,12 +4404,20 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 	realPath := f.RealPathOfFile
 	fileSize := f.Bitmap.FileSize()
 
-	// Try resuming from a persisted bitmap.
+	// Resume from a persisted sidecar, only into a bitmap that holds nothing
+	// yet: a live bitmap has the chunks a read or a write landed since the
+	// last flush, and a sidecar older than those would send the fill over an
+	// app's fresh write. A v2 sidecar names the version its bytes came from;
+	// one for another version is left to the hash reconcile.
 	bmPath := BitmapPath(realPath)
-	if info, err := os.Stat(realPath); err == nil && info.Size() == fileSize {
-		if bm, loadErr := LoadChunkBitmap(bmPath, fileSize); loadErr == nil {
-			f.Bitmap = bm
-			// logger.Info("Prefetch: resuming from bitmap", "progress", bm.Progress(), "have", bm.Have(), "total", bm.Total())
+	if info, err := os.Stat(realPath); err == nil && info.Size() == fileSize && f.Bitmap.Have() == 0 {
+		if bm, meta, loadErr := LoadSidecar(bmPath, fileSize); loadErr == nil {
+			f.metaMu.Lock()
+			if meta == nil || meta.HeldStamp == 0 || meta.HeldStamp == f.RemoteMtimeNs {
+				f.Bitmap = bm
+				f.restoreSidecarMetaLocked(meta)
+			}
+			f.metaMu.Unlock()
 		}
 	}
 
@@ -4016,8 +4455,16 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		lf.Close()
 	}
 
+	if d.OpenStreamProvider() == nil {
+		// No session yet (a write right after a restart): the fill cannot
+		// start, and a cancel left behind would stop the announce path from
+		// resuming it when the peer's announce arrives.
+		logger.Debug("Prefetch: no stream provider yet, the announce resumes the fill", "path", path)
+		return
+	}
 	ctx, cancel := context.WithCancel(d.Ctx())
 	f.PrefetchCancel = cancel
+	f.fillActive.Store(true)
 
 	go d.prefetchFile(ctx, logger, f, path, realPath)
 }
@@ -4026,6 +4473,7 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 // The server pushes all chunks sequentially without per-chunk round-trips.
 // Bitmap coordination with on-demand FUSE Read is unchanged.
 func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, path string, realPath string) {
+	defer f.fillActive.Store(false)
 	bitmap := f.Bitmap
 	if bitmap == nil {
 		return
@@ -4071,7 +4519,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	receiver, err := fsp.StreamFile(ctx, path, startOffset)
 	if err != nil {
 		logger.Warn("Prefetch: failed to start StreamFile", "error", err)
-		_ = bitmap.Save(BitmapPath(realPath))
+		f.flushSidecar()
 		return
 	}
 
@@ -4124,7 +4572,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		select {
 		case <-ctx.Done():
 			// logger.Info("Prefetch cancelled", "progress", bitmap.Progress())
-			_ = bitmap.Save(BitmapPath(realPath))
+			f.flushSidecar()
 			return
 		default:
 		}
@@ -4135,18 +4583,20 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 				break // Stream complete.
 			}
 			logger.Warn("Prefetch: recv failed", "error", recvErr)
-			_ = bitmap.Save(BitmapPath(realPath))
+			f.flushSidecar()
 			break
 		}
 
-		chunkIdx := int(offset / uint64(bitmap.ChunkSizeBytes()))
-		if bitmap.Has(chunkIdx) {
-			continue // On-demand FUSE Read already got this chunk.
-		}
-
-		_, writeErr := lf.WriteAt(data, int64(offset))
+		f.WireBytes.Add(uint64(len(data)))
+		// Land chunk by chunk, skipping chunks already present: an on-demand
+		// read got them, or a local write holds them (fillForWrite), and
+		// a block written whole would put the peer's bytes over the app's.
+		written, writeErr := markCached(lf, bitmap, data, int64(offset), bitmap.FileSize())
 		if writeErr != nil {
-			logger.Warn("Prefetch: write failed", "chunk", chunkIdx, "error", writeErr)
+			logger.Warn("Prefetch: write failed", "offset", offset, "error", writeErr)
+			continue
+		}
+		if written == 0 {
 			continue
 		}
 		if !heldStamped {
@@ -4160,38 +4610,28 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 			f.metaMu.Unlock()
 		}
 
-		// StreamFile sends in config.BlockSize (4 MiB) units while the bitmap
-		// tracks 512 KiB chunks, so one Recv covers several chunks. Mark and hash
-		// each chunk over this block (same span convention as the read-ahead path)
-		// so a later SetHash never leaves a prefetch-only chunk reporting Hash==0.
-		cs := int64(bitmap.ChunkSizeBytes())
-		blockStart := int64(offset)
-		dataEnd := blockStart + int64(len(data))
-		fileSize := bitmap.FileSize()
-		for c := int(blockStart / cs); ; c++ {
-			chunkBegin := int64(c) * cs
-			chunkEnd := chunkBegin + cs
-			if fileSize > 0 && chunkEnd > fileSize {
-				chunkEnd = fileSize
-			}
-			if chunkBegin >= dataEnd || chunkEnd > dataEnd {
-				break
-			}
-			bitmap.Set(c)
-			bitmap.SetHash(c, xxh3.Hash(data[chunkBegin-blockStart:chunkEnd-blockStart]))
-		}
-		f.Download.UpdateProgress(int64(offset), len(data))
+		f.Download.UpdateProgress(int64(offset), written)
 	}
 
 	if bitmap.IsComplete() {
 		// logger.Info("Prefetch complete — all chunks downloaded", "fileSize", bitmap.FileSize())
 		f.metaMu.Lock()
 		f.NotLocalSynced = false
+		announce := f.AnnounceAfterFill
 		f.metaMu.Unlock()
+		if announce {
+			_ = lf.Sync() // the announced bytes are on disk before the peer hears of them
+		}
 		os.Remove(BitmapPath(realPath))
+		if announce && d.hasOnLocalChange() {
+			// The edit Release could not announce: its holes are filled now.
+			if stgo, statErr := platLstat(realPath); statErr == nil {
+				d.announceLocalEdit(f, path, stgo)
+			}
+		}
 	} else {
 		// logger.Info("Prefetch finished with gaps", "progress", bitmap.Progress())
-		_ = bitmap.Save(BitmapPath(realPath))
+		f.flushSidecar()
 	}
 }
 
@@ -4214,6 +4654,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	d.AfmLock.RLock()
 	local, hasLocal := d.AllFileMap[path]
 	d.AfmLock.RUnlock()
+	local, hasLocal = d.adoptForAnnounce(path, local, hasLocal)
 
 	d.RemoteFilesLock.Lock()
 	if _, ok := d.RemoteFiles[path]; !ok && hasLocal {
@@ -4343,17 +4784,21 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	f.metaMu.Lock()
 	oldBitmap := f.Bitmap
 	f.Bitmap = NewChunkBitmap(stat.Size)
+	f.Ledger = nil // a new version: the records of the old one are moot
 	newBitmap := f.Bitmap
 	f.metaMu.Unlock()
+	// The replaced bytes are on this disk, in place or at the sibling name
+	// after a conflict: reconcile proves chunks against them when the old
+	// bitmap carries no fingerprints.
+	seed := f.RealPathOfFile
 	if conflictRel != "" {
-		// The local bytes moved to the conflict name: nothing cached
-		// remains, so reconcile must not claim proven chunks.
 		oldBitmap = nil
+		seed = conflictReal
 	}
 	d.RemoteFilesLock.Unlock()
 	// Re-mark the proven-unchanged chunks present in the background (full reset stands
 	// on any failure or ineligibility).
-	d.maybeReconcileEdit(path, f, oldBitmap, newBitmap, oldSize, newSize)
+	d.maybeReconcileEdit(path, f, oldBitmap, newBitmap, oldSize, newSize, seed)
 	d.AfmLock.Lock()
 	d.AllFileMap[path] = f
 	d.AfmLock.Unlock()
