@@ -501,8 +501,18 @@ type File struct {
 	// It is nil for local-origin files and empty files (size=0).
 	Bitmap *ChunkBitmap
 
+	// Ledger is the per-chunk version state of a cache copy (chunk_ledger.go):
+	// made at the first local write into one, restored from a v2 sidecar, nil
+	// for a local-origin file. Guarded by metaMu like Bitmap; reset with it.
+	Ledger *ChunkLedger
+
 	// PrefetchCancel cancels the background prefetch goroutine for this file.
 	PrefetchCancel context.CancelFunc
+	// fillActive is set while a prefetchFile goroutine runs. The gates that
+	// start a fill (Release, OpenEx, the announce resume) read it, so a fill
+	// that ended short of complete (the link dropped) can be started again:
+	// a cancel func left behind kept the deferred announce waiting for ever.
+	fillActive atomic.Bool
 
 	// sidecarTimer coalesces .kdbitmap writes after on-demand landings (sidecar.go).
 	sidecarMu    sync.Mutex

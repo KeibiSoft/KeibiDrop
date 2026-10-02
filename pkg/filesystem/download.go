@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -38,7 +39,8 @@ const (
 	offHave      = offTotal + bitmapTotalSize       // 17
 	offChunkSize = offHave + bitmapHaveSize         // 21
 
-	bitmapVersion = 1
+	bitmapVersion  = 1
+	bitmapVersion2 = 2 // v1 layout, then the fingerprints and the ledger (SaveSidecar)
 )
 
 var bitmapMagic = [4]byte{'K', 'D', 'B', 'M'}
@@ -349,38 +351,121 @@ func (b *ChunkBitmap) Save(path string) error {
 	for i, w := range b.bits {
 		binary.LittleEndian.PutUint64(buf[bitmapHeaderSize+i*8:], w)
 	}
-	// Whole file or nothing: a crash mid-write must not leave a truncated sidecar
-	// that reads as no sidecar, and a reader must never see a half-written one.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, buf, 0600); err != nil {
+	return writeFileAtomic(path, buf)
+}
+
+// writeFileAtomic writes buf to path through a temp file renamed over it.
+// Whole file or nothing: a crash mid-write must not leave a truncated sidecar
+// that reads as no sidecar, and a reader must never see a half-written one.
+// The temp name is unique per writer: the timer flush and the fill's save
+// run at the same time, and one shared name let a writer truncate the file
+// the other was renaming into place (a 0-byte sidecar, 2026-10-02).
+func writeFileAtomic(path string, buf []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	if err := RenameShared(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	name := tmp.Name()
+	if _, err := tmp.Write(buf); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	if err := RenameShared(name, path); err != nil {
+		_ = os.Remove(name)
 		return err
 	}
 	return nil
 }
 
-// LoadChunkBitmap reads a bitmap from a .kdbitmap file.
+// SidecarMeta is what a v2 sidecar carries beyond the bitmap
+// (CHUNK-LEDGER-DESIGN.md 3.3): the version the present bytes belong to and
+// the ledger, whose dirty records are an unannounced local change that must
+// survive a daemon restart.
+type SidecarMeta struct {
+	HeldStamp int64        // HeldMtimeNs: the peer version the present bytes came from
+	EditBase  int64        // EditBaseMtimeNs of the unannounced edit; 0 without one
+	Ledger    *ChunkLedger // the records; nil when the sidecar holds none
+}
+
+// SaveSidecar writes a v2 sidecar: the v1 layout, then the fingerprints, then
+// the ledger. Whole file or nothing, like Save. Save keeps writing v1 for the
+// pull paths that carry no ledger; both versions load.
+func SaveSidecar(path string, bm *ChunkBitmap, meta *SidecarMeta) error {
+	if bm == nil {
+		return fmt.Errorf("no bitmap to save")
+	}
+	bm.mu.RLock()
+	buf := make([]byte, bitmapHeaderSize, bitmapHeaderSize+len(bm.bits)*8+1+len(bm.hashes)*8+24)
+	copy(buf[offMagic:], bitmapMagic[:])
+	buf[offVersion] = bitmapVersion2
+	binary.LittleEndian.PutUint64(buf[offFileSize:], uint64(bm.fileSize))   // #nosec G115
+	binary.LittleEndian.PutUint32(buf[offTotal:], uint32(bm.total))         // #nosec G115
+	binary.LittleEndian.PutUint32(buf[offHave:], uint32(bm.have))           // #nosec G115
+	binary.LittleEndian.PutUint32(buf[offChunkSize:], uint32(bm.chunkSize)) // #nosec G115
+	for _, w := range bm.bits {
+		buf = binary.LittleEndian.AppendUint64(buf, w)
+	}
+	if bm.hashes == nil {
+		buf = append(buf, 0)
+	} else {
+		buf = append(buf, 1)
+		for _, h := range bm.hashes {
+			buf = binary.LittleEndian.AppendUint64(buf, h)
+		}
+	}
+	bm.mu.RUnlock()
+
+	var recs []ChunkRecord
+	var held, base int64
+	if meta != nil {
+		held, base = meta.HeldStamp, meta.EditBase
+		if meta.Ledger != nil {
+			recs = meta.Ledger.Records()
+		}
+	}
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(LedgerUnit))
+	buf = binary.LittleEndian.AppendUint64(buf, uint64(held))      // #nosec G115
+	buf = binary.LittleEndian.AppendUint64(buf, uint64(base))      // #nosec G115
+	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(recs))) // #nosec G115
+	for _, r := range recs {
+		buf = appendRecord(buf, r)
+	}
+	return writeFileAtomic(path, buf)
+}
+
+// LoadChunkBitmap reads the bitmap of a v1 or v2 sidecar.
 // It returns an error when the file is corrupt or the fileSize does not match.
 func LoadChunkBitmap(path string, expectedFileSize int64) (*ChunkBitmap, error) {
+	bm, _, err := LoadSidecar(path, expectedFileSize)
+	return bm, err
+}
+
+// LoadSidecar reads a sidecar: the bitmap, and for v2 its fingerprints and
+// the ledger (meta is nil for v1). A truncated or mismatched file is an
+// error, never a partial state.
+func LoadSidecar(path string, expectedFileSize int64) (*ChunkBitmap, *SidecarMeta, error) {
 	data, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(data) < bitmapHeaderSize {
-		return nil, fmt.Errorf("bitmap file too short: %d bytes", len(data))
+		return nil, nil, fmt.Errorf("bitmap file too short: %d bytes", len(data))
 	}
 	if [4]byte(data[offMagic:offMagic+4]) != bitmapMagic {
-		return nil, fmt.Errorf("invalid bitmap magic")
+		return nil, nil, fmt.Errorf("invalid bitmap magic")
 	}
-	if data[offVersion] != bitmapVersion {
-		return nil, fmt.Errorf("unsupported bitmap version: %d", data[offVersion])
+	version := data[offVersion]
+	if version != bitmapVersion && version != bitmapVersion2 {
+		return nil, nil, fmt.Errorf("unsupported bitmap version: %d", version)
 	}
 	fileSize := int64(binary.LittleEndian.Uint64(data[offFileSize:])) // #nosec G115
 	if fileSize != expectedFileSize {
-		return nil, fmt.Errorf("bitmap fileSize mismatch: got %d, expected %d", fileSize, expectedFileSize)
+		return nil, nil, fmt.Errorf("bitmap fileSize mismatch: got %d, expected %d", fileSize, expectedFileSize)
 	}
 	total := int(binary.LittleEndian.Uint32(data[offTotal:]))
 	have := int(binary.LittleEndian.Uint32(data[offHave:]))
@@ -390,19 +475,68 @@ func LoadChunkBitmap(path string, expectedFileSize int64) (*ChunkBitmap, error) 
 	}
 
 	numWords := (total + 63) / 64
-	if len(data) < bitmapHeaderSize+numWords*8 {
-		return nil, fmt.Errorf("bitmap data truncated: need %d bytes, have %d", bitmapHeaderSize+numWords*8, len(data))
+	pos := bitmapHeaderSize + numWords*8
+	if len(data) < pos {
+		return nil, nil, fmt.Errorf("bitmap data truncated: need %d bytes, have %d", pos, len(data))
 	}
-
 	bits := make([]uint64, numWords)
 	for i := range bits {
 		bits[i] = binary.LittleEndian.Uint64(data[bitmapHeaderSize+i*8:])
 	}
-	return &ChunkBitmap{
+	bm := &ChunkBitmap{
 		bits:      bits,
 		total:     total,
 		have:      have,
 		fileSize:  fileSize,
 		chunkSize: chunkSize,
-	}, nil
+	}
+	if version == bitmapVersion {
+		return bm, nil, nil
+	}
+
+	need := func(n int) error {
+		if len(data) < pos+n {
+			return fmt.Errorf("sidecar truncated: need %d bytes, have %d", pos+n, len(data))
+		}
+		return nil
+	}
+	if err := need(1); err != nil {
+		return nil, nil, err
+	}
+	hasHashes := data[pos]
+	pos++
+	if hasHashes == 1 {
+		if err := need(total * 8); err != nil {
+			return nil, nil, err
+		}
+		bm.hashes = make([]uint64, total)
+		for i := range bm.hashes {
+			bm.hashes[i] = binary.LittleEndian.Uint64(data[pos+i*8:])
+		}
+		pos += total * 8
+	}
+	if err := need(24); err != nil {
+		return nil, nil, err
+	}
+	unit := int(binary.LittleEndian.Uint32(data[pos:]))
+	held := int64(binary.LittleEndian.Uint64(data[pos+4:]))  // #nosec G115
+	base := int64(binary.LittleEndian.Uint64(data[pos+12:])) // #nosec G115
+	nrec := int(binary.LittleEndian.Uint32(data[pos+20:]))
+	pos += 24
+	meta := &SidecarMeta{HeldStamp: held, EditBase: base}
+	if nrec == 0 {
+		return bm, meta, nil
+	}
+	if unit != LedgerUnit || nrec != ledgerRecords(fileSize) {
+		return nil, nil, fmt.Errorf("sidecar ledger mismatch: unit %d, %d records for %d bytes", unit, nrec, fileSize)
+	}
+	if err := need(nrec * ledgerRecordSize); err != nil {
+		return nil, nil, err
+	}
+	l := NewChunkLedger(fileSize)
+	for i := range l.recs {
+		l.recs[i] = decodeRecord(data[pos+i*ledgerRecordSize:])
+	}
+	meta.Ledger = l
+	return bm, meta, nil
 }

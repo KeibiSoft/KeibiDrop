@@ -87,6 +87,21 @@ func chKey(s chState) string { return fmt.Sprintf("%+v", s) }
 type chCfg struct {
 	aWinsTie bool              // the author rank for an exact stamp tie
 	sets     [2][][chunks]bool // per peer, the chunk sets a save may change
+	reorder  bool              // deliver queued messages in any order, not FIFO (VERIFY.md A4)
+}
+
+// chJudge is the receiver's rule for one chunk. The model's own rule is the
+// default; the driver test puts the code's JudgeChunk in its place to prove
+// the two agree over every interleaving.
+var chJudge = func(own chRec, ownDirty bool, in chRec, base int, peerWins bool) (accept, conflict bool) {
+	if in.id == own.id {
+		return false, false // redelivery
+	}
+	accept = in.stamp > own.stamp || (in.stamp == own.stamp && peerWins)
+	if !accept {
+		return false, false // the sender learns when this peer's record reaches it
+	}
+	return true, ownDirty && base != own.id
 }
 
 func (c chCfg) wins(author int) bool {
@@ -163,26 +178,29 @@ func chSuccessors(s chState, cfg chCfg) []chState {
 			}
 		}
 
-		// Deliver: judge chunk by chunk.
-		if len(s.q[i]) > 0 {
+		// Deliver: judge chunk by chunk. FIFO by default; with reorder, any
+		// queued message may land first (the notify worker's cross-class
+		// reorder, VERIFY.md A4).
+		last := 0
+		if cfg.reorder {
+			last = len(s.q[i]) - 1
+		}
+		for k := 0; k <= last && k < len(s.q[i]); k++ {
 			n := cloneCh(s)
 			p := &n.p[i]
-			m := n.q[i][0]
-			n.q[i] = append([]chMsg(nil), n.q[i][1:]...)
+			m := n.q[i][k]
+			n.q[i] = append(append([]chMsg(nil), n.q[i][:k]...), n.q[i][k+1:]...)
 			for c := 0; c < chunks; c++ {
 				if !m.changed[c] {
 					continue
 				}
 				in := m.recs[c]
 				own := p.led[c]
-				if in.id == own.id {
-					continue // redelivery
-				}
-				accepted := in.stamp > own.stamp || (in.stamp == own.stamp && cfg.wins(in.author))
+				accepted, conflict := chJudge(own, p.dirty[c], in, m.base[c], cfg.wins(in.author))
 				if !accepted {
-					continue // the sender learns when this peer's record reaches it
+					continue
 				}
-				if p.dirty[c] && m.base[c] != own.id {
+				if conflict {
 					// Both sides changed this chunk from the same base: a
 					// true conflict. The loser's content survives as a copy.
 					n.preserved[own.id] = true

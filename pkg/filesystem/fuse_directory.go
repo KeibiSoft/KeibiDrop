@@ -830,7 +830,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	// sequential fill plus lag-free jumps; small files stay pure on-demand
 	// (instant open, fetch only what is read). The guard stops a second handle
 	// on the same file from starting a duplicate.
-	if remoteHasUpdate && shouldPrefetchOnOpen(d.PrefetchOnOpen, d.PrefetchAutoMB, remoteTotalSize) && fh.PrefetchCancel == nil {
+	if remoteHasUpdate && shouldPrefetchOnOpen(d.PrefetchOnOpen, d.PrefetchAutoMB, remoteTotalSize) && !fh.fillActive.Load() {
 		d.startPrefetch(logger, fh, path)
 	}
 
@@ -1445,11 +1445,21 @@ func (d *Dir) Release(path string, fh uint64) (errCode int) {
 		deferToFill := (needsNotify || f.AnnounceAfterFill) && writeNeedsFillLocked(f)
 		if deferToFill {
 			f.AnnounceAfterFill = true
+			if f.Ledger != nil && f.stat != nil {
+				// The dirty records take the identity the announce will
+				// carry and reach the sidecar, durable, before the fill:
+				// a restart during the fill then restores the edit.
+				f.Ledger.SettleDirty(f.stat.Mtim.Sec*1e9 + f.stat.Mtim.Nsec)
+			}
 		}
 		f.metaMu.Unlock()
 		if deferToFill {
 			needsNotify = false
-			if f.PrefetchCancel == nil {
+			// Synchronous: the records are on disk when close returns, so a
+			// stop right after it loses nothing. One fsync of the written
+			// bytes, only for a partial edit of a copy with chunks missing.
+			f.flushSidecarSynced()
+			if !f.fillActive.Load() {
 				d.startPrefetch(logger, f, path)
 			}
 		}
@@ -1961,6 +1971,9 @@ func (d *Dir) announceLocalEdit(f *File, path string, stgo winfuse.Stat_t) {
 	f.NotRemoteSynced = false
 	f.HadEdits = false
 	f.AnnounceAfterFill = false
+	if f.Ledger != nil {
+		f.Ledger.Clean() // announced: the peer judges these records from here
+	}
 	// Do not announce a time below the in-memory identity. Write
 	// sets f.stat.Mtim from the Go clock. The disk mtime comes
 	// from the coarse kernel tick and can be some ms older. The
@@ -2108,6 +2121,7 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 			// need no fill and the file is local from here on.
 			f.WasTruncatedToZero = true
 			f.NotLocalSynced = false
+			f.Ledger = nil
 		}
 		// HeldMtimeNs is NOT stamped here: it carries announce-clock values
 		// only (fetch watermark, own announces). The disk mtime after a
@@ -2386,7 +2400,23 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 	f.NotRemoteSynced = true // File content changed - notify peer on Release with new size
 	f.LocalNewer = true
 	bm := f.Bitmap
+	// A write into a cache copy is a chunk-level change the peer has not
+	// judged: the ledger records it with the base it starts from, and the
+	// sidecar carries it across a restart (chunk_ledger.go).
+	var led *ChunkLedger
+	var ledBase int64
+	if partial && bm != nil {
+		if f.Ledger == nil {
+			f.Ledger = NewChunkLedger(bm.FileSize())
+		}
+		led = f.Ledger
+		ledBase = f.HeldMtimeNs
+	}
 	f.metaMu.Unlock()
+	var ledBases map[int]uint64
+	if led != nil {
+		ledBases = led.basesFor(bm, offset, len(buff))
+	}
 
 	startPwrite := time.Now()
 	n, err := platPwrite(entry.FD, buff, offset)
@@ -2408,6 +2438,9 @@ func (d *Dir) Write(path string, buff []byte, offset int64, fh uint64) (errCode 
 			// The stored fingerprints must describe the disk, or the next
 			// reconcile keeps a chunk the app rewrote as the peer's bytes.
 			rehashWritten(entry.FD, bm, offset, n)
+			if led != nil {
+				led.markRange(offset, n, ledBases, ledBase)
+			}
 		}
 	}
 
@@ -3045,10 +3078,14 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 	// If the file is remote and has no stream pool but has incomplete chunks,
 	// try to create a pool on-demand so we can fetch the missing data.
-	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && f.StreamProvider != nil {
+	lazyProv := f.StreamProvider
+	if ok && lazyProv == nil {
+		lazyProv = d.OpenStreamProvider() // an entry made before the session (a restart) has none
+	}
+	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && lazyProv != nil {
 		// logger.Info("Creating on-demand stream pool for incomplete remote file")
 		streamCtx, streamCancel := context.WithCancel(d.Ctx())
-		newPool, openErr := NewStreamPool(f.StreamProvider, streamCtx, fh, path, poolSizeForFile(remoteFileSize))
+		newPool, openErr := NewStreamPool(lazyProv, streamCtx, fh, path, poolSizeForFile(remoteFileSize))
 		if openErr != nil {
 			streamCancel()
 			logger.Warn("Failed to create on-demand stream pool", "error", openErr)
@@ -4050,6 +4087,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 	d.AfmLock.RLock()
 	local, hasLocal := d.AllFileMap[path]
 	d.AfmLock.RUnlock()
+	local, hasLocal = d.adoptForAnnounce(path, local, hasLocal)
 
 	d.RemoteFilesLock.Lock()
 	if _, ok := d.RemoteFiles[path]; !ok && hasLocal {
@@ -4063,6 +4101,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		oldSize := existing.stat.Size
 		existingStatMtime := existing.stat.Mtim.Sec*1e9 + existing.stat.Mtim.Nsec
 		wasLocalNewer := existing.LocalNewer
+		announceAfterFill := existing.AnnounceAfterFill
 		existing.metaMu.Unlock()
 		sizeChanged := oldSize != stat.Size
 		// Copy the size before `existing.stat = stat` aliases it: Getattr
@@ -4134,6 +4173,12 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		existing.metaMu.Lock()
 		bmSnap := existing.Bitmap
 		existing.metaMu.Unlock()
+		if announceAfterFill && !accepted && bmSnap != nil && !bmSnap.IsComplete() && !existing.fillActive.Load() {
+			// An edit restored from the sidecar waits for its fill: the
+			// peer's announce of the version it started from says the bytes
+			// are fetchable again (CHUNK-LEDGER-DESIGN.md 3.3).
+			d.startPrefetch(logger, existing, path)
+		}
 		if sizeChanged && stat.Size < oldSize && bmSnap != nil && bmSnap.Have() > 0 && incomingMtime < existingMtime {
 			d.RemoteFilesLock.Unlock()
 			return nil
@@ -4196,6 +4241,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 			existing.metaMu.Lock()
 			oldBitmap := existing.Bitmap
 			existing.Bitmap = NewChunkBitmap(newSize)
+			existing.Ledger = nil // a new version: the records of the old one are moot
 			newBitmap := existing.Bitmap
 			existing.metaMu.Unlock()
 			// The bytes the edit replaced are on this disk: in place (the
@@ -4257,6 +4303,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 				existing.metaMu.Lock()
 				oldBitmap = existing.Bitmap
 				existing.Bitmap = NewChunkBitmap(newSize)
+				existing.Ledger = nil // a new version: the records of the old one are moot
 				newBitmap = existing.Bitmap
 				existing.metaMu.Unlock()
 				seed = existing.RealPathOfFile
@@ -4357,12 +4404,20 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 	realPath := f.RealPathOfFile
 	fileSize := f.Bitmap.FileSize()
 
-	// Try resuming from a persisted bitmap.
+	// Resume from a persisted sidecar, only into a bitmap that holds nothing
+	// yet: a live bitmap has the chunks a read or a write landed since the
+	// last flush, and a sidecar older than those would send the fill over an
+	// app's fresh write. A v2 sidecar names the version its bytes came from;
+	// one for another version is left to the hash reconcile.
 	bmPath := BitmapPath(realPath)
-	if info, err := os.Stat(realPath); err == nil && info.Size() == fileSize {
-		if bm, loadErr := LoadChunkBitmap(bmPath, fileSize); loadErr == nil {
-			f.Bitmap = bm
-			// logger.Info("Prefetch: resuming from bitmap", "progress", bm.Progress(), "have", bm.Have(), "total", bm.Total())
+	if info, err := os.Stat(realPath); err == nil && info.Size() == fileSize && f.Bitmap.Have() == 0 {
+		if bm, meta, loadErr := LoadSidecar(bmPath, fileSize); loadErr == nil {
+			f.metaMu.Lock()
+			if meta == nil || meta.HeldStamp == 0 || meta.HeldStamp == f.RemoteMtimeNs {
+				f.Bitmap = bm
+				f.restoreSidecarMetaLocked(meta)
+			}
+			f.metaMu.Unlock()
 		}
 	}
 
@@ -4400,8 +4455,16 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		lf.Close()
 	}
 
+	if d.OpenStreamProvider() == nil {
+		// No session yet (a write right after a restart): the fill cannot
+		// start, and a cancel left behind would stop the announce path from
+		// resuming it when the peer's announce arrives.
+		logger.Debug("Prefetch: no stream provider yet, the announce resumes the fill", "path", path)
+		return
+	}
 	ctx, cancel := context.WithCancel(d.Ctx())
 	f.PrefetchCancel = cancel
+	f.fillActive.Store(true)
 
 	go d.prefetchFile(ctx, logger, f, path, realPath)
 }
@@ -4410,6 +4473,7 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 // The server pushes all chunks sequentially without per-chunk round-trips.
 // Bitmap coordination with on-demand FUSE Read is unchanged.
 func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, path string, realPath string) {
+	defer f.fillActive.Store(false)
 	bitmap := f.Bitmap
 	if bitmap == nil {
 		return
@@ -4455,7 +4519,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	receiver, err := fsp.StreamFile(ctx, path, startOffset)
 	if err != nil {
 		logger.Warn("Prefetch: failed to start StreamFile", "error", err)
-		_ = bitmap.Save(BitmapPath(realPath))
+		f.flushSidecar()
 		return
 	}
 
@@ -4508,7 +4572,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		select {
 		case <-ctx.Done():
 			// logger.Info("Prefetch cancelled", "progress", bitmap.Progress())
-			_ = bitmap.Save(BitmapPath(realPath))
+			f.flushSidecar()
 			return
 		default:
 		}
@@ -4519,7 +4583,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 				break // Stream complete.
 			}
 			logger.Warn("Prefetch: recv failed", "error", recvErr)
-			_ = bitmap.Save(BitmapPath(realPath))
+			f.flushSidecar()
 			break
 		}
 
@@ -4555,6 +4619,9 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		f.NotLocalSynced = false
 		announce := f.AnnounceAfterFill
 		f.metaMu.Unlock()
+		if announce {
+			_ = lf.Sync() // the announced bytes are on disk before the peer hears of them
+		}
 		os.Remove(BitmapPath(realPath))
 		if announce && d.hasOnLocalChange() {
 			// The edit Release could not announce: its holes are filled now.
@@ -4564,7 +4631,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 		}
 	} else {
 		// logger.Info("Prefetch finished with gaps", "progress", bitmap.Progress())
-		_ = bitmap.Save(BitmapPath(realPath))
+		f.flushSidecar()
 	}
 }
 
@@ -4587,6 +4654,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	d.AfmLock.RLock()
 	local, hasLocal := d.AllFileMap[path]
 	d.AfmLock.RUnlock()
+	local, hasLocal = d.adoptForAnnounce(path, local, hasLocal)
 
 	d.RemoteFilesLock.Lock()
 	if _, ok := d.RemoteFiles[path]; !ok && hasLocal {
@@ -4716,6 +4784,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	f.metaMu.Lock()
 	oldBitmap := f.Bitmap
 	f.Bitmap = NewChunkBitmap(stat.Size)
+	f.Ledger = nil // a new version: the records of the old one are moot
 	newBitmap := f.Bitmap
 	f.metaMu.Unlock()
 	// The replaced bytes are on this disk, in place or at the sibling name
