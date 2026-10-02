@@ -740,9 +740,10 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, lo
 				return
 			}
 		}
+		// Web and no-FUSE peers send bare names; the FUSE maps key by "/".
 		hasOpenHandles := false
 		root.AfmLock.Lock()
-		file, exists := root.AllFileMap[path]
+		file, exists := root.AllFileMap[fusePath]
 		if exists && file != nil {
 			openCount := file.CountOpenDescriptors()
 			if openCount > 0 {
@@ -750,18 +751,18 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, lo
 				hasOpenHandles = true
 				logger.Info("File has open handles, marking for removal after download", "path", path, "openHandles", openCount)
 			} else {
-				delete(root.AllFileMap, path)
+				delete(root.AllFileMap, fusePath)
 			}
 		}
 		root.AfmLock.Unlock()
 
 		root.RemoteFilesLock.Lock()
-		if rf, rfOk := root.RemoteFiles[path]; rfOk {
+		if rf, rfOk := root.RemoteFiles[fusePath]; rfOk {
 			if rf.PrefetchCancel != nil {
 				rf.PrefetchCancel()
 				rf.PrefetchCancel = nil
 			}
-			delete(root.RemoteFiles, path)
+			delete(root.RemoteFiles, fusePath)
 		}
 		root.RemoteFilesLock.Unlock()
 
