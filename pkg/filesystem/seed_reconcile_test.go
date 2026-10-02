@@ -68,6 +68,7 @@ func TestReconcile_SeedsInPlaceFromLocalBytes(t *testing.T) {
 	got, err := os.ReadFile(real)
 	require.NoError(t, err)
 	require.Equal(t, data, got, "seeding in place never writes the file")
+	f.flushSidecar() // the seed scheduled a sidecar write; land it before the temp dir goes away
 }
 
 // The bytes live in another file (the conflict sibling the loser's bytes
@@ -104,6 +105,7 @@ func TestReconcile_SeedsFromSibling(t *testing.T) {
 		}
 		require.Equal(t, data[c*cs:(c+1)*cs], got[c*cs:(c+1)*cs], "chunk %d", c)
 	}
+	f.flushSidecar()
 }
 
 // With a pre-edit bitmap that has present bits but no fingerprints (loaded
@@ -128,6 +130,7 @@ func TestReconcile_SeedHonoursPresentBits(t *testing.T) {
 	require.Equal(t, 2, nb.Have())
 	require.True(t, nb.Has(0))
 	require.True(t, nb.Has(5))
+	f.flushSidecar()
 }
 
 func TestConflictCanonical(t *testing.T) {
@@ -188,6 +191,11 @@ func TestRead_HeldVersionAtServeTime(t *testing.T) {
 	require.Equal(t, remote, base, "the write session starts at the version the process read, not at -1")
 	require.Equal(t, 0, d.Release("/big.bin", wfi.Fh))
 	require.Equal(t, 0, d.Release("/big.bin", rfi.Fh))
+	// The partial write deferred its announce to the fill (A6): let the fill
+	// land the last unit before the temp dir goes away (Linux under -race
+	// removed the dir under the fill's writes).
+	require.Eventually(t, func() bool { return rf.Bitmap.IsComplete() }, 20*time.Second, 10*time.Millisecond)
+	rf.flushSidecar()
 }
 
 // A handle opened while the file was the author's own, read on after the
@@ -234,4 +242,5 @@ func TestRead_HandleOpenedBeforePeerVersionCachesMisses(t *testing.T) {
 	require.Equal(t, fillByte(4096), buf[0])
 	require.Equal(t, first, prov.reads.Load(), "the second read inside the landed unit must be served from the cache copy")
 	require.Equal(t, 0, d.Release("/own.bin", rfi.Fh))
+	f.flushSidecar()
 }
