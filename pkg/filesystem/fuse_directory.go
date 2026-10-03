@@ -3078,9 +3078,14 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 
 	// If the file is remote and has no stream pool but has incomplete chunks,
 	// try to create a pool on-demand so we can fetch the missing data.
-	lazyProv := f.StreamProvider
-	if ok && lazyProv == nil {
-		lazyProv = d.OpenStreamProvider() // an entry made before the session (a restart) has none
+	// f is nil without a handle (ClearFiles empties the map on disconnect
+	// while apps keep theirs open): such a read takes the fallback below.
+	var lazyProv types.FileStreamProvider
+	if ok {
+		lazyProv = f.StreamProvider
+		if lazyProv == nil {
+			lazyProv = d.OpenStreamProvider() // an entry made before the session (a restart) has none
+		}
 	}
 	if ok && notLocalSynced && pool == nil && bitmap != nil && !bitmap.IsComplete() && lazyProv != nil {
 		// logger.Info("Creating on-demand stream pool for incomplete remote file")
