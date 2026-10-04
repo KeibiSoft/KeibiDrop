@@ -553,6 +553,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	// Check whether the remote has a newer version.
 	remoteHasUpdate := false
 	var remoteTotalSize uint64
+	var remoteBitmap *ChunkBitmap
 	needsRemark := false
 	d.RemoteFilesLock.RLock()
 	remoteFile, hasRemote := d.RemoteFiles[path]
@@ -565,6 +566,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		if remoteFile.stat != nil {
 			remoteTotalSize = uint64(remoteFile.stat.Size)
 		}
+		remoteBitmap = remoteFile.Bitmap
 		// Stream from the peer only when the local copy is not authoritative.
 		// A local write or rename sets LocalNewer=true (e.g. git's atomic
 		// index.lock->index on commit); the local content then wins. Without
@@ -729,6 +731,21 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 		return -winfuse.EIO
 	}
 
+	// No session (a disconnect keeps the mount and the peer's files): no
+	// stream can bring the peer's bytes. A nil provider in NewStreamPool was a
+	// nil-pointer panic, EIO for each such open, and every Windows stat opens
+	// the file (4 Oct). A copy with all its chunks serves as it is.
+	var fsp types.FileStreamProvider
+	if remoteHasUpdate {
+		if fsp = d.OpenStreamProvider(); fsp == nil {
+			if remoteTotalSize > 0 && (remoteBitmap == nil || !remoteBitmap.IsComplete()) {
+				logger.Debug("No session to fetch the peer's bytes")
+				return -winfuse.EIO
+			}
+			remoteHasUpdate = false
+		}
+	}
+
 	// Remote file: check for a partial download or create the cache file.
 	var existingLocalSize int64
 	localStat, err := os.Stat(localPath)
@@ -765,7 +782,6 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	var streamCancel context.CancelFunc
 	var cacheFD *os.File
 	if remoteHasUpdate {
-		fsp := d.OpenStreamProvider()
 		streamCtx, cancel := context.WithCancel(d.Ctx())
 		streamCancel = cancel
 		pool, err = NewStreamPool(fsp, streamCtx, uint64(fd), path, poolSizeForFile(int64(remoteTotalSize))) // On-demand jumps. Prefetch uses StreamFile separately.
@@ -859,7 +875,9 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 
 // Destroy runs on unmount.
 func (d *Dir) Destroy() {
-	// d.logger.Info("Destroy")
+	if p := d.onDestroy.Load(); p != nil {
+		(*p)()
+	}
 }
 
 func (d *Dir) Flush(path string, fh uint64) (errCode int) {

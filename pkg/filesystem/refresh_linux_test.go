@@ -11,12 +11,16 @@ package filesystem
 import (
 	"bufio"
 	"context"
+	"net"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/godbus/dbus/v5"
 )
 
@@ -131,4 +135,67 @@ func TestReloadNautilusWithoutAFileManager(t *testing.T) {
 	if err := client.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, "org.freedesktop.FileManager1").Store(&has); err != nil || has {
 		t.Fatalf("NameHasOwner(FileManager1) = %v, %v; want false", has, err)
 	}
+}
+
+// dbusGoroutines counts the goroutines running godbus code.
+func dbusGoroutines() int {
+	buf := make([]byte, 1<<20)
+	n := 0
+	for _, g := range strings.Split(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
+		if strings.Contains(g, "github.com/godbus/dbus") {
+			n++
+		}
+	}
+	return n
+}
+
+// A bus that accepts the connection and never answers the handshake must not
+// hold the refresher goroutine past the flush deadline, and must leave no
+// D-Bus goroutine behind.
+func TestRefreshAgainstABusThatNeverAnswers(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "bus")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var held []net.Conn // accepted and never answered
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		for _, c := range held {
+			_ = c.Close()
+		}
+		mu.Unlock()
+	})
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path="+sock)
+
+	before := dbusGoroutines()
+	flush := newTestFS().platformRefresh(t.TempDir())
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := testkit.Within(3*time.Second, "a flush against a silent bus", func() error {
+		flush(ctx, map[string]PeerChange{"/a.txt": PeerAdded})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("flush took %s against a silent bus", took)
+	}
+	testkit.Eventually(t, 2*time.Second, 20*time.Millisecond, func() bool {
+		return dbusGoroutines() <= before
+	}, "the D-Bus goroutines to exit")
 }

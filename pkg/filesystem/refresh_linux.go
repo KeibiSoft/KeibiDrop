@@ -29,13 +29,15 @@ func (fs *FS) platformRefresh(mountPoint string) func(context.Context, map[strin
 		if addr == "" {
 			return
 		}
-		conn, err := dbus.Connect(addr)
+		ctx, cancel := context.WithTimeout(mountCtx, 5*time.Second)
+		defer cancel()
+		// The deadline covers the handshake too: a bus that never answers
+		// must not hold the refresher goroutine.
+		conn, err := dbus.Connect(addr, dbus.WithContext(ctx))
 		if err != nil {
 			return
 		}
 		defer conn.Close()
-		ctx, cancel := context.WithTimeout(mountCtx, 5*time.Second)
-		defer cancel()
 		reloadNautilus(ctx, conn, changedDirs(mountPoint, batch))
 	}
 }

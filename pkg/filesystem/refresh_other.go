@@ -10,9 +10,10 @@ package filesystem
 
 import "context"
 
-// platformRefresh: no file manager refresh on this platform. On macOS, Finder
-// takes no AppleScript update on a macFUSE volume: it hangs, and the unmount
-// then waits on it (measured 4 Oct: 117 s instead of 2.6 s).
+// platformRefresh: no file manager refresh on this platform, so the mount
+// starts no refresher. On macOS, Finder takes no AppleScript update on a
+// macFUSE volume: it hangs, and the unmount then waits on it (measured 4 Oct:
+// 117 s instead of 2.6 s).
 func (fs *FS) platformRefresh(string) func(context.Context, map[string]PeerChange) {
-	return func(context.Context, map[string]PeerChange) {}
+	return nil
 }

@@ -12,9 +12,13 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 )
 
 type flushLog struct {
@@ -144,6 +148,71 @@ func TestRefresherStopsWithItsContext(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if batches, _ := l.snapshot(); len(batches) != 0 {
 		t.Fatalf("flushed %v after the context ended", batches)
+	}
+	if err := testkit.Within(time.Second, "the refresher goroutine to end", func() error { <-r.done; return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A stop waits for the flush in progress, and that flush sees the stop. The
+// Windows unmount needs both: WinFsp frees the volume after Destroy returns.
+func TestRefresherStopWaitsForTheFlushInProgress(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	var sawStop atomic.Bool
+	r := newFileManagerRefresher(func(ctx context.Context, _ map[string]PeerChange) {
+		entered <- struct{}{}
+		<-ctx.Done() // a notify loop checks ctx between paths
+		sawStop.Store(true)
+	})
+	r.interval = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go r.run(ctx)
+	r.add("/a.txt", PeerAdded)
+	if err := testkit.Within(2*time.Second, "a flush to start", func() error { <-entered; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := testkit.Within(time.Second, "the refresher to stop", func() error { <-r.done; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !sawStop.Load() {
+		t.Fatal("run returned before the flush in progress ended")
+	}
+}
+
+// However many folders a peer makes, the set of folders already named stays
+// bounded for the life of the mount.
+func TestRefresherBoundsTheFoldersItRemembers(t *testing.T) {
+	r := newFileManagerRefresher(func(context.Context, map[string]PeerChange) {})
+	for i := range maxKnownDirs + 100 {
+		r.add(fmt.Sprintf("/d%05d/f.txt", i), PeerAdded)
+	}
+	r.mu.Lock()
+	n := len(r.known)
+	r.mu.Unlock()
+	if n > maxKnownDirs {
+		t.Fatalf("remembers %d folders, bound is %d", n, maxKnownDirs)
+	}
+}
+
+func TestDestroyRunsItsHook(t *testing.T) {
+	d := newTestDir(t.TempDir())
+	d.Destroy() // no hook set: nothing runs
+	var ran atomic.Bool
+	d.SetOnDestroy(func() { ran.Store(true) })
+	d.Destroy()
+	if !ran.Load() {
+		t.Fatal("Destroy did not run its hook")
+	}
+}
+
+// Only Windows (WinFsp notify) and Linux (Nautilus over D-Bus) refresh a file
+// manager. Elsewhere the mount starts no refresher at all.
+func TestPlatformRefreshOnlyWhereAFileManagerListens(t *testing.T) {
+	has := newTestFS().platformRefresh(t.TempDir()) != nil
+	if want := runtime.GOOS == "windows" || runtime.GOOS == "linux"; has != want {
+		t.Fatalf("platformRefresh on %s: got a refresh %v, want %v", runtime.GOOS, has, want)
 	}
 }
 

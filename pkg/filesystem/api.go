@@ -233,13 +233,28 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	fs.mountPoint = cleanMountPoint
 
 	// Its own context: CancelInFlight replaces fs.ctx while the mount stays.
-	refresh := newFileManagerRefresher(fs.platformRefresh(cleanMountPoint))
-	refresh.logger = fs.logger
-	refreshCtx, stopRefresh := context.WithCancel(context.Background())
-	defer stopRefresh()
-	go refresh.run(refreshCtx)
-	fs.refresher.Store(refresh)
-	defer fs.refresher.CompareAndSwap(refresh, nil)
+	// A platform without a file manager refresh starts nothing.
+	if flush := fs.platformRefresh(cleanMountPoint); flush != nil {
+		refresh := newFileManagerRefresher(flush)
+		refresh.logger = fs.logger
+		refreshCtx, stopRefresh := context.WithCancel(context.Background())
+		defer stopRefresh()
+		go refresh.run(refreshCtx)
+		fs.refresher.Store(refresh)
+		defer fs.refresher.CompareAndSwap(refresh, nil)
+		if runtime.GOOS == "windows" {
+			// WinFsp frees the volume right after Destroy, and a notify still
+			// running then uses it. Destroy stops the refresher first.
+			root.SetOnDestroy(func() {
+				stopRefresh()
+				select {
+				case <-refresh.done:
+				case <-time.After(refreshStopWait):
+					fs.logger.Warn("File manager refresh still running at unmount")
+				}
+			})
+		}
+	}
 
 	opts := getMountOptions(fs.AutoCache)
 

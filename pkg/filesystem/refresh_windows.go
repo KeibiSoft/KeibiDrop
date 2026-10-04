@@ -16,14 +16,18 @@ import (
 
 // platformRefresh: WinFsp tells Explorer (and any other directory watcher)
 // through its change notification. Each call takes WinFsp's rename lock, so
-// it runs only from the refresher goroutine, batched.
+// it runs only from the refresher goroutine, batched. Destroy cancels ctx and
+// waits for this loop, so it stops after the notify in progress.
 func (fs *FS) platformRefresh(string) func(context.Context, map[string]PeerChange) {
-	return func(_ context.Context, batch map[string]PeerChange) {
+	return func(ctx context.Context, batch map[string]PeerChange) {
 		host := fs.host.Load()
 		if host == nil {
 			return
 		}
 		for p, c := range batch {
+			if ctx.Err() != nil {
+				return
+			}
 			host.Notify(p, notifyAction(c))
 		}
 	}

@@ -169,8 +169,8 @@ var (
 	transferSeq atomic.Uint64
 )
 
-// newTransferID returns a short monotonic id. Monotonic, not random: an agent
-// reading a log can order them, and there is no secret in a transfer id.
+// newTransferID returns a short monotonic id such that an agent
+// reading a log can order them.
 func newTransferID() string {
 	return "t" + strconv.FormatUint(transferSeq.Add(1), 10)
 }

@@ -39,6 +39,8 @@ const (
 	refreshInterval = 2 * time.Second
 	maxRefreshBatch = 512
 	maxRefreshDirs  = 32
+	maxKnownDirs    = 4096
+	refreshStopWait = 2 * time.Second // Windows unmount: bound on one notify
 )
 
 type fileManagerRefresher struct {
@@ -46,6 +48,7 @@ type fileManagerRefresher struct {
 	pending  map[string]PeerChange // FUSE path ("/a/b") -> latest change
 	known    map[string]struct{}   // folders made on the way and already named
 	kick     chan struct{}
+	done     chan struct{} // closed when run returns
 	interval time.Duration
 	flush    func(ctx context.Context, batch map[string]PeerChange)
 	logger   *slog.Logger // nil in tests
@@ -56,6 +59,7 @@ func newFileManagerRefresher(flush func(context.Context, map[string]PeerChange))
 		pending:  make(map[string]PeerChange),
 		known:    make(map[string]struct{}),
 		kick:     make(chan struct{}, 1),
+		done:     make(chan struct{}),
 		interval: refreshInterval,
 		flush:    flush,
 	}
@@ -71,6 +75,9 @@ func (r *fileManagerRefresher) add(p string, c PeerChange) {
 	case PeerAdded, PeerDirAdded:
 		// A peer's deep file makes its folders on the way (no ADD_DIR), so the
 		// window on each parent learns about them too: once, not per file.
+		if len(r.known) >= maxKnownDirs {
+			clear(r.known) // a folder named again costs one refresh, not memory
+		}
 		for d := path.Dir(p); d != "/"; d = path.Dir(d) {
 			if _, ok := r.known[d]; ok {
 				break // its own parents were named with it
@@ -95,6 +102,7 @@ func (r *fileManagerRefresher) add(p string, c PeerChange) {
 }
 
 func (r *fileManagerRefresher) run(ctx context.Context) {
+	defer close(r.done)
 	for {
 		select {
 		case <-ctx.Done():
