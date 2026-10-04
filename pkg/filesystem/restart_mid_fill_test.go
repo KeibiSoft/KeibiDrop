@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/stretchr/testify/require"
 	winfuse "github.com/winfsp/cgofuse/fuse"
@@ -53,13 +54,38 @@ func (p *stoppableProvider) calls() []string {
 	return append([]string(nil), p.starts...)
 }
 
+// fillRunning reports whether any file of d still has a fill in flight.
+func fillRunning(d *Dir) bool {
+	busy := func(m map[string]*File) bool {
+		for _, f := range m {
+			if f.fillActive.Load() {
+				return true
+			}
+		}
+		return false
+	}
+	d.RemoteFilesLock.RLock()
+	remote := busy(d.RemoteFiles)
+	d.RemoteFilesLock.RUnlock()
+	d.AfmLock.RLock()
+	defer d.AfmLock.RUnlock()
+	return remote || busy(d.AllFileMap)
+}
+
 // newDirOver is one daemon session over saveDir: a Dir wired to prov with
 // its announces captured. Two of them in sequence over one saveDir are a
 // restart.
 func newDirOver(t *testing.T, saveDir string, prov types.FileStreamProvider) (*Dir, func() []types.FileEvent) {
 	t.Helper()
 	d := newTestDir(saveDir)
-	d.SetCtx(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	d.SetCtx(ctx)
+	// A fill still landing bytes holds the cache copy open, and Windows cannot
+	// remove the temp folder under an open file: the session ends first.
+	t.Cleanup(func() {
+		cancel()
+		testkit.Eventually(t, 10*time.Second, 5*time.Millisecond, func() bool { return !fillRunning(d) }, "the session's fills to stop")
+	})
 	d.SetStreamProvider(func() types.FileStreamProvider { return prov })
 	var events []types.FileEvent
 	evMu := make(chan struct{}, 1)

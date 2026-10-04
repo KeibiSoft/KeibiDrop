@@ -615,7 +615,7 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		// The reader's app reads the header (one 16 MiB demand unit lands), then
 		// patches 1 MiB at 1 MiB; the last 8 MiB were never fetched.
 		_ = readAt(alice, 0, 4096)
-		ex(t, alice, ".", "dd if=/dev/urandom of="+name+" bs=1048576 count=1 seek=1 conv=notrunc", 60*time.Second)
+		writeRandAt(t, alice, name, 1048576, 1048576)
 		waitConverged(t, alice, bob, name, 120*time.Second)
 		time.Sleep(3 * time.Second)
 		// The transfer bill: the reader fetched one demand unit before the

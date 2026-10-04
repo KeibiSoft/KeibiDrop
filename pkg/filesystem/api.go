@@ -56,6 +56,9 @@ type FS struct {
 	host atomic.Pointer[winfuse.FileSystemHost]
 	root atomic.Pointer[Dir]
 
+	// refresher tells the file manager about peer changes while mounted.
+	refresher atomic.Pointer[fileManagerRefresher]
+
 	// ctxMu guards ctx/cancel. CancelInFlight and ClearFiles rebuild the pair
 	// from RPC and teardown goroutines while Mount and Unmount read it. Never
 	// hold ctxMu across a blocking call.
@@ -228,6 +231,15 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	host.SetUseIno(true)
 	fs.host.Store(host)
 	fs.mountPoint = cleanMountPoint
+
+	// Its own context: CancelInFlight replaces fs.ctx while the mount stays.
+	refresh := newFileManagerRefresher(fs.platformRefresh(cleanMountPoint))
+	refresh.logger = fs.logger
+	refreshCtx, stopRefresh := context.WithCancel(context.Background())
+	defer stopRefresh()
+	go refresh.run(refreshCtx)
+	fs.refresher.Store(refresh)
+	defer fs.refresher.CompareAndSwap(refresh, nil)
 
 	opts := getMountOptions(fs.AutoCache)
 

@@ -610,9 +610,36 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		}
 	}
 
+	kd.reportPeerChange(req)
 	logger.Info("Success")
 
 	return &bindings.NotifyResponse{}, nil
+}
+
+// reportPeerChange queues a handled peer change for the file manager refresh,
+// so an open Explorer or Nautilus window shows it. A buffered REMOVE
+// reports itself when it runs (executeRemove). No mount: no-op.
+func (kd *KeibidropServiceImpl) reportPeerChange(req *bindings.NotifyRequest) {
+	fs := kd.FS()
+	if fs == nil {
+		return
+	}
+	switch req.Type {
+	case bindings.NotifyType_ADD_FILE:
+		fs.PeerChanged(req.Path, filesystem.PeerAdded)
+	case bindings.NotifyType_EDIT_FILE:
+		fs.PeerChanged(req.Path, filesystem.PeerEdited)
+	case bindings.NotifyType_ADD_DIR:
+		fs.PeerChanged(req.Path, filesystem.PeerDirAdded)
+	case bindings.NotifyType_REMOVE_DIR:
+		fs.PeerChanged(req.Path, filesystem.PeerDirRemoved)
+	case bindings.NotifyType_RENAME_FILE:
+		fs.PeerChanged(req.OldPath, filesystem.PeerRemoved)
+		fs.PeerChanged(req.Path, filesystem.PeerAdded)
+	case bindings.NotifyType_RENAME_DIR:
+		fs.PeerChanged(req.OldPath, filesystem.PeerDirRemoved)
+		fs.PeerChanged(req.Path, filesystem.PeerDirAdded)
+	}
 }
 
 // BatchNotify processes multiple notifications in a single RPC call.
@@ -717,8 +744,9 @@ func (kd *KeibidropServiceImpl) cancelAllPendingRemoves() {
 func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, logger *slog.Logger, armedAt time.Time) {
 	// Snapshot FS/root once: teardown may SetFS(nil) while this timer
 	// goroutine runs, and repeated loads would race it (nil-receiver panic).
+	fs := kd.FS()
 	var root *filesystem.Dir
-	if fs := kd.FS(); fs != nil {
+	if fs != nil {
 		root = fs.Root()
 	}
 	if root != nil {
@@ -771,6 +799,7 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, lo
 				logger.Warn("Failed to remove cache file", "path", cachePath, "error", rmErr)
 			}
 		}
+		fs.PeerChanged(path, filesystem.PeerRemoved)
 	}
 
 	if kd.SyncTracker != nil {

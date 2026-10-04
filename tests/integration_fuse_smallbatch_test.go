@@ -68,6 +68,12 @@ func TestSmallFileWarm_OneReadWarmsDirectory(t *testing.T) {
 		})
 	waitForFUSEMount(t, tp.AliceMountDir, 15*time.Second)
 
+	// Counted from before the files appear: on Windows, Defender reads each
+	// new file as it shows up, which fetches a file this small whole before
+	// the trigger read (measured: 37 of 40 complete, 576320 bytes received).
+	sentBefore, recvBefore := tp.Alice.WireStats()
+	_ = sentBefore
+
 	// Every file announced and visible before the trigger read.
 	for _, name := range names {
 		mountPath := filepath.Join(tp.AliceMountDir, "evd", name)
@@ -76,9 +82,6 @@ func TestSmallFileWarm_OneReadWarmsDirectory(t *testing.T) {
 			return err == nil && info.Size() == int64(len(content[name]))
 		}, "waiting for "+name+" to be announced")
 	}
-
-	sentBefore, recvBefore := tp.Alice.WireStats()
-	_ = sentBefore
 
 	// The one cold read: the extraction walk's first file.
 	trigger := names[0]

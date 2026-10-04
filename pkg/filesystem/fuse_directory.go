@@ -529,10 +529,19 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	// hit 0 (last handle in teardown), fall through to a fresh open.
 	if fh.openFileCounter.OpenIfActive() {
 		handleID := fh.CurrentHandleID
-		d.AfmLock.Unlock()
-		fi.Fh = handleID
-		fi.DirectIo = shouldUseDirectIo(path, flags)
-		return 0
+		d.OpenMapLock.RLock()
+		_, live := d.OpenFileHandlers[handleID]
+		d.OpenMapLock.RUnlock()
+		if live {
+			d.AfmLock.Unlock()
+			fi.Fh = handleID
+			fi.DirectIo = shouldUseDirectIo(path, flags)
+			return 0
+		}
+		// Counted, but the handle is gone: a Windows rename closes the
+		// handles of both paths under their count. Reusing it would send
+		// every later op to the miss path, and a write would never announce.
+		fh.openFileCounter.Reset()
 	}
 
 	fh.metaMu.RLock()
@@ -918,6 +927,16 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 	defer d.recoverPanic("Getattr", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
+	}
+	if runtime.GOOS == "windows" && d.ReadOnlyMount() {
+		// A Windows delete reaches the file system only at cleanup, where an
+		// EROFS cannot fail the call. The read-only attribute makes Windows
+		// refuse it first.
+		defer func() {
+			if errCode == 0 && stat.Mode&winfuse.S_IFMT != winfuse.S_IFDIR {
+				stat.Flags |= winfuse.UF_READONLY
+			}
+		}()
 	}
 	// Do not log getattr: large clones call it 200,000+ times.
 	// Synchronous logging on this hot path causes 30-second hangs.

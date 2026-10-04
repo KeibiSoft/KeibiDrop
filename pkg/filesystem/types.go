@@ -578,6 +578,13 @@ func (ofc *OpenFileCounter) Release() uint64 {
 	return ofc.counter
 }
 
+// Reset drops the count: the handle it counted is gone.
+func (ofc *OpenFileCounter) Reset() {
+	ofc.mu.Lock()
+	defer ofc.mu.Unlock()
+	ofc.counter = 0
+}
+
 func (ofc *OpenFileCounter) CountOpenDescriptors() uint64 {
 	ofc.mu.Lock()
 	defer ofc.mu.Unlock()
