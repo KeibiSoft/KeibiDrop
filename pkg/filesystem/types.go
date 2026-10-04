@@ -451,6 +451,9 @@ type File struct {
 	// PeerStoppedSharing is set when the peer sends REMOVE_FILE during a download.
 	// On Release with 0 open handles, the code removes the file reference.
 	PeerStoppedSharing bool
+	// localGone: a local unlink or a rename over this object's path replaced
+	// it, so no warm landing may write it (landWarmFile). Guarded by metaMu.
+	localGone bool
 
 	openFileCounter OpenFileCounter
 

@@ -316,6 +316,9 @@ func (fs *FS) Unmount() {
 		fs.forceUnmount()
 		<-done
 	}
+	if root := fs.root.Load(); root != nil {
+		root.flushPendingSidecars()
+	}
 	fs.root.Store(nil)
 	fs.logger.Warn("FUSE Unmount completed")
 }

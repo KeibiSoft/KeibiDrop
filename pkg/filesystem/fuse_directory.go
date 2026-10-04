@@ -1740,6 +1740,7 @@ func (d *Dir) Rename(oldpath string, newpath string) (errCode int) {
 	// The ousted target's long-lived handles point at the inode this rename
 	// displaces: later writes through them would land in the wrong file, and
 	// Windows refuses to replace a file they hold open.
+	d.markLocalGone(newpath) // before the rename: no warm landing writes into its result
 	d.AfmLock.RLock()
 	tgt := d.AllFileMap[newpath]
 	d.AfmLock.RUnlock()
@@ -2124,24 +2125,37 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		return -winfuse.EISDIR
 	}
 
-	err := platTruncate(cleanPath, size)
-	if err != nil {
-		logger.Error("Failed to truncate", "error", err)
-		return int(convertOsErrToSyscallErrno("truncate", err))
+	// The disk cut and the flags that claim it share one metaMu hold: a warm
+	// landing checks those flags and writes under the same lock, so it never
+	// lands the peer's old bytes between the two (landWarmFile).
+	d.AfmLock.RLock()
+	f := d.AllFileMap[path]
+	d.AfmLock.RUnlock()
+	if f == nil {
+		// Unknown to the mount: no flags to claim and nothing to announce.
+		if err := platTruncate(cleanPath, size); err != nil {
+			logger.Error("Failed to truncate", "error", err)
+			return int(convertOsErrToSyscallErrno("truncate", err))
+		}
+		return 0
 	}
+	f.metaMu.Lock()
+	err := platTruncate(cleanPath, size)
 
 	// Re-stat and propagate the new SIZE to the peer. A truncate has no Write/Release to ride,
 	// so without this a shrink never reaches the peer: it keeps the old (larger) size and serves
 	// stale bytes past the new EOF (integrity violation). refreshFileStat only refreshes
 	// timestamps, so update Size here too, snapshot under metaMu, then notify EDIT_FILE outside
 	// the locks (same discipline as Chmod).
-	st, statErr := platLstat(cleanPath)
+	var st winfuse.Stat_t
+	statErr := err
+	if err == nil {
+		st, statErr = platLstat(cleanPath)
+	}
 	var statSnap winfuse.Stat_t
 	var baseSnap int64
 	haveSnap, sizeChanged := false, false
-	d.AfmLock.Lock()
-	if f, ok := d.AllFileMap[path]; ok && f.stat != nil && statErr == nil {
-		f.metaMu.Lock()
+	if f.stat != nil && statErr == nil {
 		sizeChanged = st.Size != f.stat.Size
 		f.stat.Size = st.Size
 		f.stat.Ctim = st.Ctim
@@ -2178,9 +2192,12 @@ func (d *Dir) Truncate(path string, size int64, fh uint64) (errCode int) {
 		// first act of an O_TRUNC save whose open skipped the session flip
 		// (remote-open path). Stamping made the follow-up Write adopt the
 		// truncate's own time as its base, hiding real conflicts.
-		f.metaMu.Unlock()
 	}
-	d.AfmLock.Unlock()
+	f.metaMu.Unlock()
+	if err != nil {
+		logger.Error("Failed to truncate", "error", err)
+		return int(convertOsErrToSyscallErrno("truncate", err))
+	}
 	// Only emit on an actual size change. Windows re-opens an O_TRUNC file by calling Truncate
 	// even when the size is unchanged; a no-op truncate must not churn the peer with a redundant
 	// EDIT_FILE. A genuine grow/shrink/overwrite always changes the size.
@@ -2217,6 +2234,10 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 	if notifyPeer {
 		removeBase = d.targetIdentity(path)
 	}
+
+	// Before the maps and the disk: a warm landing in flight must not write
+	// the deleted file back (landWarmFile).
+	d.markLocalGone(path)
 
 	// Check if this is a remote-only file (not downloaded locally).
 	d.RemoteFilesLock.Lock()
@@ -3782,6 +3803,48 @@ func (d *Dir) SwapWouldConflict(path string, baseMtimeNs int64) bool {
 	return localNewer && baseMtimeNs < id
 }
 
+// markLocalGone marks the objects at path: a local unlink or a rename over it
+// replaces what is there, so no warm landing may write them (landWarmFile).
+// Each mark happens before the disk changes.
+func (d *Dir) markLocalGone(path string) {
+	d.RemoteFilesLock.RLock()
+	rf := d.RemoteFiles[path]
+	d.RemoteFilesLock.RUnlock()
+	d.AfmLock.RLock()
+	af := d.AllFileMap[path]
+	d.AfmLock.RUnlock()
+	for _, f := range []*File{rf, af} {
+		if f != nil {
+			f.metaMu.Lock()
+			f.localGone = true
+			f.metaMu.Unlock()
+		}
+	}
+}
+
+// LocalAuthority reports whether path is known to the mount and whether this
+// peer wrote its content (LocalNewer). Only Write, Truncate, CreateEx and a
+// rename of such a file set LocalNewer: a read that makes or fills the cache
+// file does not.
+func (d *Dir) LocalAuthority(path string) (known, local bool) {
+	d.AfmLock.Lock()
+	afm := d.AllFileMap[path]
+	d.AfmLock.Unlock()
+	d.RemoteFilesLock.RLock()
+	rf := d.RemoteFiles[path]
+	d.RemoteFilesLock.RUnlock()
+	for _, f := range []*File{afm, rf} {
+		if f == nil {
+			continue
+		}
+		known = true
+		f.metaMu.RLock()
+		local = local || f.LocalNewer
+		f.metaMu.RUnlock()
+	}
+	return known, local
+}
+
 // conflictNames builds the sibling names for a preserved conflict version:
 // report.docx -> report.conflict-20260801-104512-123456789.docx (UTC). The
 // nanosecond part keeps the two peers' simultaneous preserves from colliding
@@ -4822,7 +4885,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 		f.PrefetchCancel = nil
 	}
 	// Capture the pre-reset bitmap (hashes to compare) and the fresh live bitmap;
-	// the cache is left intact here, so common-prefix bytes still match their hashes.
+	// the truncate below keeps the common prefix, so its bytes still match their hashes.
 	f.metaMu.Lock()
 	oldBitmap := f.Bitmap
 	f.Bitmap = NewChunkBitmap(stat.Size)
@@ -4838,6 +4901,17 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 		seed = conflictReal
 	}
 	d.RemoteFilesLock.Unlock()
+	// The cache file takes the new size, as in AddRemoteFile. A smaller version
+	// kept the old tail: the fetch wrote the new bytes over the old ones and
+	// reads served both ("sphere(3);4]);", 4 Oct). The disk size, not the
+	// stat: a stale stat must not skip it.
+	if f.RealPathOfFile != "" {
+		if info, statErr := os.Stat(f.RealPathOfFile); statErr == nil && info.Size() != newSize {
+			if truncErr := os.Truncate(f.RealPathOfFile, newSize); truncErr != nil {
+				logger.Warn("Failed to truncate cache file to new size", "path", f.RealPathOfFile, "size", newSize, "error", truncErr)
+			}
+		}
+	}
 	// Re-mark the proven-unchanged chunks present in the background (full reset stands
 	// on any failure or ineligibility).
 	d.maybeReconcileEdit(path, f, oldBitmap, newBitmap, oldSize, newSize, seed)

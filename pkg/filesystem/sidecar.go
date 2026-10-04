@@ -62,6 +62,39 @@ func (f *File) flushSidecar() {
 	}
 }
 
+// flushPendingSidecars writes now every sidecar still waiting on its timer.
+// Unmount calls it: a timer that fires later writes into a folder the caller
+// may be removing, and one still pending when the process exits is lost. A
+// warmed sibling has no handle, so no Release flushes its sidecar.
+func (d *Dir) flushPendingSidecars() {
+	seen := make(map[*File]struct{})
+	var files []*File
+	collect := func(f *File) {
+		if _, ok := seen[f]; f != nil && !ok {
+			seen[f] = struct{}{}
+			files = append(files, f)
+		}
+	}
+	d.AfmLock.RLock()
+	for _, f := range d.AllFileMap {
+		collect(f)
+	}
+	d.AfmLock.RUnlock()
+	d.RemoteFilesLock.RLock()
+	for _, f := range d.RemoteFiles {
+		collect(f)
+	}
+	d.RemoteFilesLock.RUnlock()
+	for _, f := range files {
+		f.sidecarMu.Lock()
+		pending := f.sidecarTimer != nil
+		f.sidecarMu.Unlock()
+		if pending {
+			f.flushSidecar()
+		}
+	}
+}
+
 // sidecarMetaLocked composes the v2 metadata; metaMu held (read). The edit
 // base travels only with a dirty record: it is the announce's base.
 func (f *File) sidecarMetaLocked() *SidecarMeta {

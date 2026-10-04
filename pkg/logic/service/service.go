@@ -751,16 +751,22 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, lo
 	}
 	if root != nil {
 		cachePath := filepath.Clean(filepath.Join(root.LocalDownloadFolder, path))
-		if st, err := os.Stat(cachePath); err == nil && !armedAt.IsZero() && st.ModTime().After(armedAt) {
-			logger.Info("Skipping buffered remove, local write is newer", "path", path)
-			return
-		}
-		// A delete below local authority raced an unseen edit: preserve as
-		// a sibling first. Base 0 keeps the plain delete. Maps key by "/".
+		// Maps key by "/".
 		fusePath := path
 		if !strings.HasPrefix(fusePath, "/") {
 			fusePath = "/" + fusePath
 		}
+		if st, err := os.Stat(cachePath); err == nil && !armedAt.IsZero() && st.ModTime().After(armedAt) {
+			// A read also makes and fills the cache file. Only a write of
+			// this peer outranks the delete: a newer mtime alone kept a
+			// peer's deleted vim swap file on the reader (4 Oct).
+			if known, local := root.LocalAuthority(fusePath); !known || local {
+				logger.Info("Skipping buffered remove, local write is newer", "path", path)
+				return
+			}
+		}
+		// A delete below local authority raced an unseen edit: preserve as
+		// a sibling first. Base 0 keeps the plain delete.
 		if baseMtimeNs != 0 && root.SwapWouldConflict(fusePath, baseMtimeNs) {
 			if _, pErr := root.PreserveConflictSiblingForDelete(logger, fusePath); pErr != nil {
 				logger.Error("Delete raced a local edit and preservation failed, refusing the delete",
