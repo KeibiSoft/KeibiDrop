@@ -9,6 +9,7 @@ package filesystem
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -445,11 +446,23 @@ func LoadChunkBitmap(path string, expectedFileSize int64) (*ChunkBitmap, error) 
 	return bm, err
 }
 
+// readShared reads a whole file through OpenShared. On Windows a plain open
+// passes no delete sharing, so a writer renaming a new version over the file
+// (writeFileAtomic) makes it fail with a sharing violation.
+func readShared(path string) ([]byte, error) {
+	f, err := OpenShared(path, os.O_RDONLY, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(f)
+}
+
 // LoadSidecar reads a sidecar: the bitmap, and for v2 its fingerprints and
 // the ledger (meta is nil for v1). A truncated or mismatched file is an
 // error, never a partial state.
 func LoadSidecar(path string, expectedFileSize int64) (*ChunkBitmap, *SidecarMeta, error) {
-	data, err := os.ReadFile(path) // #nosec G304
+	data, err := readShared(path)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -70,11 +70,20 @@ func waitForFUSEMount(t *testing.T, dir string, timeout time.Duration) {
 	if runtime.GOOS == "windows" {
 		// On Windows, WinFSP mounts don't appear in `mount` output.
 		// Check accessibility by stat-ing the root of the mount point instead.
+		// A folder mount point exists as a plain folder before the mount
+		// (t.TempDir), so the stat alone passes too early: the mounted folder
+		// is a reparse point, which Lstat reports as irregular.
 		root := dir
-		if len(dir) == 2 && dir[1] == ':' {
-			root = dir + `\`
+		drive := (len(dir) == 2 || len(dir) == 3 && (dir[2] == '\\' || dir[2] == '/')) && dir[1] == ':'
+		if drive {
+			root = dir[:2] + `\`
 		}
 		WaitForCondition(t, timeout, 200*time.Millisecond, func() bool {
+			if !drive {
+				if fi, err := os.Lstat(root); err != nil || fi.Mode()&(os.ModeIrregular|os.ModeSymlink) == 0 {
+					return false
+				}
+			}
 			_, err := os.Stat(root)
 			return err == nil
 		}, "waiting for FUSE mount at: "+dir)

@@ -18,7 +18,9 @@ import (
 	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/stretchr/testify/require"
+	winfuse "github.com/winfsp/cgofuse/fuse"
 )
 
 func newFuseServiceForRemoveTests(t *testing.T) (*KeibidropServiceImpl, *filesystem.Dir, string) {
@@ -39,8 +41,9 @@ func newFuseServiceForRemoveTests(t *testing.T) (*KeibidropServiceImpl, *filesys
 // remove-buffer race: a peer REMOVE arms the 1000ms window, a local write
 // lands and closes inside it, and the fired timer must NOT delete the bytes.
 func TestRemoveFile_FuseMode_LocalWriteDuringWindowSurvives(t *testing.T) {
-	svc, _, tmpDir := newFuseServiceForRemoveTests(t)
+	svc, root, tmpDir := newFuseServiceForRemoveTests(t)
 	const filePath = "/doc.txt"
+	root.SetStreamProvider(func() types.FileStreamProvider { return &sliceProvider{data: []byte("original")} })
 
 	_, err := svc.Notify(context.Background(), &bindings.NotifyRequest{
 		Type: bindings.NotifyType_ADD_FILE, Path: filePath, Name: "doc.txt",
@@ -55,15 +58,22 @@ func TestRemoveFile_FuseMode_LocalWriteDuringWindowSurvives(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// The local write lands and closes well inside the 1000ms window.
+	// The local write lands through the mount and closes well inside the
+	// 1000ms window. With FUSE every local write takes this path; a write
+	// straight into the cache file is what a cache fill looks like.
 	time.Sleep(50 * time.Millisecond)
-	require.NoError(t, os.WriteFile(cachePath, []byte("fresh local bytes"), 0o644))
+	var st winfuse.Stat_t
+	require.Equal(t, 0, root.Getattr(filePath, &st, 0))
+	fi := &winfuse.FileInfo_t{Flags: os.O_WRONLY}
+	require.Equal(t, 0, root.OpenEx(filePath, fi))
+	require.Equal(t, 8, root.Write(filePath, []byte("editlocl"), 0, fi.Fh))
+	require.Equal(t, 0, root.Release(filePath, fi.Fh))
 
 	// Let the buffered remove fire; the local bytes must still be there.
 	time.Sleep(1300 * time.Millisecond)
 	got, err := os.ReadFile(cachePath)
 	require.NoError(t, err, "local write inside the remove window must survive")
-	require.Equal(t, "fresh local bytes", string(got))
+	require.Equal(t, "editlocl", string(got))
 }
 
 // TestRemoveFile_FuseMode_GenuineRemoveStillExecutes: with no local activity

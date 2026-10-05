@@ -615,7 +615,7 @@ func TestFUSEtoFUSE_BidirectionalEditPatterns(t *testing.T) {
 		// The reader's app reads the header (one 16 MiB demand unit lands), then
 		// patches 1 MiB at 1 MiB; the last 8 MiB were never fetched.
 		_ = readAt(alice, 0, 4096)
-		ex(t, alice, ".", "dd if=/dev/urandom of="+name+" bs=1048576 count=1 seek=1 conv=notrunc", 60*time.Second)
+		writeRandAt(t, alice, name, 1048576, 1048576)
 		waitConverged(t, alice, bob, name, 120*time.Second)
 		time.Sleep(3 * time.Second)
 		// The transfer bill: the reader fetched one demand unit before the
@@ -854,6 +854,13 @@ func TestFUSEtoFUSE_EditorSaves(t *testing.T) {
 			// Bob saves via vim: default writebackup does the temp+rename dance.
 			ex(t, bob, ".", "vim -es -u NONE -c :%s/one/ONE/g -c :wq note.txt", 30*time.Second)
 			waitConverged(t, alice, bob, "note.txt", 30*time.Second)
+			// Bob's vim deletes its swap file on exit; the delete reaches
+			// Alice after the 1000 ms remove buffer. A vim started before it
+			// lands finds a foreign swap file (E325), an error under -es.
+			WaitForCondition(t, 30*time.Second, 100*time.Millisecond, func() bool {
+				_, err := os.Stat(filepath.Join(aliceMount, ".note.txt.swp"))
+				return os.IsNotExist(err)
+			}, "waiting for Bob's vim swap file to leave Alice's mount")
 
 			// Handoff: alice saves via vim on the same file through her mount.
 			ex(t, alice, ".", "vim -es -u NONE -c :%s/three/THREE/g -c :wq note.txt", 30*time.Second)

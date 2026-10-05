@@ -179,6 +179,8 @@ type Dir struct {
 	// onSlowFetch is the session's ear for a demand fetch that held a reader
 	// for seconds (SlowFetchNotice). Root-only and atomic like the two above.
 	onSlowFetch atomic.Pointer[func(waited time.Duration)]
+	// onDestroy runs in Destroy, before the host frees the volume. Root-only.
+	onDestroy atomic.Pointer[func()]
 	// disk is the free-space guard of the save folder (disk_guard.go). Root-only.
 	disk diskGuard
 
@@ -348,6 +350,11 @@ func (d *Dir) SetOnSlowFetch(fn func(waited time.Duration)) {
 	d.onSlowFetch.Store(&fn)
 }
 
+// SetOnDestroy sets what Destroy runs. Call it on the root before the mount.
+func (d *Dir) SetOnDestroy(fn func()) {
+	d.onDestroy.Store(&fn)
+}
+
 // noteSlowFetch reports a demand fetch that held a reader for waited. It
 // routes through the root and does nothing while no session listens.
 func (d *Dir) noteSlowFetch(waited time.Duration) {
@@ -444,6 +451,9 @@ type File struct {
 	// PeerStoppedSharing is set when the peer sends REMOVE_FILE during a download.
 	// On Release with 0 open handles, the code removes the file reference.
 	PeerStoppedSharing bool
+	// localGone: a local unlink or a rename over this object's path replaced
+	// it, so no warm landing may write it (landWarmFile). Guarded by metaMu.
+	localGone bool
 
 	openFileCounter OpenFileCounter
 
@@ -576,6 +586,13 @@ func (ofc *OpenFileCounter) Release() uint64 {
 
 	ofc.counter--
 	return ofc.counter
+}
+
+// Reset drops the count: the handle it counted is gone.
+func (ofc *OpenFileCounter) Reset() {
+	ofc.mu.Lock()
+	defer ofc.mu.Unlock()
+	ofc.counter = 0
 }
 
 func (ofc *OpenFileCounter) CountOpenDescriptors() uint64 {

@@ -56,6 +56,9 @@ type FS struct {
 	host atomic.Pointer[winfuse.FileSystemHost]
 	root atomic.Pointer[Dir]
 
+	// refresher tells the file manager about peer changes while mounted.
+	refresher atomic.Pointer[fileManagerRefresher]
+
 	// ctxMu guards ctx/cancel. CancelInFlight and ClearFiles rebuild the pair
 	// from RPC and teardown goroutines while Mount and Unmount read it. Never
 	// hold ctxMu across a blocking call.
@@ -229,6 +232,30 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	fs.host.Store(host)
 	fs.mountPoint = cleanMountPoint
 
+	// Its own context: CancelInFlight replaces fs.ctx while the mount stays.
+	// A platform without a file manager refresh starts nothing.
+	if flush := fs.platformRefresh(cleanMountPoint); flush != nil {
+		refresh := newFileManagerRefresher(flush)
+		refresh.logger = fs.logger
+		refreshCtx, stopRefresh := context.WithCancel(context.Background())
+		defer stopRefresh()
+		go refresh.run(refreshCtx)
+		fs.refresher.Store(refresh)
+		defer fs.refresher.CompareAndSwap(refresh, nil)
+		if runtime.GOOS == "windows" {
+			// WinFsp frees the volume right after Destroy, and a notify still
+			// running then uses it. Destroy stops the refresher first.
+			root.SetOnDestroy(func() {
+				stopRefresh()
+				select {
+				case <-refresh.done:
+				case <-time.After(refreshStopWait):
+					fs.logger.Warn("File manager refresh still running at unmount")
+				}
+			})
+		}
+	}
+
 	opts := getMountOptions(fs.AutoCache)
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
@@ -272,7 +299,10 @@ func (fs *FS) Unmount() {
 	fs.ctxMu.Unlock()
 	cancel()
 
-	if fs.root.Load() != nil {
+	// Read before the host stops: Mount clears fs.root when the host returns,
+	// and on Linux that can come before host.Unmount returns.
+	root := fs.root.Load()
+	if root != nil {
 		fs.drainInFlightOperations()
 	}
 
@@ -288,6 +318,9 @@ func (fs *FS) Unmount() {
 		fs.logger.Warn("FUSE Unmount timed out, force-unmounting", "mountPoint", fs.mountPoint)
 		fs.forceUnmount()
 		<-done
+	}
+	if root != nil {
+		root.flushPendingSidecars()
 	}
 	fs.root.Store(nil)
 	fs.logger.Warn("FUSE Unmount completed")

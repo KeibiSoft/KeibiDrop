@@ -474,7 +474,15 @@ func main() {
 
 		case "quit":
 			_ = kd.UnmountFilesystem()
+			// Stop the mount watcher, then take the mount down: a process that
+			// exits with its own mount up can leave the watcher's stat of it
+			// waiting on itself forever. The peer then never dies, not even on
+			// SIGKILL, and the harness waits out the test timeout (60 min on
+			// Linux, 4 Oct).
 			cancel()
+			if kd.FS != nil {
+				kd.FS.Unmount()
+			}
 			fmt.Println("BYE")
 			return
 
