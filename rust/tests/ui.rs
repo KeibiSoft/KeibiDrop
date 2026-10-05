@@ -10,7 +10,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 const WIN_W: u32 = 1144;
-const WIN_H: u32 = 760;
+const WIN_H: u32 = 729; // Figma frames are 1144x729
 
 fn app() -> MainWindow {
     i_slint_backend_testing::init_no_event_loop();
@@ -32,15 +32,6 @@ fn one(app: &MainWindow, label: &str) -> ElementHandle {
         label
     );
     first
-}
-
-// The last element with this label. The help panel is drawn after the screens,
-// so its button is the last match when a screen shows a twin (screen 0 has its
-// own "Feedback" button).
-fn last(app: &MainWindow, label: &str) -> ElementHandle {
-    ElementHandle::find_by_accessible_label(app, label)
-        .last()
-        .unwrap_or_else(|| panic!("no element labeled {:?}", label))
 }
 
 // The one checkbox with this label; skips the row's plain-text twin.
@@ -65,11 +56,13 @@ fn assert_on_screen(el: &ElementHandle, what: &str) {
 }
 
 #[test]
-fn gear_opens_settings() {
+fn menu_opens_settings() {
     let app = app();
     assert!(!app.get_settings_visible());
+    one(&app, "Menu").invoke_accessible_default_action();
     one(&app, "Open settings").invoke_accessible_default_action();
-    assert!(app.get_settings_visible(), "gear did not open settings");
+    assert!(app.get_settings_visible(), "menu did not open settings");
+    assert!(!app.get_menu_open(), "menu stayed open over settings");
 }
 
 #[test]
@@ -150,7 +143,7 @@ fn update_notice_only_when_a_version_is_set() {
 fn help_report_button_opens_feedback() {
     let app = app();
     app.set_help_visible(true);
-    last(&app, "Feedback").invoke_accessible_default_action();
+    one(&app, "Question?").invoke_accessible_default_action();
     assert!(app.get_feedback_visible(), "feedback overlay did not open");
     assert!(!app.get_help_visible(), "help panel stayed open");
 }
@@ -226,10 +219,10 @@ fn invite_link_button_fires_and_fits_the_window() {
 
 // The connect screen is absolutely positioned, so a new element can land on
 // top of an existing one and no test would notice. The first placement of this
-// button sat at y=645 and covered the contacts panel, which starts at y=656.
+// button covered the contacts panel, which starts at y=636 (Figma Screen 12).
 #[test]
 fn invite_link_button_clears_the_contacts_panel() {
-    const CONTACTS_TOP: f32 = 656.0;
+    const CONTACTS_TOP: f32 = 636.0;
     let app = app();
     let btn = one(&app, "Copy invite link");
     let bottom = btn.absolute_position().y + btn.size().height;
@@ -252,10 +245,10 @@ fn invite_link_button_clears_the_contacts_panel() {
 
 // Caught in the cold install test of 2026-09-15: the button stopped short of
 // the input above it, which reads as a misaligned control. Card 2's content
-// column runs to x=795, the right edge of the input and of the Add/Copy button.
+// row runs to x=796 in Figma Screen 12, the right edge of the Copy button.
 #[test]
 fn invite_button_ends_at_the_card_content_edge() {
-    const CONTENT_RIGHT: f32 = 795.0;
+    const CONTENT_RIGHT: f32 = 796.0;
     let app = app();
     let btn = one(&app, "Copy invite link");
     let right = btn.absolute_position().x + btn.size().width;
@@ -337,10 +330,10 @@ fn remote_file(name: &str) -> keibidrop_rust::FileInfo {
     }
 }
 
-// What the watcher thread does on every tick: a new model, same rows.
+// What the watcher thread does on every tick (main.rs start_file_watcher).
 fn set_files(app: &MainWindow, names: &[&str]) {
     let rows: Vec<keibidrop_rust::FileInfo> = names.iter().map(|n| remote_file(n)).collect();
-    app.set_file_list(slint::ModelRc::new(slint::VecModel::from(rows)));
+    keibidrop_rust::sync_file_list(app, rows);
 }
 
 fn connected_no_fuse(app: &MainWindow) {
@@ -365,7 +358,7 @@ fn save_button(app: &MainWindow) -> ElementHandle {
 
 fn button_text(el: &ElementHandle) -> String {
     el.query_descendants()
-        .match_type_name("Text")
+        .match_inherits("Text")
         .find_first()
         .and_then(|t| t.accessible_label())
         .map(|s| s.to_string())
@@ -440,7 +433,7 @@ fn save_click_across_a_list_rebuild() {
 
     let at = centre(&save_button(&app));
     press(&app, at);
-    // The watcher tick lands between press and release: same rows, new model.
+    // The watcher tick lands between press and release.
     set_files(&app, &["signal.jpeg"]);
     release(&app, at);
 

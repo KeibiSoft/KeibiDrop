@@ -405,8 +405,7 @@ fn start_file_watcher(
                 let weak_clone = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(app) = weak_clone.upgrade() {
-                        let model = std::rc::Rc::new(slint::VecModel::from(files));
-                        app.set_file_list(slint::ModelRc::from(model));
+                        sync_file_list(&app, files);
                         app.set_any_downloading(any_dl);
                     }
                 });
@@ -2321,6 +2320,14 @@ fn main() {
                     &weak_auto,
                     &format!("Connects to '{}' when the app starts.", name),
                 );
+            }
+        });
+
+        // Overlays blur the window behind them (Figma Screen 13).
+        let weak_backdrop = app.as_weak();
+        app.on_capture_backdrop(move || {
+            if let Some(app) = weak_backdrop.upgrade() {
+                install_backdrop(&app);
             }
         });
 

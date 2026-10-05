@@ -1,4 +1,8 @@
-import { Button, VerticalBox, ScrollView, TextEdit, LineEdit } from "std-widgets.slint";
+import { ScrollView, TextEdit, LineEdit } from "std-widgets.slint";
+import { Theme, Backdrop, Label, Glass, GlassKind, Outline, TextStyle } from "theme.slint";
+
+// Rust fills it with the blurred window behind an overlay.
+export { Backdrop } from "theme.slint";
 
 // Discovered LAN peer
 export struct DiscoveredPeer {
@@ -27,245 +31,135 @@ export struct FileInfo {
     is-local: bool,       // true = my file (shared by me), false = remote file (from peer)
 }
 
-component InputArea inherits Rectangle {
-    in-out property <string> inText: "xxx-xxx-xxx";
-    in property <bool> readOnly: false;
-    in property <string> buttonText: "Copy";
-
-    callback process_code;
-
-    width: 438px;
-    height: 34px;
-    border-radius: 7px;
-    border-width: 0.5px;
-    border-color: rgba(255,255,255,0.5);
-    background: #222222;
-    clip: true;
-
-    // Input text area (left portion)
-    if root.readOnly: Text {
-        x: 8px;
-        width: 288px;
-        height: parent.height;
-        text: root.inText;
-        color: white;
-        font-family: "monospace";
-        font-size: 11px;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-
-    if !root.readOnly: TextInput {
-        x: 8px;
-        width: 288px;
-        height: parent.height;
-        horizontal-alignment: left;
-        vertical-alignment: center;
-        font-family: "monospace";
-        font-size: 12px;
-        color: white;
-        text <=> root.inText;
-        single-line: true;
-        accepted => { root.process_code(); }
-    }
-
-    // White divider line
-    Rectangle {
-        x: 296px;
-        y: 0px;
-        width: 0.5px;
-        height: parent.height;
-        background: rgba(255,255,255,0.5);
-    }
-
-    // Button (right portion, inside the pill)
-    Rectangle {
-        x: 296px;
-        y: 0px;
-        width: 142px;
-        height: parent.height;
-        background: btn-touch.pressed ? #2563eb : btn-touch.has-hover ? #60a5fa : #3b82f6;
-        animate background { duration: 150ms; }
-
-        Text {
-            text: root.buttonText;
-            color: white;
-            font-size: 14px;
-            font-weight: 600;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-
-        btn-touch := TouchArea {
-            clicked => { root.process_code(); }
-        }
-    }
+// One row of the header's "..." menu.
+export struct MenuEntry {
+    id: string,
+    label: string,
+    a11y: string,
 }
 
-component DataRectangle inherits Rectangle {
-    in property <string> info: "code";
-    in-out property <string> inText;
-    in property <string> buttonText;
-    in property <bool> readOnly;
-    in property <string> helperText: "";
-    in property <string> secondaryText: ""; // empty hides the second action
+// Numbered step square.
+component Badge inherits Outline {
+    in property <int> number;
+    width: Theme.control;
+    height: Theme.control;
 
-    callback process_code;
-    callback secondary_action;
-
-    width: 517px;
-    height: 100%;
-
-    t := Text {
-        x: 43px;
-        y: 30px;
-        text: parent.info;
-        color: white;
-        font-size: 16px;
-        font-weight: 600;
-    }
-
-    InputArea {
-        x: 43px;
-        y: 62px;
-        inText <=> parent.inText;
-        buttonText: parent.buttonText;
-        readOnly: parent.readOnly;
-        process_code => { parent.process_code() }
-    }
-
-    if root.helperText != "": Text {
-        x: 43px;
-        y: root.secondaryText != "" ? 114px : 120px;
-        // A secondary button shares this row when one is set.
-        width: root.secondaryText != "" ? 265px : parent.width - 86px;
-        text: root.helperText;
-        color: #6A6A6A;
-        font-size: 12px;
-        wrap: word-wrap;
-    }
-
-    if root.secondaryText != "": Rectangle {
-        // Directly under the primary button in InputArea, same width.
-        x: 339px;
-        y: 114px;
-        width: 142px;
-        height: 28px;
-        border-radius: 7px;
-        border-width: 0.5px;
-        border-color: #3b82f6;
-        background: sec-touch.pressed ? rgba(59,130,246,0.25)
-                  : sec-touch.has-hover ? rgba(59,130,246,0.15)
-                  : transparent;
-        animate background { duration: 150ms; }
-
-        accessible-role: button;
-        accessible-label: root.secondaryText;
-        accessible-action-default => { root.secondary_action(); }
-
-        Text {
-            accessible-role: none; // the Rectangle above carries the label
-            text: root.secondaryText;
-            color: #60a5fa;
-            font-size: 13px;
-            font-weight: 600;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            width: parent.width;
-            height: parent.height;
-        }
-
-        sec-touch := TouchArea {
-            mouse-cursor: pointer;
-            clicked => { root.secondary_action(); }
-        }
-    }
-}
-
-component NumberedToolTip inherits Rectangle {
-    in property <int> number: 1;
-    width: 34px;
-    height: 34px;
-    border-width: 0.5px;
-    border-color: white;
-    border-radius: 7px;
-    background: transparent;
-
-    Text {
-        text: number;
-        color: #6A6A6A;
-        font-size: 14px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-}
-
-component CodeRectangle inherits Rectangle {
-    in property <string> info: "code";
-    in-out property <string> inText;
-    in property <string> buttonText;
-    in property <bool> readOnly;
-    in property <string> helperText: "";
-    in property <string> secondaryText: "";
-    out property <string> codeData;
-
-    callback process_code;
-    callback secondary_action;
-
-    width: 517px;
-    height: 170px;
-    border-width: 0.5px;
-    border-color: white;
-    border-radius: 7px;
-    background: #262626;
-
-    DataRectangle {
+    Label {
         width: parent.width;
         height: parent.height;
-        info: parent.info;
-        inText <=> parent.inText;
-        buttonText: parent.buttonText;
-        readOnly: parent.readOnly;
-        helperText: parent.helperText;
-        secondaryText: parent.secondaryText;
-        process_code => { parent.process_code() }
-        secondary_action => { parent.secondary_action() }
+        horizontal-alignment: center;
+        style: Theme.badge;
+        color: Theme.faint;
+        text: root.number;
     }
 }
 
-component SectionElement inherits Rectangle {
-    in property <string> info: "code";
-    in-out property <string> inText;
-    in property <string> buttonText;
-    in property <bool> readOnly;
-    in property <int> sectionNumber;
-    in property <string> helperText: "";
-    in property <string> secondaryText: "";
+// Text that acts as a button. pad widens the hit area past the glyphs.
+component TextAction inherits Rectangle {
+    in property <string> text;
+    in property <TextStyle> style: Theme.small;
+    in property <color> ink: Theme.muted;
+    in property <color> hover-ink: Theme.text;
+    in property <length> pad: 0;
+    callback clicked;
 
-    callback process_code;
-    callback secondary_action;
+    width: label.preferred-width + 2 * root.pad;
+    height: 20px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
 
-    height: 178px;
-    width: 570px;
-
-    nt := NumberedToolTip {
-        number: parent.sectionNumber;
-        x: 0;
-        y: 0;
-    }
-
-    CodeRectangle {
-        x: nt.x + nt.width + 19px;
-        y: 0;
+    label := Label {
+        x: root.pad;
         height: parent.height;
-        info: parent.info;
-        inText <=> parent.inText;
-        readOnly: parent.readOnly;
-        buttonText: parent.buttonText;
-        helperText: parent.helperText;
-        secondaryText: parent.secondaryText;
-        process_code => { parent.process_code() }
-        secondary_action => { parent.secondary_action() }
+        silent: true;
+        style: root.style;
+        text: root.text;
+        color: touch.has-hover ? root.hover-ink : root.ink;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Input with the grey button attached on its right. Figma: the input is 303
+// wide and the button covers its last 24px. The button parts are the children.
+component Field inherits Rectangle {
+    in-out property <string> text;
+    in property <bool> read-only;
+    in property <length> button-width: 166px;
+    callback accepted;
+
+    height: Theme.control;
+
+    Outline {
+        x: 0;
+        width: root.width - root.button-width + 24px;
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+        background: Theme.field;
+        clip: true;
+
+        if root.read-only: Label {
+            x: 16px;
+            width: root.width - root.button-width - 20px;
+            height: parent.height;
+            style: Theme.code;
+            color: Theme.text-soft;
+            overflow: elide;
+            text: root.text;
+        }
+        if !root.read-only: TextInput {
+            x: 16px;
+            width: root.width - root.button-width - 20px;
+            height: parent.height;
+            font-size: Theme.code.size;
+            font-weight: Theme.code.weight;
+            color: Theme.text;
+            vertical-alignment: center;
+            single-line: true;
+            text <=> root.text;
+            accepted => { root.accepted(); }
+        }
+    }
+    Outline {
+        x: root.width - root.button-width;
+        width: root.button-width;
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+        background: Theme.button;
+        clip: true;
+        @children
+    }
+}
+
+// One clickable part of a field's grey button.
+component FieldAction inherits Rectangle {
+    in property <string> text;
+    // Figma sets Copy and Invite link as one centred string; nudge matches it.
+    in property <length> nudge: 0;
+    callback clicked;
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+    background: touch.pressed ? #0000001f : touch.has-hover ? #ffffff14 : transparent;
+    animate background { duration: 150ms; }
+
+    Label {
+        x: root.nudge;
+        width: parent.width;
+        height: parent.height;
+        horizontal-alignment: center;
+        silent: true;
+        style: Theme.button-label;
+        color: Theme.on-button;
+        text: root.text;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
     }
 }
 
@@ -286,8 +180,8 @@ component ToggleSwitch inherits Rectangle {
 
     width: 36px;
     height: 20px;
-    border-radius: 7px;
-    background: root.checked ? #3b82f6 : #363434;
+    border-radius: Theme.radius;
+    background: root.checked ? Theme.toggle-on : Theme.toggle-off;
     animate background { duration: 150ms; }
 
     Rectangle {
@@ -295,13 +189,14 @@ component ToggleSwitch inherits Rectangle {
         y: 2px;
         width: 16px;
         height: 16px;
-        border-radius: 5px;
-        background: white;
+        border-radius: Theme.radius-small;
+        background: Theme.knob;
         animate x { duration: 150ms; easing: ease-out; }
     }
 
     TouchArea {
         enabled: root.enabled;
+        mouse-cursor: pointer;
         clicked => {
             root.checked = !root.checked;
             root.toggled(root.checked);
@@ -309,7 +204,34 @@ component ToggleSwitch inherits Rectangle {
     }
 }
 
-// Pill button with blue outline (Create/Join room)
+// Switch with its label 48px to the right (Figma Screen 12).
+component ToggleRow inherits Rectangle {
+    in property <string> text;
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    height: 20px;
+
+    ToggleSwitch {
+        x: 0;
+        y: 0;
+        accessible-label: root.text;
+        checked <=> root.checked;
+        enabled: root.enabled;
+        toggled(v) => { root.toggled(v); }
+    }
+    Label {
+        x: 48px;
+        height: parent.height;
+        silent: true;
+        style: Theme.label;
+        color: Theme.muted;
+        text: root.text;
+    }
+}
+
+// Blue outline button: Connect, Question? and the overlay actions.
 component PillButton inherits Rectangle {
     in-out property <string> text: "Button";
     in property <bool> enabled: true;
@@ -325,38 +247,35 @@ component PillButton inherits Rectangle {
     }
 
     width: 161px;
-    height: 34px;
-    border-radius: 7px;
-    border-width: 0.5px;
-    background: root.active ? #177DF5 : #222222;
-    border-color: !root.enabled ? #555
-               : pill-touch.pressed ? #125ec0
-               : pill-touch.has-hover ? #4a9af7
-               : #177DF5;
+    height: Theme.control;
+    border-radius: Theme.radius;
+    border-width: Theme.hairline;
+    border-color: Theme.accent-line;
+    background: root.active ? Theme.accent-line
+              : pill-touch.pressed ? #177df526
+              : pill-touch.has-hover ? #177df514
+              : Theme.field;
+    opacity: root.enabled || root.active ? 1 : 0.4;
+    animate background { duration: 150ms; }
 
-    Text {
-        accessible-role: none;
-        text: root.text;
-        color: root.active ? white
-             : !root.enabled ? #555
-             : pill-touch.pressed ? #125ec0
-             : pill-touch.has-hover ? #4a9af7
-             : #177DF5;
-        font-size: 14px;
+    Label {
+        width: parent.width;
+        height: parent.height;
         horizontal-alignment: center;
-        vertical-alignment: center;
+        silent: true;
+        style: Theme.primary;
+        color: root.active ? Theme.text : Theme.accent;
+        text: root.text;
     }
 
     pill-touch := TouchArea {
         enabled: root.enabled;
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
-
-    animate background { duration: 150ms; }
-    animate border-color { duration: 150ms; }
 }
 
-// Small outline button (Save Log, ?, X)
+// Small outline button (Save Peer, Save All, the overlays' X)
 component SmallOutlineButton inherits Rectangle {
     in-out property <string> text: "?";
     callback clicked;
@@ -368,25 +287,25 @@ component SmallOutlineButton inherits Rectangle {
     width: self.preferred-width;
     preferred-width: btn-label.preferred-width + 28px;
     height: 24px;
-    border-radius: 7px;
-    border-width: 0.5px;
-    border-color: small-touch.pressed ? #ccc : small-touch.has-hover ? #bbb : white;
-    background: transparent;
+    border-radius: Theme.radius;
+    border-width: Theme.hairline;
+    border-color: small-touch.has-hover ? Theme.text : Theme.muted;
+    animate border-color { duration: 150ms; }
 
-    btn-label := Text {
-        accessible-role: none;
-        text: root.text;
-        color: small-touch.pressed ? #bbb : small-touch.has-hover ? #aaa : #888888;
-        font-size: 12px;
+    btn-label := Label {
+        width: parent.width;
+        height: parent.height;
         horizontal-alignment: center;
-        vertical-alignment: center;
+        silent: true;
+        style: Theme.caption;
+        color: small-touch.has-hover ? Theme.text : Theme.muted;
+        text: root.text;
     }
 
     small-touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
-
-    animate border-color { duration: 150ms; }
 }
 
 component KeibiDropLogo inherits Rectangle {
@@ -401,7 +320,6 @@ component KeibiDropLogo inherits Rectangle {
     }
 }
 
-
 // Outline button - white/grey by default, set accent: true for blue
 component OutlineButton inherits Rectangle {
     in-out property <string> text: "Button";
@@ -410,33 +328,207 @@ component OutlineButton inherits Rectangle {
     callback clicked;
 
     width: 161px;
-    height: 34px;
-    background: touch.pressed ? (accent ? rgba(59,130,246,0.15) : rgba(255,255,255,0.08))
-              : touch.has-hover ? (accent ? rgba(59,130,246,0.08) : rgba(255,255,255,0.04))
-              : transparent;
-    border-width: 1px;
-    border-radius: 8px;
-    border-color: !enabled ? #555
-               : accent ? (touch.pressed ? #2563eb : touch.has-hover ? #60a5fa : #3b82f6)
-               : (touch.pressed ? #ccc : touch.has-hover ? #bbb : #888);
+    height: Theme.control;
+    border-width: Theme.hairline;
+    border-radius: Theme.radius;
+    border-color: !root.enabled ? Theme.faint : root.accent ? Theme.accent-line : Theme.outline;
+    background: touch.pressed ? #ffffff14 : touch.has-hover ? #ffffff0a : transparent;
+    animate background { duration: 150ms; }
 
-    Text {
-        text: root.text;
-        color: !root.enabled ? #555
-             : root.accent ? (touch.pressed ? #2563eb : touch.has-hover ? #60a5fa : #3b82f6)
-             : (touch.pressed ? #fff : touch.has-hover ? #ddd : #aaa);
-        font-size: 14px;
+    Label {
+        width: parent.width;
+        height: parent.height;
         horizontal-alignment: center;
-        vertical-alignment: center;
+        style: Theme.button-label;
+        color: !root.enabled ? Theme.faint : root.accent ? Theme.accent : Theme.text;
+        text: root.text;
     }
 
     touch := TouchArea {
         enabled: root.enabled;
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
+}
 
-    animate border-color { duration: 150ms; }
-    animate background { duration: 150ms; }
+// One saved contact: status dot, name, code, Auto, Connect (Figma Screen 12).
+// Remove shows on hover only, so the row matches the design at rest.
+component ContactRow inherits Rectangle {
+    in property <ContactInfo> contact;
+    callback connect;
+    callback auto;
+    callback remove;
+
+    height: 20px;
+
+    hover := TouchArea { }
+    Rectangle {
+        x: 18.06px;
+        y: 8px;
+        width: 5.64px;
+        height: 5px;
+        border-radius: 2.5px;
+        background: root.contact.online ? Theme.online : Theme.offline;
+    }
+    Label {
+        x: 57.8px;
+        width: 105px;
+        height: parent.height;
+        overflow: elide;
+        color: Theme.text-soft;
+        text: root.contact.name;
+    }
+    Label {
+        x: 169.3px;
+        width: 165px;
+        height: parent.height;
+        overflow: elide;
+        color: Theme.text-soft;
+        text: root.contact.fingerprint;
+    }
+    TextAction {
+        x: 340.9px;
+        text: "Auto";
+        accessible-label: "Auto connect " + root.contact.name;
+        ink: root.contact.auto_connect ? Theme.link : Theme.muted;
+        clicked => { root.auto(); }
+    }
+    TextAction {
+        x: 413.1px;
+        text: "Connect";
+        accessible-label: "Connect to " + root.contact.name;
+        ink: Theme.link;
+        clicked => { root.connect(); }
+    }
+    remove-action := TextAction {
+        x: 466px;
+        pad: 4px;
+        text: "X";
+        accessible-label: "Remove " + root.contact.name;
+        ink: hover.has-hover ? Theme.muted : transparent;
+        hover-ink: Theme.error;
+        clicked => { root.remove(); }
+    }
+}
+
+// Saved contacts on glass: three rows show, the rest scroll (Figma Screen 12).
+component ContactsPanel inherits Glass {
+    in property <[ContactInfo]> contacts;
+    callback connect(int);
+    callback auto(int);
+    callback remove(int);
+
+    // Row tops in Figma: 5, 25, 46. Three rows show, the rest scroll.
+    pure function row-y(i: int) -> length {
+        return 5px + floor(i * 20.5 + 0.25) * 1px;
+    }
+
+    list := Flickable {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: root.row-y(3);
+        content-height: max(self.height, root.row-y(root.contacts.length - 1) + 20px);
+
+        for contact[i] in root.contacts: ContactRow {
+            x: 0;
+            y: root.row-y(i);
+            width: 490px;
+            contact: contact;
+            connect => { root.connect(i); }
+            auto => { root.auto(i); }
+            remove => { root.remove(i); }
+        }
+    }
+    if list.content-height > list.height: Rectangle {
+        x: 495.55px;
+        y: 9px + (root.height - 48px) * (-list.content-y / (list.content-height - list.height));
+        width: 6.77px;
+        height: 30px;
+        border-radius: Theme.radius-small;
+        background: Theme.scrollbar;
+    }
+}
+
+// One row of the header's "..." menu.
+component MenuItem inherits Rectangle {
+    in property <MenuEntry> entry;
+    callback clicked;
+
+    height: 21px;
+    accessible-role: button;
+    accessible-label: root.entry.a11y;
+    accessible-action-default => { root.clicked(); }
+
+    Label {
+        x: 18px;
+        height: parent.height;
+        silent: true;
+        color: touch.has-hover ? Theme.text : Theme.muted;
+        text: root.entry.label;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Full-window overlay (Figma Screen 13): the window blurred behind, a sharp
+// title, and a frosted glass card that holds the children.
+component Overlay inherits Rectangle {
+    in property <string> heading;
+    in property <string> heading-light;
+    in property <string> subheading;
+    in property <length> card-x: 313px;
+    in property <length> card-y: 260px;
+    in property <length> card-width: 517px;
+    in property <length> card-height: 420px;
+    callback dismiss;
+
+    property <float> alpha: 0;
+    opacity: root.alpha;
+    animate opacity { duration: 220ms; easing: ease-out; }
+    init => { root.alpha = 1; }
+
+    Rectangle { background: Theme.window-dim; }
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: Backdrop.blur;
+        image-fit: fill;
+    }
+    Rectangle { background: Theme.glass-tint; }
+    TouchArea { clicked => { root.dismiss(); } }
+
+    if root.heading != "": HorizontalLayout {
+        x: 1.5px;
+        y: 150px;
+        width: parent.width;
+        height: 30px;
+        alignment: center;
+        Label { style: Theme.title-wide; text: root.heading; }
+        if root.heading-light != "": Label { style: Theme.title-light; text: root.heading-light; }
+    }
+    if root.subheading != "": Label {
+        x: -0.5px;
+        y: 185px;
+        width: parent.width;
+        height: 30px;
+        horizontal-alignment: center;
+        style: Theme.subtitle;
+        text: root.subheading;
+    }
+    Glass {
+        x: root.card-x;
+        y: root.card-y;
+        width: root.card-width;
+        height: root.card-height;
+        kind: GlassKind.card;
+        frosted: true;
+        // Clicks on the card stay on the card.
+        TouchArea { }
+        @children
+    }
 }
 
 // Spinner arc with always-visible "+" center, clickable
@@ -792,14 +884,15 @@ export component MainWindow inherits Window {
     // KD_WINDOW_TITLE names the window when two instances run side by side.
     in property<string> window_title: "KEIBIDROP";
     default-font-family: "Inter";
+    // Figma frames are 1144x729.
     preferred-width: 1144px;
-    preferred-height: 760px;
+    preferred-height: 729px;
     min-width: 1144px;
-    min-height: 760px;
-    background: #222222;
+    min-height: 729px;
+    background: root.capturing ? Theme.window-dim : Theme.window;
 
     // Data bindings from Rust
-    in property<string> my_code: "XXXX-XXXX-XXXX-XXXX";
+    in property<string> my_code: "";
     in-out property<string> peer_code: "";
     in property<bool> next_enabled: true;
 
@@ -949,159 +1042,267 @@ export component MainWindow inherits Window {
     callback navigate_saved_folder(string);
     callback back_saved_folder();
 
+    // Header "..." menu
+    in-out property<bool> menu_open: false;
+    property<bool> can_save_peer: root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved;
+    property<[MenuEntry]> menu_entries: (root.current_screen == 1 || root.current_screen == 2) && root.can_save_peer
+        ? [{ id: "savepeer", label: "Save peer", a11y: "Save Peer" },
+           { id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
+           { id: "log", label: "Save log", a11y: "Save log" },
+           { id: "settings", label: "Settings", a11y: "Open settings" }]
+        : root.current_screen == 1 || root.current_screen == 2
+        ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
+           { id: "log", label: "Save log", a11y: "Save log" },
+           { id: "settings", label: "Settings", a11y: "Open settings" }]
+        : root.current_screen == 3
+        ? [{ id: "log", label: "Save log", a11y: "Save log" },
+           { id: "settings", label: "Settings", a11y: "Open settings" }]
+        : [{ id: "saved", label: "Saved files", a11y: "Saved files" },
+           { id: "log", label: "Save log", a11y: "Save log" },
+           { id: "settings", label: "Settings", a11y: "Open settings" }];
+
+    // Overlays blur the window behind them. Rust takes the snapshot while
+    // capturing is true, with the header and the overlay hidden, and blurs
+    // it off the UI thread (lib.rs install_backdrop).
+    out property<bool> overlay_open: root.help_visible || root.settings_visible || root.feedback_visible
+        || root.save_contact_visible || root.fuse_offer_visible;
+    in-out property<bool> capturing: false;
+    callback capture_backdrop();
+    changed overlay_open => {
+        if (self.overlay_open) {
+            root.capture_backdrop();
+        }
+    }
+    changed current_screen => {
+        if (self.overlay_open) {
+            root.capture_backdrop();
+        }
+    }
+
+    // Help card steps (Figma Screen 13 for the connect screen).
+    property<[string]> help_steps: root.current_screen == 1
+        ? ["Drag files onto the window or press Add File. Your peer sees your files and can save them.",
+           "Click Save to download a peer's file. Save Peer adds them to your contacts.",
+           "Connection badge: LAN = same network, Direct P2P = over the internet, Via Relay = through encrypted bridge."]
+        : root.current_screen == 2
+        ? ["Your peer's files appear in the mounted folder. Open with any app: Finder, Terminal, git, etc.",
+           "Files stream on access, no full download needed.",
+           "Drop files into the folder to share. Save Peer adds them to your contacts."]
+        : ["Same Wi-Fi: turn on the switch below Connect (it says Same network? \nTurn this on) on both computers, then click Connect next \nto the other computer.",
+           "Anywhere else: press Copy my code, send the code to the other person, paste the code they send you. Both press Connect.",
+           "Drag files onto the window to send them. Accept Files as a folder to open their files in any app."];
+
+    function show_overlay(help: bool, feedback: bool, settings: bool) {
+        root.menu_open = false;
+        root.help_visible = help;
+        root.feedback_visible = feedback;
+        root.settings_visible = settings;
+    }
+    function close_overlays() {
+        root.show_overlay(false, false, false);
+        if (root.save_contact_visible) {
+            root.save_contact_visible = false;
+            root.save_contact_name = "";
+        }
+        if (root.fuse_offer_visible) {
+            root.fuse_offer_declined();
+        }
+    }
+    function menu_pick(id: string) {
+        root.menu_open = false;
+        if (id == "saved") {
+            root.view_saved_files();
+        } else if (id == "log") {
+            root.export_logs_pressed();
+        } else if (id == "settings") {
+            root.show_overlay(false, false, true);
+        } else if (id == "disconnect") {
+            root.disconnect_pressed();
+        } else if (id == "savepeer") {
+            root.save_contact_visible = true;
+        }
+    }
+    // The header X closes the menu, then an overlay, then the app.
+    function close_or_quit() {
+        if (root.menu_open) {
+            root.menu_open = false;
+        } else if (root.overlay_open) {
+            root.close_overlays();
+        } else {
+            root.exit_pressed();
+        }
+    }
+
     // Opaque backdrop - ensures full coverage on Wayland where
     // Window.background alone may not fill the compositor surface.
     Rectangle {
         width: 100%;
         height: 100%;
-        background: #222222;
+        background: root.background;
     }
 
-    // ============ SCREEN 0: Connect ============
+    // ============ SCREEN 0: Connect (Figma Screen 12) ============
     if current_screen == 0: Rectangle {
         width: 100%;
         height: 100%;
-        background: #222222;
         property <float> alpha: 0.0;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
 
-        // Logo top-left
-        KeibiDropLogo {
-            x: 115px;
-            y: 24px;
-        }
-
-        // Title
-        t1 := Text {
-            y: 127px;
+        // An open overlay shows its own title over the blur.
+        if !root.overlay_open: Label {
+            y: 150px;
             width: parent.width;
+            height: 30px;
             horizontal-alignment: center;
-            vertical-alignment: top;
+            style: Theme.title;
             text: "Connect Securely";
-            color: white;
-            font-family: "Inter";
-            font-size: 23px;
-            font-weight: 700;
         }
-
-        // Subtitle
-        Text {
-            y: t1.y + t1.height + 7px;
+        if !root.overlay_open: Label {
+            x: -0.5px;
+            y: 185px;
             width: parent.width;
+            height: 30px;
             horizontal-alignment: center;
-            vertical-alignment: top;
+            style: Theme.subtitle;
             text: "Exchange fingerprints to establish a secure connection";
-            color: white;
-            font-family: "Inter";
-            font-size: 16px;
-            font-weight: 400;
         }
 
-        // Card 1: Enter Code
-        SectionElement {
-            x: 261px;
+        Badge { x: 261px; y: 262px; number: 1; }
+        Badge { x: 261px; y: 408px; number: 2; }
+
+        // Card 1: the peer's code
+        Outline {
+            x: 314px;
             y: 262px;
-            height: 170px;
-            info: root.local_mode ? "Peer Address" : "Enter Code";
-            inText <=> root.peer_code;
-            readOnly: false;
-            buttonText: "Add";
-            process_code => { root.add_peer_code() }
-            sectionNumber: 1;
-        }
+            width: 517px;
+            height: 131px;
+            background: Theme.card;
 
-        // Peer code feedback - below input in card 1
-        if root.peer_code_added: Text {
-            x: 357px;
-            y: 390px;
-            text: "Peer code added";
-            color: #22c55e;
-            font-size: 13px;
-        }
-        if root.peer_code_error: Text {
-            x: 357px;
-            y: 390px;
-            text: "Invalid code. Check that you copied the full code from your peer.";
-            color: #d97706;
-            font-size: 12px;
-            width: 300px;
-            wrap: word-wrap;
-        }
-        if !root.peer_code_added && !root.peer_code_error && !root.local_mode: Text {
-            x: 357px;
-            y: 390px;
-            text: "Paste the code your peer sent you";
-            color: #555;
-            font-size: 12px;
+            Label {
+                x: 36px;
+                y: 13.5px;
+                height: 30px;
+                style: Theme.heading-medium;
+                text: root.local_mode ? "Peer Address" : "Peer Code";
+            }
+            peer-field := Field {
+                x: 36px;
+                y: 48px;
+                width: 445px;
+                text <=> root.peer_code;
+                accepted => { root.add_peer_code(); }
+                FieldAction {
+                    width: peer-field.button-width;
+                    height: Theme.control;
+                    text: "Add";
+                    clicked => { root.add_peer_code(); }
+                }
+            }
+            Label {
+                x: 36px;
+                y: 96px;
+                height: 12px;
+                style: root.peer_code_error ? Theme.note : Theme.hint;
+                color: root.peer_code_error ? Theme.error : root.peer_code_added ? Theme.accent : Theme.faint;
+                text: root.peer_code_error ? "Invalid code. Check that you copied the full code from your peer."
+                    : root.peer_code_added ? "Peer code added"
+                    : root.local_mode ? "" : "Paste the code your peer sent you";
+            }
         }
 
         // Card 2: Your Code, or what stopped the engine, in its place
-        if root.engine_error == "": SectionElement {
-            x: 261px;
-            y: 459px;
-            height: 178px;
-            info: root.local_mode
-                ? "Your Address (local network)"
-                : "Your Code";
-            inText: root.local_mode
-                ? (root.local_address != "" ? root.local_address : "No link-local address")
-                : (root.my_code != "" ? root.my_code : "XXXX-XXXX-XXXX-XXXX-YYYY-YYYY-YYYY-YYYY");
-            readOnly: true;
-            buttonText: "Copy my code";
-            helperText: root.local_mode
-                ? ""
-                : "Send the invite link to someone who does not have the app yet. It opens one page with the download and this code.";
-            // The invite link carries this code to the other person.
-            secondaryText: root.local_mode ? "" : "Copy invite link";
-            process_code => { root.copy_my_code() }
-            secondary_action => { root.copy_invite_link() }
-            sectionNumber: 2;
-        }
-
-        // Waiting for the other side: name what is missing rather than spinning.
-        if !root.local_mode && root.room_action != 0: Text {
-            x: 868px;
-            y: 560px;
-            width: 260px;
-            text: "Waiting for the other side. They need your code too.";
-            color: #aaa;
-            font-size: 12px;
-            wrap: word-wrap;
-        }
-        if root.engine_error != "": Rectangle {
-            // Line up with the card boxes, which start after the number badge.
+        if root.engine_error == "": Outline {
             x: 314px;
-            y: 459px;
+            y: 408px;
             width: 517px;
-            height: 178px;
-            border-radius: 7px;
-            background: rgba(239,68,68,0.08);
-            border-width: 0.5px;
-            border-color: rgba(239,68,68,0.35);
-            Text {
-                x: 16px;
-                y: 14px;
-                width: parent.width - 32px;
-                text: "KeibiDrop could not start";
-                color: #ef4444;
-                font-size: 14px;
-                font-weight: 600;
+            height: 161px;
+            background: Theme.card;
+
+            Label {
+                x: 36px;
+                y: 23px;
+                height: 30px;
+                style: Theme.heading;
+                text: root.local_mode ? "Your Address (local network)" : "Your Code";
             }
-            Text {
-                x: 16px;
-                y: 40px;
-                width: parent.width - 32px;
-                height: 80px;
-                text: root.engine_error;
-                color: #e5e7eb;
-                font-size: 12px;
+            code-field := Field {
+                x: 36px;
+                y: 60px;
+                width: 446px;
+                button-width: 167px;
+                read-only: true;
+                text: root.local_mode
+                    ? (root.local_address != "" ? root.local_address : "No link-local address")
+                    : root.my_code;
+                FieldAction {
+                    x: 0;
+                    width: root.local_mode ? code-field.button-width : 67px;
+                    height: Theme.control;
+                    text: "Copy";
+                    nudge: root.local_mode ? 0 : 2.77px;
+                    accessible-label: "Copy my code";
+                    clicked => { root.copy_my_code(); }
+                }
+                // The invite link carries this code to the other person.
+                if !root.local_mode: Rectangle {
+                    x: 67px;
+                    width: 1px;
+                    height: Theme.control;
+                    background: Theme.outline;
+                }
+                if !root.local_mode: FieldAction {
+                    x: 68px;
+                    width: code-field.button-width - 68px;
+                    height: Theme.control;
+                    text: "Invite link";
+                    nudge: -2.14px;
+                    accessible-label: "Copy invite link";
+                    clicked => { root.copy_invite_link(); }
+                }
+            }
+            if !root.local_mode: Label {
+                x: 36px;
+                y: 110px;
+                width: 271px;
                 wrap: word-wrap;
+                vertical-alignment: top;
+                style: Theme.hint;
+                color: Theme.faint;
+                text: "Send this code to your peer via Telegram, Signal, Email or Carrier Pigeon.";
+            }
+        }
+        if root.engine_error != "": Outline {
+            x: 314px;
+            y: 408px;
+            width: 517px;
+            height: 161px;
+            background: Theme.card;
+            border-color: Theme.error;
+            Label {
+                x: 36px;
+                y: 13.5px;
+                height: 30px;
+                style: Theme.heading-medium;
+                color: Theme.error;
+                text: "KeibiDrop could not start";
+            }
+            Label {
+                x: 36px;
+                y: 44px;
+                width: parent.width - 72px;
+                height: 60px;
+                wrap: word-wrap;
+                overflow: elide;
+                vertical-alignment: top;
+                style: Theme.hint;
+                color: Theme.text-soft;
+                text: root.engine_error;
             }
             HorizontalLayout {
-                x: 16px;
-                y: 128px;
+                x: 36px;
+                y: 112px;
                 height: 34px;
                 spacing: 10px;
                 alignment: start;
@@ -1110,407 +1311,222 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Connect button (replaces separate Create/Join, role determined by fingerprint tiebreaker)
+        // Right column: identity and network switches, Connect, virtual folder.
+        if root.room_action == 0 && !root.local_mode: ToggleRow {
+            x: 868px;
+            y: 262px;
+            width: 230px;
+            text: "Incognito";
+            checked <=> root.incognito_mode;
+            toggled(v) => { root.incognito-mode-toggled(v); }
+        }
+        if root.room_action == 0: ToggleRow {
+            x: 868px;
+            y: 299px;
+            width: 230px;
+            text: "Local mode";
+            checked <=> root.local_mode;
+            toggled(v) => { root.local-mode-toggled(v); }
+        }
+
+        // Connect button (role determined by fingerprint tiebreaker)
         if !root.local_mode: PillButton {
             x: 868px;
-            y: 459px;
+            y: 408px;
             text: root.room_action != 0 ? "Connecting..." : "Connect";
             active: root.room_action != 0;
             // A typed code is enough: Connect registers it first (see on_connect_pressed).
             enabled: root.room_action == 0 && root.next_enabled && (root.peer_code_added || root.peer_code != "");
             clicked => { root.connect_pressed() }
         }
-
-        // Connect explanation (only when idle, not connecting, not local mode)
-        if !root.local_mode && root.room_action == 0 && root.peer_code_added: Text {
+        if !root.local_mode && root.room_action == 0 && root.peer_code_added: Label {
             x: 868px;
-            y: 497px;
-            width: 200px;
+            y: 450px;
+            height: 12px;
+            style: Theme.hint;
+            color: Theme.faint;
             text: "Both peers press Connect.";
-            color: #555;
-            font-size: 11px;
         }
 
-        // Status text while connecting (countdown timer)
-        if root.room_action != 0: Text {
+        // While connecting: the countdown, what is missing, and Cancel.
+        if root.room_action != 0: Label {
             x: 868px;
-            y: 497px;
-            width: 340px;
+            y: 450px;
+            width: 240px;
+            height: 14px;
+            style: Theme.label;
+            color: Theme.muted;
             text: root.connect_status != "" ? root.connect_status : "Connecting...";
-            color: #aaa;
-            font-size: 12px;
         }
-
-        // Cancel button (while connecting)
+        // Waiting for the other side: name what is missing rather than spinning.
+        if !root.local_mode && root.room_action != 0: Label {
+            x: 868px;
+            y: 470px;
+            width: 230px;
+            wrap: word-wrap;
+            vertical-alignment: top;
+            style: Theme.hint;
+            color: Theme.faint;
+            text: "Waiting for the other side. They need your code too.";
+        }
         if root.room_action != 0: PillButton {
             x: 868px;
-            y: 520px;
+            y: 505px;
             text: "Cancel";
             clicked => { root.cancel_connect_pressed() }
         }
 
-        // FUSE toggle
-        Rectangle {
+        // FUSE toggle: Medium first line, Light wrapped detail (Figma 8px).
+        if root.room_action == 0: Rectangle {
             x: 868px;
-            y: 573px;
-            width: 260px;
-            height: root.fuse_available ? 24px : 40px;
-            visible: root.room_action == 0;
+            y: 543px;
+            width: 230px;
+            height: 30px;
 
             ToggleSwitch {
                 x: 0;
-                y: 2px;
-                checked: root.fuse_mode;
-                enabled: root.fuse_available && root.room_action == 0;
-                toggled(val) => {
-                    root.fuse_mode = val;
-                    root.fuse-mode-toggled(val);
-                }
-            }
-
-            Text {
-                x: 44px;
                 y: 0;
-                height: 24px;
-                text: root.fuse_available
-                    ? (root.fuse_mode ? "Virtual folder\n(files sync automatically)" : "Direct transfer\n(select files to send)")
-                    : "Virtual folder not available";
-                color: root.fuse_available ? #ccc : #888888;
-                wrap: word-wrap;
-                font-size: 12px;
-                vertical-alignment: center;
+                accessible-label: "Virtual folder";
+                checked <=> root.fuse_mode;
+                enabled: root.fuse_available;
+                toggled(val) => { root.fuse-mode-toggled(val); }
             }
-
-            if !root.fuse_available: Rectangle {
+            Label {
                 x: 44px;
-                y: 20px;
-                width: fuse-hint-text.preferred-width;
-                height: 16px;
-
-                fuse-hint-text := Text {
-                    text: root.fuse_install_hint;
-                    color: fuse-hint-touch.has-hover ? #888 : #555;
-                    font-size: 11px;
+                y: -1.5px;
+                height: 10px;
+                style: Theme.tiny-strong;
+                color: Theme.muted;
+                text: root.fuse_available
+                    ? (root.fuse_mode ? "Virtual folder" : "Direct transfer")
+                    : "Virtual folder not available";
+            }
+            Rectangle {
+                x: 44px;
+                y: 8.5px;
+                width: 117px;
+                height: fuse-hint.preferred-height;
+                fuse-hint := Label {
+                    width: parent.width;
+                    wrap: word-wrap;
+                    vertical-alignment: top;
+                    style: Theme.tiny;
+                    color: fuse-hint-touch.has-hover ? Theme.text : Theme.muted;
+                    text: root.fuse_available
+                        ? (root.fuse_mode ? "(files sync automatically)" : "(select files to send)")
+                        : root.fuse_install_hint;
                 }
                 fuse-hint-touch := TouchArea {
+                    enabled: !root.fuse_available;
                     mouse-cursor: pointer;
                     clicked => { root.open-fuse-install(); }
                 }
             }
         }
 
-        // Local mode toggle (first: the LAN path needs no code at all)
-        Rectangle {
+        // LAN discovery, in place of Connect while local mode is on.
+        if root.local_mode && root.discovery_name != "" && root.room_action == 0: Label {
             x: 868px;
-            y: 525px;
-            width: 260px;
-            height: 24px;
-            visible: root.room_action == 0;
-
-            ToggleSwitch {
-                x: 0;
-                y: 2px;
-                checked: root.local_mode;
-                enabled: root.room_action == 0;
-                toggled(val) => {
-                    root.local_mode = val;
-                    root.local-mode-toggled(val);
-                }
-            }
-
-            Text {
-                x: 44px;
-                y: 0;
-                height: 24px;
-                text: root.local_mode
-                    ? "Local network\n(direct connection, no relay)"
-                    : "Internet\n(connect via relay server)";
-                color: #ccc;
-                font-size: 12px;
-                wrap: word-wrap;
-                vertical-alignment: center;
-            }
-
-            if !root.local_mode && root.room_action == 0: Text {
-                x: 44px;
-                y: 28px;
-                width: 210px;
-                text: "Same network? Turn this on to find your peer. No code is needed.";
-                color: #888;
-                font-size: 10px;
-                wrap: word-wrap;
-            }
-        }
-
-        // Discovery info (shown when local mode is on and not connecting)
-        if root.local_mode && root.discovery_name != "" && root.room_action == 0: Text {
-            x: 868px;
-            y: 636px;
+            y: 340px;
+            height: 14px;
+            style: Theme.label;
+            color: Theme.accent;
             text: "You appear as: " + root.discovery_name;
-            color: #177DF5;
-            font-size: 12px;
         }
-
-        if root.local_mode && root.discovered_peers.length > 0 && root.room_action == 0: Text {
+        if root.local_mode && root.room_action == 0: Label {
             x: 868px;
-            y: 656px;
-            text: "Nearby devices:";
-            color: #94a3b8;
-            font-size: 11px;
+            y: 362px;
+            height: 14px;
+            style: Theme.small;
+            color: Theme.muted;
+            text: root.discovered_peers.length > 0 ? "Nearby devices:" : "Searching for devices...";
         }
-
-        for peer[idx] in root.discovered_peers: Rectangle {
+        for peer[idx] in root.discovered_peers: Outline {
             x: 868px;
-            y: 672px + idx * 32px;
-            width: 250px;
+            y: 382px + idx * 32px;
+            width: 230px;
             height: 28px;
-            border-radius: 6px;
-            visible: root.room_action == 0;
-            background: peer-touch.has-hover ? #333 : #2a2a2a;
+            visible: root.local_mode && root.room_action == 0;
+            background: peer-touch.has-hover ? Theme.card : transparent;
+            border-color: Theme.toggle-off;
+            accessible-role: button;
+            accessible-label: "Connect to " + peer.name;
+            accessible-action-default => { root.discovery-peer-selected(idx); }
 
-            Text {
+            Label {
                 x: 10px;
-                y: 0;
+                width: parent.width - 80px;
                 height: parent.height;
+                overflow: elide;
+                silent: true;
+                style: Theme.label;
+                color: Theme.text;
                 text: peer.name;
-                color: white;
-                font-size: 13px;
-                vertical-alignment: center;
             }
-            Text {
-                x: parent.width - 70px;
-                y: 0;
+            Label {
+                x: parent.width - 60px;
                 height: parent.height;
+                silent: true;
+                style: Theme.label;
+                color: Theme.link;
                 text: "Connect";
-                color: #177DF5;
-                font-size: 12px;
-                vertical-alignment: center;
             }
             peer-touch := TouchArea {
+                mouse-cursor: pointer;
                 clicked => { root.discovery-peer-selected(idx); }
             }
         }
 
-        if root.local_mode && root.discovered_peers.length == 0 && root.room_action == 0: Text {
-            x: 868px;
-            y: 656px;
-            text: "Searching for devices...";
-            color: #666;
-            font-size: 12px;
+        // Saved contacts (not while connecting or on the LAN path)
+        if root.contacts.length > 0 && root.room_action == 0 && !root.local_mode: Label {
+            x: 350px;
+            y: 594.5px;
+            height: 30px;
+            style: Theme.section;
+            text: "Contacts";
         }
-
-        // Incognito toggle (below the FUSE toggle)
-        Rectangle {
-            x: 868px;
-            y: 613px;
-            width: 260px;
-            height: 24px;
-            visible: root.room_action == 0 && !root.local_mode;
-
-            ToggleSwitch {
-                x: 0;
-                y: 2px;
-                checked: root.incognito_mode;
-                enabled: root.room_action == 0;
-                toggled(val) => {
-                    root.incognito_mode = val;
-                    root.incognito-mode-toggled(val);
-                }
-            }
-
-            Text {
-                x: 44px;
-                y: 0;
-                height: 24px;
-                text: root.incognito_mode
-                    ? "Incognito (new keys each session)"
-                    : "Persistent identity (contacts work)";
-                color: root.incognito_mode ? #d97706 : #ccc;
-                font-size: 12px;
-                wrap: word-wrap;
-                vertical-alignment: center;
-            }
-        }
-
-        // Saved contacts panel (only when contacts exist, not connecting, not local mode)
-        if root.contacts.length > 0 && root.room_action == 0 && !root.local_mode: Rectangle {
+        if root.contacts.length > 0 && root.room_action == 0 && !root.local_mode: ContactsPanel {
             x: 314px;
-            y: 656px;
+            y: 636px;
             width: 517px;
-            height: Math.min((root.contacts.length * 36 + 28) * 1px, root.height - 660px);
-            border-radius: 7px;
-            background: #262626;
-            border-width: 0.5px;
-            border-color: rgba(255,255,255,0.10);
-            clip: true;
-
-            Text {
-                x: 12px;
-                y: 6px;
-                text: "Contacts (" + root.contacts.length + ")";
-                color: #888;
-                font-size: 11px;
-                font-weight: 600;
-            }
-
-            ScrollView {
-                x: 12px;
-                y: 24px;
-                width: parent.width - 24px;
-                height: parent.height - 28px;
-                viewport-height: root.contacts.length * 36px;
-
-                for contact[idx] in root.contacts: Rectangle {
-                    x: 0;
-                    y: idx * 36px;
-                    width: parent.width - 12px;
-                    height: 32px;
-                    border-radius: 6px;
-                    background: connect-touch.has-hover ? #333 : transparent;
-
-                    Rectangle {
-                        x: 0;
-                        y: (parent.height - 8px) / 2;
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: contact.online ? #22c55e : #555;
-                    }
-
-                    Text {
-                        x: 16px;
-                        y: 0;
-                        height: parent.height;
-                        text: contact.name;
-                        color: white;
-                        font-size: 13px;
-                        vertical-alignment: center;
-                    }
-
-                    Text {
-                        x: 200px;
-                        y: 0;
-                        width: 200px;
-                        height: parent.height;
-                        text: contact.fingerprint;
-                        color: #555;
-                        font-size: 11px;
-                        font-family: "monospace";
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-
-                    // Auto link (connect to this contact at startup)
-                    Rectangle {
-                        x: parent.width - 160px;
-                        y: 0;
-                        width: 50px;
-                        height: parent.height;
-                        Text {
-                            text: "Auto";
-                            color: contact.auto_connect
-                                ? #3b82f6
-                                : (auto-touch.has-hover ? #999 : #666);
-                            font-size: 12px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        auto-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.toggle_auto_connect(idx); }
-                        }
-                    }
-
-                    // Connect link
-                    Rectangle {
-                        x: parent.width - 100px;
-                        y: 0;
-                        width: 50px;
-                        height: parent.height;
-                        Text {
-                            text: "Connect";
-                            color: connect-touch.has-hover ? #60a5fa : #3b82f6;
-                            font-size: 12px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        connect-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.connect-to-contact(idx); }
-                        }
-                    }
-
-                    // Delete link
-                    Rectangle {
-                        x: parent.width - 30px;
-                        y: 0;
-                        width: 24px;
-                        height: parent.height;
-                        Text {
-                            text: "X";
-                            color: delete-touch.has-hover ? #ef4444 : #666;
-                            font-size: 11px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                        delete-touch := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { root.remove-contact(idx); }
-                        }
-                    }
-                }
-            }
+            height: 77px;
+            contacts: root.contacts;
+            connect(i) => { root.connect-to-contact(i); }
+            auto(i) => { root.toggle_auto_connect(i); }
+            remove(i) => { root.remove-contact(i); }
         }
 
-        // Status message (only when NOT connecting; connecting state uses connect_status above)
-        if root.status_message != "" && root.error_message == "" && root.room_action == 0: Text {
+        // Status and errors, under the right column.
+        if root.error_message != "": Label {
             x: 868px;
-            y: 636px + (root.local_mode ? 80px : 0px);
+            y: 590px;
+            width: 240px;
+            wrap: word-wrap;
+            vertical-alignment: top;
+            style: Theme.note;
+            color: Theme.error;
+            text: root.error_message;
+        }
+        if root.status_message != "" && root.error_message == "" && root.room_action == 0: Label {
+            x: 868px;
+            y: 590px;
+            width: 240px;
+            wrap: word-wrap;
+            vertical-alignment: top;
+            style: Theme.hint;
+            color: Theme.muted;
             text: root.status_message;
-            color: #94a3b8;
-            font-size: 12px;
         }
-        if root.error_message != "": Rectangle {
-            x: 261px;
-            y: 660px;
-            width: 580px;
-            height: 44px;
-            border-radius: 7px;
-            background: rgba(239,68,68,0.08);
-            border-width: 0.5px;
-            border-color: rgba(239,68,68,0.25);
-
-            Text {
-                x: 12px;
-                width: parent.width - 24px;
-                height: parent.height;
-                text: root.error_message;
-                color: #ef4444;
-                font-size: 12px;
-                horizontal-alignment: left;
-                vertical-alignment: center;
-                wrap: word-wrap;
-                overflow: elide;
-            }
-        }
-
     }
 
     // ============ SCREEN 1: Connected (No FUSE) ============
     if current_screen == 1: Rectangle {
         width: 100%;
         height: 100%;
-        background: #1f1f1f;
         property <float> alpha: 0.0;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
-
-        // Logo top-left (matches design)
-        KeibiDropLogo {
-            x: 115px;
-            y: 24px;
-        }
 
         // Connected status - below logo
         HorizontalLayout {
@@ -1597,15 +1613,6 @@ export component MainWindow inherits Window {
             }
         }
 
-        // Save Peer button (no-FUSE, aligned under gear/?/X)
-        if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: SmallOutlineButton {
-            x: 973px;
-            y: 125px;
-            width: 88px;
-            text: "Save Peer";
-            clicked => { root.save_contact_visible = true; }
-        }
-
         // Save All button - aligned with global top-right buttons
         SmallOutlineButton {
             x: 700px;
@@ -1657,7 +1664,7 @@ export component MainWindow inherits Window {
             y: root.current_folder != "" ? 345px : 310px;
             width: parent.width;
             height: parent.height - (root.current_folder != "" ? 345px : 310px);
-            viewport-height: Math.ceil(root.file_list.length / 4) * 200px;
+            content-height: Math.ceil(root.file_list.length / 4) * 200px;
 
             for file[idx] in root.file_list: FileCard {
                 x: 40px + mod(idx, 4) * 265px;
@@ -1695,17 +1702,10 @@ export component MainWindow inherits Window {
     if current_screen == 2: Rectangle {
         width: 100%;
         height: 100%;
-        background: #1f1f1f;
         property <float> alpha: 0.0;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
-
-        // Logo top-left (matches design)
-        KeibiDropLogo {
-            x: 115px;
-            y: 24px;
-        }
 
         // Connected status - below logo
         HorizontalLayout {
@@ -1867,17 +1867,10 @@ export component MainWindow inherits Window {
     if current_screen == 3: Rectangle {
         width: 100%;
         height: 100%;
-        background: #1f1f1f;
         property <float> alpha: 0.0;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
-
-        // Logo top-left
-        KeibiDropLogo {
-            x: 115px;
-            y: 24px;
-        }
 
         // Header row: back + title + count left, utilities right
         OutlineButton {
@@ -1971,7 +1964,7 @@ export component MainWindow inherits Window {
             y: root.saved_current_folder != "" ? 165px : 130px;
             width: parent.width;
             height: parent.height - (root.saved_current_folder != "" ? 165px : 130px);
-            viewport-height: Math.ceil(root.saved_file_list.length / 4) * 200px;
+            content-height: Math.ceil(root.saved_file_list.length / 4) * 200px;
 
             for file[idx] in root.saved_file_list: FileCard {
                 x: 40px + mod(idx, 4) * 265px;
@@ -2003,133 +1996,128 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ============ GLOBAL: Top-right buttons (all screens) ============
+    // ============ OVERLAYS: blurred window, sharp title, glass card ============
 
-    // Disconnect button (only when connected, not on Screen 3)
-    if root.current_screen == 1 || root.current_screen == 2: SmallOutlineButton {
-        x: 780px;
-        y: 93px;
-        width: 78px;
-        text: "Disconnect";
-        clicked => { root.disconnect_pressed() }
-    }
+    // Help (Figma Screen 13)
+    if root.help_visible: Overlay {
+        visible: !root.capturing;
+        heading: "How to use KEIBI";
+        heading-light: "DROP";
+        subheading: "Exchange fingerprints to establish a secure connection";
+        dismiss => { root.help_visible = false; }
 
-    // Feedback button (Screen 0 only: the first screen a new person sees)
-    if root.current_screen == 0: SmallOutlineButton {
-        x: 676px;
-        y: 93px;
-        width: 80px;
-        text: "Feedback";
-        clicked => { root.feedback_visible = true; }
-    }
-
-    // Saved Files button (Screen 0 only, when files exist)
-    if root.current_screen == 0 && root.saved_file_list.length > 0: SmallOutlineButton {
-        x: 764px;
-        y: 93px;
-        width: 96px;
-        text: "Saved Files";
-        clicked => { root.view_saved_files() }
-    }
-
-    SmallOutlineButton {
-        x: 868px;
-        y: 93px;
-        width: 96px;
-        text: "Save Log";
-        clicked => { root.export_logs_pressed() }
-    }
-    Rectangle {
-        x: 973px;
-        y: 93px;
-        width: 24px;
-        height: 24px;
-        border-radius: 7px;
-        border-width: 0.5px;
-        border-color: gear-touch.pressed ? #ccc : gear-touch.has-hover ? #bbb : white;
-        background: transparent;
-        animate border-color { duration: 150ms; }
-
-        Text {
-            text: "\u{2699}";
-            color: gear-touch.pressed ? #bbb : gear-touch.has-hover ? #aaa : #888;
-            font-size: 14px;
+        for step[i] in root.help_steps: Rectangle {
+            x: 58px;
+            y: 49px + i * 57px;
+            width: 401px;
+            height: Theme.control;
+            Badge { x: 0; y: 0; number: i + 1; }
+            Label {
+                x: 46px;
+                y: -0.5px;
+                width: 355px;
+                height: parent.height;
+                wrap: word-wrap;
+                color: Theme.text-soft;
+                text: step;
+            }
+        }
+        if root.current_screen == 0: Rectangle {
+            x: 58px;
+            y: 217.5px;
+            width: 401px;
+            height: Theme.hairline;
+            background: Theme.outline;
+        }
+        if root.current_screen == 0: HorizontalLayout {
+            x: 58px;
+            y: 241.4px;
+            width: 401px;
+            height: 12.1px;
+            alignment: center;
+            Label { color: Theme.text; text: "Saved contacts appear below."; }
+            Label { color: Theme.text-soft; text: " Click Connect next to a name."; }
+        }
+        if root.current_screen == 0: Label {
+            x: 58px;
+            y: 253.5px;
+            width: 401px;
+            height: 12.1px;
             horizontal-alignment: center;
-            vertical-alignment: center;
-            y: 4.5px;
+            color: Theme.text-soft;
+            text: "Incognito: new keys each session. Nobody can save you as a contact.";
         }
-        gear-touch := TouchArea {
-            accessible-role: button;
-            accessible-label: "Open settings";
-            accessible-action-default => { root.settings_visible = !root.settings_visible; }
-            clicked => { root.settings_visible = !root.settings_visible; }
+        if root.current_screen == 0: Rectangle {
+            x: 58px;
+            y: 291.5px;
+            width: 401px;
+            height: Theme.hairline;
+            background: Theme.outline;
         }
-    }
-    SmallOutlineButton {
-        x: 1005px;
-        y: 93px;
-        width: 24px;
-        text: "?";
-        clicked => { root.help_visible = !root.help_visible; }
-    }
-    SmallOutlineButton {
-        x: 1037px;
-        y: 93px;
-        width: 24px;
-        text: "X";
-        clicked => { root.exit_pressed() }
+        Rectangle {
+            x: 58px;
+            y: 321.45px;
+            width: 401px;
+            height: 12.1px;
+            HorizontalLayout {
+                alignment: center;
+                Label { style: Theme.small-strong; color: Theme.accent; text: "Guide with short videos:"; }
+                Label { color: Theme.accent; text: " keibidrop.com/how-to-use"; }
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.open_help_url(); }
+            }
+        }
+        PillButton {
+            x: 179px;
+            y: 359px;
+            text: "Question?";
+            clicked => { root.show_overlay(false, true, false); }
+        }
     }
 
-    // Settings panel overlay. Fits the window and scrolls when short.
-    if root.settings_visible: Rectangle {
-        x: (parent.width - 500px) / 2;
-        y: (parent.height - self.height) / 2;
-        width: 500px;
-        height: min(700px, parent.height - 24px);
-        border-radius: 10px;
-        background: #2a2a2a;
-        border-width: 1px;
-        border-color: rgba(255,255,255,0.12);
+    // Settings. Fits the window and scrolls when short.
+    if root.settings_visible: settings := Overlay {
+        visible: !root.capturing;
+        card-width: 500px;
+        card-height: min(700px, root.height - 24px);
+        card-x: (root.width - 500px) / 2;
+        card-y: (root.height - self.card-height) / 2;
+        dismiss => { root.settings_visible = false; }
 
         ScrollView {
             x: 0;
             y: 0;
-            width: parent.width;
-            height: parent.height;
-            viewport-height: 700px;
+            width: settings.card-width;
+            height: settings.card-height;
+            content-height: 700px;
 
-        Text {
-            x: 20px;
-            y: 16px;
-            text: "Settings";
-            color: white;
-            font-size: 16px;
-            font-weight: 700;
-        }
+        Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Settings"; }
 
         // Relay
-        Text { x: 20px; y: 56px; text: "Relay server"; color: #888; font-size: 12px; }
-        Text { x: 20px; y: 72px; text: root.cfg_relay; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+        Label { x: 20px; y: 56px; height: 14px; style: Theme.small; color: Theme.muted; text: "Relay server"; }
+        Label { x: 20px; y: 72px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; font-family: "monospace"; overflow: elide; text: root.cfg_relay; }
 
         // Save path
-        Text { x: 20px; y: 100px; text: "Save path (received files)"; color: #888; font-size: 12px; }
-        Text { x: 20px; y: 116px; text: root.cfg_save_path; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+        Label { x: 20px; y: 100px; height: 14px; style: Theme.small; color: Theme.muted; text: "Save path (received files)"; }
+        Label { x: 20px; y: 116px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; font-family: "monospace"; overflow: elide; text: root.cfg_save_path; }
 
         // Mount path
-        Text { x: 20px; y: 144px; text: "Mount path (FUSE virtual folder)"; color: #888; font-size: 12px; }
-        Text { x: 20px; y: 160px; text: root.cfg_mount_path; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+        Label { x: 20px; y: 144px; height: 14px; style: Theme.small; color: Theme.muted; text: "Mount path (FUSE virtual folder)"; }
+        Label { x: 20px; y: 160px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; font-family: "monospace"; overflow: elide; text: root.cfg_mount_path; }
 
         // Log file
-        Text { x: 20px; y: 188px; text: "Log file"; color: #888; font-size: 12px; }
-        Text { x: 20px; y: 204px; text: root.cfg_log_file; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+        Label { x: 20px; y: 188px; height: 14px; style: Theme.small; color: Theme.muted; text: "Log file"; }
+        Label { x: 20px; y: 204px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; font-family: "monospace"; overflow: elide; text: root.cfg_log_file; }
 
         // Config file
-        Text { x: 20px; y: 232px; text: "Config file"; color: #888; font-size: 12px; }
-        Text { x: 20px; y: 248px; text: root.cfg_config_path; color: #ccc; font-size: 13px; font-family: "monospace"; overflow: elide; width: 460px; }
+        Label { x: 20px; y: 232px; height: 14px; style: Theme.small; color: Theme.muted; text: "Config file"; }
+        Label { x: 20px; y: 248px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; font-family: "monospace"; overflow: elide; text: root.cfg_config_path; }
 
         // Version
-        Text { x: 20px; y: 284px; text: "Version"; color: #888; font-size: 12px; }
-        Text { x: 20px; y: 300px; text: root.version_text; color: #ccc; font-size: 13px; }
+        Label { x: 20px; y: 284px; height: 14px; style: Theme.small; color: Theme.muted; text: "Version"; }
+        Label { x: 20px; y: 300px; height: 16px; style: Theme.label; color: Theme.text-soft; text: root.version_text; }
 
         // Passphrase protect toggle
         Rectangle {
@@ -2146,16 +2134,7 @@ export component MainWindow inherits Window {
                     root.passphrase-protect-toggled(val);
                 }
             }
-
-            Text {
-                x: 44px;
-                y: 0;
-                height: 24px;
-                text: "Encrypt identity with a passphrase";
-                color: #ccc;
-                font-size: 13px;
-                vertical-alignment: center;
-            }
+            Label { x: 48px; height: 24px; style: Theme.label; color: Theme.muted; text: "Encrypt identity with a passphrase"; }
         }
 
         // Share read only
@@ -2172,25 +2151,16 @@ export component MainWindow inherits Window {
                 checked <=> root.cfg_share_read_only;
                 toggled(val) => { root.share_read_only_toggled(val); }
             }
-
-            Text {
-                x: 44px;
-                y: 0;
-                height: 20px;
-                text: "Share is read only";
-                color: #ccc;
-                font-size: 13px;
-                vertical-alignment: center;
-            }
-
-            Text {
-                x: 44px;
-                y: 20px;
-                width: parent.width - 60px;
-                text: "Peers can read your files. Changes and new files from peers are refused. Takes effect at the next connection.";
-                color: #777;
-                font-size: 10px;
+            Label { x: 48px; y: 0; height: 24px; style: Theme.label; color: Theme.muted; text: "Share is read only"; }
+            Label {
+                x: 48px;
+                y: 24px;
+                width: parent.width - 64px;
                 wrap: word-wrap;
+                vertical-alignment: top;
+                style: Theme.hint;
+                color: Theme.faint;
+                text: "Peers can read your files. Changes and new files from peers are refused. Takes effect at the next connection.";
             }
         }
 
@@ -2208,25 +2178,16 @@ export component MainWindow inherits Window {
                 checked <=> root.cfg_mount_read_only;
                 toggled(val) => { root.mount_read_only_toggled(val); }
             }
-
-            Text {
-                x: 44px;
-                y: 0;
-                height: 20px;
-                text: "Virtual folder is read only";
-                color: #ccc;
-                font-size: 13px;
-                vertical-alignment: center;
-            }
-
-            Text {
-                x: 44px;
-                y: 20px;
-                width: parent.width - 60px;
-                text: "Programs on this computer cannot write in the virtual folder. Takes effect at the next connection.";
-                color: #777;
-                font-size: 10px;
+            Label { x: 48px; y: 0; height: 24px; style: Theme.label; color: Theme.muted; text: "Virtual folder is read only"; }
+            Label {
+                x: 48px;
+                y: 24px;
+                width: parent.width - 64px;
                 wrap: word-wrap;
+                vertical-alignment: top;
+                style: Theme.hint;
+                color: Theme.faint;
+                text: "Programs on this computer cannot write in the virtual folder. Takes effect at the next connection.";
             }
         }
 
@@ -2244,50 +2205,42 @@ export component MainWindow inherits Window {
                 checked <=> root.cfg_preserve_metadata;
                 toggled(val) => { root.preserve_metadata_toggled(val); }
             }
-
-            Text {
-                x: 44px;
-                y: 0;
-                height: 20px;
-                text: "Keep original timestamps";
-                color: #ccc;
-                font-size: 13px;
-                vertical-alignment: center;
-            }
-
-            Text {
-                x: 44px;
-                y: 20px;
-                width: parent.width - 60px;
-                text: "Received files keep the sender's file times and permissions. Applies to files that finish saving after you turn this on.";
-                color: #777;
-                font-size: 10px;
+            Label { x: 48px; y: 0; height: 24px; style: Theme.label; color: Theme.muted; text: "Keep original timestamps"; }
+            Label {
+                x: 48px;
+                y: 24px;
+                width: parent.width - 64px;
                 wrap: word-wrap;
+                vertical-alignment: top;
+                style: Theme.hint;
+                color: Theme.faint;
+                text: "Received files keep the sender's file times and permissions. Applies to files that finish saving after you turn this on.";
             }
         }
 
         // Relay credit (prepaid priority tokens)
-        Text { x: 20px; y: 528px; text: "Relay credit"; color: #888; font-size: 12px; }
-        Text {
-            x: 20px; y: 544px;
-            text: root.tokens_status_text;
-            color: #ccc; font-size: 13px; overflow: elide; width: 460px;
-        }
-        tokens-input := InputArea {
+        Label { x: 20px; y: 528px; height: 14px; style: Theme.small; color: Theme.muted; text: "Relay credit"; }
+        Label { x: 20px; y: 544px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; overflow: elide; text: root.tokens_status_text; }
+        tokens-input := Field {
             x: 20px;
-            y: 568px;
-            inText: "";
-            buttonText: "Add";
-            process_code => {
-                root.tokens_add(tokens-input.inText);
-                tokens-input.inText = "";
+            y: 566px;
+            width: 438px;
+            button-width: 142px;
+            accepted => {
+                root.tokens_add(tokens-input.text);
+                tokens-input.text = "";
+            }
+            FieldAction {
+                width: tokens-input.button-width;
+                height: Theme.control;
+                text: "Add";
+                clicked => {
+                    root.tokens_add(tokens-input.text);
+                    tokens-input.text = "";
+                }
             }
         }
-        Text {
-            x: 20px; y: 608px;
-            text: root.tokens_add_result;
-            color: #aca; font-size: 12px; overflow: elide; width: 460px;
-        }
+        Label { x: 20px; y: 606px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; overflow: elide; text: root.tokens_add_result; }
         Rectangle {
             x: 20px;
             y: 632px;
@@ -2300,15 +2253,7 @@ export component MainWindow inherits Window {
                 text: "Buy relay credit";
                 clicked => { root.tokens_buy(); }
             }
-            Text {
-                x: 160px;
-                y: 0;
-                height: 26px;
-                text: "Prepaid, anonymous, no account. Paste the code above.";
-                color: #777;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
+            Label { x: 160px; height: 26px; style: Theme.small; color: Theme.faint; text: "Prepaid, anonymous, no account. Paste the code above."; }
         }
 
         // Config file editing
@@ -2324,20 +2269,12 @@ export component MainWindow inherits Window {
                 text: "Edit config file";
                 clicked => { root.open_config(); }
             }
-            Text {
-                x: 160px;
-                y: 0;
-                height: 26px;
-                text: "All settings, with defaults. Changes apply at the next start.";
-                color: #777;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
+            Label { x: 160px; height: 26px; style: Theme.small; color: Theme.faint; text: "All settings, with defaults. Changes apply at the next start."; }
         }
         }
 
         SmallOutlineButton {
-            x: parent.width - 36px;
+            x: settings.card-width - 36px;
             y: 8px;
             width: 24px;
             text: "X";
@@ -2345,104 +2282,24 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Help panel overlay
-    if root.help_visible: Rectangle {
-        x: (parent.width - 440px) / 2;
-        y: (parent.height - 320px) / 2;
-        width: 440px;
-        height: 320px;
-        border-radius: 10px;
-        background: #2a2a2a;
-        border-width: 1px;
-        border-color: rgba(255,255,255,0.12);
-
-        // Close button
-        SmallOutlineButton {
-            x: parent.width - 36px;
-            y: 8px;
-            width: 24px;
-            text: "X";
-            clicked => { root.help_visible = false; }
-        }
-
-        Text {
-            x: 20px;
-            y: 16px;
-            text: "How to use KeibiDrop";
-            color: white;
-            font-size: 16px;
-            font-weight: 700;
-        }
-
-        Text {
-            x: 20px;
-            y: 48px;
-            width: parent.width - 40px;
-            wrap: word-wrap;
-            color: #bbb;
-            font-size: 13px;
-            text: root.current_screen == 0
-                ? "1. Same Wi-Fi: turn on the switch below Connect (it says Same network? Turn this on) on both computers, then click Connect next to the other computer.\n2. Anywhere else: press Copy my code, send the code to the other person, paste the code they send you. Both press Connect.\n3. Drag files onto the window to send them. Accept Files as a folder to open their files in any app.\n\nSaved contacts appear below. Click Connect next to a name.\n\nIncognito: new keys each session. Nobody can save you as a contact."
-                : root.current_screen == 1
-                ? "Drag files onto the window or press Add File.\nYour peer sees your files and can save them.\nClick Save to download a peer's file.\n\nSave Peer adds them to your contacts.\n\nConnection badge:\n  LAN = same network\n  Direct P2P = over the internet\n  Via Relay = through encrypted bridge"
-                : "Your peer's files appear in the mounted folder.\nOpen with any app: Finder, Terminal, git, etc.\nFiles stream on access, no full download needed.\n\nDrop files into the folder to share.\nSave Peer adds them to your contacts.";
-        }
-
-        Rectangle {
-            x: 20px;
-            y: parent.height - 30px;
-            width: help-link.preferred-width;
-            height: 20px;
-            help-link := Text {
-                text: "Guide with short videos: keibidrop.com/how-to-use";
-                color: help-link-touch.has-hover ? #60a5fa : #3b82f6;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-            help-link-touch := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.open_help_url(); }
-            }
-        }
+    // Feedback: stars and a message to the KeibiDrop inbox, no mail app needed
+    if root.feedback_visible: feedback := Overlay {
+        visible: !root.capturing;
+        card-width: 460px;
+        card-height: 400px;
+        card-x: (root.width - 460px) / 2;
+        card-y: (root.height - 400px) / 2;
+        dismiss => { root.feedback_visible = false; }
 
         SmallOutlineButton {
-            x: parent.width - 100px;
-            y: parent.height - 34px;
-            text: "Feedback";
-            clicked => {
-                root.help_visible = false;
-                root.feedback_visible = true;
-            }
-        }
-    }
-
-    // Feedback overlay: stars and a message to the KeibiDrop inbox, no mail app needed
-    if root.feedback_visible: Rectangle {
-        x: (parent.width - 460px) / 2;
-        y: (parent.height - 400px) / 2;
-        width: 460px;
-        height: 400px;
-        border-radius: 10px;
-        background: #2a2a2a;
-        border-width: 1px;
-        border-color: rgba(255,255,255,0.12);
-
-        SmallOutlineButton {
-            x: parent.width - 36px;
+            x: feedback.card-width - 36px;
             y: 8px;
             width: 24px;
             text: "X";
             clicked => { root.feedback_visible = false; }
         }
 
-        Text {
-            x: 20px;
-            y: 16px;
-            text: "Feedback";
-            color: white;
-            font-size: 16px;
-            font-weight: 700;
-        }
+        Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Report problem"; }
 
         // Five stars. Click one to rate, click it again to clear.
         for i in [1, 2, 3, 4, 5]: Rectangle {
@@ -2452,7 +2309,7 @@ export component MainWindow inherits Window {
             height: 28px;
             Text {
                 text: i <= root.feedback_rating ? "\u{2605}" : "\u{2606}";
-                color: i <= root.feedback_rating ? #f5b301 : (star-touch.has-hover ? #ccc : #666);
+                color: i <= root.feedback_rating ? #f5b301 : (star-touch.has-hover ? Theme.text : Theme.faint);
                 font-size: 22px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -2464,28 +2321,21 @@ export component MainWindow inherits Window {
                 clicked => { root.feedback_rating = root.feedback_rating == i ? 0 : i; }
             }
         }
-        Text {
+        Label {
             x: 178px;
             y: 42px;
             height: 28px;
+            style: Theme.caption;
+            color: Theme.faint;
             text: root.feedback_rating == 0 ? "How is it going? Optional." : root.feedback_rating + " of 5";
-            color: #777;
-            font-size: 11px;
-            vertical-alignment: center;
         }
 
-        Text {
-            x: 20px;
-            y: 78px;
-            text: "What happened? What did you expect instead?";
-            color: #bbb;
-            font-size: 12px;
-        }
+        Label { x: 20px; y: 78px; height: 16px; style: Theme.label; color: Theme.muted; text: "What happened? What did you expect instead?"; }
 
         TextEdit {
             x: 20px;
             y: 100px;
-            width: parent.width - 40px;
+            width: feedback.card-width - 40px;
             height: 144px;
             font-size: 13px;
             wrap: word-wrap;
@@ -2495,21 +2345,22 @@ export component MainWindow inherits Window {
         LineEdit {
             x: 20px;
             y: 254px;
-            width: parent.width - 40px;
+            width: feedback.card-width - 40px;
             height: 30px;
             font-size: 13px;
             placeholder-text: "Email for a reply (optional)";
             text <=> root.feedback_contact;
         }
 
-        Text {
+        Label {
             x: 20px;
             y: 292px;
-            width: parent.width - 40px;
-            text: "Sends your stars, your message, the reply address, the app version and the platform. Nothing else.";
-            color: #777;
-            font-size: 10px;
+            width: feedback.card-width - 40px;
             wrap: word-wrap;
+            vertical-alignment: top;
+            style: Theme.hint;
+            color: Theme.faint;
+            text: "Sends your stars, your message, the reply address, the app version and the platform. Nothing else.";
         }
 
         PillButton {
@@ -2529,58 +2380,39 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Save Contact dialog overlay
-    if root.save_contact_visible: Rectangle {
-        x: (parent.width - 360px) / 2;
-        y: (parent.height - 160px) / 2;
-        width: 360px;
-        height: 160px;
-        border-radius: 10px;
-        background: #2a2a2a;
-        border-width: 1px;
-        border-color: rgba(255,255,255,0.12);
+    // Save Contact dialog
+    if root.save_contact_visible: save-contact := Overlay {
+        visible: !root.capturing;
+        card-width: 360px;
+        card-height: 160px;
+        card-x: (root.width - 360px) / 2;
+        card-y: (root.height - 160px) / 2;
+        dismiss => { root.save_contact_visible = false; root.save_contact_name = ""; }
 
         SmallOutlineButton {
-            x: parent.width - 36px;
+            x: save-contact.card-width - 36px;
             y: 8px;
             width: 24px;
             text: "X";
             clicked => { root.save_contact_visible = false; root.save_contact_name = ""; }
         }
 
-        Text {
-            x: 20px;
-            y: 16px;
-            text: "Save Peer as Contact";
-            color: white;
-            font-size: 16px;
-            font-weight: 700;
-        }
+        Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Save Peer as Contact"; }
+        Label { x: 20px; y: 50px; height: 14px; style: Theme.small; color: Theme.muted; text: "Name"; }
 
-        Text {
-            x: 20px;
-            y: 50px;
-            text: "Name";
-            color: #888;
-            font-size: 12px;
-        }
-
-        Rectangle {
+        Outline {
             x: 20px;
             y: 68px;
-            width: parent.width - 40px;
+            width: save-contact.card-width - 40px;
             height: 32px;
-            border-radius: 6px;
-            border-width: 0.5px;
-            border-color: rgba(255,255,255,0.3);
-            background: #333;
+            background: Theme.field;
 
             contact-name-input := TextInput {
-                x: 8px;
-                width: parent.width - 16px;
+                x: 12px;
+                width: parent.width - 24px;
                 height: parent.height;
-                color: white;
-                font-size: 13px;
+                color: Theme.text;
+                font-size: Theme.label.size;
                 vertical-alignment: center;
                 single-line: true;
                 text <=> root.save_contact_name;
@@ -2597,7 +2429,7 @@ export component MainWindow inherits Window {
         PillButton {
             x: 20px;
             y: 114px;
-            width: parent.width - 40px;
+            width: save-contact.card-width - 40px;
             text: "Save";
             enabled: root.save_contact_name != "";
             clicked => {
@@ -2610,42 +2442,34 @@ export component MainWindow inherits Window {
         }
     }
 
-    // FUSE offer overlay (after the first received file)
-    if root.fuse_offer_visible: Rectangle {
-        x: (parent.width - 380px) / 2;
-        y: (parent.height - 190px) / 2;
-        width: 380px;
-        height: 190px;
-        border-radius: 10px;
-        background: #2a2a2a;
-        border-width: 1px;
-        border-color: rgba(255,255,255,0.12);
+    // FUSE offer (after the first received file)
+    if root.fuse_offer_visible: fuse-offer := Overlay {
+        visible: !root.capturing;
+        card-width: 380px;
+        card-height: 190px;
+        card-x: (root.width - 380px) / 2;
+        card-y: (root.height - 190px) / 2;
+        dismiss => { root.fuse_offer_declined(); }
 
         SmallOutlineButton {
-            x: parent.width - 36px;
+            x: fuse-offer.card-width - 36px;
             y: 8px;
             width: 24px;
             text: "X";
             clicked => { root.fuse_offer_declined(); }
         }
 
-        Text {
-            x: 20px;
-            y: 16px;
-            text: "Files as a folder";
-            color: white;
-            font-size: 16px;
-            font-weight: 700;
-        }
+        Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Files as a folder"; }
 
-        Text {
+        Label {
             x: 20px;
             y: 50px;
-            width: parent.width - 40px;
-            text: root.fuse_offer_body;
-            color: #ccc;
-            font-size: 13px;
+            width: fuse-offer.card-width - 40px;
             wrap: word-wrap;
+            vertical-alignment: top;
+            style: Theme.label;
+            color: Theme.text-soft;
+            text: root.fuse_offer_body;
         }
 
         PillButton {
@@ -2665,36 +2489,117 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ============ GLOBAL: header, drawn above the overlays ============
+
+    KeibiDropLogo {
+        x: 115px;
+        y: root.current_screen == 0 || root.overlay_open ? 70.39px : 24px;
+        visible: !root.capturing;
+    }
+
+    // Control pill (Figma Screen 12): Report problem, ?, ..., X.
+    Glass {
+        kind: GlassKind.pill;
+        x: 868px;
+        y: 76px;
+        width: 161px;
+        height: 24px;
+        visible: !root.capturing;
+
+        TextAction {
+            x: 51px - self.width / 2;
+            height: 24px;
+            text: "Report problem";
+            ink: root.feedback_visible ? Theme.text : Theme.muted;
+            clicked => { root.show_overlay(false, !root.feedback_visible, false); }
+        }
+        TextAction {
+            x: 103.5px - self.width / 2;
+            height: 24px;
+            pad: 5px;
+            style: Theme.caption;
+            text: "?";
+            accessible-label: "Help";
+            ink: root.help_visible ? Theme.text : Theme.muted;
+            clicked => { root.show_overlay(!root.help_visible, false, false); }
+        }
+        TextAction {
+            x: 126px - self.width / 2;
+            y: -4px;
+            height: 24px;
+            pad: 4px;
+            text: "...";
+            accessible-label: "Menu";
+            ink: root.menu_open ? Theme.text : Theme.muted;
+            clicked => { root.menu_open = !root.menu_open; }
+        }
+        Rectangle {
+            x: 141px;
+            y: 6px;
+            width: 13.004px;
+            height: 13.004px;
+            accessible-role: button;
+            accessible-label: root.overlay_open ? "Close" : "Quit";
+            accessible-action-default => { root.close_or_quit(); }
+            Image {
+                x: 2.17px;
+                y: 2.17px;
+                width: 8.668px;
+                height: 8.667px;
+                source: @image-url("../assets/xmark.svg");
+                colorize: x-touch.has-hover ? Theme.text : Theme.muted;
+            }
+            x-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.close_or_quit(); }
+            }
+        }
+    }
+
+    // A click anywhere else closes the menu.
+    if root.menu_open: TouchArea {
+        clicked => { root.menu_open = false; }
+    }
+    if root.menu_open: Glass {
+        x: 868px;
+        y: 108px;
+        width: 161px;
+        height: 35px + (root.menu_entries.length - 1) * 21px;
+        visible: !root.capturing;
+        for entry[i] in root.menu_entries: MenuItem {
+            y: 4.5px + i * 21px;
+            width: parent.width;
+            entry: entry;
+            clicked => { root.menu_pick(entry.id); }
+        }
+    }
+
     // Toast notification (bottom-center, all screens)
-    if root.toast_message != "": Rectangle {
+    if root.toast_message != "": Glass {
+        kind: GlassKind.pill;
         x: (parent.width - 280px) / 2;
         y: parent.height - 56px;
         width: 280px;
         height: 32px;
-        border-radius: 8px;
-        background: rgba(255,255,255,0.10);
-        border-width: 0.5px;
-        border-color: rgba(255,255,255,0.15);
+        visible: !root.capturing;
 
-        Text {
+        Label {
             width: parent.width;
             height: parent.height;
-            text: root.toast_message;
-            color: #ccc;
-            font-size: 13px;
             horizontal-alignment: center;
-            vertical-alignment: center;
+            style: Theme.label;
+            color: Theme.text;
+            text: root.toast_message;
         }
     }
 
     // Version text bottom-right (all screens)
-    Text {
+    Label {
         x: parent.width - self.width - 16px;
         y: parent.height - self.height - 12px;
+        style: Theme.caption;
+        color: Theme.faint;
         text: root.version_text;
-        color: #666666;
-        font-size: 11px;
-        font-family: "Inter";
     }
 
     // Update notice bottom-left (all screens), set when a newer release exists
@@ -2708,13 +2613,11 @@ export component MainWindow inherits Window {
         accessible-label: "Update notice";
         accessible-action-default => { root.open_update_page(); }
         clicked => { root.open_update_page(); }
-        upd-note := Text {
+        upd-note := Label {
             height: 22px;
+            style: Theme.caption;
+            color: upd-touch.has-hover ? Theme.text : Theme.accent;
             text: "Version " + root.update_available + " is out. Click to get it.";
-            color: upd-touch.has-hover ? #60a5fa : #3b82f6;
-            font-size: 11px;
-            font-family: "Inter";
-            vertical-alignment: center;
         }
     }
 }

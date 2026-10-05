@@ -10,7 +10,11 @@ fn main() {
     // Debug builds emit slint element info so the headless UI tests
     // (tests/ui.rs) can query elements. Release output is unchanged.
     let debug = std::env::var("DEBUG").as_deref() == Ok("true");
-    let config = slint_build::CompilerConfiguration::new().with_debug_info(debug);
+    // The dark Fluent style on every OS: the UI is dark whatever the system
+    // color scheme, so the std widgets (scroll bars, text editors) are too.
+    let config = slint_build::CompilerConfiguration::new()
+        .with_debug_info(debug)
+        .with_style("fluent-dark".into());
     slint_build::compile_with_config("src/ui.slint", config).unwrap();
 
     // Embed app icon in Windows executable
