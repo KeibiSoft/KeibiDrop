@@ -299,7 +299,10 @@ func (fs *FS) Unmount() {
 	fs.ctxMu.Unlock()
 	cancel()
 
-	if fs.root.Load() != nil {
+	// Read before the host stops: Mount clears fs.root when the host returns,
+	// and on Linux that can come before host.Unmount returns.
+	root := fs.root.Load()
+	if root != nil {
 		fs.drainInFlightOperations()
 	}
 
@@ -316,7 +319,7 @@ func (fs *FS) Unmount() {
 		fs.forceUnmount()
 		<-done
 	}
-	if root := fs.root.Load(); root != nil {
+	if root != nil {
 		root.flushPendingSidecars()
 	}
 	fs.root.Store(nil)
