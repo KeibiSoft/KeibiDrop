@@ -9,6 +9,7 @@ package tests
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -68,10 +69,16 @@ func TestResilience_HeartbeatsWork(t *testing.T) {
 
 	// RTT should be non-zero (heartbeat round-trip measured).
 	lastRTT := tp.Alice.HealthMonitor.LastRTT()
-	require.Greater(int64(lastRTT), int64(0), "RTT should be positive")
+	// Go's monotonic clock on Windows ticks with the system timer (up to
+	// 15.6 ms), so a loopback round trip can read 0 there.
+	minRTT := int64(1)
+	if runtime.GOOS == "windows" {
+		minRTT = 0
+	}
+	require.GreaterOrEqual(int64(lastRTT), minRTT, "RTT should be positive")
 
 	avgRTT := tp.Alice.HealthMonitor.AvgRTT()
-	require.Greater(int64(avgRTT), int64(0), "Avg RTT should be positive")
+	require.GreaterOrEqual(int64(avgRTT), minRTT, "Avg RTT should be positive")
 
 	// Loopback RTT should be very low (< 100ms).
 	require.Less(lastRTT, 100*time.Millisecond, "Loopback RTT should be < 100ms")

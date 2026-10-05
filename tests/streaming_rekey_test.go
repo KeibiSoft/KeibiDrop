@@ -252,11 +252,14 @@ func TestStream_PacedBluRayPlaybackNoRekeyUnderrun(t *testing.T) {
 	alicePath := filepath.Join(tp.AliceMountDir, "clip.bin")
 	WaitForFileOnMount(t, alicePath, 30*time.Second)
 
+	// Counted from before the open: on Windows the on-access scan (Defender)
+	// reads the whole clip inside the open, so its rotations land there
+	// (measured 4 Oct: epoch 1 -> 8 for 32 MiB on Windows and macOS alike).
+	epochStart := getEpoch()
 	f, err := os.Open(alicePath)
 	require.NoError(err)
 	defer f.Close() //nolint:errcheck // read-only handle
 
-	epochStart := getEpoch()
 	buf := make([]byte, block)
 	var maxFetch time.Duration
 	var slowestOffset int64
