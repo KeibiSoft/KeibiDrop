@@ -399,6 +399,14 @@ func isDebouncedNotify(t bindings.NotifyType) bool {
 	return t == bindings.NotifyType_ADD_FILE || t == bindings.NotifyType_EDIT_FILE
 }
 
+// skipPeerSync reports whether a local change is macOS metadata that is never sent to the peer: .DS_Store,
+// AppleDouble "._" files, and the .fseventsd folder with the files fseventsd writes inside it.
+func skipPeerSync(path string) bool {
+	base := filepath.Base(path)
+	return base == ".DS_Store" || base == ".fseventsd" || strings.HasPrefix(base, "._") ||
+		strings.Contains("/"+path, "/.fseventsd/")
+}
+
 // countImmediateNotifies returns how many entries in a flush batch are the immediate
 // REMOVE/RENAME/ADD_DIR kind that pendingNotifies counts, to balance the per-event increment.
 func countImmediateNotifies(batch []*bindings.NotifyRequest) int64 {
@@ -593,9 +601,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					return
 				}
 
-				// Filter macOS metadata files from peer sync.
-				baseName := filepath.Base(req.Path)
-				if baseName == ".DS_Store" || baseName == ".fseventsd" || strings.HasPrefix(baseName, "._") {
+				if skipPeerSync(req.Path) {
 					continue
 				}
 
