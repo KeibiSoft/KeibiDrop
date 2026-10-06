@@ -76,6 +76,20 @@ func TestOpenLogFile_AppendsAndCreates(t *testing.T) {
 	require.Equal(t, "first\nsecond\n", string(got))
 }
 
+// A fresh install has no log directory. The first run used to log to stdout
+// and "Export logs" then reported a missing file (Windows round, 2026-10-05).
+func TestOpenLogFile_CreatesTheMissingDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".local", "share", "keibidrop", "keibidrop.log")
+	w, err := OpenLogFile(path)
+	require.NoError(t, err)
+	_, err = w.Write([]byte("first\n"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "first\n", string(got))
+}
+
 // An instance with its own config dir logs there. Two instances on one machine
 // without an explicit log_file used to append to the one platform file.
 func TestDefaultConfig_LogFileFollowsTheConfigDir(t *testing.T) {

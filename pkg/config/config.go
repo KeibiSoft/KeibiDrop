@@ -108,6 +108,17 @@ func Load() (Config, error) {
 	// Overrides accept the KEIBIDROP_ prefix (Rust UI, CLI) and the KD_ prefix (kd daemon).
 	applyEnvOverrides(&cfg)
 
+	// An empty path in the file is no place to save: Abs below would make it
+	// the working directory. The platform default stands in, so an install
+	// always has a save folder and a mount point.
+	def := DefaultConfig()
+	if cfg.SavePath == "" {
+		cfg.SavePath = def.SavePath
+	}
+	if cfg.MountPath == "" {
+		cfg.MountPath = def.MountPath
+	}
+
 	// Resolve relative paths to absolute.
 	if cfg.SavePath != "" {
 		if abs, err := filepath.Abs(cfg.SavePath); err == nil {
