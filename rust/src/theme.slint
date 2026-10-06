@@ -21,9 +21,11 @@ export global Theme {
     out property <color> field: #222222;
     out property <color> outline: #ffffff;
     out property <color> button: #888888;
-    out property <color> toggle-off: #343436;
-    out property <color> toggle-on: #177df5;
-    out property <color> knob: #ffffff;
+    out property <color> knob-on: #ffffff;
+    out property <color> knob-off: #888888;
+    out property <color> progress: #1681ff;
+    out property <color> progress-track: #1f3a59;
+    out property <color> file-preview: #454545;
     out property <color> scrollbar: #888888;
     out property <color> glass-tint: rgba(52, 52, 54, 0.2);
 
@@ -88,8 +90,9 @@ export component Label inherits Text {
     vertical-alignment: center;
 }
 
-// pill: 24px controls, panel: menus and lists, card: an overlay's frosted card.
-export enum GlassKind { pill, panel, card }
+// pill: 24px controls, track: switches (lit from below), panel: menus and
+// lists, card: an overlay's frosted card.
+export enum GlassKind { pill, track, panel, card }
 
 struct RimBand { y: length, outer: color, inner: color }
 
@@ -102,16 +105,22 @@ export component Glass inherits Rectangle {
     // Show the blurred window through the glass (cards over an overlay).
     in property <bool> frosted: false;
 
-    property <length> h: max(root.height, 24px);
+    property <length> h: max(root.height, 20px);
+    property <bool> track: root.kind == GlassKind.track;
+    // Rim strength (white alpha) of the outer and inner hairline per edge.
+    property <float> top-outer: root.track ? 0.53 : 0.44;
+    property <float> top-inner: root.track ? 0.33 : 0.13;
+    property <float> bottom-outer: root.track ? 0.36 : 0.68;
+    property <float> bottom-inner: root.track ? 0.21 : 0.19;
     property <[RimBand]> rim: [
-        { y: 0, outer: #ffffff70, inner: #ffffff21 },
-        { y: 1px, outer: #ffffff52, inner: #ffffff17 },
-        { y: 2px, outer: #ffffff33, inner: #ffffff0d },
-        { y: 3px, outer: #ffffff12, inner: #ffffff05 },
-        { y: root.h - 4px, outer: #ffffff1a, inner: #ffffff08 },
-        { y: root.h - 3px, outer: #ffffff4d, inner: #ffffff14 },
-        { y: root.h - 2px, outer: #ffffff80, inner: #ffffff24 },
-        { y: root.h - 1px, outer: #ffffffad, inner: #ffffff31 },
+        { y: 0, outer: rgba(255, 255, 255, root.top-outer), inner: rgba(255, 255, 255, root.top-inner) },
+        { y: 1px, outer: rgba(255, 255, 255, root.top-outer * 0.73), inner: rgba(255, 255, 255, root.top-inner * 0.7) },
+        { y: 2px, outer: rgba(255, 255, 255, root.top-outer * 0.45), inner: rgba(255, 255, 255, root.top-inner * 0.4) },
+        { y: 3px, outer: rgba(255, 255, 255, root.top-outer * 0.16), inner: rgba(255, 255, 255, root.top-inner * 0.15) },
+        { y: root.h - 4px, outer: rgba(255, 255, 255, root.bottom-outer * 0.15), inner: rgba(255, 255, 255, root.bottom-inner * 0.16) },
+        { y: root.h - 3px, outer: rgba(255, 255, 255, root.bottom-outer * 0.45), inner: rgba(255, 255, 255, root.bottom-inner * 0.41) },
+        { y: root.h - 2px, outer: rgba(255, 255, 255, root.bottom-outer * 0.74), inner: rgba(255, 255, 255, root.bottom-inner * 0.73) },
+        { y: root.h - 1px, outer: rgba(255, 255, 255, root.bottom-outer), inner: rgba(255, 255, 255, root.bottom-inner) },
     ];
 
     // Gradient stop at a distance from the top edge.
@@ -130,19 +139,26 @@ export component Glass inherits Rectangle {
         source: Backdrop.blur;
         image-fit: fill;
     }
-    // A card repeats the overlay's tint over the blur it shows.
-    if root.frosted: Rectangle { background: Theme.glass-tint; }
-    Rectangle { background: Theme.glass-tint; }
+    // A card repeats the overlay's tint over the blur it shows. Every layer is
+    // rounded itself: the software renderer clips to the bounding rectangle.
+    if root.frosted: Rectangle { border-radius: Theme.radius; background: Theme.glass-tint; }
+    Rectangle { border-radius: Theme.radius; background: Theme.glass-tint; }
     Rectangle {
+        border-radius: Theme.radius;
         background: root.kind == GlassKind.pill
             ? @linear-gradient(180deg, #ffffff09 0%, #ffffff07 root.at(2px), #ffffff04 root.at(4px), #ffffff00 root.at(9.5px))
+            : root.track
+            ? @linear-gradient(180deg, #ffffff00 root.at(11px), #ffffff02 root.at(14px), #ffffff03 root.at(15px), #ffffff05 root.at(17px), #ffffff09 root.at(18.5px), #ffffff0a 100%)
             : root.kind == GlassKind.panel
             ? @linear-gradient(180deg, #ffffff08 0%, #ffffff04 root.at(8px), #ffffff02 root.at(16px), #ffffff00 root.at(32px))
             : @linear-gradient(180deg, #ffffff0d 0%, #ffffff0c root.at(5px), #ffffff0b root.at(13px), #ffffff08 root.at(25px), #ffffff0a root.at(45px), #ffffff08 root.at(57px), #ffffff07 root.at(73px), #ffffff04 root.at(89px), #ffffff01 root.at(113px), #ffffff01 100%);
     }
     Rectangle {
+        border-radius: Theme.radius;
         background: root.kind == GlassKind.pill
             ? @linear-gradient(180deg, #00000000 0%, #00000004 root.at(9.5px), #00000004 root.at(root.h - 10px), #00000016 root.at(root.h - 6px), #0000003a root.at(root.h - 1.5px), #00000040 100%)
+            : root.track
+            ? @linear-gradient(180deg, #0000002d 0%, #00000026 root.at(3px), #00000018 root.at(4px), #00000012 root.at(5px), #0000000b root.at(6px), #0000000b root.at(9px), #00000004 root.at(10px), #00000000 root.at(11px))
             : root.kind == GlassKind.panel
             ? @linear-gradient(180deg, #00000000 root.at(32px), #0000000b root.at(40px), #0000000b root.at(root.h - 17px), #00000018 root.at(root.h - 13px), #0000002d root.at(root.h - 1.5px), #0000002e 100%)
             : @linear-gradient(180deg, #00000000 root.at(root.h - 140px), #00000001 root.at(root.h - 91px), #00000005 root.at(root.h - 75px), #0000000b root.at(root.h - 51px), #0000001a root.at(root.h - 31px), #0000001d root.at(root.h - 15px), #00000023 100%);

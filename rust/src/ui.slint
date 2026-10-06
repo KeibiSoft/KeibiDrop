@@ -164,7 +164,9 @@ component FieldAction inherits Rectangle {
 }
 
 // Toggle switch (reusable for FUSE and local mode)
-component ToggleSwitch inherits Rectangle {
+// Switch (Figma Screen 12): a glass track; the knob is grey when off and
+// white on the right when on.
+component ToggleSwitch inherits Glass {
     in-out property <bool> checked: false;
     in property <bool> enabled: true;
     callback toggled(bool);
@@ -178,11 +180,9 @@ component ToggleSwitch inherits Rectangle {
         }
     }
 
+    kind: GlassKind.track;
     width: 36px;
     height: 20px;
-    border-radius: Theme.radius;
-    background: root.checked ? Theme.toggle-on : Theme.toggle-off;
-    animate background { duration: 150ms; }
 
     Rectangle {
         x: root.checked ? parent.width - self.width - 2px : 2px;
@@ -190,8 +190,9 @@ component ToggleSwitch inherits Rectangle {
         width: 16px;
         height: 16px;
         border-radius: Theme.radius-small;
-        background: Theme.knob;
+        background: root.checked ? Theme.knob-on : Theme.knob-off;
         animate x { duration: 150ms; easing: ease-out; }
+        animate background { duration: 150ms; }
     }
 
     TouchArea {
@@ -226,7 +227,7 @@ component ToggleRow inherits Rectangle {
         height: parent.height;
         silent: true;
         style: Theme.label;
-        color: Theme.muted;
+        color: root.checked ? Theme.text : Theme.muted;
         text: root.text;
     }
 }
@@ -251,8 +252,7 @@ component PillButton inherits Rectangle {
     border-radius: Theme.radius;
     border-width: Theme.hairline;
     border-color: Theme.accent-line;
-    background: root.active ? Theme.accent-line
-              : pill-touch.pressed ? #177df526
+    background: root.active || pill-touch.pressed ? Theme.accent
               : pill-touch.has-hover ? #177df514
               : Theme.field;
     opacity: root.enabled || root.active ? 1 : 0.4;
@@ -264,7 +264,7 @@ component PillButton inherits Rectangle {
         horizontal-alignment: center;
         silent: true;
         style: Theme.primary;
-        color: root.active ? Theme.text : Theme.accent;
+        color: root.active || pill-touch.pressed ? Theme.text : Theme.accent;
         text: root.text;
     }
 
@@ -453,6 +453,8 @@ component ContactsPanel inherits Glass {
 // One row of the header's "..." menu.
 component MenuItem inherits Rectangle {
     in property <MenuEntry> entry;
+    // Figma places the chevrons on their own 20.5px grid.
+    in property <length> chevron-y;
     callback clicked;
 
     height: 21px;
@@ -466,6 +468,14 @@ component MenuItem inherits Rectangle {
         silent: true;
         color: touch.has-hover ? Theme.text : Theme.muted;
         text: root.entry.label;
+    }
+    Image {
+        x: 143.35px;
+        y: root.chevron-y;
+        width: 9.531px;
+        height: 9.3px;
+        source: @image-url("../assets/chevron.svg");
+        colorize: touch.has-hover ? Theme.text : Theme.muted;
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -549,7 +559,7 @@ component SpinnerArc inherits Rectangle {
         height: 100%;
         border-radius: self.width / 2;
         border-width: 6px;
-        border-color: #334155;
+        border-color: Theme.progress-track;
         background: transparent;
     }
 
@@ -563,7 +573,7 @@ component SpinnerArc inherits Rectangle {
         viewbox-y: 0;
         viewbox-width: 100;
         viewbox-height: 100;
-        stroke: #3b82f6;
+        stroke: Theme.progress;
         stroke-width: 3px;
         stroke-line-cap: round;
         fill: transparent;
@@ -586,7 +596,7 @@ component SpinnerArc inherits Rectangle {
     Text {
         text: "+";
         font-size: root.size * 0.35;
-        color: spinner-touch.has-hover ? #60a5fa : #3b82f6;
+        color: spinner-touch.has-hover ? Theme.progress : Theme.progress-track;
         horizontal-alignment: center;
         vertical-alignment: center;
         animate color { duration: 150ms; }
@@ -600,7 +610,7 @@ component SpinnerArc inherits Rectangle {
 // Small spinner for file cards - shows progress 0->100%
 component SmallSpinner inherits Rectangle {
     in property <bool> active: true;
-    in property <color> accent: #3b82f6;  // blue default
+    in property <color> accent: Theme.progress;
     in property <float> progress: 0.0;    // 0.0 to 1.0
 
     width: 20px;
@@ -666,14 +676,7 @@ component FileTypeIcon inherits Rectangle {
             : root.file-type == "archive" ? "ZIP"
             : root.file-type == "text" ? "TXT"
             : "FILE";
-        color: root.file-type == "folder" ? #60a5fa
-             : root.file-type == "pdf" ? #ef4444
-             : root.file-type == "image" ? #22c55e
-             : root.file-type == "video" ? #a855f7
-             : root.file-type == "audio" ? #f59e0b
-             : root.file-type == "code" ? #3b82f6
-             : root.file-type == "archive" ? #f97316
-             : #9ca3af;
+        color: Theme.muted;
         font-size: 16px;
         font-weight: 700;
         horizontal-alignment: center;
@@ -687,13 +690,13 @@ component ProgressBar inherits Rectangle {
 
     width: 100%;
     height: 4px;
-    background: #334155;
+    background: Theme.progress-track;
     border-radius: 2px;
 
     Rectangle {
         width: parent.width * clamp(root.progress, 0, 1);
         height: 100%;
-        background: root.progress >= 1.0 ? #22c55e : #3b82f6;
+        background: Theme.progress;
         border-radius: 2px;
 
         animate width { duration: 300ms; easing: ease-out; }
@@ -737,7 +740,7 @@ component FileCard inherits Rectangle {
     Rectangle {
         width: parent.width;
         height: 140px;
-        background: #3a3a3a;
+        background: Theme.file-preview;
         border-radius: 4px;
 
         // File type icon centered
@@ -752,7 +755,7 @@ component FileCard inherits Rectangle {
             x: 8px;
             y: 8px;
             active: true;
-            accent: #22c55e;
+            accent: Theme.progress;
         }
 
         // Blue spinner: uploading to peer (top-right)
@@ -760,7 +763,7 @@ component FileCard inherits Rectangle {
             x: parent.width - 28px;
             y: 8px;
             active: true;
-            accent: #3b82f6;
+            accent: Theme.progress;
         }
 
         // Progress bar at bottom of preview area
@@ -776,7 +779,7 @@ component FileCard inherits Rectangle {
             x: 8px;
             y: parent.height - 14px;
             text: Math.round(root.progress * 100) + "%";
-            color: #22c55e;
+            color: Theme.progress;
             font-size: 10px;
         }
         if root.downloading && root.size-bytes > 0: Text {
@@ -790,7 +793,7 @@ component FileCard inherits Rectangle {
                 : root.size-bytes > 1024
                 ? Math.round(root.size-bytes / 10.24) / 100 + " KB"
                 : root.size-bytes + " B";
-            color: #888;
+            color: Theme.muted;
             font-size: 9px;
         }
 
@@ -799,7 +802,7 @@ component FileCard inherits Rectangle {
             x: parent.width - 30px;
             y: 8px;
             text: "OK";
-            color: #22c55e;
+            color: Theme.online;
             font-size: 12px;
             font-weight: 700;
         }
@@ -816,15 +819,15 @@ component FileCard inherits Rectangle {
             width: 20px;
             height: 20px;
             active: true;
-            accent: #22c55e;
+            accent: Theme.progress;
             progress: root.progress;
         }
         if !root.downloading && !root.browse-mode: Rectangle {
             width: 20px;
             height: 20px;
-            border-width: 1px;
-            border-color: #666;
-            border-radius: 4px;
+            border-width: Theme.hairline;
+            border-color: Theme.outline;
+            border-radius: Theme.radius-small;
         }
 
         Text {
@@ -1314,7 +1317,7 @@ export component MainWindow inherits Window {
         // Right column: identity and network switches, Connect, virtual folder.
         if root.room_action == 0 && !root.local_mode: ToggleRow {
             x: 868px;
-            y: 262px;
+            y: 410px;
             width: 230px;
             text: "Incognito";
             checked <=> root.incognito_mode;
@@ -1322,7 +1325,7 @@ export component MainWindow inherits Window {
         }
         if root.room_action == 0: ToggleRow {
             x: 868px;
-            y: 299px;
+            y: 447px;
             width: 230px;
             text: "Local mode";
             checked <=> root.local_mode;
@@ -1332,7 +1335,7 @@ export component MainWindow inherits Window {
         // Connect button (role determined by fingerprint tiebreaker)
         if !root.local_mode: PillButton {
             x: 868px;
-            y: 408px;
+            y: 535px;
             text: root.room_action != 0 ? "Connecting..." : "Connect";
             active: root.room_action != 0;
             // A typed code is enough: Connect registers it first (see on_connect_pressed).
@@ -1341,7 +1344,7 @@ export component MainWindow inherits Window {
         }
         if !root.local_mode && root.room_action == 0 && root.peer_code_added: Label {
             x: 868px;
-            y: 450px;
+            y: 577px;
             height: 12px;
             style: Theme.hint;
             color: Theme.faint;
@@ -1351,7 +1354,7 @@ export component MainWindow inherits Window {
         // While connecting: the countdown, what is missing, and Cancel.
         if root.room_action != 0: Label {
             x: 868px;
-            y: 450px;
+            y: 577px;
             width: 240px;
             height: 14px;
             style: Theme.label;
@@ -1361,7 +1364,7 @@ export component MainWindow inherits Window {
         // Waiting for the other side: name what is missing rather than spinning.
         if !root.local_mode && root.room_action != 0: Label {
             x: 868px;
-            y: 470px;
+            y: 597px;
             width: 230px;
             wrap: word-wrap;
             vertical-alignment: top;
@@ -1371,7 +1374,7 @@ export component MainWindow inherits Window {
         }
         if root.room_action != 0: PillButton {
             x: 868px;
-            y: 505px;
+            y: 632px;
             text: "Cancel";
             clicked => { root.cancel_connect_pressed() }
         }
@@ -1379,7 +1382,7 @@ export component MainWindow inherits Window {
         // FUSE toggle: Medium first line, Light wrapped detail (Figma 8px).
         if root.room_action == 0: Rectangle {
             x: 868px;
-            y: 543px;
+            y: 482px;
             width: 230px;
             height: 30px;
 
@@ -1427,7 +1430,7 @@ export component MainWindow inherits Window {
         // LAN discovery, in place of Connect while local mode is on.
         if root.local_mode && root.discovery_name != "" && root.room_action == 0: Label {
             x: 868px;
-            y: 340px;
+            y: 535px;
             height: 14px;
             style: Theme.label;
             color: Theme.accent;
@@ -1435,7 +1438,7 @@ export component MainWindow inherits Window {
         }
         if root.local_mode && root.room_action == 0: Label {
             x: 868px;
-            y: 362px;
+            y: 557px;
             height: 14px;
             style: Theme.small;
             color: Theme.muted;
@@ -1443,12 +1446,12 @@ export component MainWindow inherits Window {
         }
         for peer[idx] in root.discovered_peers: Outline {
             x: 868px;
-            y: 382px + idx * 32px;
+            y: 577px + idx * 32px;
             width: 230px;
             height: 28px;
             visible: root.local_mode && root.room_action == 0;
             background: peer-touch.has-hover ? Theme.card : transparent;
-            border-color: Theme.toggle-off;
+            border-color: Theme.faint;
             accessible-role: button;
             accessible-label: "Connect to " + peer.name;
             accessible-action-default => { root.discovery-peer-selected(idx); }
@@ -1499,7 +1502,7 @@ export component MainWindow inherits Window {
         // Status and errors, under the right column.
         if root.error_message != "": Label {
             x: 868px;
-            y: 590px;
+            y: 340px;
             width: 240px;
             wrap: word-wrap;
             vertical-alignment: top;
@@ -1509,7 +1512,7 @@ export component MainWindow inherits Window {
         }
         if root.status_message != "" && root.error_message == "" && root.room_action == 0: Label {
             x: 868px;
-            y: 590px;
+            y: 340px;
             width: 240px;
             wrap: word-wrap;
             vertical-alignment: top;
@@ -1541,21 +1544,21 @@ export component MainWindow inherits Window {
                 height: 8px;
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
-                background: root.session_state == "connected" || root.session_state == "" ? #22c55e
-                          : root.session_state == "gave_up" || root.session_state == "mount_failed" ? #ef4444
-                          : #d97706;
+                background: root.session_state == "connected" || root.session_state == "" ? Theme.online
+                          : root.session_state == "gave_up" || root.session_state == "mount_failed" ? Theme.error
+                          : Theme.muted;
             }
             Text {
                 text: root.session_state_text != "" ? root.session_state_text : "Connected";
-                color: root.session_state == "connected" || root.session_state == "" ? #22c55e
-                     : root.session_state == "gave_up" || root.session_state == "mount_failed" ? #ef4444
-                     : #d97706;
+                color: root.session_state == "connected" || root.session_state == "" ? Theme.online
+                     : root.session_state == "gave_up" || root.session_state == "mount_failed" ? Theme.error
+                     : Theme.muted;
                 font-size: 13px;
                 vertical-alignment: center;
             }
             if root.throughput_text != "": Text {
                 text: root.throughput_text;
-                color: #777;
+                color: Theme.faint;
                 font-size: 11px;
                 vertical-alignment: center;
             }
@@ -1564,9 +1567,9 @@ export component MainWindow inherits Window {
                 height: 20px;
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
-                background: root.connection_mode == "lan" ? rgba(34,197,94,0.12)
-                          : root.connection_mode == "direct" || root.connection_mode == "direct-out" ? rgba(59,130,246,0.12)
-                          : rgba(217,119,6,0.12);
+                background: root.connection_mode == "lan" ? Theme.online.transparentize(0.88)
+                          : root.connection_mode == "direct" || root.connection_mode == "direct-out" ? Theme.accent.transparentize(0.88)
+                          : Theme.muted.transparentize(0.88);
                 mode-text := Text {
                     text: root.connection_mode == "lan" ? "LAN"
                         : root.connection_mode == "direct" ? "Direct P2P"
@@ -1574,9 +1577,9 @@ export component MainWindow inherits Window {
                         : root.connection_mode == "direct-in" ? "Direct for peer"
                         : root.connection_mode == "bridge" ? "Via Relay"
                         : root.connection_mode;
-                    color: root.connection_mode == "lan" ? #22c55e
-                         : root.connection_mode == "direct" || root.connection_mode == "direct-out" ? #3b82f6
-                         : #d97706;
+                    color: root.connection_mode == "lan" ? Theme.online
+                         : root.connection_mode == "direct" || root.connection_mode == "direct-out" ? Theme.accent
+                         : Theme.muted;
                     font-size: 11px;
                     font-weight: 600;
                     horizontal-alignment: center;
@@ -1590,11 +1593,11 @@ export component MainWindow inherits Window {
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
                 border-width: 1px;
-                border-color: rgba(59,130,246,0.5);
-                background: rgba(59,130,246,0.12);
+                border-color: Theme.accent-line.transparentize(0.5);
+                background: Theme.accent.transparentize(0.88);
                 buy-chip-text := Text {
                     text: "Get relay credit";
-                    color: #3b82f6;
+                    color: Theme.accent;
                     font-size: 11px;
                     font-weight: 600;
                     horizontal-alignment: center;
@@ -1607,7 +1610,7 @@ export component MainWindow inherits Window {
             }
             if root.connection_mode == "bridge" && root.tokens_funded && root.tokens_credit_short != "": Text {
                 text: root.tokens_credit_short;
-                color: #777;
+                color: Theme.faint;
                 font-size: 11px;
                 vertical-alignment: center;
             }
@@ -1640,7 +1643,7 @@ export component MainWindow inherits Window {
 
             Text {
                 text: "< Back";
-                color: #60a5fa;
+                color: Theme.link;
                 font-size: 14px;
                 vertical-alignment: center;
             }
@@ -1655,7 +1658,7 @@ export component MainWindow inherits Window {
             y: 312px;
             x: 250px;
             text: root.current_folder;
-            color: #9ca3af;
+            color: Theme.muted;
             font-size: 13px;
         }
 
@@ -1720,21 +1723,21 @@ export component MainWindow inherits Window {
                 height: 8px;
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
-                background: root.session_state == "connected" || root.session_state == "" ? #22c55e
-                          : root.session_state == "gave_up" || root.session_state == "mount_failed" ? #ef4444
-                          : #d97706;
+                background: root.session_state == "connected" || root.session_state == "" ? Theme.online
+                          : root.session_state == "gave_up" || root.session_state == "mount_failed" ? Theme.error
+                          : Theme.muted;
             }
             Text {
                 text: root.session_state_text != "" ? root.session_state_text : "Connected · FUSE mounted";
-                color: root.session_state == "connected" || root.session_state == "" ? #22c55e
-                     : root.session_state == "gave_up" || root.session_state == "mount_failed" ? #ef4444
-                     : #d97706;
+                color: root.session_state == "connected" || root.session_state == "" ? Theme.online
+                     : root.session_state == "gave_up" || root.session_state == "mount_failed" ? Theme.error
+                     : Theme.muted;
                 font-size: 13px;
                 vertical-alignment: center;
             }
             if root.throughput_text != "": Text {
                 text: root.throughput_text;
-                color: #777;
+                color: Theme.faint;
                 font-size: 11px;
                 vertical-alignment: center;
             }
@@ -1743,17 +1746,17 @@ export component MainWindow inherits Window {
                 height: 20px;
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
-                background: root.connection_mode == "lan" ? rgba(34,197,94,0.12)
-                          : root.connection_mode == "direct" ? rgba(59,130,246,0.12)
-                          : rgba(217,119,6,0.12);
+                background: root.connection_mode == "lan" ? Theme.online.transparentize(0.88)
+                          : root.connection_mode == "direct" ? Theme.accent.transparentize(0.88)
+                          : Theme.muted.transparentize(0.88);
                 fuse-mode-text := Text {
                     text: root.connection_mode == "lan" ? "LAN"
                         : root.connection_mode == "direct" ? "Direct P2P"
                         : root.connection_mode == "bridge" ? "Via Relay"
                         : root.connection_mode;
-                    color: root.connection_mode == "lan" ? #22c55e
-                         : root.connection_mode == "direct" ? #3b82f6
-                         : #d97706;
+                    color: root.connection_mode == "lan" ? Theme.online
+                         : root.connection_mode == "direct" ? Theme.accent
+                         : Theme.muted;
                     font-size: 11px;
                     font-weight: 600;
                     horizontal-alignment: center;
@@ -1767,11 +1770,11 @@ export component MainWindow inherits Window {
                 y: (parent.height - self.height) / 2;
                 border-radius: 4px;
                 border-width: 1px;
-                border-color: rgba(59,130,246,0.5);
-                background: rgba(59,130,246,0.12);
+                border-color: Theme.accent-line.transparentize(0.5);
+                background: Theme.accent.transparentize(0.88);
                 fuse-buy-chip-text := Text {
                     text: "Get relay credit";
-                    color: #3b82f6;
+                    color: Theme.accent;
                     font-size: 11px;
                     font-weight: 600;
                     horizontal-alignment: center;
@@ -1784,7 +1787,7 @@ export component MainWindow inherits Window {
             }
             if root.connection_mode == "bridge" && root.tokens_funded && root.tokens_credit_short != "": Text {
                 text: root.tokens_credit_short;
-                color: #777;
+                color: Theme.faint;
                 font-size: 11px;
                 vertical-alignment: center;
             }
@@ -1814,14 +1817,14 @@ export component MainWindow inherits Window {
 
             Text {
                 text: "Drop files into the folder to share them instantly with your peer.";
-                color: #9ca3af;
+                color: Theme.muted;
                 font-size: 15px;
                 horizontal-alignment: center;
             }
 
             Text {
                 text: "Files stream on access. Open videos, documents, or code without waiting for the full download.";
-                color: #666;
+                color: Theme.faint;
                 font-size: 12px;
                 horizontal-alignment: center;
             }
@@ -1840,7 +1843,7 @@ export component MainWindow inherits Window {
                     padding-right: 16px;
                     Text {
                         text: root.mount_path;
-                        color: #64748b;
+                        color: Theme.faint;
                         font-size: 13px;
                         vertical-alignment: center;
                         overflow: elide;
@@ -1897,7 +1900,7 @@ export component MainWindow inherits Window {
             text: root.saved_file_list.length == 1
                 ? "1 file"
                 : root.saved_file_list.length + " files";
-            color: #9ca3af;
+            color: Theme.muted;
             font-size: 13px;
         }
 
@@ -1918,7 +1921,7 @@ export component MainWindow inherits Window {
 
             Text {
                 text: "< Back";
-                color: #60a5fa;
+                color: Theme.link;
                 font-size: 14px;
                 vertical-alignment: center;
             }
@@ -1934,7 +1937,7 @@ export component MainWindow inherits Window {
             x: 250px;
             width: parent.width - 260px;
             text: root.saved_current_folder;
-            color: #9ca3af;
+            color: Theme.muted;
             font-size: 13px;
             overflow: elide;
         }
@@ -1946,14 +1949,14 @@ export component MainWindow inherits Window {
 
             Text {
                 text: "No saved files";
-                color: #9ca3af;
+                color: Theme.muted;
                 font-size: 16px;
                 horizontal-alignment: center;
             }
 
             Text {
                 text: "Files you download will appear here";
-                color: #555;
+                color: Theme.faint;
                 font-size: 13px;
                 horizontal-alignment: center;
             }
@@ -2069,9 +2072,34 @@ export component MainWindow inherits Window {
                 clicked => { root.open_help_url(); }
             }
         }
+        Rectangle {
+            x: 496px;
+            y: 5px;
+            width: 13.004px;
+            height: 13.004px;
+            accessible-role: button;
+            accessible-label: "Close help";
+            accessible-action-default => { root.help_visible = false; }
+            Image {
+                x: 2.17px;
+                y: 4.17px;
+                width: 8.668px;
+                height: 8.667px;
+                source: @image-url("../assets/xmark.svg");
+                colorize: help-close.has-hover ? Theme.text : Theme.muted;
+            }
+            help-close := TouchArea {
+                x: -6px;
+                y: -4px;
+                width: 25px;
+                height: 25px;
+                mouse-cursor: pointer;
+                clicked => { root.help_visible = false; }
+            }
+        }
         PillButton {
             x: 179px;
-            y: 359px;
+            y: 355px;
             text: "Question?";
             clicked => { root.show_overlay(false, true, false); }
         }
@@ -2309,7 +2337,7 @@ export component MainWindow inherits Window {
             height: 28px;
             Text {
                 text: i <= root.feedback_rating ? "\u{2605}" : "\u{2606}";
-                color: i <= root.feedback_rating ? #f5b301 : (star-touch.has-hover ? Theme.text : Theme.faint);
+                color: i <= root.feedback_rating ? Theme.accent : (star-touch.has-hover ? Theme.text : Theme.faint);
                 font-size: 22px;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -2568,6 +2596,7 @@ export component MainWindow inherits Window {
         visible: !root.capturing;
         for entry[i] in root.menu_entries: MenuItem {
             y: 4.5px + i * 21px;
+            chevron-y: 10.35px + floor(i * 20.5 + 0.25) * 1px - self.y;
             width: parent.width;
             entry: entry;
             clicked => { root.menu_pick(entry.id); }
