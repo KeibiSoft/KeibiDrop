@@ -37,6 +37,11 @@ type rotatingLog struct {
 }
 
 func openRotatingLog(path string, max int64) (*rotatingLog, error) {
+	// A fresh install has no log directory yet. Without this the first run
+	// logged to stdout at debug level and "Export logs" found no file.
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil { // #nosec G301
+		return nil, err
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
