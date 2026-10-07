@@ -1,5 +1,5 @@
 // Design tokens and primitives from Mila's Figma file (KEIBIDROP, Screens 12
-// and 13). Every color, size and type style of the UI comes from here.
+// to 14). Every color, size, icon and type style of the UI comes from here.
 
 // Inter 3.19, the version Figma renders with (text widths match it, not 4.x).
 import "../assets/fonts/Inter.ttf";
@@ -21,13 +21,21 @@ export global Theme {
     out property <color> field: #222222;
     out property <color> outline: #ffffff;
     out property <color> button: #888888;
-    out property <color> knob-on: #ffffff;
+    // Switch (Figma Screen 12, her Incognito example): a grey knob on grey
+    // glass when off, a blue knob on blue glass when on.
+    out property <color> knob-on: #177cf3;
     out property <color> knob-off: #888888;
+    out property <color> switch-on: rgba(23, 124, 243, 0.2);
+    out property <color> switch-off: rgba(54, 52, 52, 0.2);
     out property <color> progress: #1681ff;
-    out property <color> progress-track: #1f3a59;
+    // Her spinner's track: progress at 25%, so a file preview's grey shows
+    // through it.
+    out property <color> spinner-track: rgba(22, 129, 255, 0.25);
     out property <color> file-preview: #454545;
     out property <color> scrollbar: #888888;
     out property <color> glass-tint: rgba(52, 52, 54, 0.2);
+    // The note under the Teleport card (Figma Screen 14).
+    out property <color> info-tint: rgba(38, 46, 58, 0.2);
 
     // Text
     out property <color> text: #ffffff;
@@ -38,6 +46,9 @@ export global Theme {
     out property <color> accent: #177cf3;
     out property <color> accent-line: #177df5;
     out property <color> link: #1583ff;
+    // Open on a file card (Figma 214:988).
+    out property <color> open-line: #167cf4;
+    out property <color> open-ink: #1779ec;
     out property <color> online: #0885fe;
     out property <color> offline: #878787;
     out property <color> error: #c74309;
@@ -47,6 +58,24 @@ export global Theme {
     out property <length> radius-small: 5px;
     out property <length> hairline: 0.5px;
     out property <length> control: 34px;
+    // The Figma frame. A larger window centres this column.
+    out property <length> frame-width: 1144px;
+    out property <length> frame-height: 729px;
+    // The box every screen keeps inside (Marius): the logo's left edge and
+    // top, the menu pill's right edge (Figma Screen 12).
+    out property <length> box-left: 115px;
+    out property <length> box-right: 1029px;
+    out property <length> box-top: 70.39px;
+    out property <length> box-width: self.box-right - self.box-left;
+    // The menu pill, at one place on every screen (Marius; her frames put it
+    // at 74 to 78). Its menu opens 8px under it.
+    out property <length> pill-y: 76px;
+    out property <length> pill-width: 161px;
+    out property <length> menu-y: self.pill-y + 32px;
+
+    // One turn of her spinner: her prototype steps a quarter in 200, 200, 200
+    // and 300 ms (Figma component set "Spinner").
+    out property <duration> spin: 900ms;
 
     // Type
     out property <TextStyle> title: { size: 23px, weight: 800, spacing: -0.48px, leading: 1 };
@@ -59,6 +88,7 @@ export global Theme {
     out property <TextStyle> code: { size: 15px, weight: 300, spacing: 0, leading: 1 };
     out property <TextStyle> primary: { size: 15px, weight: 800, spacing: 0, leading: 1 };
     out property <TextStyle> button-label: { size: 14px, weight: 800, spacing: 0, leading: 1 };
+    out property <TextStyle> button-small: { size: 11px, weight: 800, spacing: 0, leading: 1 };
     out property <TextStyle> label: { size: 12px, weight: 300, spacing: 0, leading: 1 };
     out property <TextStyle> badge: { size: 11px, weight: 400, spacing: -0.22px, leading: 1 };
     out property <TextStyle> caption: { size: 11px, weight: 300, spacing: 0, leading: 1 };
@@ -75,6 +105,27 @@ export global Backdrop {
     in-out property <image> blur;   // Figma background blur 32
     in-out property <length> width;
     in-out property <length> height;
+}
+
+// Her icons (Figma Screens 12 to 14) as path data in px, moved 2px right and
+// down so the round caps stay inside the drawing (Icon).
+export global Icons {
+    // Close: 7 by 7.
+    out property <string> cross: "M 2 2 L 9 9 M 9 2 L 2 9";
+    // Help in the pill: 5 by 8.
+    out property <string> help: "M 4.469 10 L 4.469 9.939 L 4.406 9.939 L 4.406 10 L 4.469 10 Z M 2 3.689 C 2.146 3.26 2.413 2.878 2.773 2.586 C 3.132 2.293 3.569 2.101 4.036 2.03 C 4.503 1.96 4.981 2.013 5.418 2.186 C 5.855 2.358 6.232 2.642 6.51 3.007 C 6.788 3.371 6.955 3.802 6.992 4.251 C 7.029 4.7 6.935 5.15 6.721 5.551 C 6.506 5.953 6.18 6.29 5.777 6.526 C 5.374 6.761 4.91 6.886 4.437 6.886 L 4.437 7.496";
+    // The menu's three dots: 14 by 2, filled.
+    out property <string> more: "M 14 3 C 14 3.552 14.448 4 15 4 C 15.552 4 16 3.552 16 3 C 16 2.448 15.552 2 15 2 C 14.448 2 14 2.448 14 3 Z M 8 3 C 8 3.552 8.448 4 9 4 C 9.552 4 10 3.552 10 3 C 10 2.448 9.552 2 9 2 C 8.448 2 8 2.448 8 3 Z M 2 3 C 2 3.552 2.448 4 3 4 C 3.552 4 4 3.552 4 3 C 4 2.448 3.552 2 3 2 C 2.448 2 2 2.448 2 3 Z";
+    // A menu row's chevron: 4 by 8.
+    out property <string> chevron: "M 2 2 L 6 6 L 2 10";
+    // Info, in a circle: 18 by 18.
+    out property <string> info: "M 2 11 C 2 15.971 6.029 20 11 20 C 15.971 20 20 15.971 20 11 C 20 6.029 15.971 2 11 2 C 6.029 2 2 6.029 2 11 Z M 11 10 L 11 15 M 11.05 7 L 11.05 7.1 L 10.95 7.1 L 10.95 7 L 11.05 7 Z";
+    // Teleport's four points: a file 16 by 21, play 21 by 21, code 22 by 14,
+    // a file with an arrow down 17 by 21.
+    out property <string> file: "M 13.357 3.094 L 16.929 6.74 C 17.324 7.144 17.521 7.345 17.662 7.58 C 17.787 7.789 17.88 8.017 17.936 8.255 C 17.983 8.456 17.996 8.667 17.999 9 C 18 9.112 18 9.237 18 9.38 L 18 19.271 C 18 20.575 18 21.227 17.751 21.726 C 17.532 22.165 17.181 22.522 16.751 22.746 C 16.263 23 15.624 23 14.346 23 L 5.654 23 C 4.376 23 3.736 23 3.248 22.746 C 2.818 22.522 2.468 22.165 2.249 21.726 C 2 21.227 2 20.574 2 19.267 L 2 5.734 C 2 4.427 2 3.773 2.249 3.274 C 2.468 2.835 2.818 2.478 3.248 2.254 C 3.737 2 4.377 2 5.657 2 L 10.771 2 C 10.911 2 11.034 2 11.143 2.001 C 11.469 2.004 11.676 2.016 11.873 2.064 C 12.106 2.122 12.329 2.216 12.533 2.344 C 12.764 2.488 12.962 2.69 13.357 3.094 Z M 11.143 2.001 L 11.143 5.267 C 11.143 6.573 11.143 7.226 11.392 7.726 C 11.611 8.165 11.96 8.522 12.39 8.746 C 12.879 9 13.519 9 14.796 9 L 17.999 9 L 18 9";
+    out property <string> play: "M 2 12.5 C 2 18.299 6.701 23 12.5 23 C 18.299 23 23 18.299 23 12.5 C 23 6.701 18.299 2 12.5 2 C 6.701 2 2 6.701 2 12.5 Z M 10.167 16 L 10.167 9 L 16 12.5 L 10.167 16 Z";
+    out property <string> code: "M 17.125 2 L 24 9 L 17.125 16 M 8.875 16 L 2 9 L 8.875 2";
+    out property <string> download: "M 14.067 3.094 L 17.862 6.74 C 18.282 7.144 18.491 7.345 18.641 7.58 C 18.774 7.789 18.873 8.017 18.932 8.255 C 18.982 8.456 18.995 8.667 18.999 9 C 19 9.112 19 9.237 19 9.38 L 19 19.271 C 19 20.575 19 21.227 18.735 21.726 C 18.502 22.165 18.13 22.522 17.673 22.746 C 17.154 23 16.475 23 15.118 23 L 5.882 23 C 4.524 23 3.845 23 3.326 22.746 C 2.869 22.522 2.498 22.165 2.265 21.726 C 2 21.227 2 20.574 2 19.267 L 2 5.734 C 2 4.427 2 3.773 2.265 3.274 C 2.498 2.835 2.869 2.478 3.326 2.254 C 3.845 2 4.526 2 5.886 2 L 11.319 2 C 11.468 2 11.598 2 11.714 2.001 C 12.061 2.004 12.28 2.016 12.49 2.064 C 12.738 2.122 12.974 2.216 13.192 2.344 C 13.437 2.488 13.647 2.69 14.067 3.094 Z M 10.5 12.5 L 10.5 19.5 M 10.5 19.5 L 14.143 17.167 M 10.5 19.5 L 6.857 17.167 M 11.714 2.001 L 11.714 5.267 C 11.714 6.573 11.714 7.226 11.979 7.726 C 12.212 8.165 12.583 8.522 13.04 8.746 C 13.559 9 14.239 9 15.596 9 L 18.999 9 L 19 9";
 }
 
 export component Label inherits Text {
@@ -104,6 +155,8 @@ export component Glass inherits Rectangle {
     in property <GlassKind> kind: GlassKind.panel;
     // Show the blurred window through the glass (cards over an overlay).
     in property <bool> frosted: false;
+    // Her glass is grey; a switch that is on and the Teleport note are tinted.
+    in property <color> tint: Theme.glass-tint;
 
     property <length> h: max(root.height, 20px);
     property <bool> track: root.kind == GlassKind.track;
@@ -142,7 +195,11 @@ export component Glass inherits Rectangle {
     // A card repeats the overlay's tint over the blur it shows. Every layer is
     // rounded itself: the software renderer clips to the bounding rectangle.
     if root.frosted: Rectangle { border-radius: Theme.radius; background: Theme.glass-tint; }
-    Rectangle { border-radius: Theme.radius; background: Theme.glass-tint; }
+    Rectangle {
+        border-radius: Theme.radius;
+        background: root.tint;
+        animate background { duration: 150ms; }
+    }
     Rectangle {
         border-radius: Theme.radius;
         background: root.kind == GlassKind.pill
@@ -192,4 +249,203 @@ export component Outline inherits Rectangle {
     border-radius: Theme.radius;
     border-width: Theme.hairline;
     border-color: Theme.outline;
+}
+
+// Glass pill with a centred label (Figma 214:988 "< Back"): Light 10px white.
+// The glass lights up a little on hover and press.
+export component GlassButton inherits Glass {
+    in property <string> text;
+    callback clicked;
+
+    kind: GlassKind.pill;
+    height: 24px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        border-radius: Theme.radius;
+        background: touch.pressed ? #ffffff14 : touch.has-hover ? #ffffff0a : transparent;
+        animate background { duration: 150ms; }
+    }
+    // Figma draws her label half a pixel right of and below the centre.
+    Label {
+        x: 0.5px;
+        y: 0.5px;
+        width: root.width;
+        height: root.height;
+        horizontal-alignment: center;
+        silent: true;
+        text: root.text;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// One of her icons (Icons) at its own size: round strokes, white by default.
+export component Icon inherits Rectangle {
+    in property <string> icon;
+    in property <length> line: 1px;
+    in property <color> ink: Theme.text;
+    // Her dots are filled.
+    in property <bool> filled: false;
+
+    Path {
+        x: -2px;
+        y: -2px;
+        width: root.width + 4px;
+        height: root.height + 4px;
+        fit: preserve;
+        commands: root.icon;
+        stroke: root.ink;
+        stroke-width: root.line;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        fill: root.filled ? root.ink : transparent;
+    }
+}
+
+// An icon that is a button (her pill, her cards' close): grey, white on hover.
+// The hit area reaches pad past the icon.
+export component IconButton inherits Icon {
+    in property <length> pad: 6px;
+    callback clicked;
+
+    line: 1.5px;
+    ink: touch.has-hover ? Theme.text : Theme.muted;
+    accessible-role: button;
+    accessible-action-default => { root.clicked(); }
+
+    touch := TouchArea {
+        x: -root.pad;
+        y: -root.pad;
+        width: root.width + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Her ring (Figma component set "Spinner"): a track at 25% around the box's
+// centre. Spinner and ProgressRing draw their arc on it.
+export component Ring inherits Rectangle {
+    // Centre line of the track. Her big ring is a hair taller than wide.
+    in property <length> radius-x: 6.579px;
+    in property <length> radius-y: self.radius-x;
+    in property <length> thickness: 5px;
+
+    out property <float> cx: root.width / 1px / 2;
+    out property <float> cy: root.height / 1px / 2;
+    out property <float> rx: root.radius-x / 1px;
+    out property <float> ry: root.radius-y / 1px;
+
+    // A point on the track, clockwise from 12 o'clock, in path units (px).
+    public pure function at(a: angle) -> string {
+        return (root.cx + root.rx * sin(a)) + " " + (root.cy - root.ry * cos(a));
+    }
+    // The track clockwise from the last point to a, under half a turn.
+    public pure function to(a: angle) -> string {
+        return " A " + root.rx + " " + root.ry + " 0 0 1 " + root.at(a);
+    }
+
+    Path {
+        width: root.width;
+        height: root.height;
+        fit: preserve;
+        commands: "M " + root.at(0deg) + root.to(90deg) + root.to(180deg) + root.to(270deg) + root.to(360deg) + " Z";
+        stroke: Theme.spinner-track;
+        stroke-width: root.thickness;
+        fill: transparent;
+    }
+}
+
+// Her spinner: a quarter arc with a round head that fades out behind it. Her
+// prototype turns it a quarter clockwise per step, linear, and comes to rest
+// where it began; set active, it turns until let go, then ends the turn it is
+// in. Her arcs are dashed 4/4, but the round caps close the gaps, so the arc
+// is drawn whole. It is redrawn each frame because not every renderer rotates.
+export component Spinner inherits Ring {
+    in property <bool> active: false;
+    // Where the head rests, clockwise from 12 o'clock.
+    in property <angle> head: 0deg;
+
+    // True from a start until the end of the turn it was let go in.
+    out property <bool> turning: false;
+    property <duration> began;
+    property <float> turn: Theme.spin / 1ms;
+    property <float> t: root.turning ? mod((animation-tick() - root.began) / 1ms, root.turn) : 0;
+    // Her steps: three quarters of 200 ms, the last of 300 ms (Theme.spin is 900).
+    property <angle> tip: root.head + 1deg * (root.t < root.turn * 2 / 3
+        ? root.t * 405 / root.turn
+        : 270 + (root.t - root.turn * 2 / 3) * 270 / root.turn);
+
+    function start() {
+        root.began = animation-tick();
+        root.turning = true;
+    }
+    init => {
+        if (root.active) {
+            root.start();
+        }
+    }
+    changed active => {
+        if (root.active && !root.turning) {
+            root.start();
+        }
+    }
+    // Whole turns only: stop at the end of the turn in which it was let go.
+    Timer {
+        interval: Theme.spin;
+        running: root.turning;
+        triggered => {
+            if (!root.active) {
+                root.turning = false;
+            }
+        }
+    }
+
+    Path {
+        // Her gradient crosses the centre, opaque just past the head and clear
+        // on the far side, 1% at 75.5% of the way. Slint measures a gradient
+        // across the whole box (CSS), so the stops follow the angle.
+        property <angle> a: root.tip + 210.2deg;
+        property <float> k: (root.rx + root.ry) / 2
+            / ((abs(root.width * sin(self.a)) + abs(root.height * cos(self.a))) / 1px);
+        property <float> t0: 0.5 - self.k;
+        property <float> t1: 0.5 + 0.5104 * self.k;
+        property <float> t2: 0.5 + self.k;
+        property <color> fade: Theme.progress.transparentize(0.99);
+        property <color> clear: Theme.progress.transparentize(1);
+
+        width: root.width;
+        height: root.height;
+        fit: preserve;
+        commands: "M " + root.at(root.tip - 90deg) + root.to(root.tip);
+        stroke: @linear-gradient(self.a, Theme.progress self.t0, self.fade self.t1, self.clear self.t2);
+        stroke-width: root.thickness;
+        stroke-line-cap: round;
+        fill: transparent;
+    }
+}
+
+// A download's progress on her ring: the arc grows clockwise from 12 o'clock
+// in her blue, a dot at the start.
+export component ProgressRing inherits Ring {
+    in property <float> progress: 0.0; // 0.0 to 1.0
+
+    Path {
+        property <angle> sweep: clamp(root.progress, 0.01, 0.999) * 360deg;
+
+        width: root.width;
+        height: root.height;
+        fit: preserve;
+        commands: "M " + root.at(0deg)
+            + (self.sweep > 180deg ? root.to(180deg) + root.to(self.sweep) : root.to(self.sweep));
+        stroke: Theme.progress;
+        stroke-width: root.thickness;
+        stroke-line-cap: round;
+        fill: transparent;
+    }
 }

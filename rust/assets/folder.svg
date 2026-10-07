@@ -1,0 +1,27 @@
+<svg width="80" height="62" viewBox="0 0 80 62" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M5.47301 0.75H27.4234C29.5913 0.75 31.1786 1.99758 31.9528 4.04279L34.1595 9.48305H66.7173C69.5046 9.48305 71.75 11.8555 71.75 14.8006V19.75H0.75V5.76076C0.75 2.97928 2.84051 0.75 5.47301 0.75Z" fill="url(#tab_fill)" stroke="url(#tab_line)" stroke-width="1.5"/>
+<g transform="translate(0 14)">
+<path d="M5.51559 0.75H73.9844C76.7854 0.75 78.75 2.93403 78.75 5.67857V42.0147C78.75 44.7979 76.4742 46.75 73.6926 46.75H5.51559C2.71459 46.75 0.75 44.5273 0.75 41.7248V5.77521C0.75 2.99202 2.71459 0.75 5.51559 0.75Z" fill="url(#body_fill)" stroke="url(#body_line)" stroke-width="1.5"/>
+</g>
+<defs>
+<linearGradient id="tab_fill" x1="39.5406" y1="0.443219" x2="39.5406" y2="23.3496" gradientUnits="userSpaceOnUse">
+<stop stop-color="#28313F"/>
+<stop offset="1" stop-color="#202733"/>
+</linearGradient>
+<linearGradient id="tab_line" x1="4.31162" y1="2.07938" x2="77.7161" y2="57.0467" gradientUnits="userSpaceOnUse">
+<stop stop-color="#7D9BD3"/>
+<stop offset="0.45" stop-color="#637DAA"/>
+<stop offset="1" stop-color="#455A79"/>
+</linearGradient>
+<linearGradient id="body_fill" x1="39.75" y1="0.653361" x2="39.75" y2="47.0399" gradientUnits="userSpaceOnUse">
+<stop stop-color="#2C3543"/>
+<stop offset="0.55" stop-color="#252D39"/>
+<stop offset="1" stop-color="#202833"/>
+</linearGradient>
+<linearGradient id="body_line" x1="4.34851" y1="-11.3298" x2="74.8033" y2="44.7713" gradientUnits="userSpaceOnUse">
+<stop stop-color="#7D9BD3"/>
+<stop offset="0.45" stop-color="#637DAA"/>
+<stop offset="1" stop-color="#455A79"/>
+</linearGradient>
+</defs>
+</svg>

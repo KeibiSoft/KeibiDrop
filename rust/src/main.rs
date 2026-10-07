@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use slint::winit_030::WinitWindowAccessor;
@@ -477,7 +477,7 @@ fn engine_start_message(raw: &str) -> String {
     }
     if lower.contains("fuse") || lower.contains("winfsp") {
         return format!(
-            "The folder driver is not ready ({}). Install macFUSE or WinFsp, or turn off Files as a folder, then press Retry.",
+            "Teleport is not ready ({}). Install macFUSE or WinFsp, or turn off Teleport, then press Retry.",
             raw
         );
     }
@@ -715,10 +715,99 @@ fn show_toast(weak: &slint::Weak<MainWindow>, msg: &str) {
     });
 }
 
+/// Keeps the (+) ring turning while dropped or picked files are added. The
+/// ring ends the turn it is in (ui.slint Spinner), so one small file still
+/// shows a whole turn. Drops that overlap share one count.
+struct AddingFiles {
+    weak: slint::Weak<MainWindow>,
+    busy: Arc<AtomicUsize>,
+}
+
+impl AddingFiles {
+    fn start(weak: &slint::Weak<MainWindow>, busy: &Arc<AtomicUsize>) -> Self {
+        busy.fetch_add(1, Ordering::SeqCst);
+        // A drop arrives on the UI thread: set it in the same frame that ends
+        // the hover. upgrade() is None on a worker, which queues it instead.
+        match weak.upgrade() {
+            Some(app) => app.set_adding_files(true),
+            None => {
+                let _ = weak.upgrade_in_event_loop(|app| app.set_adding_files(true));
+            }
+        }
+        AddingFiles { weak: weak.clone(), busy: busy.clone() }
+    }
+}
+
+impl Drop for AddingFiles {
+    fn drop(&mut self) {
+        if self.busy.fetch_sub(1, Ordering::SeqCst) == 1 {
+            let busy = self.busy.clone();
+            let _ = self.weak.upgrade_in_event_loop(move |app| {
+                app.set_adding_files(busy.load(Ordering::SeqCst) > 0);
+            });
+        }
+    }
+}
+
+/// Mila's frames are a full screen at 1.5x. The window opens at that size,
+/// or the largest that fits its screen, never under the frame itself.
+fn first_size(app: &MainWindow) {
+    let Some((system, screen)) = app
+        .window()
+        .with_winit_window(|w| (w.scale_factor() as f32, w.current_monitor().map(|m| m.size())))
+    else {
+        return;
+    };
+    let theme = app.global::<Theme>();
+    let (w, h) = (theme.get_frame_width() * system, theme.get_frame_height() * system);
+    let mut zoom = 1.5f32;
+    if let Some(screen) = screen {
+        // Room for the menu bar, the dock or taskbar and the title bar.
+        zoom = zoom.min(screen.width as f32 * 0.9 / w).min(screen.height as f32 * 0.9 / h);
+    }
+    let zoom = zoom.max(1.0);
+    app.window().set_size(slint::PhysicalSize::new((w * zoom).round() as u32, (h * zoom).round() as u32));
+    refit(app);
+}
+
+/// The whole UI scales with the window so Mila's frame fills it, never under
+/// its own size: the window's scale factor becomes the screen's times that
+/// zoom, and sizes, text and clicks all follow the scale factor.
+fn fit_zoom(app: &MainWindow, size: slint::winit_030::winit::dpi::PhysicalSize<u32>) {
+    if size.width == 0 || size.height == 0 {
+        return; // minimised
+    }
+    let Some(system) = app.window().with_winit_window(|w| w.scale_factor() as f32) else {
+        return;
+    };
+    let theme = app.global::<Theme>();
+    let zoom = (size.width as f32 / (theme.get_frame_width() * system))
+        .min(size.height as f32 / (theme.get_frame_height() * system))
+        .max(1.0);
+    app.set_zoom(zoom);
+    if (app.window().scale_factor() - system * zoom).abs() > 0.001 {
+        app.window().dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
+            scale_factor: system * zoom,
+        });
+    }
+}
+
+/// fit_zoom outside a resize: lay the window out again at the new scale.
+fn refit(app: &MainWindow) {
+    let Some(size) = app.window().with_winit_window(|w| w.inner_size()) else {
+        return;
+    };
+    fit_zoom(app, size);
+    let scale = app.window().scale_factor();
+    app.window().dispatch_event(slint::platform::WindowEvent::Resized {
+        size: slint::LogicalSize::new(size.width as f32 / scale, size.height as f32 / scale),
+    });
+}
+
 fn humanize_error(msg: &str) -> String {
     let lower = msg.to_lowercase();
     if lower.contains("timeout") || lower.contains("timed out") {
-        return "Peer didn't respond in time. Check that they pressed Connect.".into();
+        return "Your friend didn't respond in time. Check that they pressed Connect.".into();
     }
     if lower.contains("relay at full capacity") || lower.contains("relay at maximum capacity") {
         return "Relay is busy. Try again in a minute, or switch to Local Network mode.".into();
@@ -730,16 +819,16 @@ fn humanize_error(msg: &str) -> String {
         return "Not connected yet. Exchange codes and press Connect first.".into();
     }
     if lower.contains("not found") && lower.contains("relay") {
-        return "Peer not found on relay. Check the code and try again.".into();
+        return "Your friend could not be found. Check the code and try again.".into();
     }
     if lower.contains("not found") {
-        return "Peer not found. Check that they are online and try again.".into();
+        return "Your friend could not be found. Check that they are online and try again.".into();
     }
     if lower.contains("fingerprint mismatch") {
-        return "Security check failed. The peer's identity doesn't match. Try exchanging codes again.".into();
+        return "Security check failed: your friend's identity doesn't match. Exchange codes again.".into();
     }
     if lower.contains("identical fingerprint") {
-        return "You entered your own code. Paste your peer's code, not yours.".into();
+        return "You entered your own code. Paste your friend's code, not yours.".into();
     }
     if lower.contains("nil pointer") || lower.contains("nil filesystem") {
         return "Something went wrong internally. Try restarting the app.".into();
@@ -751,7 +840,7 @@ fn humanize_error(msg: &str) -> String {
         return "Session expired. Reconnect to continue.".into();
     }
     if lower.contains("connection refused") || lower.contains("no route") {
-        return "Can't reach peer. Check your internet connection or try Local Network mode.".into();
+        return "Can't reach your friend. Check your internet connection or try Local mode.".into();
     }
     if lower.contains("invalid fingerprint") || lower.contains("invalid length") {
         return "Invalid code format. Check that you copied the full code.".into();
@@ -856,7 +945,7 @@ fn connect_room_auto(
             let remaining = total_secs - elapsed;
             let mins = remaining / 60;
             let secs = remaining % 60;
-            let msg = format!("Waiting for peer... ({}:{:02} remaining)", mins, secs);
+            let msg = format!("Waiting for your friend... ({}:{:02} remaining)", mins, secs);
             let w = countdown_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(app) = w.upgrade() {
@@ -1681,10 +1770,14 @@ fn main() {
         // failed on files another program held open (os error 32) and held
         // every announce back until the copy was done.
         let weak_toast_add = app.as_weak();
+        let adding = Arc::new(AtomicUsize::new(0));
+        let adding_pick = adding.clone();
         app.on_add_file_pressed(move || {
             let weak = weak_toast_add.clone();
+            let adding = adding_pick.clone();
             std::thread::spawn(move || {
                 if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                    let _turning = AddingFiles::start(&weak, &adding);
                     let count = paths.len();
                     for path in paths {
                         let path_str = path.to_string_lossy().to_string();
@@ -1696,9 +1789,9 @@ fn main() {
                         }
                     }
                     if count == 1 {
-                        show_toast(&weak, "File shared with peer");
+                        show_toast(&weak, "File shared with your friend");
                     } else if count > 1 {
-                        show_toast(&weak, &format!("{} files shared with peer", count));
+                        show_toast(&weak, &format!("{} files shared with your friend", count));
                     }
                 }
             });
@@ -2130,27 +2223,27 @@ fn main() {
             });
         }
 
-        // ---- FUSE offer after the first received file ----
+        // ---- Teleport (FUSE) offer after the first received file ----
 
         {
             let body_tail = if fuse_present {
-                "Turn on the virtual folder."
+                "Turn on Teleport."
             } else if cfg!(target_os = "macos") {
-                "Install macFUSE."
+                "Teleport needs macFUSE."
             } else if cfg!(target_os = "windows") {
-                "Install WinFsp."
+                "Teleport needs WinFsp."
             } else {
-                "Install fuse3."
+                "Teleport needs fuse3."
             };
             app.set_fuse_offer_body(
                 format!(
-                    "Want their files as a folder you can open in any app? {}",
+                    "Teleport allows you to instantly open shared files. {}",
                     body_tail
                 )
                 .into(),
             );
             let action = if fuse_present {
-                "Turn on"
+                "Turn on Teleport"
             } else if cfg!(target_os = "macos") {
                 "Get macFUSE"
             } else if cfg!(target_os = "windows") {
@@ -2182,7 +2275,7 @@ fn main() {
                     bindings::KD_SetNoFUSE(0);
                     show_toast(
                         &weak_offer_ok,
-                        "The virtual folder starts at the next connection.",
+                        "Teleport starts at the next connection.",
                     );
                 } else {
                     // Next launch mounts once the driver is installed.
@@ -2529,10 +2622,35 @@ fn main() {
 
         // Drag-and-drop: intercept winit events for OS file drops
         let weak_dnd = app.as_weak();
+        let adding_drop = adding.clone();
+        let sized = std::cell::Cell::new(false);
         #[allow(deprecated)]
         app.window().on_winit_window_event(move |_slint_window, event| {
             use slint::winit_030::winit;
+            // The first event means the window exists: size it for its screen.
+            if !sized.get() {
+                if let Some(app) = weak_dnd.upgrade() {
+                    sized.set(true);
+                    first_size(&app);
+                }
+            }
             match event {
+                winit::event::WindowEvent::Resized(size) => {
+                    if let Some(app) = weak_dnd.upgrade() {
+                        fit_zoom(&app, *size);
+                    }
+                    WinitWindowEventResult::Propagate
+                }
+                // Another screen: the adapter applies its factor, then the zoom goes back on.
+                winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                    let weak = weak_dnd.clone();
+                    slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                        if let Some(app) = weak.upgrade() {
+                            refit(&app);
+                        }
+                    });
+                    WinitWindowEventResult::Propagate
+                }
                 winit::event::WindowEvent::HoveredFile(_path) => {
                     if let Some(app) = weak_dnd.upgrade() {
                         app.set_drag_hovering(true);
@@ -2552,6 +2670,9 @@ fn main() {
                     let path_str = path.to_string_lossy().to_string();
                     println!("File dropped: {}", path_str);
                     let path = path.to_path_buf();
+                    // Started here, before the thread: the ring keeps turning
+                    // from the hover straight into the add.
+                    let turning = AddingFiles::start(&weak_dnd, &adding_drop);
                     // Shared in place: the engine serves the dropped path (kd and
                     // the FUSE mount do the same). The copy into the save folder
                     // that ran first doubled the disk use on the system drive,
@@ -2559,6 +2680,7 @@ fn main() {
                     // and a folder reached the peer one file at a time, each
                     // after its own full copy.
                     std::thread::spawn(move || {
+                        let _turning = turning;
                         if path.is_dir() {
                             let dir_name = path.file_name()
                                 .map(|n| n.to_string_lossy().to_string())
@@ -2803,15 +2925,15 @@ fn main() {
                         // remounts it and says when it is back. The peer's session
                         // is untouched either way.
                         if evt.starts_with("mount_gone:") {
-                            show_toast(&weak_evt, "The folder was unmounted. Remounting it now.");
-                            system_notify("The folder was unmounted. Bringing it back.");
+                            show_toast(&weak_evt, "The Teleport Folder closed. Opening it again.");
+                            system_notify("The Teleport Folder closed. Opening it again.");
                         } else if evt.starts_with("mount_back:") {
-                            show_toast(&weak_evt, "The folder is back.");
-                            system_notify("The folder is back.");
+                            show_toast(&weak_evt, "The Teleport Folder is back.");
+                            system_notify("The Teleport Folder is back.");
                         } else if let Some(reason) = evt.strip_prefix("mount_failed:") {
-                            show_toast(&weak_evt, "The folder could not be remounted.");
+                            show_toast(&weak_evt, "The Teleport Folder could not open again.");
                             system_notify(&format!(
-                                "The folder could not be remounted ({}). Files still arrive in the save folder.",
+                                "The Teleport Folder could not open again ({}). Files still arrive in the save folder.",
                                 reason
                             ));
                         } else if let Some(free_mb) = evt.strip_prefix("disk_low:") {
@@ -2819,7 +2941,7 @@ fn main() {
                             // need bytes from the peer fail until space is freed.
                             show_toast(&weak_evt, "The save folder's disk is almost full.");
                             system_notify(&format!(
-                                "The save folder's disk is almost full ({} MB free). Reads from the peer stop until space is freed.",
+                                "The save folder's disk is almost full ({} MB free). Files from your friend pause until space is freed.",
                                 free_mb
                             ));
                         } else if evt.starts_with("disk_ok:") {
@@ -2944,13 +3066,13 @@ fn main() {
                             watcher_running_evt.store(false, Ordering::Relaxed);
 
                             let msg = if evt.starts_with("peer_disconnected:") {
-                                "Peer disconnected"
+                                "Your friend disconnected"
                             } else {
                                 "Connection lost"
                             };
                             away_notified.set(false);
                             system_notify(if evt.starts_with("peer_disconnected:") {
-                                "The other side disconnected."
+                                "Your friend disconnected."
                             } else {
                                 "Gave up reconnecting. Connect again from the app."
                             });

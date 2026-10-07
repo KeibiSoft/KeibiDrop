@@ -88,7 +88,7 @@ fn settings_toggles_fire_their_callbacks() {
     let f = fired.clone();
     app.on_mount_read_only_toggled(move |v| f.set(Some(v)));
     fired.set(None);
-    toggle(&app, "Virtual folder is read only").invoke_accessible_default_action();
+    toggle(&app, "Teleport Folder is read only").invoke_accessible_default_action();
     assert_eq!(fired.get(), Some(true), "mount toggle callback");
     assert!(app.get_cfg_mount_read_only(), "mount toggle state");
 
@@ -342,8 +342,8 @@ fn connected_no_fuse(app: &MainWindow) {
     set_files(app, &["signal.jpeg"]);
 }
 
-// The card's action button: the wide one. Pause is 60px and hidden until a
-// download runs; Save/Open is 80px.
+// The card's action button (Save, Open, the percent while it downloads): 110px,
+// or 80px beside X. X is a SmallOutlineButton.
 fn save_button(app: &MainWindow) -> ElementHandle {
     let card = ElementHandle::find_by_element_type_name(app, "FileCard")
         .next()
@@ -420,7 +420,7 @@ fn marking_a_row_downloading_shows_the_cue_at_once() {
     assert!(keibidrop_rust::mark_row_downloading(&app.get_file_list(), "signal.jpeg"));
     assert_eq!(button_text(&save_button(&app)), "0%", "progress shows on the click itself");
     let card = ElementHandle::find_by_element_type_name(&app, "FileCard").next().unwrap();
-    assert!(card.query_descendants().match_type_name("SmallSpinner").find_first().is_some(), "spinner on the card");
+    assert!(card.query_descendants().match_type_name("ProgressRing").find_first().is_some(), "progress ring on the card");
 
     assert!(!keibidrop_rust::mark_row_downloading(&app.get_file_list(), "missing.bin"), "unknown name touches nothing");
 }
@@ -453,4 +453,112 @@ fn save_click_after_a_list_rebuild() {
     press(&app, at);
     release(&app, at);
     assert_eq!(saves.borrow().as_slice(), ["signal.jpeg"]);
+}
+
+// The logo and the "..." pill sit at one place and size on every screen, and
+// a wider window centres the Figma column around them rather than leaving
+// them at the left.
+#[test]
+fn logo_and_menu_pill_keep_their_place_on_every_screen_and_size() {
+    let app = app();
+    let header = |app: &MainWindow| {
+        let (menu, logo) = (one(app, "Menu"), one(app, "KEIBIDROP"));
+        (menu.absolute_position(), menu.size(), logo.absolute_position(), logo.size())
+    };
+    for (w, h) in [(WIN_W, WIN_H), (1600, 1000)] {
+        app.window().set_size(slint::PhysicalSize::new(w, h));
+        let at: Vec<_> = (0..4)
+            .map(|screen| {
+                app.set_current_screen(screen);
+                header(&app)
+            })
+            .collect();
+        assert!(at.iter().all(|p| *p == at[0]), "{}x{}: the header moves between screens: {:?}", w, h, at);
+        if w != WIN_W {
+            app.window().set_size(slint::PhysicalSize::new(WIN_W, WIN_H));
+            app.set_current_screen(0);
+            let base = header(&app);
+            let shift = (w - WIN_W) as f32 / 2.0;
+            assert_eq!(at[0].0.x - base.0.x, shift, "the pill's column is not centred");
+            assert_eq!(at[0].2.x - base.2.x, shift, "the logo's column is not centred");
+            assert_eq!((at[0].0.y, at[0].2.y), (base.0.y, base.2.y), "the header moved down");
+        }
+    }
+}
+
+// Her Teleport card (Figma Screen 14): its X ends the session (Marius).
+#[test]
+fn the_teleport_card_x_disconnects() {
+    let app = app();
+    app.set_current_screen(2);
+    let fired = Rc::new(Cell::new(false));
+    let f = fired.clone();
+    app.on_disconnect_pressed(move || f.set(true));
+    one(&app, "Disconnect").invoke_accessible_default_action();
+    assert!(fired.get(), "the card's X did not disconnect");
+}
+
+#[test]
+fn how_it_works_opens_help_on_the_teleport_screen() {
+    let app = app();
+    app.set_current_screen(2);
+    one(&app, "How it works?").invoke_accessible_default_action();
+    assert!(app.get_help_visible(), "help did not open");
+}
+
+// The Teleport switch keeps its job; while it is off it names her mode.
+#[test]
+fn the_teleport_switch_says_direct_transfer_while_off() {
+    let app = app();
+    app.set_fuse_available(true);
+    app.set_fuse_mode(false);
+    let count = |label: &str| ElementHandle::find_by_accessible_label(&app, label).count();
+    assert_eq!((count("Direct transfer"), count("Select files to send")), (1, 1));
+    toggle(&app, "Teleport").invoke_accessible_default_action();
+    assert!(app.get_fuse_mode(), "the switch did not turn Teleport on");
+    assert_eq!(count("Direct transfer"), 0, "Direct transfer still shown with Teleport on");
+    assert_eq!(count("Instantly open shared files"), 1);
+}
+
+#[test]
+fn add_ring_opens_the_picker() {
+    let app = app();
+    connected_no_fuse(&app);
+    let picked = Rc::new(Cell::new(0));
+    let p = picked.clone();
+    app.on_add_file_pressed(move || p.set(p.get() + 1));
+    one(&app, "Add files").invoke_accessible_default_action();
+    assert_eq!(picked.get(), 1);
+}
+
+// While a file downloads its action shows the percent; a click pauses it.
+#[test]
+fn a_download_pauses_from_its_card() {
+    let app = app();
+    connected_no_fuse(&app);
+    let paused = Rc::new(RefCell::new(Vec::<String>::new()));
+    let seen = paused.clone();
+    app.on_pause_file(move |name| seen.borrow_mut().push(name.to_string()));
+    assert!(keibidrop_rust::mark_row_downloading(&app.get_file_list(), "signal.jpeg"));
+
+    let at = centre(&save_button(&app));
+    press(&app, at);
+    release(&app, at);
+    assert_eq!(paused.borrow().as_slice(), ["signal.jpeg"]);
+}
+
+#[test]
+fn save_all_is_in_the_menu_on_the_no_fuse_screen() {
+    let app = app();
+    connected_no_fuse(&app);
+    let fired = Rc::new(Cell::new(false));
+    let f = fired.clone();
+    app.on_save_all_pressed(move || f.set(true));
+    one(&app, "Menu").invoke_accessible_default_action();
+    // Her order: Disconnect first.
+    let row = |label: &str| one(&app, label).absolute_position().y;
+    assert!(row("Disconnect") < row("Save all"), "Disconnect is not the first row");
+    one(&app, "Save all").invoke_accessible_default_action();
+    assert!(fired.get(), "Save all did not fire save_all_pressed");
+    assert!(!app.get_menu_open(), "the menu stayed open");
 }

@@ -1,8 +1,8 @@
 import { ScrollView, TextEdit, LineEdit } from "std-widgets.slint";
-import { Theme, Backdrop, Label, Glass, GlassKind, Outline, TextStyle } from "theme.slint";
+import { Theme, Backdrop, Icons, Label, Glass, GlassKind, GlassButton, Icon, IconButton, Outline, ProgressRing, Spinner, TextStyle } from "theme.slint";
 
 // Rust fills it with the blurred window behind an overlay.
-export { Backdrop } from "theme.slint";
+export { Backdrop, Theme } from "theme.slint";
 
 // Discovered LAN peer
 export struct DiscoveredPeer {
@@ -163,9 +163,8 @@ component FieldAction inherits Rectangle {
     }
 }
 
-// Toggle switch (reusable for FUSE and local mode)
-// Switch (Figma Screen 12): a glass track; the knob is grey when off and
-// white on the right when on.
+// Switch (Figma Screen 12): grey glass with a grey knob when off, blue glass
+// with a blue knob on the right when on.
 component ToggleSwitch inherits Glass {
     in-out property <bool> checked: false;
     in property <bool> enabled: true;
@@ -181,6 +180,7 @@ component ToggleSwitch inherits Glass {
     }
 
     kind: GlassKind.track;
+    tint: root.checked ? Theme.switch-on : Theme.switch-off;
     width: 36px;
     height: 20px;
 
@@ -222,8 +222,10 @@ component ToggleRow inherits Rectangle {
         enabled: root.enabled;
         toggled(v) => { root.toggled(v); }
     }
+    // Her label box sits half a pixel above the track's centre.
     Label {
         x: 48px;
+        y: -0.5px;
         height: parent.height;
         silent: true;
         style: Theme.label;
@@ -258,7 +260,10 @@ component PillButton inherits Rectangle {
     opacity: root.enabled || root.active ? 1 : 0.4;
     animate background { duration: 150ms; }
 
+    // Figma draws her label half a pixel right of and above the centre.
     Label {
+        x: 0.5px;
+        y: -0.5px;
         width: parent.width;
         height: parent.height;
         horizontal-alignment: center;
@@ -311,6 +316,8 @@ component SmallOutlineButton inherits Rectangle {
 component KeibiDropLogo inherits Rectangle {
     width: 195px;
     height: 24px;
+    accessible-role: image;
+    accessible-label: "KEIBIDROP";
 
     Image {
         width: parent.width;
@@ -325,13 +332,18 @@ component OutlineButton inherits Rectangle {
     in-out property <string> text: "Button";
     in property <bool> enabled: true;
     in property <bool> accent: false;
+    in property <TextStyle> style: Theme.button-label;
+    // Screen 12's blue; a file card's Open passes its own.
+    in property <color> accent-line: Theme.accent-line;
+    in property <color> accent-ink: Theme.accent;
+    out property <bool> hovered: touch.has-hover;
     callback clicked;
 
     width: 161px;
     height: Theme.control;
     border-width: Theme.hairline;
     border-radius: Theme.radius;
-    border-color: !root.enabled ? Theme.faint : root.accent ? Theme.accent-line : Theme.outline;
+    border-color: !root.enabled ? Theme.faint : root.accent ? root.accent-line : Theme.outline;
     background: touch.pressed ? #ffffff14 : touch.has-hover ? #ffffff0a : transparent;
     animate background { duration: 150ms; }
 
@@ -339,8 +351,8 @@ component OutlineButton inherits Rectangle {
         width: parent.width;
         height: parent.height;
         horizontal-alignment: center;
-        style: Theme.button-label;
-        color: !root.enabled ? Theme.faint : root.accent ? Theme.accent : Theme.text;
+        style: root.style;
+        color: !root.enabled ? Theme.faint : root.accent ? root.accent-ink : Theme.text;
         text: root.text;
     }
 
@@ -411,6 +423,14 @@ component ContactRow inherits Rectangle {
     }
 }
 
+// Her scroll thumb (Screen 12 contacts), shown while a list has more.
+component ScrollThumb inherits Rectangle {
+    width: 6.77px;
+    height: 30px;
+    border-radius: Theme.radius-small;
+    background: Theme.scrollbar;
+}
+
 // Saved contacts on glass: three rows show, the rest scroll (Figma Screen 12).
 component ContactsPanel inherits Glass {
     in property <[ContactInfo]> contacts;
@@ -440,42 +460,42 @@ component ContactsPanel inherits Glass {
             remove => { root.remove(i); }
         }
     }
-    if list.content-height > list.height: Rectangle {
+    if list.content-height > list.height: ScrollThumb {
         x: 495.55px;
         y: 9px + (root.height - 48px) * (-list.content-y / (list.content-height - list.height));
-        width: 6.77px;
-        height: 30px;
-        border-radius: Theme.radius-small;
-        background: Theme.scrollbar;
     }
 }
 
-// One row of the header's "..." menu.
+// One row of the header's "..." menu: grey, white with its chevron on hover
+// (Figma Screen 14, Disconnect).
 component MenuItem inherits Rectangle {
     in property <MenuEntry> entry;
-    // Figma places the chevrons on their own 20.5px grid.
-    in property <length> chevron-y;
     callback clicked;
+
+    property <color> ink: touch.has-hover ? Theme.text : Theme.muted;
 
     height: 21px;
     accessible-role: button;
     accessible-label: root.entry.a11y;
     accessible-action-default => { root.clicked(); }
 
+    // Figma draws her 10px rows half a pixel low.
     Label {
         x: 18px;
+        y: 0.5px;
         height: parent.height;
         silent: true;
-        color: touch.has-hover ? Theme.text : Theme.muted;
+        color: root.ink;
         text: root.entry.label;
     }
-    Image {
-        x: 143.35px;
-        y: root.chevron-y;
-        width: 9.531px;
-        height: 9.3px;
-        source: @image-url("../assets/chevron.svg");
-        colorize: touch.has-hover ? Theme.text : Theme.muted;
+    Icon {
+        x: 147px;
+        y: 5.5px;
+        width: 4px;
+        height: 8px;
+        icon: Icons.chevron;
+        line: 2px;
+        ink: root.ink;
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -510,9 +530,10 @@ component Overlay inherits Rectangle {
     Rectangle { background: Theme.glass-tint; }
     TouchArea { clicked => { root.dismiss(); } }
 
+    // Figma draws her titles half a pixel up from their boxes (her 2x render).
     if root.heading != "": HorizontalLayout {
-        x: 1.5px;
-        y: 150px;
+        x: 2px;
+        y: 149.5px;
         width: parent.width;
         height: 30px;
         alignment: center;
@@ -541,358 +562,392 @@ component Overlay inherits Rectangle {
     }
 }
 
-// Spinner arc with always-visible "+" center, clickable
-component SpinnerArc inherits Rectangle {
-    in property <length> size: 180px;
-    in property <bool> spinning: false;
+// The (+) of the no-FUSE screen (Figma 214:988): her blue plus, and her
+// spinner ring around it only while files are dragged over the window or
+// dropped ones are added (Marius), gone after the turn it is in. A click
+// picks files.
+component AddRing inherits Rectangle {
+    in property <bool> spinning;
     callback clicked;
 
-    width: size;
-    height: size;
+    width: 135.59px;
+    height: 137px;
+    accessible-role: button;
+    accessible-label: "Add files";
+    accessible-action-default => { root.clicked(); }
 
-    // Continuous rotation using animation-tick
-    property <float> angle: mod(animation-tick() / 8ms, 360);
-
-    // Background ring (always visible)
-    Rectangle {
-        width: 100%;
-        height: 100%;
-        border-radius: self.width / 2;
-        border-width: 6px;
-        border-color: Theme.progress-track;
-        background: transparent;
+    Spinner {
+        width: root.width;
+        height: root.height;
+        radius-x: 49.5575px;
+        radius-y: 50.0735px;
+        thickness: 8px;
+        active: root.spinning;
+        visible: self.turning;
     }
-
-    // Rotating arc (only when spinning)
-    if root.spinning: Path {
-        x: 0;
-        y: 0;
-        width: root.size;
-        height: root.size;
-        viewbox-x: 0;
-        viewbox-y: 0;
-        viewbox-width: 100;
-        viewbox-height: 100;
-        stroke: Theme.progress;
-        stroke-width: 3px;
-        stroke-line-cap: round;
-        fill: transparent;
-
-        property <float> start: angle;
-        property <float> arc-len: 90;
-        property <float> r: 47;
-        property <float> cx: 50;
-        property <float> cy: 50;
-
-        property <float> x1: cx + r * sin(start * 1deg);
-        property <float> y1: cy - r * cos(start * 1deg);
-        property <float> x2: cx + r * sin((start + arc-len) * 1deg);
-        property <float> y2: cy - r * cos((start + arc-len) * 1deg);
-
-        commands: "M " + x1 + " " + y1 + " A " + r + " " + r + " 0 0 1 " + x2 + " " + y2;
-    }
-
-    // Center "+" icon (always visible)
-    Text {
-        text: "+";
-        font-size: root.size * 0.35;
-        color: spinner-touch.has-hover ? Theme.progress : Theme.progress-track;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-        animate color { duration: 150ms; }
-    }
-
-    spinner-touch := TouchArea {
-        clicked => { root.clicked() }
-    }
-}
-
-// Small spinner for file cards - shows progress 0->100%
-component SmallSpinner inherits Rectangle {
-    in property <bool> active: true;
-    in property <color> accent: Theme.progress;
-    in property <float> progress: 0.0;    // 0.0 to 1.0
-
-    width: 20px;
-    height: 20px;
-
-    // Slow rotation so it looks alive even at fixed progress
-    property <float> angle: active ? mod(animation-tick() / 10ms, 360) : 0;
-
-    // Background circle (track)
-    Rectangle {
-        width: 100%;
-        height: 100%;
-        border-radius: self.width / 2;
-        background: root.accent.darker(60%);
-    }
-
-    // Progress arc: arc-len = progress * 360° (min 30° so it's always visible when active)
+    // Her plus: 43px across, 8px round strokes, centred on the ring.
     Path {
-        width: 100%;
-        height: 100%;
-        viewbox-x: 0;
-        viewbox-y: 0;
-        viewbox-width: 20;
-        viewbox-height: 20;
-        stroke: root.accent;
-        stroke-width: 2px;
+        width: root.width;
+        height: root.height;
+        fit: preserve;
+        commands: "M 46 68.5 L 89 68.5 M 67.5 47 L 67.5 90";
+        stroke: touch.has-hover ? Theme.progress : Theme.open-ink;
+        stroke-width: 8px;
         stroke-line-cap: round;
         fill: transparent;
-
-        property <float> r: 7;
-        property <float> cx: 10;
-        property <float> cy: 10;
-        property <float> start: angle;
-        property <float> arc-len: clamp(root.progress * 340, 30, 340);
-        // large-arc flag: 1 if arc > 180°
-        property <float> large: arc-len > 180 ? 1 : 0;
-
-        property <float> x1: cx + r * sin(start * 1deg);
-        property <float> y1: cy - r * cos(start * 1deg);
-        property <float> x2: cx + r * sin((start + arc-len) * 1deg);
-        property <float> y2: cy - r * cos((start + arc-len) * 1deg);
-
-        commands: "M " + x1 + " " + y1 + " A " + r + " " + r + " 0 " + large + " 1 " + x2 + " " + y2;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
     }
 }
 
-// File type icon (emoji-based placeholder for different file types)
-component FileTypeIcon inherits Rectangle {
+// What a file is, in the middle of its preview.
+component FileTypeIcon inherits Label {
     in property <string> file-type: "other";
 
-    width: 48px;
-    height: 48px;
-    background: transparent;
-
-    // Icon text based on file type
-    Text {
-        text: root.file-type == "folder" ? "DIR"
-            : root.file-type == "pdf" ? "PDF"
-            : root.file-type == "image" ? "IMG"
-            : root.file-type == "video" ? "VID"
-            : root.file-type == "audio" ? "SND"
-            : root.file-type == "code" ? "</>"
-            : root.file-type == "archive" ? "ZIP"
-            : root.file-type == "text" ? "TXT"
-            : "FILE";
-        color: Theme.muted;
-        font-size: 16px;
-        font-weight: 700;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
+    horizontal-alignment: center;
+    style: Theme.heading-medium;
+    color: Theme.muted;
+    text: root.file-type == "folder" ? "DIR"
+        : root.file-type == "pdf" ? "PDF"
+        : root.file-type == "image" ? "IMG"
+        : root.file-type == "video" ? "VID"
+        : root.file-type == "audio" ? "SND"
+        : root.file-type == "code" ? "</>"
+        : root.file-type == "archive" ? "ZIP"
+        : root.file-type == "text" ? "TXT"
+        : "FILE";
 }
 
-// Progress bar
-component ProgressBar inherits Rectangle {
-    in property <float> progress: 0.0;  // 0.0 to 1.0
-
-    width: 100%;
-    height: 4px;
-    background: Theme.progress-track;
-    border-radius: 2px;
-
-    Rectangle {
-        width: parent.width * clamp(root.progress, 0, 1);
-        height: 100%;
-        background: Theme.progress;
-        border-radius: 2px;
-
-        animate width { duration: 300ms; easing: ease-out; }
-        animate background { duration: 300ms; }
-    }
-}
-
-// File card for non-FUSE mode (original design + progress)
+// One file (Figma 214:988): a grey preview, then a square, the name and the
+// action. While it downloads the square is its progress ring (Marius) and the
+// action shows the percent: Pause on hover, Resume once paused; once saved the
+// square holds a check. A file that can go (yours, or a saved one) ends the
+// row with X.
 component FileCard inherits Rectangle {
-    in property <string> filename: "Project 123";
+    in property <string> filename: "";
     in property <string> file-type: "other";
-    in property <int> size-bytes: 0;
     in property <bool> downloading: false;
-    in property <bool> uploading: false;
     in property <float> progress: 0.0;
     in property <bool> saved: false;
     in property <bool> is-local: false;
     in property <bool> paused: false;
-    in property <bool> browse-mode: false;
+    in property <length> preview-height: 116px;
 
     callback save-clicked;
     callback open-clicked;
     callback pause-clicked;
     callback delete-clicked;
 
-    width: 250px;
-    height: 180px;
-    background: transparent;
+    // Her card: the preview, the row 11px under it, 24px tall.
+    property <length> row-y: root.preview-height + 11px;
+    property <bool> removable: root.is-local;
 
-    // Glass card background
-    Rectangle {
-        width: parent.width;
-        height: parent.height;
-        border-radius: 12px;
-        background: rgba(255,255,255,0.03);
-        border-width: 1px;
-        border-color: rgba(255,255,255,0.08);
-    }
+    width: 214px;
+    height: self.row-y + 24px;
 
-    // Preview area (original grey style)
     Rectangle {
-        width: parent.width;
-        height: 140px;
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.preview-height;
+        border-radius: Theme.radius;
         background: Theme.file-preview;
-        border-radius: 4px;
 
-        // File type icon centered
         FileTypeIcon {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2 - 10px;
+            width: parent.width;
+            height: parent.height;
             file-type: root.file-type;
         }
-
-        // Green spinner: downloading from peer (top-left)
-        if root.downloading: SmallSpinner {
-            x: 8px;
-            y: 8px;
-            active: true;
-            accent: Theme.progress;
-        }
-
-        // Blue spinner: uploading to peer (top-right)
-        if root.uploading: SmallSpinner {
-            x: parent.width - 28px;
-            y: 8px;
-            active: true;
-            accent: Theme.progress;
-        }
-
-        // Progress bar at bottom of preview area
-        if root.downloading: ProgressBar {
-            x: 8px;
-            y: parent.height - 18px;
-            width: parent.width - 16px;
-            progress: root.progress;
-        }
-
-        // Progress: percentage and size
-        if root.downloading: Text {
-            x: 8px;
-            y: parent.height - 14px;
-            text: Math.round(root.progress * 100) + "%";
-            color: Theme.progress;
-            font-size: 10px;
-        }
-        if root.downloading && root.size-bytes > 0: Text {
-            x: parent.width - 8px;
-            y: parent.height - 14px;
-            horizontal-alignment: right;
-            text: root.size-bytes > 1073741824
-                ? Math.round(root.size-bytes / 10737418.24) / 100 + " GB"
-                : root.size-bytes > 1048576
-                ? Math.round(root.size-bytes / 10485.76) / 100 + " MB"
-                : root.size-bytes > 1024
-                ? Math.round(root.size-bytes / 10.24) / 100 + " KB"
-                : root.size-bytes + " B";
-            color: Theme.muted;
-            font-size: 9px;
-        }
-
-        // Saved checkmark
-        if root.saved && !root.downloading: Text {
-            x: parent.width - 30px;
-            y: 8px;
-            text: "OK";
-            color: Theme.online;
-            font-size: 12px;
-            font-weight: 700;
-        }
     }
 
-    // Bottom row (matches design: checkbox + name + button)
-    HorizontalLayout {
-        y: 148px;
-        height: 28px;
-        spacing: 8px;
+    // Her small ring (18px, 5px stroke) in the 24px square's place.
+    if root.downloading || root.paused: ProgressRing {
+        x: 0;
+        y: root.row-y;
+        width: 24px;
+        height: 24px;
+        progress: root.progress;
+    }
+    if !(root.downloading || root.paused): Outline {
+        x: 0;
+        y: root.row-y;
+        width: 24px;
+        height: 24px;
 
-        // Checkbox - shows progress spinner while downloading (hidden in browse mode)
-        if root.downloading && !root.browse-mode: SmallSpinner {
-            width: 20px;
-            height: 20px;
-            active: true;
-            accent: Theme.progress;
-            progress: root.progress;
+        if root.saved: Path {
+            width: parent.width;
+            height: parent.height;
+            fit: preserve;
+            commands: "M 7 12.5 L 10.5 16 L 17 8.5";
+            stroke: Theme.text;
+            stroke-width: 1.5px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+            fill: transparent;
         }
-        if !root.downloading && !root.browse-mode: Rectangle {
-            width: 20px;
-            height: 20px;
-            border-width: Theme.hairline;
-            border-color: Theme.outline;
-            border-radius: Theme.radius-small;
-        }
-
-        Text {
-            text: filename;
-            color: white;
-            font-size: 13px;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-            overflow: elide;
-        }
-
-        OutlineButton {
-            width: 60px;
-            height: 28px;
-            text: root.paused ? "Resume" : "Pause";
-            visible: root.downloading || root.paused;
-            clicked => { root.pause-clicked(); }
-        }
-
-        OutlineButton {
-            width: 80px;
-            height: 28px;
-            // "Open" is blue accent, "Save" is white/grey
-            accent: root.is-local || root.saved;
-            text: root.file-type == "folder" ? "Open"
-                : root.downloading ? Math.round(root.progress * 100) + "%"
-                : root.paused ? Math.round(root.progress * 100) + "%"
-                : root.is-local ? "Open"
-                : root.saved ? "Open"
-                : "Save";
-            enabled: root.file-type == "folder" || !root.downloading || root.paused;
-            clicked => {
-                if (root.file-type == "folder") { root.open-clicked(); }
-                else if (root.paused) { root.save-clicked(); }
-                else if (root.is-local || root.saved) { root.open-clicked(); }
-                else { root.save-clicked(); }
+    }
+    Label {
+        x: 34px;
+        y: root.row-y;
+        width: action.x - 6px - self.x;
+        height: 24px;
+        style: Theme.badge;
+        overflow: elide;
+        text: root.filename;
+    }
+    // Her action is 110px wide; with X the two share those 110px.
+    action := OutlineButton {
+        x: root.width - 110px;
+        y: root.row-y;
+        width: root.removable ? 80px : 110px;
+        height: 24px;
+        style: Theme.button-small;
+        accent: root.is-local || root.saved;
+        accent-line: Theme.open-line;
+        accent-ink: Theme.open-ink;
+        text: root.file-type == "folder" ? "Open"
+            : root.downloading ? (self.hovered ? "Pause" : Math.round(root.progress * 100) + "%")
+            : root.paused ? "Resume"
+            : root.is-local || root.saved ? "Open"
+            : "Save";
+        clicked => {
+            if (root.file-type == "folder") {
+                root.open-clicked();
+            } else if (root.downloading) {
+                root.pause-clicked();
+            } else if (root.paused || !(root.is-local || root.saved)) {
+                // Save, or Resume: the download picks up where it stopped.
+                root.save-clicked();
+            } else {
+                root.open-clicked();
             }
         }
+    }
+    if root.removable: SmallOutlineButton {
+        x: root.width - 24px;
+        y: root.row-y;
+        width: 24px;
+        text: "X";
+        clicked => { root.delete-clicked(); }
+    }
+}
 
-        if root.is-local && !root.browse-mode: SmallOutlineButton {
-            width: 24px;
-            text: "X";
-            clicked => { root.delete-clicked(); }
-        }
-        if root.browse-mode: SmallOutlineButton {
-            width: 24px;
-            text: "X";
-            clicked => { root.delete-clicked(); }
+// Her file grid (Figma 214:988): four columns that scroll. It fills the box,
+// so there is no thumb: her frame shows the next row cut by the window.
+component FileGrid inherits Rectangle {
+    in property <[FileInfo]> files;
+    // Saved Files: every file is saved, opens and can go.
+    in property <bool> browse-mode: false;
+    in property <length> card-width: 214.25px;
+    in property <length> gap: 19px;
+    in property <length> preview-height: 116px;
+    in property <length> row-pitch: 183px;
+    callback open(FileInfo);
+    callback save(string);
+    callback pause(string);
+    callback remove(string);
+
+    list := Flickable {
+        width: root.width;
+        height: root.height;
+        content-height: max(self.height, Math.ceil(root.files.length / 4) * root.row-pitch);
+
+        for file[idx] in root.files: FileCard {
+            // Whole pixels as in her frame: 214, 215, 215, 214 wide.
+            property <float> left: mod(idx, 4) * (root.card-width + root.gap) / 1px;
+            x: floor(self.left + 0.25) * 1px;
+            y: floor(idx / 4) * root.row-pitch;
+            width: ceil(self.left + root.card-width / 1px - 0.25) * 1px - self.x;
+            preview-height: root.preview-height;
+            filename: file.name;
+            file-type: file.file-type;
+            downloading: !root.browse-mode && file.downloading;
+            progress: file.progress;
+            saved: root.browse-mode || file.saved;
+            is-local: root.browse-mode || file.is-local;
+            paused: !root.browse-mode && file.paused;
+            open-clicked => { root.open(file); }
+            save-clicked => { root.save(file.name); }
+            pause-clicked => { root.pause(file.name); }
+            delete-clicked => { root.remove(file.name); }
         }
     }
 }
 
+// Inside a folder (Figma 214:988): her glass "< Back" pill, then the
+// folder's name.
+component FolderBar inherits Rectangle {
+    in property <string> folder;
+    // Muted text after the name, such as a count.
+    in property <string> note;
+    callback back;
 
+    height: 24px;
+
+    GlassButton {
+        x: 0;
+        y: 0;
+        width: 101px;
+        text: "< Back";
+        clicked => { root.back(); }
+    }
+    title := Label {
+        x: 114px;
+        y: 0;
+        width: min(self.preferred-width, root.width - self.x);
+        height: 24px;
+        style: Theme.section;
+        overflow: elide;
+        text: root.folder;
+    }
+    if root.note != "": Label {
+        x: title.x + title.width + 12px;
+        y: 0;
+        height: 24px;
+        style: Theme.label;
+        color: Theme.muted;
+        text: root.note;
+    }
+}
+
+// One of Teleport's four points (Figma Screen 14): her icon, then two grey
+// lines.
+component TeleportPoint inherits Rectangle {
+    in property <string> icon;
+    in property <length> icon-width;
+    in property <length> icon-height;
+    in property <length> icon-y: 0;
+    // Where the lines start, from the icon's left edge.
+    in property <length> text-x;
+    in property <string> text;
+
+    width: self.text-x + 79px;
+    height: 23px;
+
+    Icon {
+        x: 0;
+        y: root.icon-y;
+        width: root.icon-width;
+        height: root.icon-height;
+        icon: root.icon;
+    }
+    Label {
+        x: root.text-x;
+        y: 1.5px;
+        height: 20px;
+        vertical-alignment: top;
+        style: Theme.tiny;
+        color: Theme.muted;
+        text: root.text;
+    }
+}
+
+// A glass tag on the connection line: the path, or the relay credit offer.
+component Chip inherits Glass {
+    in property <string> text;
+    in property <color> ink: Theme.muted;
+    in property <bool> clickable: false;
+    callback clicked;
+
+    kind: GlassKind.pill;
+    width: chip-label.preferred-width + 16px;
+    height: 20px;
+
+    chip-label := Label {
+        x: 8px;
+        height: root.height;
+        style: Theme.small-strong;
+        color: root.ink;
+        text: root.text;
+    }
+    if root.clickable: TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Under the logo of a connected screen: the state, speed, path and relay
+// credit.
+component ConnectionLine inherits HorizontalLayout {
+    in property <string> state;
+    in property <string> state-text;
+    in property <string> throughput;
+    in property <string> mode;
+    in property <bool> funded;
+    in property <string> credit;
+    callback buy;
+
+    property <color> ink: root.state == "connected" || root.state == "" ? Theme.online
+        : root.state == "gave_up" || root.state == "mount_failed" ? Theme.error
+        : Theme.muted;
+
+    height: 22px;
+    spacing: 8px;
+    alignment: start;
+
+    Rectangle {
+        width: 8px;
+        height: 8px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 4px;
+        background: root.ink;
+    }
+    Label {
+        style: Theme.label;
+        color: root.ink;
+        text: root.state-text != "" ? root.state-text : "Connected";
+    }
+    if root.throughput != "": Label {
+        style: Theme.caption;
+        color: Theme.faint;
+        text: root.throughput;
+    }
+    if root.mode != "": Chip {
+        y: (parent.height - self.height) / 2;
+        ink: root.mode == "lan" ? Theme.online
+            : root.mode == "direct" || root.mode == "direct-out" ? Theme.accent
+            : Theme.muted;
+        text: root.mode == "lan" ? "LAN"
+            : root.mode == "direct" ? "Direct P2P"
+            : root.mode == "direct-out" ? "Direct reads"
+            : root.mode == "direct-in" ? "Direct for friend"
+            : root.mode == "bridge" ? "Via Relay"
+            : root.mode;
+    }
+    // Relay credit: offer the buy page while unfunded, show balance when funded.
+    if root.mode == "bridge" && !root.funded: Chip {
+        y: (parent.height - self.height) / 2;
+        ink: Theme.accent;
+        clickable: true;
+        text: "Get relay credit";
+        clicked => { root.buy(); }
+    }
+    if root.mode == "bridge" && root.funded && root.credit != "": Label {
+        style: Theme.caption;
+        color: Theme.faint;
+        text: root.credit;
+    }
+}
 
 export component MainWindow inherits Window {
     title: root.window_title;
     // KD_WINDOW_TITLE names the window when two instances run side by side.
     in property<string> window_title: "KEIBIDROP";
     default-font-family: "Inter";
-    // Figma frames are 1144x729.
-    preferred-width: 1144px;
-    preferred-height: 729px;
-    min-width: 1144px;
-    min-height: 729px;
+    // The whole UI scales with the window (main.rs fit_zoom): Mila's frames
+    // are a full screen at 1.5x. zoom is that factor, never under 1.
+    in property <float> zoom: 1;
+    preferred-width: Theme.frame-width * 1.5 / root.zoom;
+    preferred-height: Theme.frame-height * 1.5 / root.zoom;
+    min-width: Theme.frame-width / root.zoom;
+    min-height: Theme.frame-height / root.zoom;
     background: root.capturing ? Theme.window-dim : Theme.window;
+
+    // Every screen and the header sit in the Figma frame's column, centred
+    // when the window is wider, so the menu pill keeps its place everywhere.
+    property <length> column-x: max(0px, (root.width - Theme.frame-width) / 2);
 
     // Data bindings from Rust
     in property<string> my_code: "";
@@ -920,6 +975,8 @@ export component MainWindow inherits Window {
     in-out property<bool> any_downloading: false;
     // Set by Rust when a file is being dragged over the window
     in-out property<bool> drag_hovering: false;
+    // Set by Rust while dropped or picked files are added (main.rs AddingFiles)
+    in-out property<bool> adding_files: false;
     // Mount path for FUSE mode (Screen 2)
     in property<string> mount_path: "";
     in property<string> connection_mode: ""; // "lan", "direct", "bridge", "direct-out" (our reads direct), "direct-in" (the peer's reads direct)
@@ -1048,17 +1105,30 @@ export component MainWindow inherits Window {
     // Header "..." menu
     in-out property<bool> menu_open: false;
     property<bool> can_save_peer: root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved;
-    property<[MenuEntry]> menu_entries: (root.current_screen == 1 || root.current_screen == 2) && root.can_save_peer
-        ? [{ id: "savepeer", label: "Save peer", a11y: "Save Peer" },
-           { id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
+    // Her order (Figma Screens 12 to 14): Disconnect first, Settings last.
+    property<[MenuEntry]> menu_entries: root.current_screen == 1 && root.can_save_peer
+        ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
+           { id: "saveall", label: "Save all", a11y: "Save all" },
+           { id: "savepeer", label: "Save contact", a11y: "Save contact" },
            { id: "log", label: "Save log", a11y: "Save log" },
            { id: "settings", label: "Settings", a11y: "Open settings" }]
-        : root.current_screen == 1 || root.current_screen == 2
+        : root.current_screen == 1
+        ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
+           { id: "saveall", label: "Save all", a11y: "Save all" },
+           { id: "log", label: "Save log", a11y: "Save log" },
+           { id: "settings", label: "Settings", a11y: "Open settings" }]
+        : root.current_screen == 2 && root.can_save_peer
+        ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
+           { id: "savepeer", label: "Save contact", a11y: "Save contact" },
+           { id: "log", label: "Save log", a11y: "Save log" },
+           { id: "settings", label: "Settings", a11y: "Open settings" }]
+        : root.current_screen == 2
         ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
            { id: "log", label: "Save log", a11y: "Save log" },
            { id: "settings", label: "Settings", a11y: "Open settings" }]
         : root.current_screen == 3
-        ? [{ id: "log", label: "Save log", a11y: "Save log" },
+        ? [{ id: "folder", label: "Open folder", a11y: "Open folder" },
+           { id: "log", label: "Save log", a11y: "Save log" },
            { id: "settings", label: "Settings", a11y: "Open settings" }]
         : [{ id: "saved", label: "Saved files", a11y: "Saved files" },
            { id: "log", label: "Save log", a11y: "Save log" },
@@ -1084,16 +1154,16 @@ export component MainWindow inherits Window {
 
     // Help card steps (Figma Screen 13 for the connect screen).
     property<[string]> help_steps: root.current_screen == 1
-        ? ["Drag files onto the window or press Add File. Your peer sees your files and can save them.",
-           "Click Save to download a peer's file. Save Peer adds them to your contacts.",
+        ? ["Drag files onto the window or click the +. Your friend sees your files and can save them.",
+           "Click Save to download one of their files. Save contact in the ... menu keeps them in your contacts.",
            "Connection badge: LAN = same network, Direct P2P = over the internet, Via Relay = through encrypted bridge."]
         : root.current_screen == 2
-        ? ["Your peer's files appear in the mounted folder. Open with any app: Finder, Terminal, git, etc.",
-           "Files stream on access, no full download needed.",
-           "Drop files into the folder to share. Save Peer adds them to your contacts."]
+        ? ["Teleport allows you to instantly open shared files.",
+           "Press Open Folder, then open any file with any app.",
+           "Put your files in the Teleport Folder to send them."]
         : ["Same Wi-Fi: turn on the switch below Connect (it says Same network? \nTurn this on) on both computers, then click Connect next \nto the other computer.",
-           "Anywhere else: press Copy my code, send the code to the other person, paste the code they send you. Both press Connect.",
-           "Drag files onto the window to send them. Accept Files as a folder to open their files in any app."];
+           "Anywhere else: press Copy my code, send the code to your friend, paste the code they send you. You both press Connect.",
+           "Drag files onto the window to send them. Teleport allows you to instantly open shared files."];
 
     function show_overlay(help: bool, feedback: bool, settings: bool) {
         root.menu_open = false;
@@ -1123,6 +1193,10 @@ export component MainWindow inherits Window {
             root.disconnect_pressed();
         } else if (id == "savepeer") {
             root.save_contact_visible = true;
+        } else if (id == "saveall") {
+            root.save_all_pressed();
+        } else if (id == "folder") {
+            root.open_save_folder();
         }
     }
     // The header X closes the menu, then an overlay, then the app.
@@ -1146,7 +1220,8 @@ export component MainWindow inherits Window {
 
     // ============ SCREEN 0: Connect (Figma Screen 12) ============
     if current_screen == 0: Rectangle {
-        width: 100%;
+        x: root.column-x;
+        width: Theme.frame-width;
         height: 100%;
         property <float> alpha: 0.0;
         opacity: alpha;
@@ -1155,7 +1230,7 @@ export component MainWindow inherits Window {
 
         // An open overlay shows its own title over the blur.
         if !root.overlay_open: Label {
-            y: 150px;
+            y: 149.5px;
             width: parent.width;
             height: 30px;
             horizontal-alignment: center;
@@ -1188,7 +1263,7 @@ export component MainWindow inherits Window {
                 y: 13.5px;
                 height: 30px;
                 style: Theme.heading-medium;
-                text: root.local_mode ? "Peer Address" : "Peer Code";
+                text: root.local_mode ? "Friend's Address" : "Friend's Code";
             }
             peer-field := Field {
                 x: 36px;
@@ -1209,9 +1284,9 @@ export component MainWindow inherits Window {
                 height: 12px;
                 style: root.peer_code_error ? Theme.note : Theme.hint;
                 color: root.peer_code_error ? Theme.error : root.peer_code_added ? Theme.accent : Theme.faint;
-                text: root.peer_code_error ? "Invalid code. Check that you copied the full code from your peer."
-                    : root.peer_code_added ? "Peer code added"
-                    : root.local_mode ? "" : "Paste the code your peer sent you";
+                text: root.peer_code_error ? "Invalid code. Check that you copied the full code from your friend."
+                    : root.peer_code_added ? "Friend's code added"
+                    : root.local_mode ? "" : "Paste the code your friend sent you";
             }
         }
 
@@ -1273,7 +1348,7 @@ export component MainWindow inherits Window {
                 vertical-alignment: top;
                 style: Theme.hint;
                 color: Theme.faint;
-                text: "Send this code to your peer via Telegram, Signal, Email or Carrier Pigeon.";
+                text: "Send this code to your friend via Telegram, Signal, Email or Carrier Pigeon.";
             }
         }
         if root.engine_error != "": Outline {
@@ -1348,7 +1423,7 @@ export component MainWindow inherits Window {
             height: 12px;
             style: Theme.hint;
             color: Theme.faint;
-            text: "Both peers press Connect.";
+            text: "You both press Connect.";
         }
 
         // While connecting: the countdown, what is missing, and Cancel.
@@ -1379,7 +1454,8 @@ export component MainWindow inherits Window {
             clicked => { root.cancel_connect_pressed() }
         }
 
-        // FUSE toggle: Medium first line, Light wrapped detail (Figma 8px).
+        // Teleport switch (FUSE): Medium first line, Light wrapped detail (Figma
+        // 8px). Off, it names her mode: Direct transfer (Marius).
         if root.room_action == 0: Rectangle {
             x: 868px;
             y: 482px;
@@ -1389,24 +1465,23 @@ export component MainWindow inherits Window {
             ToggleSwitch {
                 x: 0;
                 y: 0;
-                accessible-label: "Virtual folder";
+                accessible-label: "Teleport";
                 checked <=> root.fuse_mode;
                 enabled: root.fuse_available;
                 toggled(val) => { root.fuse-mode-toggled(val); }
             }
             Label {
-                x: 44px;
-                y: -1.5px;
+                x: 48px;
+                y: 1px;
                 height: 10px;
                 style: Theme.tiny-strong;
                 color: Theme.muted;
-                text: root.fuse_available
-                    ? (root.fuse_mode ? "Virtual folder" : "Direct transfer")
-                    : "Virtual folder not available";
+                text: !root.fuse_available ? "Teleport not available"
+                    : root.fuse_mode ? "Teleport" : "Direct transfer";
             }
             Rectangle {
-                x: 44px;
-                y: 8.5px;
+                x: 48px;
+                y: 11px;
                 width: 117px;
                 height: fuse-hint.preferred-height;
                 fuse-hint := Label {
@@ -1415,9 +1490,8 @@ export component MainWindow inherits Window {
                     vertical-alignment: top;
                     style: Theme.tiny;
                     color: fuse-hint-touch.has-hover ? Theme.text : Theme.muted;
-                    text: root.fuse_available
-                        ? (root.fuse_mode ? "(files sync automatically)" : "(select files to send)")
-                        : root.fuse_install_hint;
+                    text: !root.fuse_available ? root.fuse_install_hint
+                        : root.fuse_mode ? "Instantly open shared files" : "Select files to send";
                 }
                 fuse-hint-touch := TouchArea {
                     enabled: !root.fuse_available;
@@ -1483,7 +1557,7 @@ export component MainWindow inherits Window {
         // Saved contacts (not while connecting or on the LAN path)
         if root.contacts.length > 0 && root.room_action == 0 && !root.local_mode: Label {
             x: 350px;
-            y: 594.5px;
+            y: 594px;
             height: 30px;
             style: Theme.section;
             text: "Contacts";
@@ -1522,480 +1596,257 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ============ SCREEN 1: Connected (No FUSE) ============
+    // ============ SCREEN 1: Connected, no FUSE (Figma 214:988) ============
+    // Her frame with the menu pill at its place on every screen, Save all in
+    // its menu and the connection line under the logo (Marius).
     if current_screen == 1: Rectangle {
-        width: 100%;
+        x: root.column-x;
+        width: Theme.frame-width;
         height: 100%;
         property <float> alpha: 0.0;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
 
-        // Connected status - below logo
-        HorizontalLayout {
-            x: 115px;
-            y: 55px;
-            height: 22px;
-            spacing: 8px;
-            alignment: start;
-
-            Rectangle {
-                width: 8px;
-                height: 8px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                background: root.session_state == "connected" || root.session_state == "" ? Theme.online
-                          : root.session_state == "gave_up" || root.session_state == "mount_failed" ? Theme.error
-                          : Theme.muted;
-            }
-            Text {
-                text: root.session_state_text != "" ? root.session_state_text : "Connected";
-                color: root.session_state == "connected" || root.session_state == "" ? Theme.online
-                     : root.session_state == "gave_up" || root.session_state == "mount_failed" ? Theme.error
-                     : Theme.muted;
-                font-size: 13px;
-                vertical-alignment: center;
-            }
-            if root.throughput_text != "": Text {
-                text: root.throughput_text;
-                color: Theme.faint;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
-            if root.connection_mode != "": Rectangle {
-                width: mode-text.preferred-width + 14px;
-                height: 20px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                background: root.connection_mode == "lan" ? Theme.online.transparentize(0.88)
-                          : root.connection_mode == "direct" || root.connection_mode == "direct-out" ? Theme.accent.transparentize(0.88)
-                          : Theme.muted.transparentize(0.88);
-                mode-text := Text {
-                    text: root.connection_mode == "lan" ? "LAN"
-                        : root.connection_mode == "direct" ? "Direct P2P"
-                        : root.connection_mode == "direct-out" ? "Direct reads"
-                        : root.connection_mode == "direct-in" ? "Direct for peer"
-                        : root.connection_mode == "bridge" ? "Via Relay"
-                        : root.connection_mode;
-                    color: root.connection_mode == "lan" ? Theme.online
-                         : root.connection_mode == "direct" || root.connection_mode == "direct-out" ? Theme.accent
-                         : Theme.muted;
-                    font-size: 11px;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
-            // Relay credit: offer the buy page while unfunded, show balance when funded.
-            if root.connection_mode == "bridge" && !root.tokens_funded: Rectangle {
-                width: buy-chip-text.preferred-width + 14px;
-                height: 20px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                border-width: 1px;
-                border-color: Theme.accent-line.transparentize(0.5);
-                background: Theme.accent.transparentize(0.88);
-                buy-chip-text := Text {
-                    text: "Get relay credit";
-                    color: Theme.accent;
-                    font-size: 11px;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.tokens_buy(); }
-                }
-            }
-            if root.connection_mode == "bridge" && root.tokens_funded && root.tokens_credit_short != "": Text {
-                text: root.tokens_credit_short;
-                color: Theme.faint;
-                font-size: 11px;
-                vertical-alignment: center;
-            }
+        ConnectionLine {
+            x: Theme.box-left;
+            y: 106px;
+            state: root.session_state;
+            state-text: root.session_state_text;
+            throughput: root.throughput_text;
+            mode: root.connection_mode;
+            funded: root.tokens_funded;
+            credit: root.tokens_credit_short;
+            buy => { root.tokens_buy(); }
         }
 
-        // Save All button - aligned with global top-right buttons
-        SmallOutlineButton {
-            x: 700px;
-            y: 93px;
-            width: 70px;
-            text: "Save All";
-            clicked => { root.save_all_pressed() }
+        AddRing {
+            x: 504px;
+            y: 100px;
+            spinning: root.drag_hovering || root.adding_files;
+            clicked => { root.add_file_pressed(); }
         }
 
-        // "+" circle always visible, spins only during drag-hover or active transfers
-        SpinnerArc {
-            x: (parent.width - self.width) / 2;
-            y: 90px;
-            size: 180px;
-            spinning: root.drag_hovering || root.any_downloading;
-            clicked => { root.add_file_pressed() }
+        if root.current_folder != "": FolderBar {
+            x: Theme.box-left;
+            y: 274px;
+            width: Theme.box-width;
+            folder: root.current_folder;
+            back => { root.back_folder(); }
         }
 
-        // Back button (visible when inside a folder)
-        if root.current_folder != "" : Rectangle {
-            y: 310px;
-            x: 40px;
-            width: 200px;
-            height: 30px;
-
-            Text {
-                text: "< Back";
-                color: Theme.link;
-                font-size: 14px;
-                vertical-alignment: center;
-            }
-
-            TouchArea {
-                clicked => { root.back_folder() }
-            }
-        }
-
-        // Current folder label
-        if root.current_folder != "" : Text {
-            y: 312px;
-            x: 250px;
-            text: root.current_folder;
-            color: Theme.muted;
-            font-size: 13px;
-        }
-
-        // Scrollable file grid
-        ScrollView {
-            y: root.current_folder != "" ? 345px : 310px;
-            width: parent.width;
-            height: parent.height - (root.current_folder != "" ? 345px : 310px);
-            content-height: Math.ceil(root.file_list.length / 4) * 200px;
-
-            for file[idx] in root.file_list: FileCard {
-                x: 40px + mod(idx, 4) * 265px;
-                y: floor(idx / 4) * 200px;
-                filename: file.name;
-                file-type: file.file-type;
-                size-bytes: file.size-bytes;
-                downloading: file.downloading;
-                uploading: file.uploading;
-                progress: file.progress;
-                saved: file.saved;
-                is-local: file.is-local;
-                paused: file.paused;
-                save-clicked => {
-                    if file.file-type == "folder" {
-                        root.navigate_folder(file.name)
-                    } else {
-                        root.save_file(file.name)
-                    }
+        FileGrid {
+            x: Theme.box-left;
+            y: 319px;
+            width: Theme.box-width;
+            height: parent.height - self.y;
+            files: root.file_list;
+            open(file) => {
+                if (file.file-type == "folder") {
+                    root.navigate_folder(file.name);
+                } else {
+                    root.open_file(file.name);
                 }
-                open-clicked => {
-                    if file.file-type == "folder" {
-                        root.navigate_folder(file.name)
-                    } else {
-                        root.open_file(file.name)
-                    }
-                }
-                pause-clicked => { root.pause_file(file.name) }
-                delete-clicked => { root.unshare_file(file.name) }
             }
+            save(name) => { root.save_file(name); }
+            pause(name) => { root.pause_file(name); }
+            remove(name) => { root.unshare_file(name); }
         }
     }
 
-    // ============ SCREEN 2: Connected (FUSE present) ============
+    // ============ SCREEN 2: Connected, Teleport (Figma Screen 14) ============
+    // Her card: the Teleport Folder, four points, its path with Open Folder;
+    // her note under it. The card's X disconnects (Marius). Save contact is in
+    // the menu; the connection line stays under the logo as on screen 1.
     if current_screen == 2: Rectangle {
-        width: 100%;
+        x: root.column-x;
+        width: Theme.frame-width;
         height: 100%;
         property <float> alpha: 0.0;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
 
-        // Connected status - below logo
-        HorizontalLayout {
-            x: 115px;
-            y: 55px;
-            height: 22px;
-            spacing: 8px;
-            alignment: start;
+        ConnectionLine {
+            x: Theme.box-left;
+            y: 106px;
+            state: root.session_state;
+            state-text: root.session_state_text;
+            throughput: root.throughput_text;
+            mode: root.connection_mode;
+            funded: root.tokens_funded;
+            credit: root.tokens_credit_short;
+            buy => { root.tokens_buy(); }
+        }
 
-            Rectangle {
-                width: 8px;
-                height: 8px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                background: root.session_state == "connected" || root.session_state == "" ? Theme.online
-                          : root.session_state == "gave_up" || root.session_state == "mount_failed" ? Theme.error
-                          : Theme.muted;
+        Glass {
+            x: 282px;
+            y: 216px;
+            width: 587px;
+            height: 319px;
+            kind: GlassKind.pill;
+
+            // Her folder: a tab behind a body, her gradients (assets/folder.svg).
+            Image {
+                x: 253.25px;
+                y: 33.25px;
+                width: 80px;
+                height: 62px;
+                source: @image-url("../assets/folder.svg");
             }
-            Text {
-                text: root.session_state_text != "" ? root.session_state_text : "Connected · FUSE mounted";
-                color: root.session_state == "connected" || root.session_state == "" ? Theme.online
-                     : root.session_state == "gave_up" || root.session_state == "mount_failed" ? Theme.error
-                     : Theme.muted;
-                font-size: 13px;
-                vertical-alignment: center;
+            IconButton {
+                x: 564px;
+                y: 15px;
+                width: 7px;
+                height: 7px;
+                icon: Icons.cross;
+                accessible-label: "Disconnect";
+                clicked => { root.disconnect_pressed(); }
             }
-            if root.throughput_text != "": Text {
-                text: root.throughput_text;
-                color: Theme.faint;
-                font-size: 11px;
-                vertical-alignment: center;
+            // Centred where her text boxes centre: 292.5 and 291.
+            Label {
+                x: 93px;
+                y: 115.5px;
+                width: 400px;
+                height: 30px;
+                horizontal-alignment: center;
+                style: Theme.title-wide;
+                text: "Open Teleport Folder";
             }
-            if root.connection_mode != "": Rectangle {
-                width: fuse-mode-text.preferred-width + 14px;
-                height: 20px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                background: root.connection_mode == "lan" ? Theme.online.transparentize(0.88)
-                          : root.connection_mode == "direct" ? Theme.accent.transparentize(0.88)
-                          : Theme.muted.transparentize(0.88);
-                fuse-mode-text := Text {
-                    text: root.connection_mode == "lan" ? "LAN"
-                        : root.connection_mode == "direct" ? "Direct P2P"
-                        : root.connection_mode == "bridge" ? "Via Relay"
-                        : root.connection_mode;
-                    color: root.connection_mode == "lan" ? Theme.online
-                         : root.connection_mode == "direct" ? Theme.accent
-                         : Theme.muted;
-                    font-size: 11px;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+            Label {
+                x: 41px;
+                y: 148px;
+                width: 500px;
+                height: 30px;
+                horizontal-alignment: center;
+                style: Theme.subtitle;
+                text: "Drop files into folder to share them instantly with your friend";
+            }
+
+            TeleportPoint { x: 74px; y: 204px; icon: Icons.file; icon-width: 16px; icon-height: 21px; text-x: 29px; text: "File system\non access"; }
+            TeleportPoint { x: 195px; y: 204px; icon: Icons.play; icon-width: 21px; icon-height: 21px; text-x: 34px; text: "Open videos\nfiles directly"; }
+            TeleportPoint { x: 302px; y: 204px; icon: Icons.code; icon-width: 22px; icon-height: 14px; icon-y: 3px; text-x: 29px; text: "View documents\nand code"; }
+            TeleportPoint { x: 414px; y: 204px; icon: Icons.download; icon-width: 17px; icon-height: 21px; text-x: 28px; text: "No waiting\nfor full downloading"; }
+            for line-x in [182px, 293px, 403px]: Rectangle {
+                x: line-x - Theme.hairline / 2;
+                y: 203px;
+                width: Theme.hairline;
+                height: 23px;
+                background: Theme.outline;
+            }
+
+            path-field := Field {
+                x: 69px;
+                y: 255px;
+                width: 445px;
+                read-only: true;
+                text: root.mount_path;
+                FieldAction {
+                    width: path-field.button-width;
+                    height: Theme.control;
+                    text: "Open Folder";
+                    clicked => { root.open_folder_pressed(); }
                 }
-            }
-            // Relay credit: offer the buy page while unfunded, show balance when funded.
-            if root.connection_mode == "bridge" && !root.tokens_funded: Rectangle {
-                width: fuse-buy-chip-text.preferred-width + 14px;
-                height: 20px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 4px;
-                border-width: 1px;
-                border-color: Theme.accent-line.transparentize(0.5);
-                background: Theme.accent.transparentize(0.88);
-                fuse-buy-chip-text := Text {
-                    text: "Get relay credit";
-                    color: Theme.accent;
-                    font-size: 11px;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.tokens_buy(); }
-                }
-            }
-            if root.connection_mode == "bridge" && root.tokens_funded && root.tokens_credit_short != "": Text {
-                text: root.tokens_credit_short;
-                color: Theme.faint;
-                font-size: 11px;
-                vertical-alignment: center;
             }
         }
 
-        // ── Main content ─────────────────────────────────────────
-        VerticalLayout {
-            alignment: center;
-            spacing: 16px;
-            padding-left: 120px;
-            padding-right: 120px;
+        Glass {
+            x: 350px;
+            y: 569px;
+            width: 446px;
+            height: 66px;
+            kind: GlassKind.pill;
+            tint: Theme.info-tint;
 
-            Text {
-                text: "📁";
-                font-size: 56px;
-                color: white;
-                horizontal-alignment: center;
+            Icon {
+                x: 34px;
+                y: 24px;
+                width: 18px;
+                height: 18px;
+                icon: Icons.info;
+                line: 1.5px;
             }
-
-            Text {
-                text: "Shared folder is live";
-                color: white;
-                font-size: 24px;
-                font-weight: 700;
-                horizontal-alignment: center;
-            }
-
-            Text {
-                text: "Drop files into the folder to share them instantly with your peer.";
+            Label {
+                x: 83px;
+                y: 20px;
+                height: 13px;
                 color: Theme.muted;
-                font-size: 15px;
-                horizontal-alignment: center;
+                text: "Files are available to your friend through a secure connection.";
             }
-
-            Text {
-                text: "Files stream on access. Open videos, documents, or code without waiting for the full download.";
-                color: Theme.faint;
-                font-size: 12px;
-                horizontal-alignment: center;
-            }
-
-            if root.mount_path != "": Rectangle {
-                height: 38px;
-                border-radius: 19px;
-                background: rgba(255,255,255,0.05);
-                border-width: 1px;
-                border-color: rgba(255,255,255,0.10);
-                horizontal-stretch: 0;
-
-                HorizontalLayout {
-                    alignment: center;
-                    padding-left: 16px;
-                    padding-right: 16px;
-                    Text {
-                        text: root.mount_path;
-                        color: Theme.faint;
-                        font-size: 13px;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-                }
-            }
-
-            HorizontalLayout {
-                alignment: center;
-                spacing: 12px;
-                OutlineButton {
-                    text: "Open Folder";
-                    clicked => { root.open_folder_pressed() }
-                }
-                if root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved: OutlineButton {
-                    text: "Save Peer";
-                    clicked => { root.save_contact_visible = true; }
-                }
+            TextAction {
+                x: 83px;
+                y: 33px;
+                height: 13px;
+                text: "How it works?";
+                ink: Theme.accent;
+                clicked => { root.show_overlay(true, false, false); }
             }
         }
     }
 
-    // ============ SCREEN 3: Saved Files Browser ============
+    // ============ SCREEN 3: Saved Files (Figma 214:988 without the (+)) ============
+    // Mila: like the no-FUSE screen without the (+), the row up where the old
+    // screen had it (as far under the logo). Open folder is in the menu.
     if current_screen == 3: Rectangle {
-        width: 100%;
+        x: root.column-x;
+        width: Theme.frame-width;
         height: 100%;
         property <float> alpha: 0.0;
+        property <length> row-y: 139px;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
 
-        // Header row: back + title + count left, utilities right
-        OutlineButton {
-            x: 40px;
-            y: 88px;
-            width: 90px;
-            accent: true;
-            text: "\u{2190} Back";
-            clicked => { root.back_to_connect() }
-        }
-
-        Text {
-            x: 140px;
-            y: 91px;
-            text: "Saved Files";
-            color: white;
-            font-size: 23px;
-            font-weight: 700;
-        }
-
-        Text {
-            x: 305px;
-            y: 99px;
-            text: root.saved_file_list.length == 1
-                ? "1 file"
-                : root.saved_file_list.length + " files";
-            color: Theme.muted;
-            font-size: 13px;
-        }
-
-        SmallOutlineButton {
-            x: 780px;
-            y: 93px;
-            width: 80px;
-            text: "Open Folder";
-            clicked => { root.open_save_folder() }
-        }
-
-        // Folder navigation (inside saved files)
-        if root.saved_current_folder != "": Rectangle {
-            y: 130px;
-            x: 40px;
-            width: 200px;
-            height: 30px;
-
-            Text {
-                text: "< Back";
-                color: Theme.link;
-                font-size: 14px;
-                vertical-alignment: center;
-            }
-
-            TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.back_saved_folder() }
+        FolderBar {
+            x: Theme.box-left;
+            y: parent.row-y;
+            width: Theme.box-width;
+            folder: root.saved_current_folder != "" ? root.saved_current_folder : "Saved Files";
+            note: root.saved_file_list.length == 1 ? "1 file" : root.saved_file_list.length + " files";
+            back => {
+                if (root.saved_current_folder != "") {
+                    root.back_saved_folder();
+                } else {
+                    root.back_to_connect();
+                }
             }
         }
-
-        if root.saved_current_folder != "": Text {
-            y: 132px;
-            x: 250px;
-            width: parent.width - 260px;
-            text: root.saved_current_folder;
-            color: Theme.muted;
-            font-size: 13px;
-            overflow: elide;
-        }
-
-        // Empty state
         if root.saved_file_list.length == 0: VerticalLayout {
+            x: Theme.box-left;
+            y: parent.row-y + 45px;
+            width: Theme.box-width;
+            height: parent.height - self.y;
             alignment: center;
             spacing: 8px;
-
-            Text {
-                text: "No saved files";
+            Label {
+                horizontal-alignment: center;
+                style: Theme.heading;
                 color: Theme.muted;
-                font-size: 16px;
-                horizontal-alignment: center;
+                text: "No saved files";
             }
-
-            Text {
-                text: "Files you download will appear here";
-                color: Theme.faint;
-                font-size: 13px;
+            Label {
                 horizontal-alignment: center;
+                style: Theme.label;
+                color: Theme.faint;
+                text: "Files you download will appear here";
             }
         }
 
-        // File grid (same column layout as Screen 1)
-        if root.saved_file_list.length > 0: ScrollView {
-            y: root.saved_current_folder != "" ? 165px : 130px;
-            width: parent.width;
-            height: parent.height - (root.saved_current_folder != "" ? 165px : 130px);
-            content-height: Math.ceil(root.saved_file_list.length / 4) * 200px;
-
-            for file[idx] in root.saved_file_list: FileCard {
-                x: 40px + mod(idx, 4) * 265px;
-                y: floor(idx / 4) * 200px;
-                filename: file.name;
-                file-type: file.file-type;
-                size-bytes: file.size-bytes;
-                downloading: false;
-                uploading: false;
-                progress: 1.0;
-                saved: true;
-                is-local: true;
-                paused: false;
-                browse-mode: true;
-                open-clicked => {
-                    if file.file-type == "folder" {
-                        root.navigate_saved_folder(file.name)
-                    } else {
-                        root.open_file(file.name)
-                    }
+        if root.saved_file_list.length > 0: FileGrid {
+            x: Theme.box-left;
+            y: parent.row-y + 45px;
+            width: Theme.box-width;
+            height: parent.height - self.y;
+            files: root.saved_file_list;
+            browse-mode: true;
+            open(file) => {
+                if (file.file-type == "folder") {
+                    root.navigate_saved_folder(file.name);
+                } else {
+                    root.open_file(file.name);
                 }
-                save-clicked => {
-                    if file.file-type == "folder" {
-                        root.navigate_saved_folder(file.name)
-                    }
-                }
-                delete-clicked => { root.delete_file(file.name) }
             }
+            remove(name) => { root.delete_file(name); }
         }
     }
 
@@ -2003,6 +1854,8 @@ export component MainWindow inherits Window {
 
     // Help (Figma Screen 13)
     if root.help_visible: Overlay {
+        card-x: root.column-x + 313px;
+        card-y: 262px;
         visible: !root.capturing;
         heading: "How to use KEIBI";
         heading-light: "DROP";
@@ -2072,34 +1925,18 @@ export component MainWindow inherits Window {
                 clicked => { root.open_help_url(); }
             }
         }
-        Rectangle {
-            x: 496px;
-            y: 5px;
-            width: 13.004px;
-            height: 13.004px;
-            accessible-role: button;
+        IconButton {
+            x: 497px;
+            y: 11px;
+            width: 7px;
+            height: 7px;
+            icon: Icons.cross;
             accessible-label: "Close help";
-            accessible-action-default => { root.help_visible = false; }
-            Image {
-                x: 2.17px;
-                y: 4.17px;
-                width: 8.668px;
-                height: 8.667px;
-                source: @image-url("../assets/xmark.svg");
-                colorize: help-close.has-hover ? Theme.text : Theme.muted;
-            }
-            help-close := TouchArea {
-                x: -6px;
-                y: -4px;
-                width: 25px;
-                height: 25px;
-                mouse-cursor: pointer;
-                clicked => { root.help_visible = false; }
-            }
+            clicked => { root.help_visible = false; }
         }
         PillButton {
             x: 179px;
-            y: 355px;
+            y: 353px;
             text: "Question?";
             clicked => { root.show_overlay(false, true, false); }
         }
@@ -2132,7 +1969,7 @@ export component MainWindow inherits Window {
         Label { x: 20px; y: 116px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; font-family: "monospace"; overflow: elide; text: root.cfg_save_path; }
 
         // Mount path
-        Label { x: 20px; y: 144px; height: 14px; style: Theme.small; color: Theme.muted; text: "Mount path (FUSE virtual folder)"; }
+        Label { x: 20px; y: 144px; height: 14px; style: Theme.small; color: Theme.muted; text: "Teleport Folder"; }
         Label { x: 20px; y: 160px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; font-family: "monospace"; overflow: elide; text: root.cfg_mount_path; }
 
         // Log file
@@ -2188,7 +2025,7 @@ export component MainWindow inherits Window {
                 vertical-alignment: top;
                 style: Theme.hint;
                 color: Theme.faint;
-                text: "Peers can read your files. Changes and new files from peers are refused. Takes effect at the next connection.";
+                text: "Friends can open your files. Their changes and new files are refused. Takes effect at the next connection.";
             }
         }
 
@@ -2202,11 +2039,11 @@ export component MainWindow inherits Window {
             ToggleSwitch {
                 x: 0;
                 y: 2px;
-                accessible-label: "Virtual folder is read only";
+                accessible-label: "Teleport Folder is read only";
                 checked <=> root.cfg_mount_read_only;
                 toggled(val) => { root.mount_read_only_toggled(val); }
             }
-            Label { x: 48px; y: 0; height: 24px; style: Theme.label; color: Theme.muted; text: "Virtual folder is read only"; }
+            Label { x: 48px; y: 0; height: 24px; style: Theme.label; color: Theme.muted; text: "Teleport Folder is read only"; }
             Label {
                 x: 48px;
                 y: 24px;
@@ -2215,7 +2052,7 @@ export component MainWindow inherits Window {
                 vertical-alignment: top;
                 style: Theme.hint;
                 color: Theme.faint;
-                text: "Programs on this computer cannot write in the virtual folder. Takes effect at the next connection.";
+                text: "Programs on this computer can open files in the Teleport Folder but cannot change them. Takes effect at the next connection.";
             }
         }
 
@@ -2425,7 +2262,7 @@ export component MainWindow inherits Window {
             clicked => { root.save_contact_visible = false; root.save_contact_name = ""; }
         }
 
-        Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Save Peer as Contact"; }
+        Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Save contact"; }
         Label { x: 20px; y: 50px; height: 14px; style: Theme.small; color: Theme.muted; text: "Name"; }
 
         Outline {
@@ -2470,7 +2307,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    // FUSE offer (after the first received file)
+    // Teleport offer (FUSE, after the first received file)
     if root.fuse_offer_visible: fuse-offer := Overlay {
         visible: !root.capturing;
         card-width: 380px;
@@ -2487,7 +2324,7 @@ export component MainWindow inherits Window {
             clicked => { root.fuse_offer_declined(); }
         }
 
-        Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Files as a folder"; }
+        Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Teleport"; }
 
         Label {
             x: 20px;
@@ -2520,67 +2357,60 @@ export component MainWindow inherits Window {
     // ============ GLOBAL: header, drawn above the overlays ============
 
     KeibiDropLogo {
-        x: 115px;
-        y: root.current_screen == 0 || root.overlay_open ? 70.39px : 24px;
+        x: root.column-x + Theme.box-left;
+        y: Theme.box-top;
         visible: !root.capturing;
     }
 
-    // Control pill (Figma Screen 12): Report problem, ?, ..., X.
+    // Control pill (Figma Screens 12 to 14): Report problem, then her ?, dots
+    // and X. Same place and size on every screen.
     Glass {
         kind: GlassKind.pill;
-        x: 868px;
-        y: 76px;
-        width: 161px;
+        x: root.column-x + Theme.box-right - self.width;
+        y: Theme.pill-y;
+        width: Theme.pill-width;
         height: 24px;
         visible: !root.capturing;
 
+        // Grey while its menu or overlay is open too, as in her frames.
         TextAction {
             x: 51px - self.width / 2;
+            y: 0.5px;
             height: 24px;
             text: "Report problem";
-            ink: root.feedback_visible ? Theme.text : Theme.muted;
             clicked => { root.show_overlay(false, !root.feedback_visible, false); }
         }
-        TextAction {
-            x: 103.5px - self.width / 2;
-            height: 24px;
+        IconButton {
+            x: 99px;
+            y: 8px;
+            width: 5px;
+            height: 8px;
             pad: 5px;
-            style: Theme.caption;
-            text: "?";
+            icon: Icons.help;
             accessible-label: "Help";
-            ink: root.help_visible ? Theme.text : Theme.muted;
             clicked => { root.show_overlay(!root.help_visible, false, false); }
         }
-        TextAction {
-            x: 126px - self.width / 2;
-            y: -4px;
-            height: 24px;
-            pad: 4px;
-            text: "...";
+        IconButton {
+            x: 118px;
+            y: 11px;
+            width: 14px;
+            height: 2px;
+            pad: 5px;
+            icon: Icons.more;
+            line: 1px;
+            filled: true;
             accessible-label: "Menu";
-            ink: root.menu_open ? Theme.text : Theme.muted;
             clicked => { root.menu_open = !root.menu_open; }
         }
-        Rectangle {
-            x: 141px;
-            y: 6px;
-            width: 13.004px;
-            height: 13.004px;
-            accessible-role: button;
+        IconButton {
+            x: 144px;
+            y: 9px;
+            width: 7px;
+            height: 7px;
+            pad: 5px;
+            icon: Icons.cross;
             accessible-label: root.overlay_open ? "Close" : "Quit";
-            accessible-action-default => { root.close_or_quit(); }
-            Image {
-                x: 2.17px;
-                y: 2.17px;
-                width: 8.668px;
-                height: 8.667px;
-                source: @image-url("../assets/xmark.svg");
-                colorize: x-touch.has-hover ? Theme.text : Theme.muted;
-            }
-            x-touch := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.close_or_quit(); }
-            }
+            clicked => { root.close_or_quit(); }
         }
     }
 
@@ -2588,15 +2418,15 @@ export component MainWindow inherits Window {
     if root.menu_open: TouchArea {
         clicked => { root.menu_open = false; }
     }
+    // Only the rows this screen has: no empty slot at the top (Marius).
     if root.menu_open: Glass {
-        x: 868px;
-        y: 108px;
-        width: 161px;
-        height: 35px + (root.menu_entries.length - 1) * 21px;
+        x: root.column-x + Theme.box-right - self.width;
+        y: Theme.menu-y;
+        width: Theme.pill-width;
+        height: 14px + root.menu_entries.length * 21px;
         visible: !root.capturing;
         for entry[i] in root.menu_entries: MenuItem {
             y: 4.5px + i * 21px;
-            chevron-y: 10.35px + floor(i * 20.5 + 0.25) * 1px - self.y;
             width: parent.width;
             entry: entry;
             clicked => { root.menu_pick(entry.id); }
@@ -2622,18 +2452,18 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Version text bottom-right (all screens)
+    // Version text, bottom right inside the box (all screens)
     Label {
-        x: parent.width - self.width - 16px;
+        x: root.column-x + Theme.box-right - self.width;
         y: parent.height - self.height - 12px;
         style: Theme.caption;
         color: Theme.faint;
         text: root.version_text;
     }
 
-    // Update notice bottom-left (all screens), set when a newer release exists
+    // Update notice, bottom left inside the box (all screens), set when a newer release exists
     if root.update_available != "": upd-touch := TouchArea {
-        x: 16px;
+        x: root.column-x + Theme.box-left;
         y: parent.height - 34px;
         width: upd-note.width;
         height: 22px;
