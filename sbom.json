@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.6",
-  "serialNumber": "urn:uuid:c0307a8a-e66f-4ca8-a343-c48c201f5868",
+  "serialNumber": "urn:uuid:1b35a3d4-afaf-4c25-8209-8914104c761b",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-15T23:02:15+03:00",
+    "timestamp": "2026-10-08T00:27:08+03:00",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -46,17 +46,26 @@
       }
     ],
     "component": {
-      "bom-ref": "pkg:golang/github.com/KeibiSoft/KeibiDrop@v0.4.9-0.20260915192738-f9892cdcaa18?type=module",
+      "bom-ref": "pkg:golang/github.com/KeibiSoft/KeibiDrop@v0.5.0?type=module",
       "type": "application",
       "name": "github.com/KeibiSoft/KeibiDrop",
-      "version": "v0.4.9-0.20260915192738-f9892cdcaa18",
-      "purl": "pkg:golang/github.com/KeibiSoft/KeibiDrop@v0.4.9-0.20260915192738-f9892cdcaa18?goarch=amd64\u0026goos=darwin\u0026type=module",
+      "version": "v0.5.0",
+      "purl": "pkg:golang/github.com/KeibiSoft/KeibiDrop@v0.5.0?goarch=amd64\u0026goos=darwin\u0026type=module",
       "externalReferences": [
         {
           "url": "https://github.com/KeibiSoft/KeibiDrop",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "AGPL-3.0-only"
+            }
+          }
+        ]
+      }
     }
   },
   "components": [
@@ -78,7 +87,16 @@
           "url": "https://github.com/BurntSushi/toml",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/c-bata/go-prompt@v0.2.6?type=module",
@@ -98,7 +116,16 @@
           "url": "https://github.com/c-bata/go-prompt",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/danieljoos/wincred@v1.2.3?type=module",
@@ -118,7 +145,16 @@
           "url": "https://github.com/danieljoos/wincred",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/davecgh/go-spew@v1.1.1?type=module",
@@ -138,7 +174,16 @@
           "url": "https://github.com/davecgh/go-spew",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "0BSD"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/fatih/color@v1.18.0?type=module",
@@ -158,7 +203,16 @@
           "url": "https://github.com/fatih/color",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/godbus/dbus/v5@v5.2.2?type=module",
@@ -178,7 +232,16 @@
           "url": "https://github.com/godbus/dbus",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-2-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/klauspost/cpuid/v2@v2.0.9?type=module",
@@ -198,7 +261,16 @@
           "url": "https://github.com/klauspost/cpuid",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/mattn/go-colorable@v0.1.14?type=module",
@@ -218,7 +290,16 @@
           "url": "https://github.com/mattn/go-colorable",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/mattn/go-isatty@v0.0.20?type=module",
@@ -238,7 +319,16 @@
           "url": "https://github.com/mattn/go-isatty",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/mattn/go-runewidth@v0.0.9?type=module",
@@ -258,7 +348,16 @@
           "url": "https://github.com/mattn/go-runewidth",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/mattn/go-tty@v0.0.3?type=module",
@@ -278,7 +377,16 @@
           "url": "https://github.com/mattn/go-tty",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/pkg/term@v1.2.0-beta.2?type=module",
@@ -298,7 +406,16 @@
           "url": "https://github.com/pkg/term",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-2-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/pkg/xattr@v0.4.12?type=module",
@@ -318,7 +435,16 @@
           "url": "https://github.com/pkg/xattr",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-2-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/pmezard/go-difflib@v1.0.0?type=module",
@@ -338,7 +464,16 @@
           "url": "https://github.com/pmezard/go-difflib",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-3-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/KeibiSoft/quic-go@v0.0.0-20260719194007-24ecf34ccaf9?type=module",
@@ -358,7 +493,16 @@
           "url": "https://github.com/KeibiSoft/quic-go",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/stretchr/testify@v1.11.1?type=module",
@@ -378,7 +522,16 @@
           "url": "https://github.com/stretchr/testify",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/winfsp/cgofuse@v1.6.0?type=module",
@@ -398,7 +551,16 @@
           "url": "https://github.com/winfsp/cgofuse",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/zalando/go-keyring@v0.2.8?type=module",
@@ -418,7 +580,16 @@
           "url": "https://github.com/zalando/go-keyring",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "MIT"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/github.com/zeebo/xxh3@v1.0.2?type=module",
@@ -438,7 +609,16 @@
           "url": "https://github.com/zeebo/xxh3",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-2-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/golang.org/x/crypto@v0.55.0?type=module",
@@ -452,7 +632,16 @@
           "content": "f8a5878db80e68043ae9d87f625919287973f59525abad40162ac047d9ed3fc3"
         }
       ],
-      "purl": "pkg:golang/golang.org/x/crypto@v0.55.0?goarch=amd64\u0026goos=darwin\u0026type=module"
+      "purl": "pkg:golang/golang.org/x/crypto@v0.55.0?goarch=amd64\u0026goos=darwin\u0026type=module",
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-3-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/golang.org/x/net@v0.58.0?type=module",
@@ -466,7 +655,16 @@
           "content": "ca7586eeba988b871ca5312e3d9d901961e4b5510cf433028fdcb30c4d10ed3a"
         }
       ],
-      "purl": "pkg:golang/golang.org/x/net@v0.58.0?goarch=amd64\u0026goos=darwin\u0026type=module"
+      "purl": "pkg:golang/golang.org/x/net@v0.58.0?goarch=amd64\u0026goos=darwin\u0026type=module",
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-3-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/golang.org/x/sys@v0.47.0?type=module",
@@ -480,7 +678,16 @@
           "content": "a3b5c63af6500800c1410e18ed536ad9d456411ec998e516f0ac71e19b0d816b"
         }
       ],
-      "purl": "pkg:golang/golang.org/x/sys@v0.47.0?goarch=amd64\u0026goos=darwin\u0026type=module"
+      "purl": "pkg:golang/golang.org/x/sys@v0.47.0?goarch=amd64\u0026goos=darwin\u0026type=module",
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-3-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/golang.org/x/term@v0.45.0?type=module",
@@ -494,7 +701,16 @@
           "content": "3705b2066a0909b7d31e9c6b5a867d0bafd5c4e7fb89cdb5f48f3165915dadfd"
         }
       ],
-      "purl": "pkg:golang/golang.org/x/term@v0.45.0?goarch=amd64\u0026goos=darwin\u0026type=module"
+      "purl": "pkg:golang/golang.org/x/term@v0.45.0?goarch=amd64\u0026goos=darwin\u0026type=module",
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-3-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/golang.org/x/text@v0.41.0?type=module",
@@ -508,7 +724,16 @@
           "content": "bf3fec780d259d7f3b3ad86ed9fff42f6e11720ad70fdfd81534ae1a38f7ac7f"
         }
       ],
-      "purl": "pkg:golang/golang.org/x/text@v0.41.0?goarch=amd64\u0026goos=darwin\u0026type=module"
+      "purl": "pkg:golang/golang.org/x/text@v0.41.0?goarch=amd64\u0026goos=darwin\u0026type=module",
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-3-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260526163538-3dc84a4a5aaa?type=module",
@@ -522,7 +747,16 @@
           "content": "9991c774f665d1d6c61c27e566002afd0e3af0359515c536c21841d8a028f1f9"
         }
       ],
-      "purl": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260526163538-3dc84a4a5aaa?goarch=amd64\u0026goos=darwin\u0026type=module"
+      "purl": "pkg:golang/google.golang.org/genproto/googleapis/rpc@v0.0.0-20260526163538-3dc84a4a5aaa?goarch=amd64\u0026goos=darwin\u0026type=module",
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "Apache-2.0"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/google.golang.org/grpc@v1.83.2?type=module",
@@ -536,7 +770,16 @@
           "content": "10c6a7791a264ce6c0d0153b23cbd7820ffbf2e139309f4cf01dfd117d96b1c5"
         }
       ],
-      "purl": "pkg:golang/google.golang.org/grpc@v1.83.2?goarch=amd64\u0026goos=darwin\u0026type=module"
+      "purl": "pkg:golang/google.golang.org/grpc@v1.83.2?goarch=amd64\u0026goos=darwin\u0026type=module",
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "Apache-2.0"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/google.golang.org/protobuf@v1.36.11?type=module",
@@ -550,7 +793,16 @@
           "content": "7d5e99c21368703c812cad1d8fe7e0f1e92d7157a0041b84a25a5b4d0c813551"
         }
       ],
-      "purl": "pkg:golang/google.golang.org/protobuf@v1.36.11?goarch=amd64\u0026goos=darwin\u0026type=module"
+      "purl": "pkg:golang/google.golang.org/protobuf@v1.36.11?goarch=amd64\u0026goos=darwin\u0026type=module",
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "BSD-3-Clause"
+            }
+          }
+        ]
+      }
     },
     {
       "bom-ref": "pkg:golang/gopkg.in/yaml.v3@v3.0.1?type=module",
@@ -570,17 +822,27 @@
           "url": "https://github.com/go-yaml/yaml",
           "type": "vcs"
         }
-      ]
+      ],
+      "evidence": {
+        "licenses": [
+          {
+            "license": {
+              "id": "Apache-2.0"
+            }
+          }
+        ]
+      }
     }
   ],
   "dependencies": [
     {
-      "ref": "pkg:golang/github.com/KeibiSoft/KeibiDrop@v0.4.9-0.20260915192738-f9892cdcaa18?type=module",
+      "ref": "pkg:golang/github.com/KeibiSoft/KeibiDrop@v0.5.0?type=module",
       "dependsOn": [
         "pkg:golang/github.com/BurntSushi/toml@v1.6.0?type=module",
         "pkg:golang/github.com/KeibiSoft/quic-go@v0.0.0-20260719194007-24ecf34ccaf9?type=module",
         "pkg:golang/github.com/c-bata/go-prompt@v0.2.6?type=module",
         "pkg:golang/github.com/fatih/color@v1.18.0?type=module",
+        "pkg:golang/github.com/godbus/dbus/v5@v5.2.2?type=module",
         "pkg:golang/github.com/pkg/xattr@v0.4.12?type=module",
         "pkg:golang/github.com/stretchr/testify@v1.11.1?type=module",
         "pkg:golang/github.com/winfsp/cgofuse@v1.6.0?type=module",
