@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // OwnNoQUIC: a peer that cannot hold up the QUIC end says so by sending no QUIC
 // seeds, which is exactly how an older peer already looks. A browser sets it,

@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package common
 
@@ -11,7 +8,7 @@ import (
 )
 
 var (
-	Version    = "0.4.8" // Last release. Build ldflags overwrite both values from the tag.
+	Version    = "0.5.0" // The release this code ships as. Build ldflags overwrite both values from the tag.
 	CommitHash = "dev"
 )
 

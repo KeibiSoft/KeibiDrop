@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // ABOUTME: TDD tests for per-chunk hash filling at the two FUSE cache-write points.
 // ABOUTME: Verifies SetHash is called at both the async writer goroutine and prefetchRange.

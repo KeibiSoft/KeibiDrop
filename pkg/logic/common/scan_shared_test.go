@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // ABOUTME: Tests for ScanAndShareSaveDir — announce pre-existing save dir files.
 // ABOUTME: Covers idempotence, internal-file skip, nested paths, BFS order, remote skip.

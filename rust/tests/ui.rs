@@ -354,6 +354,7 @@ fn remote_file(name: &str) -> keibidrop_rust::FileInfo {
         paused: false,
         file_type: "image".into(),
         is_local: false,
+        viewable: false,
     }
 }
 
@@ -572,6 +573,31 @@ fn a_download_pauses_from_its_card() {
     press(&app, at);
     release(&app, at);
     assert_eq!(paused.borrow().as_slice(), ["signal.jpeg"]);
+}
+
+// The grid makes cards for the rows in view only (a folder of 12,789 files
+// froze it) and hands them to other files as it scrolls: each file must still
+// land in its own row and column.
+#[test]
+fn a_scrolled_grid_shows_each_file_in_its_place() {
+    let app = app();
+    connected_no_fuse(&app);
+    let names: Vec<String> = (0..1000).map(|i| format!("f{i:04}.txt")).collect();
+    set_files(&app, &names.iter().map(String::as_str).collect::<Vec<_>>());
+    let at = |name: &str| ElementHandle::find_by_accessible_label(&app, name).next().map(|e| e.absolute_position());
+
+    let (top_left, top_fifth) = (at("f0000.txt").expect("first file"), at("f0004.txt").expect("fifth file"));
+    assert!(at("f0040.txt").is_none(), "row 10 is out of view");
+
+    // Ten rows down: the 41st file takes the first file's place.
+    app.window().dispatch_event(WindowEvent::PointerScrolled {
+        position: slint::LogicalPosition::new(500.0, 500.0),
+        delta_x: 0.0,
+        delta_y: -1830.0,
+    });
+    assert!(at("f0000.txt").is_none(), "row 0 still in view");
+    assert_eq!(at("f0040.txt"), Some(top_left), "41st file not at the top left");
+    assert_eq!(at("f0044.txt"), Some(top_fifth), "45th file not under it");
 }
 
 #[test]

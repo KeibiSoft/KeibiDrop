@@ -30,6 +30,7 @@ export struct FileInfo {
     paused: bool,         // download was paused (can resume)
     file-type: string,    // "pdf", "image", "video", "audio", "code", "archive", "text", "other"
     is-local: bool,       // true = my file (shared by me), false = remote file (from peer)
+    viewable: bool,       // the browser build opens it in its player; the desktop leaves it false
 }
 
 // One row of the header's "..." menu.
@@ -369,6 +370,8 @@ component OutlineButton inherits Rectangle {
 // Remove shows on hover only, so the row matches the design at rest.
 component ContactRow inherits Rectangle {
     in property <ContactInfo> contact;
+    // The browser build: a tab cannot reconnect on its own, so no Auto.
+    in property <bool> web: false;
     callback connect;
     callback auto;
     callback remove;
@@ -400,7 +403,7 @@ component ContactRow inherits Rectangle {
         color: Theme.text-soft;
         text: root.contact.fingerprint;
     }
-    TextAction {
+    if !root.web: TextAction {
         x: 340.9px;
         text: "Auto";
         accessible-label: "Auto connect " + root.contact.name;
@@ -436,6 +439,7 @@ component ScrollThumb inherits Rectangle {
 // Saved contacts on glass: three rows show, the rest scroll (Figma Screen 12).
 component ContactsPanel inherits Glass {
     in property <[ContactInfo]> contacts;
+    in property <bool> web: false;
     callback connect(int);
     callback auto(int);
     callback remove(int);
@@ -457,6 +461,7 @@ component ContactsPanel inherits Glass {
             y: root.row-y(i);
             width: 490px;
             contact: contact;
+            web: root.web;
             connect => { root.connect(i); }
             auto => { root.auto(i); }
             remove => { root.remove(i); }
@@ -643,6 +648,10 @@ component FileCard inherits Rectangle {
     in property <bool> is-local: false;
     in property <bool> paused: false;
     in property <length> preview-height: 116px;
+    // The browser build: its player opens what it can show, and it cannot
+    // unshare, so its own files have no X.
+    in property <bool> web: false;
+    in property <bool> viewable: false;
 
     callback save-clicked;
     callback open-clicked;
@@ -651,7 +660,10 @@ component FileCard inherits Rectangle {
 
     // Her card: the preview, the row 11px under it, 24px tall.
     property <length> row-y: root.preview-height + 11px;
-    property <bool> removable: root.is-local;
+    property <bool> removable: root.is-local && !root.web;
+    // Open plays or shows it in the browser; the small button beside it saves.
+    property <bool> web-view: root.web && root.viewable && !root.is-local && !root.saved
+        && !root.downloading && !root.paused;
 
     width: 214px;
     height: self.row-y + 24px;
@@ -720,23 +732,25 @@ component FileCard inherits Rectangle {
     action := OutlineButton {
         x: root.width - 110px;
         y: root.row-y;
-        width: root.removable ? 80px : 110px;
+        width: root.removable || root.web-view ? 80px : 110px;
         height: 24px;
         style: Theme.button-small;
-        accent: root.is-local || root.saved;
+        enabled: !(root.web && root.is-local);
+        accent: root.is-local || root.saved || root.web-view;
         accent-line: Theme.open-line;
         accent-ink: Theme.open-ink;
         text: root.file-type == "folder" ? "Open"
             : root.downloading ? (self.hovered ? "Pause" : Math.round(root.progress * 100) + "%")
             : root.paused ? "Resume"
-            : root.is-local || root.saved ? "Open"
+            : root.web && root.is-local ? "Shared"
+            : root.is-local || root.saved || root.web-view ? "Open"
             : "Save";
         clicked => {
             if (root.file-type == "folder") {
                 root.open-clicked();
             } else if (root.downloading) {
                 root.pause-clicked();
-            } else if (root.paused || !(root.is-local || root.saved)) {
+            } else if (root.paused || !(root.is-local || root.saved || root.web-view)) {
                 // Save, or Resume: the download picks up where it stopped.
                 root.save-clicked();
             } else {
@@ -750,6 +764,14 @@ component FileCard inherits Rectangle {
         width: 24px;
         text: "X";
         clicked => { root.delete-clicked(); }
+    }
+    if root.web-view: SmallOutlineButton {
+        x: root.width - 24px;
+        y: root.row-y;
+        width: 24px;
+        text: "\u{2193}";
+        accessible-label: "Save";
+        clicked => { root.save-clicked(); }
     }
     // A name cut short shows whole above its row while the pointer is on it.
     if name-hover.has-hover && name.preferred-width > name.width: Rectangle {
@@ -777,6 +799,7 @@ component FileGrid inherits Rectangle {
     in property <[FileInfo]> files;
     // Saved Files: every file is saved, opens and can go.
     in property <bool> browse-mode: false;
+    in property <bool> web: false;
     in property <length> card-width: 214.25px;
     in property <length> gap: 19px;
     in property <length> preview-height: 116px;
@@ -786,16 +809,26 @@ component FileGrid inherits Rectangle {
     callback pause(string);
     callback remove(string);
 
+    property <int> columns: 4;
+    // Only the rows in view, and the one coming into view, have cards: a
+    // folder of 12,789 files costs a screenful, and scrolling hands the same
+    // cards to the next files.
+    property <int> first-row: max(0, floor(-list.content-y / root.row-pitch));
+    property <int> rows-shown: ceil(root.height / root.row-pitch) + 1;
+    property <int> first: root.first-row * root.columns;
+
     list := Flickable {
         width: root.width;
         height: root.height;
-        content-height: max(self.height, Math.ceil(root.files.length / 4) * root.row-pitch);
+        content-height: max(self.height, Math.ceil(root.files.length / root.columns) * root.row-pitch);
 
-        for file[idx] in root.files: FileCard {
+        for slot in max(0, min(root.rows-shown * root.columns, root.files.length - root.first)): FileCard {
+            property <int> idx: root.first + slot;
+            property <FileInfo> file: root.files[self.idx];
             // Whole pixels as in her frame: 214, 215, 215, 214 wide.
-            property <float> left: mod(idx, 4) * (root.card-width + root.gap) / 1px;
+            property <float> left: mod(self.idx, root.columns) * (root.card-width + root.gap) / 1px;
             x: floor(self.left + 0.25) * 1px;
-            y: floor(idx / 4) * root.row-pitch;
+            y: floor(self.idx / root.columns) * root.row-pitch;
             width: ceil(self.left + root.card-width / 1px - 0.25) * 1px - self.x;
             preview-height: root.preview-height;
             filename: file.label;
@@ -803,12 +836,14 @@ component FileGrid inherits Rectangle {
             downloading: !root.browse-mode && file.downloading;
             progress: file.progress;
             saved: root.browse-mode || file.saved;
-            is-local: root.browse-mode || file.is-local;
+            is-local: (root.browse-mode && !root.web) || file.is-local;
             paused: !root.browse-mode && file.paused;
-            open-clicked => { root.open(file); }
-            save-clicked => { root.save(file.name); }
-            pause-clicked => { root.pause(file.name); }
-            delete-clicked => { root.remove(file.name); }
+            web: root.web;
+            viewable: file.viewable;
+            open-clicked => { root.open(self.file); }
+            save-clicked => { root.save(self.file.name); }
+            pause-clicked => { root.pause(self.file.name); }
+            delete-clicked => { root.remove(self.file.name); }
         }
     }
 }
@@ -915,6 +950,7 @@ component ConnectionLine inherits HorizontalLayout {
     in property <string> mode;
     in property <bool> funded;
     in property <string> credit;
+    in property <bool> offer-credit: true;
     callback buy;
 
     property <color> ink: root.state == "connected" || root.state == "" ? Theme.online
@@ -955,7 +991,7 @@ component ConnectionLine inherits HorizontalLayout {
             : root.mode;
     }
     // Relay credit: offer the buy page while unfunded, show balance when funded.
-    if root.mode == "bridge" && !root.funded: Chip {
+    if root.mode == "bridge" && !root.funded && root.offer-credit: Chip {
         y: (parent.height - self.height) / 2;
         ink: Theme.accent;
         clickable: true;
@@ -1039,6 +1075,23 @@ export component MainWindow inherits Window {
     in property<string> update_available: "";
     callback open_update_page();
     // FUSE mode toggle (can be changed before connecting)
+    // The browser build (KeibiDropWeb web/slint-ui) sets it: no Local mode,
+    // Teleport, auto-connect, log files or desktop settings there.
+    in property<bool> web: false;
+    // Its Settings rows: the save folder, notifications, relay and bridge.
+    in property<string> web_dest: "";         // folder name, "" = ask each time
+    in property<string> web_dest_action: "";  // Choose folder, Change, Reconnect; "" = no folder access
+    in property<string> web_dest_note: "";
+    in-out property<bool> web_notify: false;
+    in property<string> web_notify_note: "";
+    in-out property<string> web_relay: "";
+    in-out property<string> web_bridge: "";
+    callback web_dest_choose();
+    callback web_dest_forget();
+    callback web_notify_toggled(bool);
+    callback web_save_relay(string);
+    callback web_save_bridge(string);
+
     in-out property<bool> fuse_mode: false;
     in property<bool> fuse_available: false;
     in property<string> fuse_install_hint: "Install macFUSE: macfuse.github.io";
@@ -1147,7 +1200,20 @@ export component MainWindow inherits Window {
     in-out property<bool> menu_open: false;
     property<bool> can_save_peer: root.peer_is_persistent && !root.incognito_mode && !root.peer_already_saved;
     // Her order (Figma Screens 12 to 14): Disconnect first, Settings last.
-    property<[MenuEntry]> menu_entries: root.current_screen == 1 && root.can_save_peer
+    property<[MenuEntry]> menu_entries: root.web && root.current_screen == 1 && root.can_save_peer
+        ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
+           { id: "saveall", label: "Save all", a11y: "Save all" },
+           { id: "saved", label: "Saved files", a11y: "Saved files" },
+           { id: "savepeer", label: "Save contact", a11y: "Save contact" },
+           { id: "settings", label: "Settings", a11y: "Open settings" }]
+        : root.web && root.current_screen == 1
+        ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
+           { id: "saveall", label: "Save all", a11y: "Save all" },
+           { id: "saved", label: "Saved files", a11y: "Saved files" },
+           { id: "settings", label: "Settings", a11y: "Open settings" }]
+        : root.web
+        ? [{ id: "settings", label: "Settings", a11y: "Open settings" }]
+        : root.current_screen == 1 && root.can_save_peer
         ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
            { id: "saveall", label: "Save all", a11y: "Save all" },
            { id: "savepeer", label: "Save contact", a11y: "Save contact" },
@@ -1189,7 +1255,15 @@ export component MainWindow inherits Window {
 
     // Help card steps (Figma Screen 13 for the connect screen).
     // Plain words, the same ones the buttons and switches use.
-    property<[string]> help_steps: root.current_screen == 1
+    property<[string]> help_steps: root.web && root.current_screen == 1
+        ? ["Drag files or folders onto the window or click the +. Keep this tab open: your friend reads your files from it.",
+           "Open plays videos and music and shows PDFs and pictures without saving them. The arrow next to Open saves a copy.",
+           "Save all is in the ... menu. In Chrome and Edge, a save folder chosen in Settings takes every save without asking."]
+        : root.web
+        ? ["Press Copy and send your code to your friend, or press Invite link and send the link.",
+           "Paste the code your friend sent you, or open their invite link. You both press Connect.",
+           "Nothing to install: KeibiDrop runs in this tab. Drag files onto the window to send them once you are connected."]
+        : root.current_screen == 1
         ? ["Drag files onto the window or click the +. Your friend sees your files and can save them.",
            "Click Save to download one of their files, or Save all in the ... menu. Save contact keeps your friend in your contacts.",
            "Under the logo: LAN means same Wi-Fi, Direct P2P means straight to your friend, Via Relay means through our relay, still encrypted."]
@@ -1419,20 +1493,22 @@ export component MainWindow inherits Window {
                 spacing: 10px;
                 alignment: start;
                 PillButton { text: "Retry"; clicked => { root.engine_retry(); } }
-                PillButton { text: "Quit"; clicked => { root.engine_quit(); } }
+                if !root.web: PillButton { text: "Quit"; clicked => { root.engine_quit(); } }
             }
         }
 
         // Right column: identity and network switches, Connect, virtual folder.
+        // The browser has this one switch: it ends where the desktop's last
+        // one ends, the same gap above Connect.
         if root.room_action == 0 && !root.local_mode: ToggleRow {
             x: 868px;
-            y: 410px;
+            y: root.web ? 492px : 410px;
             width: 230px;
             text: "Incognito";
             checked <=> root.incognito_mode;
             toggled(v) => { root.incognito-mode-toggled(v); }
         }
-        if root.room_action == 0: ToggleRow {
+        if root.room_action == 0 && !root.web: ToggleRow {
             x: 868px;
             y: 447px;
             width: 230px;
@@ -1490,7 +1566,7 @@ export component MainWindow inherits Window {
 
         // Teleport switch (FUSE): Medium first line, Light wrapped detail (Figma
         // 8px). Off, it names her mode: Direct transfer.
-        if root.room_action == 0: Rectangle {
+        if root.room_action == 0 && !root.web: Rectangle {
             x: 868px;
             y: 482px;
             width: 230px;
@@ -1602,6 +1678,7 @@ export component MainWindow inherits Window {
             width: 517px;
             height: 77px;
             contacts: root.contacts;
+            web: root.web;
             connect(i) => { root.connect-to-contact(i); }
             auto(i) => { root.toggle_auto_connect(i); }
             remove(i) => { root.remove-contact(i); }
@@ -1653,6 +1730,7 @@ export component MainWindow inherits Window {
             mode: root.connection_mode;
             funded: root.tokens_funded;
             credit: root.tokens_credit_short;
+            offer-credit: !root.web;
             buy => { root.tokens_buy(); }
         }
 
@@ -1679,6 +1757,7 @@ export component MainWindow inherits Window {
             width: Theme.box-width;
             height: parent.height - self.y;
             files: root.file_list;
+            web: root.web;
             open(file) => {
                 if (file.file-type == "folder") {
                     root.navigate_folder(file.name);
@@ -1888,6 +1967,7 @@ export component MainWindow inherits Window {
             height: parent.height - self.y;
             files: root.saved_file_list;
             browse-mode: true;
+            web: root.web;
             open(file) => {
                 if (file.file-type == "folder") {
                     root.navigate_saved_folder(file.name);
@@ -1997,7 +2077,7 @@ export component MainWindow inherits Window {
     }
 
     // Settings. Fits the window and scrolls when short.
-    if root.settings_visible: settings := Overlay {
+    if root.settings_visible && !root.web: settings := Overlay {
         visible: !root.capturing;
         card-width: 500px;
         card-height: min(700px, root.height - 24px);
@@ -2201,13 +2281,98 @@ export component MainWindow inherits Window {
         }
     }
 
+    // Settings in the browser: where saves go, notifications, the servers.
+    if root.settings_visible && root.web: web-settings := Overlay {
+        visible: !root.capturing;
+        card-width: 500px;
+        card-height: 408px;
+        card-x: (root.width - 500px) / 2;
+        card-y: (root.height - self.card-height) / 2;
+        dismiss => { root.settings_visible = false; }
+
+        Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Settings"; }
+
+        Label { x: 20px; y: 56px; height: 14px; style: Theme.small; color: Theme.muted; text: "Save folder"; }
+        Label { x: 20px; y: 72px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; overflow: elide; text: root.web_dest != "" ? root.web_dest : "Ask each time"; }
+        HorizontalLayout {
+            x: 20px;
+            y: 96px;
+            height: 24px;
+            spacing: 10px;
+            alignment: start;
+            if root.web_dest_action != "": SmallOutlineButton {
+                text: root.web_dest_action;
+                clicked => { root.web_dest_choose(); }
+            }
+            if root.web_dest != "": SmallOutlineButton {
+                text: "Forget";
+                clicked => { root.web_dest_forget(); }
+            }
+        }
+        Label { x: 20px; y: 128px; width: 460px; wrap: word-wrap; vertical-alignment: top; style: Theme.small; color: Theme.faint; text: root.web_dest_note; }
+
+        ToggleRow {
+            x: 20px;
+            y: 170px;
+            width: 460px;
+            text: "Tell me when a transfer ends while this tab is in the background";
+            checked <=> root.web_notify;
+            toggled(v) => { root.web_notify_toggled(v); }
+        }
+        Label { x: 68px; y: 196px; width: 412px; height: 12px; style: Theme.small; color: Theme.faint; text: root.web_notify_note; }
+
+        Label { x: 20px; y: 222px; height: 14px; style: Theme.small; color: Theme.muted; text: "Relay server (empty: the built-in one)"; }
+        relay-field := Field {
+            x: 20px;
+            y: 240px;
+            width: 460px;
+            button-width: 90px;
+            text <=> root.web_relay;
+            accepted => { root.web_save_relay(self.text); }
+            FieldAction {
+                width: relay-field.button-width;
+                height: Theme.control;
+                text: "Save";
+                clicked => { root.web_save_relay(relay-field.text); }
+            }
+        }
+        Label { x: 20px; y: 288px; height: 14px; style: Theme.small; color: Theme.muted; text: "Bridge server (empty: the built-in one)"; }
+        bridge-field := Field {
+            x: 20px;
+            y: 306px;
+            width: 460px;
+            button-width: 90px;
+            text <=> root.web_bridge;
+            accepted => { root.web_save_bridge(self.text); }
+            FieldAction {
+                width: bridge-field.button-width;
+                height: Theme.control;
+                text: "Save";
+                clicked => { root.web_save_bridge(bridge-field.text); }
+            }
+        }
+
+        Label { x: 20px; y: 356px; height: 14px; style: Theme.small; color: Theme.muted; text: "Version"; }
+        Label { x: 20px; y: 372px; height: 16px; style: Theme.label; color: Theme.text-soft; text: root.version_text; }
+
+        SmallOutlineButton {
+            x: web-settings.card-width - 36px;
+            y: 8px;
+            width: 24px;
+            text: "X";
+            clicked => { root.settings_visible = false; }
+        }
+    }
+
     // Feedback: stars and a message to the KeibiDrop inbox, no mail app needed
     if root.feedback_visible: feedback := Overlay {
+        // The browser has no log files: no Include logs, the rest moves up.
+        property <length> logs-row: root.web ? 0 : 28px;
         visible: !root.capturing;
         card-width: 460px;
-        card-height: 430px;
-        card-x: (root.width - 460px) / 2;
-        card-y: (root.height - 430px) / 2;
+        card-height: 402px + self.logs-row;
+        card-x: (root.width - self.card-width) / 2;
+        card-y: (root.height - self.card-height) / 2;
         dismiss => { root.feedback_visible = false; }
 
         SmallOutlineButton {
@@ -2272,7 +2437,7 @@ export component MainWindow inherits Window {
         }
 
         // Off by default: logs go only when the person asks.
-        ToggleRow {
+        if !root.web: ToggleRow {
             x: 20px;
             y: 294px;
             width: feedback.card-width - 40px;
@@ -2282,7 +2447,7 @@ export component MainWindow inherits Window {
 
         Label {
             x: 20px;
-            y: 322px;
+            y: 294px + feedback.logs-row;
             width: feedback.card-width - 40px;
             wrap: word-wrap;
             vertical-alignment: top;
@@ -2295,7 +2460,7 @@ export component MainWindow inherits Window {
 
         PillButton {
             x: 20px;
-            y: 366px;
+            y: 338px + feedback.logs-row;
             width: 120px;
             text: root.feedback_sending ? "Sending..." : "Send";
             enabled: !root.feedback_sending && root.feedback_message != "";
@@ -2304,7 +2469,7 @@ export component MainWindow inherits Window {
 
         SmallOutlineButton {
             x: 152px;
-            y: 371px;
+            y: 343px + feedback.logs-row;
             text: "Cancel";
             clicked => { root.feedback_visible = false; }
         }

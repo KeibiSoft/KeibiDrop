@@ -1,6 +1,6 @@
 //go:build !android
 
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 
 // A peer's EDIT_FILE that makes the file smaller left the old bytes past the

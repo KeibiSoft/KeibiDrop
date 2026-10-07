@@ -10,9 +10,9 @@ All commits must be:
 
 By submitting a signed-off commit, you confirm:
 - You have the right to submit the code
-- You agree to license your contribution under MPL 2.0
+- You agree to license your contribution under AGPL-3.0
 - If your contribution modifies KeibiSoft-authored files or code, you allow KeibiSoft SRL to dual-license that contribution (including under a commercial license)
-- If your contribution is a separate self-contained module, you keep full copyright and can license it however you want (as long as it's MPL 2.0 compatible). We will not dual-license it without your explicit permission
+- If your contribution is a separate self-contained module, you keep full copyright and can license it however you want (as long as it's AGPL-3.0 compatible). We will not dual-license it without your explicit permission
 
 If you don't want to grant dual-licensing rights, write a self-contained module instead of modifying core files.
 
@@ -38,7 +38,7 @@ Unsigned or non-signed-off commits will be rejected.
 
 ## License
 
-**KEIBI**DROP is licensed under [Mozilla Public License 2.0](./LICENSE).
+**KEIBI**DROP is licensed under the [GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0-only). See [LICENSING.md](./LICENSING.md).
 
 ## Questions?
 

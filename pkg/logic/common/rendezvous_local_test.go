@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // This file drives the creator's real rendezvous round and the real local-mode key
 // exchange the way two peers on one LAN run them, and pins what broke on

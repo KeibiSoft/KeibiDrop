@@ -167,6 +167,7 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
                     paused: false,
                     file_type: slint::SharedString::from("folder"),
                     is_local: true,
+                    viewable: false,
                 });
             }
             continue;
@@ -188,6 +189,7 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
             paused: false,
             file_type: slint::SharedString::from(ftype),
             is_local: true,
+            viewable: false,
         });
     }
 
@@ -367,6 +369,7 @@ fn start_file_watcher(
                                 paused: false,
                                 file_type: slint::SharedString::from("folder"),
                                 is_local: false,
+                                viewable: false,
                             });
                         }
                         continue;
@@ -422,6 +425,7 @@ fn start_file_watcher(
                         paused,
                         file_type: slint::SharedString::from(ftype),
                         is_local: false,
+                        viewable: false,
                     });
                 }
 
@@ -462,6 +466,7 @@ fn start_file_watcher(
                                     paused: false,
                                     file_type: slint::SharedString::from("folder"),
                                     is_local: true,
+                                    viewable: false,
                                 });
                             }
                         }
@@ -486,6 +491,7 @@ fn start_file_watcher(
                         paused: false,
                         file_type: slint::SharedString::from(ftype),
                         is_local: true,
+                        viewable: false,
                     });
                 }
 
@@ -2487,7 +2493,7 @@ fn main() {
             let c_name = CString::new(name_str.clone()).unwrap();
             let res = bindings::KD_SaveCurrentPeerAsContact(c_name.as_ptr() as *mut i8);
             if res == 0 {
-                // The engine arms auto-connect for a first saved contact (BUGS 10).
+                // Auto-connect is the contacts panel's switch; saving leaves it as it was.
                 let auto = config_auto_connect_peer();
                 let saved_msg = if auto.eq_ignore_ascii_case(&name_str) {
                     format!("Saved as '{}'. Reconnects to {} on its own.", name_str, name_str)

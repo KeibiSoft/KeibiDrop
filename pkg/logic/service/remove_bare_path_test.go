@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // ABOUTME: A REMOVE_FILE from a web or no-FUSE peer carries a bare name; the FUSE maps key
 // ABOUTME: by "/", so the remove must still clear the entry and the cache file.

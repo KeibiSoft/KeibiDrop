@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // This file tests on-demand read-ahead: one 16 MiB fetch per block, singleflight
 // coalescing of concurrent readers, and byte integrity across block boundaries.

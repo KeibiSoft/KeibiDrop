@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 
 // ABOUTME: Windows stubs: CPU via GetProcessTimes; GSO/GRO/batch/per-socket CC

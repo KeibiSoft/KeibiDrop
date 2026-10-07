@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // A contact saved a moment ago shows online on the other side at once: the
 // save posts presence instead of leaving it to the next heartbeat tick, which

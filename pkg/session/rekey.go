@@ -1,10 +1,7 @@
 // ABOUTME: Per-direction rekey KDF helpers (X25519 + ML-KEM seed encapsulation then DeriveKey).
 // ABOUTME: Retained ONLY as a key-derivation unit for tests; MUST NOT be wired to a live SecureConn (an in-band key swap has no on-wire epoch and reuses nonces). The Rekey RPC now carries the ephemeral entropy fold; rotate keys via the ratchet or a full re-handshake.
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package session
 

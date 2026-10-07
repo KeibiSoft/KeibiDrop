@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // ABOUTME: Regression test: a Read on a handle the map no longer holds (ClearFiles ran on a
 // ABOUTME: disconnect while an app kept its fd) must take the cache fallback, not panic to EIO.

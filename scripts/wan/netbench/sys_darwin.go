@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 
 // ABOUTME: Darwin stubs: CPU times work; GSO/GRO/per-socket CC do not exist here

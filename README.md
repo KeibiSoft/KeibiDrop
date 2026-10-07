@@ -25,7 +25,7 @@ Another computer's files show up as a folder on yours. Open and edit them in you
 - End-to-end encrypted (post-quantum). No cloud, and the relay never reads your files.
 - Same network: one click. Over the internet: swap a code once, then save the contact.
 - Their files become a real folder on your machine. Open, edit, `git clone`, anything.
-- macOS, Linux, Windows, Android. iOS coming soon. Open source engine (MPL-2.0).
+- macOS, Linux, Windows, Android. iOS coming soon. Open source (AGPL-3.0).
 
 **Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop-0.4.8-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop-0.4.8-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop_0.4.8_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html)
 
@@ -206,9 +206,9 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-Go engine, CLI, and mobile bindings: [Mozilla Public License 2.0](./LICENSE) (per-file copyleft)
+From version 0.5.0 the engine, CLI, mobile bindings and desktop UI are licensed under the [GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0-only). A closed-source product that embeds or links them needs a commercial license.
 
-Rust UI, mobile apps, and brand assets: Proprietary - see [LICENSING.md](./LICENSING.md)
+Mobile apps and brand assets: Proprietary - see [LICENSING.md](./LICENSING.md)
 
 Desktop UI built with [Slint](https://slint.dev)
 

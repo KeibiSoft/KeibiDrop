@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // The native gRPC servers ping an idle client: a browser peer sends no client
 // pings and a bridge reaps a silent leg. The test counts the HTTP/2 PING

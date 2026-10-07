@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // ABOUTME: A file manager's trash folder on the mount is refused with EPERM, so
 // ABOUTME: Finder offers "delete immediately" and no trash move reaches the peer.

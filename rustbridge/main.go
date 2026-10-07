@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package main
 
@@ -1325,18 +1322,9 @@ func KD_SaveCurrentPeerAsContact(name *C.char) C.int {
 		setLastError(err)
 		return -1
 	}
-	// The first saved contact becomes the connect-on-start peer (BUGS 10): a
-	// laptop that paired with an always-on box comes back on its own after the
-	// box restarts. An existing choice is kept; the contacts panel changes it.
-	if cfg, err := config.Load(); err == nil && cfg.AutoConnectPeer == "" {
-		cfg.AutoConnectPeer = n
-		if err := config.Save(cfg); err == nil {
-			kd.AutoConnectPeer = n
-			if kdCtx != nil && !kd.AutoConnectArmed() {
-				_ = kd.StartAutoConnect(kdCtx)
-			}
-		}
-	}
+	// Auto-connect stays off until the person switches it on in the contacts
+	// panel: arming it on the first save left the app redialling a friend who
+	// had disconnected on purpose. The kd CLI keeps arming it for a headless box.
 	return 0
 }
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // When both sides connect at once, the joiner's first relay fetch lands before
 // the creator has registered. A one-second sleep before the second fetch was

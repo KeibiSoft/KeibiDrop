@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // This file tests that a real initdb run on a FUSE mount syncs every file it
 // leaves on disk to the peer (no live file lost to a transient REMOVE).

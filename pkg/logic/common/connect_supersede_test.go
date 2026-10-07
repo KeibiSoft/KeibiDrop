@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // A connect while the daemon still runs a session with no link (its reconnect
 // retrying, waiting for the peer, or given up) ends that session and runs,

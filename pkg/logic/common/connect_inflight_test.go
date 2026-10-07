@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // A second CreateRoom, JoinRoom or Connect while one is in flight is refused
 // and opens nothing. Seen 2026-09-16 on 0.4.8: auto-connect had the creator's

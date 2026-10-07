@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // ABOUTME: Tests the local-connect role decider gives two peers opposite create/join
 // ABOUTME: roles, including the equal-name collision where the address breaks the tie.

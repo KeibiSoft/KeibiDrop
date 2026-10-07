@@ -1,57 +1,51 @@
 # Licensing
 
-## Go Engine, CLI, Mobile Bindings - MPL-2.0 (Open Source)
+## KeibiDrop - AGPL-3.0 (from version 0.5.0)
 
-Go source code files (`pkg/`, `cmd/`, `mobile/`, `tests/`, `keibidrop.proto`) are licensed under the [Mozilla Public License 2.0](LICENSE) on a **per-file** basis.
+All source code in this repository is licensed under the [GNU Affero General Public License, version 3 only](LICENSE) (SPDX: `AGPL-3.0-only`): the Go engine, CLI and mobile bindings (`pkg/`, `cmd/`, `mobile/`, `internal/`, `tests/`, `keibidrop.proto`), the desktop UI (`rust/`), its FFI bridge (`rustbridge/`) and the scripts.
 
-MPL-2.0 is a file-level copyleft: you may freely use, modify, and distribute each MPL-2.0 licensed file, but modifications to those specific files must remain under MPL-2.0. You may combine MPL-2.0 files with code under other licenses (including proprietary) in the same project.
+You may use, study, change and share **KEIBI**DROP under the AGPL-3.0. If you distribute it, or software that includes or links it, you must offer the complete source of the whole work under the AGPL-3.0. If you run a modified version for people who use it over a network, you must offer them its source too.
 
-## Rust UI and FFI Bridge - Proprietary
+Releases up to 0.4.x were published under the Mozilla Public License 2.0 (the Go engine) and a proprietary license (the desktop UI). Those releases keep the licenses they were published under.
 
-The Rust UI (`rust/`) and FFI bridge (`rustbridge/`) are **proprietary software** owned by **KEIBI**SOFT SRL. Source is provided for transparency only. See `rust/LICENSE` for terms.
+## Commercial License
 
-The [Slint](https://slint.dev) UI framework is used under the **Slint Royalty-Free Desktop, Mobile, and Web Applications License** - not GPLv3. Attribution to Slint is provided in the application.
+A product that cannot meet the AGPL-3.0, such as a closed-source application that embeds or links the **KEIBI**DROP engine, needs a commercial license from **KEIBI**SOFT SRL. Contact marius@keibisoft.com.
+
+## Slint
+
+The desktop UI is built with [Slint](https://slint.dev), which is offered under GPL-3.0, a royalty-free license and a commercial license. In this AGPL-3.0 source, Slint is used under GPL-3.0; section 13 of both licenses allows the two to be combined. **KEIBI**SOFT's own builds use the Slint Royalty-Free Desktop, Mobile, and Web Applications License, with the attribution to Slint shown in the application.
 
 ## Android and iOS Apps - Proprietary
 
-The **KEIBI**DROP mobile apps are **proprietary software** owned by **KEIBI**SOFT SRL, distributed as binaries through our F-Droid repository and the app stores. They embed the MPL-2.0 Go engine through the mobile bindings above; that does not place the apps themselves under MPL-2.0.
+The **KEIBI**DROP mobile apps are **proprietary software** owned by **KEIBI**SOFT SRL, distributed as binaries through our F-Droid repository and the app stores. They embed the Go engine under **KEIBI**SOFT's own rights to that code; the AGPL-3.0 grant above does not place the apps under the AGPL-3.0.
 
-## Brand Assets - Proprietary, All Rights Reserved
+## Name and Logo
 
-**The following are the exclusive property of **KEIBI**SOFT SRL and are NOT covered by any open source license:**
+The names **KEIBI**DROP and **KEIBI**SOFT, the **KEIBI**DROP logo, logotype, K icon, app icons and the visual design assets in `design/` and `assets/icons/` belong to **KEIBI**SOFT SRL. The AGPL-3.0 grants no rights to them.
 
-- The name **KEIBI**DROP and **KEIBI**SOFT
-- The **KEIBI**DROP logo, logotype, K icon, and all app icons
-- Visual design assets in `design/` and `assets/icons/`
+You may:
+- Share unmodified copies of an official **KEIBI**DROP release under its name and logo, for example as a package in a Linux distribution or a mirror.
+- Say in plain text that your project is "based on **KEIBI**DROP" or "a fork of **KEIBI**DROP", together with the sentence "Not made by or affiliated with **KEIBI**SOFT SRL."
 
-**You are NOT permitted to:**
-- Use the **KEIBI**DROP or **KEIBI**SOFT name for any product, service, or project
-- Use, reproduce, or distribute the **KEIBI**DROP logo, icons, or brand assets
-- Represent any derivative work as affiliated with or endorsed by **KEIBI**SOFT SRL
+You may not:
+- Use **KEIBI**DROP or **KEIBI**SOFT, or a name that can be mistaken for them, as the name of a modified version, product or service.
+- Use the **KEIBI**DROP logo or icons on a modified version.
+- Suggest that **KEIBI**SOFT SRL made, reviewed or endorses your version.
 
 **© 2024-2026 **KEIBI**SOFT SRL. All rights reserved.**
 
-## Personal Use and Community Edition
-
-You are free to use **KEIBI**DROP, including the Rust UI, for personal and non-commercial purposes as part of the Community Edition.
-
 ## If You Fork This Project
 
-You may fork and modify the code for personal use. If you distribute a fork, you **must**:
-1. Remove all **KEIBI**DROP and **KEIBI**SOFT branding (name, logos, icons, splash screens)
-2. Choose a different name and create your own visual identity
-3. Remove or replace the Rust UI and FFI bridge, which are not licensed for redistribution
-4. Comply with MPL-2.0 for the Go source code
-
-You may NOT distribute any fork or derivative work under the **KEIBI**DROP or **KEIBI**SOFT name.
-
-## Dual Licensing
-
-**KEIBI**SOFT SRL reserves the right to offer the MPL-2.0 licensed code under alternative commercial licenses. This enables enterprise customers to use **KEIBI**DROP without MPL-2.0 obligations.
+You may fork, modify and distribute the code under the AGPL-3.0. A modified version that you distribute, or run for others over a network, must:
+1. Stay under the AGPL-3.0 and offer its complete source to everyone who receives or uses it
+2. Say that it is modified, and when, as section 5 of the AGPL-3.0 requires
+3. Carry its own name and visual identity, not the **KEIBI**DROP name, logo or icons
+4. If it mentions **KEIBI**DROP, do so as "Based on **KEIBI**DROP. Not made by or affiliated with **KEIBI**SOFT SRL." where people see its name: the about screen, the README and the download page
 
 ## Contributions
 
-By contributing to this project, you agree to the [Developer Certificate of Origin](DCO.txt) and grant **KEIBI**SOFT SRL the right to dual-license your contributions under both MPL-2.0 and any commercial license offered by **KEIBI**SOFT SRL.
+By contributing to this project, you agree to the [Developer Certificate of Origin](DCO.txt), license your contribution under the AGPL-3.0, and grant **KEIBI**SOFT SRL the right to also license it under commercial licenses.
 
 ## Contact
 
