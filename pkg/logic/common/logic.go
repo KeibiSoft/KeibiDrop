@@ -217,7 +217,10 @@ type LocalAs struct {
 // again, with the rest, and ends the call.
 func (kd *KeibiDrop) AddFilesAs(items []LocalAs) (int, error) {
 	logger := kd.logger.With("method", "add-files-as")
-	if kd.rpcSession() == nil {
+	// The share belongs to this session's friend: it stops if the session
+	// changes, and it is kept under their name only.
+	sess := kd.rpcSession()
+	if sess == nil {
 		return 0, ErrInvalidSession
 	}
 	files := make([]*synctracker.File, 0, len(items))
@@ -243,11 +246,14 @@ func (kd *KeibiDrop) AddFilesAs(items []LocalAs) (int, error) {
 	announced := 0
 	for start, seq := 0, uint64(1); start < len(reqs); start, seq = start+announceBatchSize, seq+1 {
 		end := min(start+announceBatchSize, len(reqs))
-		_, err := kd.sendAnnounceBatch(ctx, logger, &bindings.BatchNotifyRequest{
-			Notifications: reqs[start:end],
-			Seq:           seq,
-			Timestamp:     uint64(time.Now().UnixNano()),
-		})
+		err := error(ErrInvalidSession)
+		if kd.rpcSession() == sess {
+			_, err = kd.sendAnnounceBatch(ctx, logger, &bindings.BatchNotifyRequest{
+				Notifications: reqs[start:end],
+				Seq:           seq,
+				Timestamp:     uint64(time.Now().UnixNano()),
+			})
+		}
 		if err != nil {
 			kd.SyncTracker.LocalFilesMu.Lock()
 			for _, f := range files[start:] {
@@ -256,11 +262,15 @@ func (kd *KeibiDrop) AddFilesAs(items []LocalAs) (int, error) {
 				}
 			}
 			kd.SyncTracker.LocalFilesMu.Unlock()
+			kd.persistSharedFilesFor(sess, files[:start])
 			logger.Error("Failed to share files", "announced", announced, "of", len(reqs), "error", err)
 			return announced, err
 		}
 		announced = end
 	}
+	// Kept for this friend as AddFileAs keeps each file, in one write: a new
+	// session with them restores the shares from it (resilience.go).
+	kd.persistSharedFilesFor(sess, files)
 	logger.Info("Shared files", "count", announced, "skipped", skipped)
 	return announced, nil
 }

@@ -701,7 +701,7 @@ component FileCard inherits Rectangle {
             fill: transparent;
         }
     }
-    Label {
+    name := Label {
         x: 34px;
         y: root.row-y;
         width: action.x - 6px - self.x;
@@ -709,6 +709,12 @@ component FileCard inherits Rectangle {
         style: Theme.badge;
         overflow: elide;
         text: root.filename;
+    }
+    name-hover := TouchArea {
+        x: name.x;
+        y: name.y;
+        width: name.width;
+        height: name.height;
     }
     // Her action is 110px wide; with X the two share those 110px.
     action := OutlineButton {
@@ -744,6 +750,24 @@ component FileCard inherits Rectangle {
         width: 24px;
         text: "X";
         clicked => { root.delete-clicked(); }
+    }
+    // A name cut short shows whole above its row while the pointer is on it.
+    if name-hover.has-hover && name.preferred-width > name.width: Rectangle {
+        x: 0;
+        y: root.row-y - 8px - self.height;
+        width: root.width;
+        height: full.preferred-height + 12px;
+        border-radius: Theme.radius;
+        background: Theme.card;
+
+        full := Label {
+            x: 10px;
+            y: 6px;
+            width: parent.width - 20px;
+            style: Theme.badge;
+            wrap: word-wrap;
+            text: root.filename;
+        }
     }
 }
 

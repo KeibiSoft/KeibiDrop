@@ -4,11 +4,15 @@
 package common
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
+	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 )
 
 // A dropped folder goes out in BatchNotify batches, not one Notify per file
@@ -71,6 +75,7 @@ func TestAddFilesAs_FailedBatchUntracksTheRest(t *testing.T) {
 		items = append(items, LocalAs{Local: local, Remote: filepath.Base(local)})
 	}
 	kd, cli := newScanTestKD(t, t.TempDir())
+	withSharedStore(t, kd)
 	cli.mu.Lock()
 	cli.failNext = 1 << 30
 	cli.mu.Unlock()
@@ -81,6 +86,93 @@ func TestAddFilesAs_FailedBatchUntracksTheRest(t *testing.T) {
 	kd.SyncTracker.LocalFilesMu.RLock()
 	require.Empty(t, kd.SyncTracker.LocalFiles)
 	kd.SyncTracker.LocalFilesMu.RUnlock()
+	require.Empty(t, kd.sharedStore.Load(), "kept a share the friend never got")
+}
+
+// What a batch share sends is kept for this friend, as a single share is: the
+// next session with them restores it (resilience.go). Without it a dropped
+// folder was gone on both sides after a reconnect.
+func TestAddFilesAs_KeepsTheSharesForTheNextSession(t *testing.T) {
+	dir := t.TempDir()
+	items := []LocalAs{}
+	for i := 0; i < 3; i++ {
+		local := filepath.Join(dir, fmt.Sprintf("f%d.txt", i))
+		writeFile(t, local, []byte("x"))
+		items = append(items, LocalAs{Local: local, Remote: "drop/" + filepath.Base(local)})
+	}
+	kd, _ := newScanTestKD(t, t.TempDir())
+	withSharedStore(t, kd)
+
+	n, err := kd.AddFilesAs(items)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+	rels := []string{}
+	for _, e := range kd.sharedStore.Load() {
+		rels = append(rels, e.Rel)
+	}
+	require.ElementsMatch(t, []string{"drop/f0.txt", "drop/f1.txt", "drop/f2.txt"}, rels)
+}
+
+// A share stops when the session changes, maybe to another friend: the rest
+// never goes to them, and what went out is kept for the first friend only.
+func TestAddFilesAs_StopsWhenTheSessionChanges(t *testing.T) {
+	dir := t.TempDir()
+	count := announceBatchSize + 1
+	items := make([]LocalAs, 0, count)
+	for i := 0; i < count; i++ {
+		local := filepath.Join(dir, fmt.Sprintf("f%04d.txt", i))
+		writeFile(t, local, []byte("x"))
+		items = append(items, LocalAs{Local: local, Remote: fmt.Sprintf("drop/f%04d.txt", i)})
+	}
+	kd, cli := newScanTestKD(t, t.TempDir())
+	withSharedStore(t, kd)
+	first := kd.session
+	cli.onSend = func() {
+		kd.mu.Lock()
+		kd.session = &session.Session{GRPCClient: cli, ExpectedPeerFingerprint: "other-peer"}
+		kd.mu.Unlock()
+	}
+
+	n, err := kd.AddFilesAs(items)
+	require.Error(t, err)
+	require.Equal(t, announceBatchSize, n)
+	require.Equal(t, 1, cli.batchCount(), "the rest went out on the new session")
+	entries := kd.sharedStore.Load()
+	require.Len(t, entries, announceBatchSize)
+	firstTag := kd.dlRegistry.peerTag(first.ExpectedPeerFingerprint, kd.registryKey)
+	for _, e := range entries {
+		require.Equal(t, firstTag, e.PeerTag)
+	}
+}
+
+// Restored shares go back to the friend in batches, not one Notify each.
+func TestNotifyRestoredFiles_Batches(t *testing.T) {
+	dir := t.TempDir()
+	kd, cli := newScanTestKD(t, t.TempDir())
+	kd.KDClient = cli
+	kd.ctx = context.Background()
+	count := announceBatchSize + 3
+	kd.SyncTracker.LocalFilesMu.Lock()
+	for i := 0; i < count; i++ {
+		local := filepath.Join(dir, fmt.Sprintf("f%04d.txt", i))
+		writeFile(t, local, []byte("x"))
+		rel := fmt.Sprintf("drop/f%04d.txt", i)
+		kd.SyncTracker.LocalFiles[rel] = &synctracker.File{Name: filepath.Base(rel), RelativePath: rel, RealPathOfFile: local}
+	}
+	kd.SyncTracker.LocalFilesMu.Unlock()
+
+	kd.notifyRestoredFiles(kd.logger)
+	require.Equal(t, 2, cli.batchCount())
+	require.Zero(t, cli.singles, "a file went out on its own")
+	require.Len(t, cli.paths(), count)
+}
+
+func withSharedStore(t *testing.T, kd *KeibiDrop) {
+	t.Helper()
+	key := make([]byte, 32)
+	kd.registryKey = key
+	kd.dlRegistry = newDownloadRegistry(t.TempDir(), key)
+	kd.sharedStore = newSharedFilesStore(t.TempDir(), key)
 }
 
 // A file that vanished between the walk and the share is skipped, not fatal.

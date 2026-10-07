@@ -547,10 +547,8 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 	}
 	kd.SyncTracker.LocalFilesMu.RUnlock()
 
+	reqs := make([]*bindings.NotifyRequest, 0, len(files))
 	for _, file := range files {
-		if ctx.Err() != nil {
-			return
-		}
 		info, err := os.Stat(filepath.Clean(file.RealPathOfFile))
 		if err != nil {
 			continue
@@ -558,7 +556,7 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 		atime, btime := statTimes(info)
 		// Base = our last announce watermark, not the disk mtime: an offline
 		// edit above it becomes provable and is preserved, not overwritten.
-		_, _ = client.Notify(ctx, &bindings.NotifyRequest{
+		reqs = append(reqs, &bindings.NotifyRequest{
 			Type:        bindings.NotifyType(types.AddFile),
 			Path:        file.RelativePath,
 			BaseMtimeNs: int64(file.LastEditTime),
@@ -571,8 +569,24 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 				BirthTime:        btime,
 			},
 		})
-		logger.Info("Re-notified peer about restored file", "path", file.RelativePath)
 	}
+	// In BatchNotify batches, as a share goes out: one Notify and one log
+	// line per file took 12,789 of each for a restored folder.
+	sent := 0
+	for start, seq := 0, uint64(1); start < len(reqs); start, seq = start+announceBatchSize, seq+1 {
+		end := min(start+announceBatchSize, len(reqs))
+		_, err := kd.sendAnnounceBatch(ctx, logger, &bindings.BatchNotifyRequest{
+			Notifications: reqs[start:end],
+			Seq:           seq,
+			Timestamp:     uint64(time.Now().UnixNano()),
+		})
+		if err != nil {
+			logger.Warn("Re-notifying peer about restored files stopped", "sent", sent, "of", len(reqs), "error", err)
+			return
+		}
+		sent = end
+	}
+	logger.Info("Re-notified peer about restored files", "count", sent)
 }
 
 // resumePartialDownloads finds this peer's bitmaps in the registry and resumes them.

@@ -16,6 +16,7 @@ import (
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/winfsp/cgofuse/fuse"
@@ -244,13 +245,16 @@ func (kd *KeibiDrop) sendAnnounceBatch(ctx context.Context, logger *slog.Logger,
 // A per-file persist rewrites the encrypted store once per file, quadratic on
 // large folders.
 func (kd *KeibiDrop) persistSharedFilesBatch(files []*synctracker.File) {
-	if len(files) == 0 || kd.sharedStore == nil || kd.dlRegistry == nil {
-		return
-	}
 	kd.mu.Lock()
 	sess := kd.session
 	kd.mu.Unlock()
-	if sess == nil {
+	kd.persistSharedFilesFor(sess, files)
+}
+
+// persistSharedFilesFor keeps the files for the friend of sess only: a
+// session with another friend never restores them.
+func (kd *KeibiDrop) persistSharedFilesFor(sess *session.Session, files []*synctracker.File) {
+	if len(files) == 0 || sess == nil || kd.sharedStore == nil || kd.dlRegistry == nil {
 		return
 	}
 	tag := kd.dlRegistry.peerTag(sess.ExpectedPeerFingerprint, kd.registryKey)
