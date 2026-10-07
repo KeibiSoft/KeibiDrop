@@ -69,3 +69,36 @@ func TestPruneStaleLocalFiles_AllDeleted(t *testing.T) {
 
 	require.Len(t, st.LocalFiles, 0, "all stale files should be pruned")
 }
+
+// The count moves with every write and every new tracker, never with a
+// read: the app's file list polls it without a lock.
+func TestListWritesFollowsWritesAndNewTrackers(t *testing.T) {
+	st := NewSyncTracker()
+	w0 := ListWrites()
+
+	st.LocalFilesMu.RLock()
+	st.LocalFilesMu.RUnlock()
+	if ListWrites() != w0 {
+		t.Fatal("a read moved the count")
+	}
+
+	st.RemoteFilesMu.Lock()
+	st.RemoteFiles["a"] = &File{Name: "a"}
+	st.RemoteFilesMu.Unlock()
+	w1 := ListWrites()
+	if w1 <= w0 {
+		t.Fatal("a remote write did not move the count")
+	}
+
+	st.LocalFilesMu.Lock()
+	st.LocalFilesMu.Unlock()
+	if ListWrites() <= w1 {
+		t.Fatal("a local write did not move the count")
+	}
+
+	w2 := ListWrites()
+	NewSyncTracker()
+	if ListWrites() <= w2 {
+		t.Fatal("a new tracker did not move the count")
+	}
+}

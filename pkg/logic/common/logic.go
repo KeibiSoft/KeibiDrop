@@ -176,20 +176,105 @@ func (kd *KeibiDrop) UnshareFile(name string) error {
 }
 
 // AddFileAs adds a file with a custom remote name (preserving folder structure).
-// Automatically sends ADD_DIR for any parent directories the peer may not have.
+// The peer creates any parent folders itself.
 func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 	logger := kd.logger.With("method", "add-file-as")
 	if kd.rpcSession() == nil {
 		return ErrInvalidSession
 	}
-
-	cleanPath := filepath.Clean(localPath)
-	finfo, err := os.Stat(cleanPath)
+	file, req, err := addFileRecord(localPath, remoteName)
 	if err != nil {
 		return err
 	}
+
+	kd.SyncTracker.LocalFilesMu.Lock()
+	kd.SyncTracker.LocalFiles[remoteName] = file
+	kd.SyncTracker.LocalFilesMu.Unlock()
+
+	// The announce runs outside the lock: readers of the list must not wait
+	// on a round trip to the peer.
+	if _, err = kd.sendNotify(context.Background(), req); err != nil {
+		logger.Error("Failed to notify peer", "error", err)
+		return err
+	}
+
+	logger.Info("Success", "remoteName", remoteName)
+	return nil
+}
+
+// LocalAs is one file to share: where it is here, and the name the peer sees.
+type LocalAs struct {
+	Local  string
+	Remote string
+}
+
+// AddFilesAs shares many files at once, as AddFileAs shares one: all are
+// tracked under one short lock, then announced in BatchNotify batches of
+// announceBatchSize, outside the lock. AddFileAs per file sent one RPC each
+// and held the list for each round trip: a 12,789-file folder took 33 s and
+// froze the app's file list. Files it cannot read are skipped. Returns how
+// many were announced; a batch that still fails after its retries is untracked
+// again, with the rest, and ends the call.
+func (kd *KeibiDrop) AddFilesAs(items []LocalAs) (int, error) {
+	logger := kd.logger.With("method", "add-files-as")
+	if kd.rpcSession() == nil {
+		return 0, ErrInvalidSession
+	}
+	files := make([]*synctracker.File, 0, len(items))
+	reqs := make([]*bindings.NotifyRequest, 0, len(items))
+	skipped := 0
+	for _, it := range items {
+		file, req, err := addFileRecord(it.Local, it.Remote)
+		if err != nil {
+			skipped++
+			continue
+		}
+		files = append(files, file)
+		reqs = append(reqs, req)
+	}
+
+	kd.SyncTracker.LocalFilesMu.Lock()
+	for _, f := range files {
+		kd.SyncTracker.LocalFiles[f.RelativePath] = f
+	}
+	kd.SyncTracker.LocalFilesMu.Unlock()
+
+	ctx := context.Background()
+	announced := 0
+	for start, seq := 0, uint64(1); start < len(reqs); start, seq = start+announceBatchSize, seq+1 {
+		end := min(start+announceBatchSize, len(reqs))
+		_, err := kd.sendAnnounceBatch(ctx, logger, &bindings.BatchNotifyRequest{
+			Notifications: reqs[start:end],
+			Seq:           seq,
+			Timestamp:     uint64(time.Now().UnixNano()),
+		})
+		if err != nil {
+			kd.SyncTracker.LocalFilesMu.Lock()
+			for _, f := range files[start:] {
+				if kd.SyncTracker.LocalFiles[f.RelativePath] == f {
+					delete(kd.SyncTracker.LocalFiles, f.RelativePath)
+				}
+			}
+			kd.SyncTracker.LocalFilesMu.Unlock()
+			logger.Error("Failed to share files", "announced", announced, "of", len(reqs), "error", err)
+			return announced, err
+		}
+		announced = end
+	}
+	logger.Info("Shared files", "count", announced, "skipped", skipped)
+	return announced, nil
+}
+
+// addFileRecord stats localPath and builds what AddFileAs and AddFilesAs
+// track and announce for it.
+func addFileRecord(localPath, remoteName string) (*synctracker.File, *bindings.NotifyRequest, error) {
+	cleanPath := filepath.Clean(localPath)
+	finfo, err := os.Stat(cleanPath)
+	if err != nil {
+		return nil, nil, err
+	}
 	if finfo.IsDir() {
-		return syscall.EISDIR
+		return nil, nil, syscall.EISDIR
 	}
 
 	atime, btime := statTimes(finfo)
@@ -202,12 +287,7 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 		CreatedTime:    btime,
 		Atime:          atime,
 	}
-
-	kd.SyncTracker.LocalFilesMu.Lock()
-	defer kd.SyncTracker.LocalFilesMu.Unlock()
-	kd.SyncTracker.LocalFiles[remoteName] = file
-
-	_, err = kd.sendNotify(context.Background(), &bindings.NotifyRequest{
+	req := &bindings.NotifyRequest{
 		Type: bindings.NotifyType(types.AddFile),
 		Path: remoteName,
 		Attr: &bindings.Attr{
@@ -219,14 +299,8 @@ func (kd *KeibiDrop) AddFileAs(localPath string, remoteName string) error {
 			BirthTime:        btime,
 			Flags:            0o444,
 		},
-	})
-	if err != nil {
-		logger.Error("Failed to notify peer", "error", err)
-		return err
 	}
-
-	logger.Info("Success", "remoteName", remoteName)
-	return nil
+	return file, req, nil
 }
 
 func (kd *KeibiDrop) ListFiles() (remote []string, local []string) {

@@ -28,17 +28,27 @@ type fakeNotifyCli struct {
 	mu       sync.Mutex
 	reqs     []*bindings.NotifyRequest
 	batches  int
+	singles  int
 	failNext int // BatchNotify calls to fail before succeeding again
+	// onSend runs at the start of every Notify and BatchNotify, outside mu.
+	onSend func()
 }
 
 func (f *fakeNotifyCli) Notify(_ context.Context, req *bindings.NotifyRequest, _ ...grpc.CallOption) (*bindings.NotifyResponse, error) {
+	if f.onSend != nil {
+		f.onSend()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.singles++
 	f.reqs = append(f.reqs, req)
 	return &bindings.NotifyResponse{}, nil
 }
 
 func (f *fakeNotifyCli) BatchNotify(_ context.Context, req *bindings.BatchNotifyRequest, _ ...grpc.CallOption) (*bindings.BatchNotifyResponse, error) {
+	if f.onSend != nil {
+		f.onSend()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.batches++

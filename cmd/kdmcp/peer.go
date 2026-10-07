@@ -297,6 +297,8 @@ func (p *peer) sendTree(dir, remoteName string) (any, *toolError) {
 	var files, skipped, links int
 	var bytes uint64
 	var firstErr error
+	var items []common.LocalAs
+	var sizes []uint64
 
 	walkErr := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -327,19 +329,24 @@ func (p *peer) sendTree(dir, remoteName string) (any, *toolError) {
 			return nil
 		}
 		// The peer sees slash-separated paths whatever the local separator is.
-		remote := base + "/" + filepath.ToSlash(rel)
-
-		if addErr := p.kd.AddFileAs(path, remote); addErr != nil {
-			skipped++
-			if firstErr == nil {
-				firstErr = addErr
-			}
-			return nil
-		}
-		files++
-		bytes += uint64(fi.Size())
+		items = append(items, common.LocalAs{Local: path, Remote: base + "/" + filepath.ToSlash(rel)})
+		sizes = append(sizes, uint64(fi.Size()))
 		return nil
 	})
+
+	// One call for the tree: the engine announces it in batches, where a call
+	// per file sent the peer one message each.
+	if len(items) > 0 {
+		var addErr error
+		files, addErr = p.kd.AddFilesAs(items)
+		if addErr != nil {
+			firstErr = addErr
+		}
+		skipped += len(items) - files
+		for _, size := range sizes[:files] {
+			bytes += size
+		}
+	}
 
 	if walkErr != nil && files == 0 {
 		return nil, toolErr(codeInternal, "walking %s: %v", dir, walkErr)

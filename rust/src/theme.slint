@@ -61,6 +61,11 @@ export global Theme {
     // The Figma frame. A larger window centres this column.
     out property <length> frame-width: 1144px;
     out property <length> frame-height: 729px;
+    // How far the UI scales with its window (main.rs first_size, fit_zoom):
+    // it opens at no more than zoom-open, and shrinks to zoom-min so a small
+    // screen still holds it.
+    out property <float> zoom-open: 1.25;
+    out property <float> zoom-min: 0.75;
     // The box every screen keeps inside (Marius): the logo's left edge and
     // top, the menu pill's right edge (Figma Screen 12).
     out property <length> box-left: 115px;

@@ -470,7 +470,7 @@ func KD_GetLocalFileCount() C.int {
 	if kd == nil {
 		return 0
 	}
-	kd.SyncTracker.PruneStaleLocalFiles()
+	pruneLocalFilesThrottled(kd.SyncTracker)
 	kd.SyncTracker.LocalFilesMu.RLock()
 	defer kd.SyncTracker.LocalFilesMu.RUnlock()
 	return C.int(len(kd.SyncTracker.LocalFiles))

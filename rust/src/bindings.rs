@@ -8222,6 +8222,15 @@ fn bindgen_test_layout_GoSlice() {
     );
 }
 extern "C" {
+    pub fn KD_FileListStamp() -> ::std::os::raw::c_ulonglong;
+}
+extern "C" {
+    pub fn KD_ListAllFiles() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_AddFilesAs(list: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn KD_Initialize(
         relayURL: *mut ::std::os::raw::c_char,
         inbound: ::std::os::raw::c_int,

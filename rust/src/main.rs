@@ -55,7 +55,9 @@ fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_dir() {
+            // The entry's own type, not its target's: a link to a folder
+            // above would walk forever.
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
                 files.extend(walkdir(&p));
             } else {
                 files.push(p);
@@ -63,6 +65,11 @@ fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+/// Hidden by its own name or by its path: ".DS_Store" inside a folder too.
+fn is_hidden_path(path: &str) -> bool {
+    is_hidden_file(path) || path.rsplit('/').next().is_some_and(is_hidden_file)
 }
 
 /// Returns true if a filename should be hidden from the UI.
@@ -198,6 +205,71 @@ fn refresh_saved_files(weak: &slint::Weak<MainWindow>, save_path: &str, folder: 
     }
 }
 
+/// The bridge's escaping for list lines (rustbridge/filelist.go listEscape):
+/// a name stays inside one tab-separated field of one line.
+fn list_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn list_unescape(s: &str) -> String {
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('t') => out.push('\t'),
+            Some('n') => out.push('\n'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Both file lists in one call (KD_ListAllFiles): the peer's files with their
+/// sizes, then ours, names without a leading "/", hidden files left out.
+unsafe fn read_all_files() -> (Vec<(String, i64)>, Vec<String>) {
+    let ptr = bindings::KD_ListAllFiles();
+    if ptr.is_null() {
+        return (Vec::new(), Vec::new());
+    }
+    let text = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+    libc::free(ptr as *mut libc::c_void);
+    let mut remote = Vec::new();
+    let mut local = Vec::new();
+    for line in text.lines() {
+        let mut parts = line.splitn(3, '\t');
+        let (Some(tag), Some(size), Some(name)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let name = list_unescape(name).trim_start_matches('/').to_string();
+        if is_hidden_path(&name) {
+            continue;
+        }
+        match tag {
+            "R" => remote.push((name, size.parse().unwrap_or(0))),
+            "L" => local.push(name),
+            _ => {}
+        }
+    }
+    (remote, local)
+}
+
 /// Start a background thread that polls Go for file list updates and pushes to Slint model.
 fn start_file_watcher(
     running: Arc<AtomicBool>,
@@ -210,6 +282,18 @@ fn start_file_watcher(
         // The list as last pushed to the UI. None until the first push, so a
         // new session always replaces the previous session's cards.
         let mut last_pushed: Option<Vec<FileInfo>> = None;
+        // Both lists as last read, and the engine's list-write count, folder
+        // and download counts they were grouped for: a poll with all of them
+        // unchanged and nothing downloading does no work.
+        let mut all_names: Vec<(String, i64)> = Vec::new();
+        let mut local_names: Vec<String> = Vec::new();
+        let mut read_at: Option<u64> = None;
+        let mut grouped_for: Option<(u64, String, [usize; 4])> = None;
+        // Whether a file the session does not track is in the save folder, as
+        // (half download with a .kdbitmap, file): checked once per file per
+        // read of the lists and every 30 s, not twice per file per poll.
+        let mut on_disk: HashMap<String, (bool, bool)> = HashMap::new();
+        let mut on_disk_since = std::time::Instant::now();
         // FileWatcher running
         while running.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -217,30 +301,37 @@ fn start_file_watcher(
             // Event polling is handled by a dedicated Slint Timer (see main).
             // This thread only updates the file list.
             unsafe {
-                let count = bindings::KD_GetFileCount();
+                let writes = bindings::KD_FileListStamp() as u64;
                 let folder = current_folder.lock().unwrap().clone();
-
-                // Collect all remote file names
-                let mut all_names: Vec<(String, i64)> = Vec::new();
-                for i in 0..count {
-                    let name_ptr = bindings::KD_GetFileName(i);
-                    if name_ptr.is_null() {
-                        continue;
-                    }
-                    let raw_name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
-                    let name = raw_name.trim_start_matches('/').to_string();
-                    if is_hidden_file(&name) {
-                        continue;
-                    }
-                    let size = bindings::KD_GetFileSize(i) as i64;
-                    all_names.push((name, size));
+                if read_at != Some(writes) {
+                    (all_names, local_names) = read_all_files();
+                    read_at = Some(writes);
+                    on_disk.clear();
+                    on_disk_since = std::time::Instant::now();
                 }
+                let recheck = on_disk_since.elapsed() >= std::time::Duration::from_secs(30);
+                if recheck {
+                    on_disk.clear();
+                    on_disk_since = std::time::Instant::now();
+                }
+                let dl = downloads.lock().unwrap();
+                // Downloads by state; while one runs, its percent moves every poll.
+                let mut dl_counts = [dl.len(), 0, 0, 0];
+                for info in dl.values() {
+                    dl_counts[1] += info.downloading as usize;
+                    dl_counts[2] += info.paused as usize;
+                    dl_counts[3] += info.saved as usize;
+                }
+                let state = (writes, folder.clone(), dl_counts);
+                if !recheck && dl_counts[1] == 0 && grouped_for.as_ref() == Some(&state) {
+                    continue;
+                }
+                grouped_for = Some(state);
 
                 // Group by current folder: show items at this level,
                 // collapse subdirectories into folder cards
                 let mut files: Vec<FileInfo> = Vec::new();
                 let mut seen_folders: std::collections::HashSet<String> = std::collections::HashSet::new();
-                let dl = downloads.lock().unwrap();
 
                 for (name, size) in all_names.iter() {
                     let name = name.clone();
@@ -306,14 +397,16 @@ fn start_file_watcher(
                     } else {
                         // Not tracked in-session. A leftover ".kdbitmap" sidecar means
                         // an incomplete download (e.g. from a previous run), not saved.
-                        let local = format!("{}/{}", save_path, name);
-                        if Path::new(&format!("{}.kdbitmap", local)).exists() {
+                        let (partial, already_saved) = *on_disk.entry(name.clone()).or_insert_with(|| {
+                            let local = format!("{}/{}", save_path, name);
+                            (Path::new(&format!("{}.kdbitmap", local)).exists(), Path::new(&local).exists())
+                        });
+                        if partial {
                             let c_name = CString::new(name.clone()).unwrap();
                             let prog = bindings::KD_GetDownloadProgress(c_name.as_ptr() as *mut i8);
                             let p = if prog >= 0 { prog as f32 / 100.0 } else { 0.0 };
                             (false, p, false, false)
                         } else {
-                            let already_saved = Path::new(&local).exists();
                             (false, if already_saved { 1.0 } else { 0.0 }, already_saved, false)
                         }
                     };
@@ -331,21 +424,11 @@ fn start_file_watcher(
                     });
                 }
 
-                // Also include local files (files I shared), shown as already saved
-                let local_count = bindings::KD_GetLocalFileCount();
-                let mut local_names: Vec<String> = Vec::new();
-                for i in 0..local_count {
-                    let name_ptr = bindings::KD_GetLocalFileName(i);
-                    if name_ptr.is_null() {
-                        continue;
-                    }
-                    let raw_name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
-                    let name = raw_name.trim_start_matches('/').to_string();
-                    if !is_hidden_file(&name) {
-                        local_names.push(name);
-                    }
-                }
-
+                // Also include local files (files I shared), shown as already
+                // saved. A set of the cards so far: comparing each of 12k files
+                // with every card was quadratic.
+                let mut taken: std::collections::HashSet<String> =
+                    files.iter().map(|f| f.name.to_string()).collect();
                 for lname in &local_names {
                     let relative = if folder.is_empty() {
                         lname.clone()
@@ -366,7 +449,7 @@ fn start_file_watcher(
                             let child_count = local_names.iter()
                                 .filter(|n| n.starts_with(&format!("{}/", full_folder)))
                                 .count();
-                            if !files.iter().any(|f| f.name.as_str() == subfolder) {
+                            if taken.insert(subfolder.to_string()) {
                                 files.push(FileInfo {
                                     name: slint::SharedString::from(subfolder),
                                     size_bytes: child_count as i32,
@@ -383,13 +466,15 @@ fn start_file_watcher(
                         continue;
                     }
 
-                    // Skip if already in remote list
-                    if files.iter().any(|f| f.name.as_str() == relative) {
+                    // Skip if already in remote list. Cards carry the full name, as
+                    // the peer's do: Open and X look it up (the bare name inside a
+                    // folder matched nothing).
+                    if !taken.insert(lname.clone()) {
                         continue;
                     }
                     let ftype = file_type_from_name(&relative);
                     files.push(FileInfo {
-                        name: slint::SharedString::from(&relative),
+                        name: slint::SharedString::from(lname.as_str()),
                         size_bytes: 0,
                         downloading: false,
                         uploading: false,
@@ -790,8 +875,11 @@ impl Drop for AddingFiles {
     }
 }
 
-/// Mila's frames are a full screen at 1.5x. The window opens at that size,
-/// or the largest that fits its screen, never under the frame itself.
+/// The window opens sized from its screen, in Mila's proportions: 70% of the
+/// screen's height, at least her frame and at most Theme.zoom-open times it
+/// (Marius: 1.5 was too big on his Mac), and never more than fits, which on
+/// a small screen means under her frame. Works in the screen's own scale
+/// (macOS, Windows and Linux report it alike).
 fn first_size(app: &MainWindow) {
     let Some((system, screen)) = app
         .window()
@@ -801,19 +889,22 @@ fn first_size(app: &MainWindow) {
     };
     let theme = app.global::<Theme>();
     let (w, h) = (theme.get_frame_width() * system, theme.get_frame_height() * system);
-    let mut zoom = 1.5f32;
-    if let Some(screen) = screen {
-        // Room for the menu bar, the dock or taskbar and the title bar.
-        zoom = zoom.min(screen.width as f32 * 0.9 / w).min(screen.height as f32 * 0.9 / h);
-    }
-    let zoom = zoom.max(1.0);
+    let zoom = match screen {
+        Some(screen) => {
+            let (sw, sh) = (screen.width as f32, screen.height as f32);
+            // Room for the menu bar, the dock or taskbar and the title bar.
+            let fits = (sw * 0.85 / w).min(sh * 0.85 / h).max(theme.get_zoom_min());
+            (sh * 0.7 / h).clamp(1.0, theme.get_zoom_open()).min(fits)
+        }
+        None => 1.0,
+    };
     app.window().set_size(slint::PhysicalSize::new((w * zoom).round() as u32, (h * zoom).round() as u32));
     refit(app);
 }
 
-/// The whole UI scales with the window so Mila's frame fills it, never under
-/// its own size: the window's scale factor becomes the screen's times that
-/// zoom, and sizes, text and clicks all follow the scale factor.
+/// The whole UI scales with the window so Mila's frame fills it, down to
+/// Theme.zoom-min on a small screen: the window's scale factor becomes the
+/// screen's times that zoom, and sizes, text and clicks all follow it.
 fn fit_zoom(app: &MainWindow, size: slint::winit_030::winit::dpi::PhysicalSize<u32>) {
     if size.width == 0 || size.height == 0 {
         return; // minimised
@@ -824,7 +915,7 @@ fn fit_zoom(app: &MainWindow, size: slint::winit_030::winit::dpi::PhysicalSize<u
     let theme = app.global::<Theme>();
     let zoom = (size.width as f32 / (theme.get_frame_width() * system))
         .min(size.height as f32 / (theme.get_frame_height() * system))
-        .max(1.0);
+        .max(theme.get_zoom_min());
     app.set_zoom(zoom);
     if (app.window().scale_factor() - system * zoom).abs() > 0.001 {
         app.window().dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
@@ -1807,16 +1898,22 @@ fn main() {
             std::thread::spawn(move || {
                 if let Some(paths) = rfd::FileDialog::new().pick_files() {
                     let _turning = AddingFiles::start(&weak, &adding);
-                    let count = paths.len();
-                    for path in paths {
-                        let path_str = path.to_string_lossy().to_string();
-                        let c_path = CString::new(path_str).unwrap();
-                        let res = bindings::KD_AddFile(c_path.as_ptr() as *mut i8);
-                        if res != 0 {
-                            let err = get_last_error();
-                            eprintln!("Failed to add file: {}", err);
-                        }
+                    // One call for all picked files (KD_AddFilesAs), each under
+                    // its own name, as KD_AddFile names it.
+                    let mut list = String::new();
+                    for path in &paths {
+                        let Some(name) = path.file_name() else { continue };
+                        list.push_str(&list_escape(&path.to_string_lossy()));
+                        list.push('\t');
+                        list.push_str(&list_escape(&name.to_string_lossy()));
+                        list.push('\n');
                     }
+                    let c_list = CString::new(list.replace('\0', "")).unwrap_or_default();
+                    let res = bindings::KD_AddFilesAs(c_list.as_ptr() as *mut i8);
+                    if res < paths.len() as std::os::raw::c_int {
+                        eprintln!("Shared {} of {} picked files: {}", res.max(0), paths.len(), get_last_error());
+                    }
+                    let count = res.max(0) as usize;
                     if count == 1 {
                         show_toast(&weak, "File shared with your friend");
                     } else if count > 1 {
@@ -1983,22 +2080,16 @@ fn main() {
         let weak_offer_all = app.as_weak();
         let offer_all = fuse_offer_pending.clone();
         app.on_save_all_pressed(move || {
-            let file_count = bindings::KD_GetFileCount();
-            let mut to_save_names: Vec<String> = Vec::new();
-            for i in 0..file_count {
-                let name_ptr = bindings::KD_GetFileName(i);
-                if name_ptr.is_null() {
-                    continue;
-                }
-                let raw = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
-                let name = raw.trim_start_matches('/').to_string();
-                let dl = downloads_all.lock().unwrap();
-                let dominated = dl.get(&name).map_or(false, |d| d.saved || d.downloading);
-                drop(dl);
-                if !dominated && !is_hidden_file(&name) {
-                    to_save_names.push(name);
-                }
-            }
+            // One read of the list: the per-index getters sorted every name
+            // once per file, seconds on the UI thread for a large folder.
+            let (remote, _) = read_all_files();
+            let dl = downloads_all.lock().unwrap();
+            let to_save_names: Vec<String> = remote
+                .into_iter()
+                .map(|(name, _)| name)
+                .filter(|name| !dl.get(name).map_or(false, |d| d.saved || d.downloading))
+                .collect();
+            drop(dl);
             let total = to_save_names.len();
             if total == 0 {
                 show_toast(&weak_toast_all, "All files already saved");
@@ -2727,6 +2818,12 @@ fn main() {
                             let dir_name = path.file_name()
                                 .map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_default();
+                            // One call for the whole folder (KD_AddFilesAs): the
+                            // engine announces it in batches. A call per file sent
+                            // one message to the peer each and locked the list for
+                            // each round trip.
+                            let mut list = String::new();
+                            let mut count = 0usize;
                             for entry in walkdir(&path) {
                                 if entry.is_file() {
                                     let rel = entry.strip_prefix(&path).unwrap_or(&entry);
@@ -2737,17 +2834,24 @@ fn main() {
                                         .map(|c| c.to_string_lossy().to_string())
                                         .collect();
                                     let remote_name = format!("{}/{}", dir_name, rel.join("/"));
-                                    let c_local = CString::new(entry.to_string_lossy().to_string()).unwrap();
-                                    let c_remote = CString::new(remote_name.clone()).unwrap();
-                                    let res = bindings::KD_AddFileAs(c_local.as_ptr() as *mut i8, c_remote.as_ptr() as *mut i8);
-                                    if res != 0 {
-                                        eprintln!("Failed to add: {}", remote_name);
-                                    } else {
-                                        shared = true;
+                                    if is_hidden_path(&remote_name) {
+                                        continue;
                                     }
+                                    list.push_str(&list_escape(&entry.to_string_lossy()));
+                                    list.push('\t');
+                                    list.push_str(&list_escape(&remote_name));
+                                    list.push('\n');
+                                    count += 1;
                                 }
                             }
-                            println!("Directory added: {}", path_str);
+                            let c_list = CString::new(list.replace('\0', "")).unwrap_or_default();
+                            let res = bindings::KD_AddFilesAs(c_list.as_ptr() as *mut i8);
+                            shared = res > 0;
+                            if res < count as std::os::raw::c_int {
+                                eprintln!("Shared {} of {} files from {}: {}", res.max(0), count, path_str, get_last_error());
+                            } else {
+                                println!("Shared {} files from {}", res, path_str);
+                            }
                         } else {
                             let c_path = CString::new(path_str.clone()).unwrap();
                             let res = bindings::KD_AddFile(c_path.as_ptr() as *mut i8);
@@ -2928,6 +3032,11 @@ fn main() {
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_millis(200),
                 move || {
+                    // Arrivals print as one line per tick: a folder from the peer
+                    // is one event per file, and a line each held this, the UI
+                    // thread, for thousands of terminal writes.
+                    let mut arrivals = 0usize;
+                    let mut first_arrival = String::new();
                     loop {
                         let evt_ptr = bindings::KD_PollEvent();
                         if evt_ptr.is_null() {
@@ -2935,7 +3044,14 @@ fn main() {
                         }
                         let evt = CStr::from_ptr(evt_ptr).to_string_lossy().to_string();
                         libc::free(evt_ptr as *mut libc::c_void);
-                        println!("[Event] {}", evt);
+                        if let Some(name) = evt.strip_prefix("file_arrived:") {
+                            if arrivals == 0 {
+                                first_arrival = name.to_string();
+                            }
+                            arrivals += 1;
+                        } else {
+                            println!("[Event] {}", evt);
+                        }
 
                         // Identity error (failed to load, using ephemeral)
                         if evt.starts_with("identity_error:") {
@@ -3166,6 +3282,12 @@ fn main() {
                         }
                     }
 
+                    match arrivals {
+                        0 => {}
+                        1 => println!("[Event] file_arrived:{}", first_arrival),
+                        n => println!("[Event] file_arrived: {} files, first {}", n, first_arrival),
+                    }
+
                     // Send batched notification for files that arrived this tick
                     let mut files = arrived_files.lock().unwrap();
                     if !files.is_empty() {
@@ -3194,6 +3316,40 @@ fn main() {
         // Cleanup
         bindings::KD_Stop();
         println!("KeibiDrop stopped.");
+    }
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::{is_hidden_path, list_escape, list_unescape};
+
+    // The list lines between the app and the engine keep every name whole,
+    // a Windows path with its backslashes too (rustbridge listEscape).
+    #[test]
+    fn list_names_round_trip() {
+        for name in [
+            "plain.txt",
+            r"C:\Users\marius\Desktop\19Aug26\Frame 1.png",
+            "tab\there",
+            "line\nbreak",
+            r"trailing\",
+        ] {
+            let escaped = list_escape(name);
+            assert!(!escaped.contains('\t') && !escaped.contains('\n'), "{escaped:?}");
+            assert_eq!(list_unescape(&escaped), name);
+        }
+        // What Go's listEscape writes for a Windows path.
+        assert_eq!(list_unescape(r"C:\\Users\\x"), r"C:\Users\x");
+    }
+
+    // A hidden file stays hidden inside a folder, not only at the top.
+    #[test]
+    fn hidden_by_own_name_inside_folders() {
+        assert!(is_hidden_path(".DS_Store"));
+        assert!(is_hidden_path("19Aug26/.DS_Store"));
+        assert!(is_hidden_path("a/b/Thumbs.db"));
+        assert!(is_hidden_path("x/.fseventsd/fseventsd-uuid"));
+        assert!(!is_hidden_path("19Aug26/Frame 1.png"));
     }
 }
 

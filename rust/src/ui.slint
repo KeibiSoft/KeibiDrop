@@ -938,13 +938,13 @@ export component MainWindow inherits Window {
     // KD_WINDOW_TITLE names the window when two instances run side by side.
     in property<string> window_title: "KEIBIDROP";
     default-font-family: "Inter";
-    // The whole UI scales with the window (main.rs fit_zoom): Mila's frames
-    // are a full screen at 1.5x. zoom is that factor, never under 1.
+    // The whole UI scales with the window (main.rs first_size, fit_zoom), in
+    // Mila's proportions. zoom is that factor, Theme.zoom-min at the least.
     in property <float> zoom: 1;
-    preferred-width: Theme.frame-width * 1.5 / root.zoom;
-    preferred-height: Theme.frame-height * 1.5 / root.zoom;
-    min-width: Theme.frame-width / root.zoom;
-    min-height: Theme.frame-height / root.zoom;
+    preferred-width: Theme.frame-width * Theme.zoom-open / root.zoom;
+    preferred-height: Theme.frame-height * Theme.zoom-open / root.zoom;
+    min-width: Theme.frame-width * Theme.zoom-min / root.zoom;
+    min-height: Theme.frame-height * Theme.zoom-min / root.zoom;
     background: root.capturing ? Theme.window-dim : Theme.window;
 
     // Every screen and the header sit in the Figma frame's column, centred

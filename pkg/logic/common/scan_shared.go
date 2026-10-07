@@ -8,6 +8,7 @@ package common
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -92,20 +93,7 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 			Seq:           batchSeq,
 			Timestamp:     uint64(time.Now().UnixNano()),
 		}
-		var resp *bindings.BatchNotifyResponse
-		var err error
-		for attempt := 1; ; attempt++ {
-			resp, err = kd.sendBatchNotify(ctx, req)
-			if err == nil || attempt >= announceRetries || ctx.Err() != nil {
-				break
-			}
-			logger.Warn("Announce batch send failed, retrying",
-				"attempt", attempt, "of", announceRetries, "error", err)
-			select {
-			case <-ctx.Done():
-			case <-time.After(time.Duration(attempt) * announceRetryDelay):
-			}
-		}
+		resp, err := kd.sendAnnounceBatch(ctx, logger, req)
 		if err != nil {
 			kd.SyncTracker.LocalFilesMu.Lock()
 			for _, f := range batchFiles {
@@ -233,6 +221,23 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 	}
 	flushPersist()
 	return announced, nil
+}
+
+// sendAnnounceBatch sends one announce batch, retrying a failed send up to
+// announceRetries times with a growing pause.
+func (kd *KeibiDrop) sendAnnounceBatch(ctx context.Context, logger *slog.Logger, req *bindings.BatchNotifyRequest) (*bindings.BatchNotifyResponse, error) {
+	for attempt := 1; ; attempt++ {
+		resp, err := kd.sendBatchNotify(ctx, req)
+		if err == nil || attempt >= announceRetries || ctx.Err() != nil {
+			return resp, err
+		}
+		logger.Warn("Announce batch send failed, retrying",
+			"attempt", attempt, "of", announceRetries, "error", err)
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Duration(attempt) * announceRetryDelay):
+		}
+	}
 }
 
 // persistSharedFilesBatch appends the files to the shared store in one write.
