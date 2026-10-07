@@ -52,6 +52,8 @@ type FS struct {
 	// goroutines (Run, teardown, gRPC handlers) read them, so access is atomic.
 	host atomic.Pointer[winfuse.FileSystemHost]
 	root atomic.Pointer[Dir]
+	// hostDone closes when that host's FUSE loop returns.
+	hostDone atomic.Pointer[chan struct{}]
 
 	// refresher tells the file manager about peer changes while mounted.
 	refresher atomic.Pointer[fileManagerRefresher]
@@ -226,6 +228,8 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	host := winfuse.NewFileSystemHost(root)
 	host.SetCapReaddirPlus(true)
 	host.SetUseIno(true)
+	hostDone := make(chan struct{})
+	fs.hostDone.Store(&hostDone)
 	fs.host.Store(host)
 	fs.mountPoint = cleanMountPoint
 
@@ -257,6 +261,7 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
 	ok := host.Mount(cleanMountPoint, opts)
+	close(hostDone)
 	if !ok {
 		// Reset host/Root so IsMounted() reports false. Otherwise a failed mount
 		// leaves them set. The next reconnect then takes the "already mounted,
@@ -282,6 +287,10 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 func isWindowsDirMountPoint(goos, p string) bool {
 	return goos == "windows" && (len(p) != 2 || p[1] != ':')
 }
+
+// hostLoopEndWait bounds the wait for the FUSE loop after the unmount. A process
+// still inside a lazily detached Linux mount keeps the loop serving it.
+const hostLoopEndWait = 3 * time.Second
 
 func (fs *FS) Unmount() {
 	host := fs.host.Load()
@@ -315,6 +324,15 @@ func (fs *FS) Unmount() {
 		fs.logger.Warn("FUSE Unmount timed out, force-unmounting", "mountPoint", fs.mountPoint)
 		fs.forceUnmount()
 		<-done
+	}
+	// On Linux host.Unmount is a lazy detach: the loop still serves queued
+	// calls, and a late Release writes its sidecar. Flush after the loop ends.
+	if p := fs.hostDone.Load(); p != nil {
+		select {
+		case <-*p:
+		case <-time.After(hostLoopEndWait):
+			fs.logger.Warn("FUSE loop still running after unmount", "mountPoint", fs.mountPoint)
+		}
 	}
 	if root != nil {
 		root.flushPendingSidecars()

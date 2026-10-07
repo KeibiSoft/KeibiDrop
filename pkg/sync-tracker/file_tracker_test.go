@@ -77,6 +77,7 @@ func TestListWritesFollowsWritesAndNewTrackers(t *testing.T) {
 	w0 := ListWrites()
 
 	st.LocalFilesMu.RLock()
+	_ = st.LocalFiles["a"]
 	st.LocalFilesMu.RUnlock()
 	if ListWrites() != w0 {
 		t.Fatal("a read moved the count")
@@ -91,6 +92,7 @@ func TestListWritesFollowsWritesAndNewTrackers(t *testing.T) {
 	}
 
 	st.LocalFilesMu.Lock()
+	st.LocalFiles["a"] = &File{Name: "a"}
 	st.LocalFilesMu.Unlock()
 	if ListWrites() <= w1 {
 		t.Fatal("a local write did not move the count")
