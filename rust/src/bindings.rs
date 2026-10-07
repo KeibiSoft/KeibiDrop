@@ -8413,6 +8413,7 @@ extern "C" {
         message: *mut ::std::os::raw::c_char,
         contact: *mut ::std::os::raw::c_char,
         rating: ::std::os::raw::c_int,
+        includeLogs: ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {

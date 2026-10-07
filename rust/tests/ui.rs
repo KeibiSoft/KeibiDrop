@@ -156,7 +156,7 @@ fn feedback_send_passes_message_and_contact() {
     app.set_feedback_contact("a@b.co".into());
     let got = Rc::new(RefCell::new(None::<(String, String)>));
     let g = got.clone();
-    app.on_send_feedback(move |m, c, _rating| {
+    app.on_send_feedback(move |m, c, _rating, _logs| {
         *g.borrow_mut() = Some((m.to_string(), c.to_string()));
     });
     one(&app, "Send").invoke_accessible_default_action();
@@ -173,9 +173,35 @@ fn feedback_send_disabled_on_empty_message() {
     app.set_feedback_visible(true);
     let fired = Rc::new(Cell::new(false));
     let f = fired.clone();
-    app.on_send_feedback(move |_, _, _| f.set(true));
+    app.on_send_feedback(move |_, _, _, _| f.set(true));
     one(&app, "Send").invoke_accessible_default_action();
     assert!(!fired.get(), "send fired with an empty message");
+}
+
+// Logs go with a report only when the person switches them on.
+#[test]
+fn include_logs_goes_only_when_switched_on() {
+    let app = app();
+    app.set_feedback_visible(true);
+    app.set_feedback_message("it hangs".into());
+    let got = Rc::new(RefCell::new(Vec::<bool>::new()));
+    let g = got.clone();
+    app.on_send_feedback(move |_, _, _, logs| g.borrow_mut().push(logs));
+    one(&app, "Send").invoke_accessible_default_action();
+    toggle(&app, "Include logs").invoke_accessible_default_action();
+    one(&app, "Send").invoke_accessible_default_action();
+    assert_eq!(got.borrow().as_slice(), [false, true]);
+}
+
+// Save log is gone from the menus: logs ride with Report problem instead.
+#[test]
+fn no_menu_offers_save_log() {
+    let app = app();
+    for screen in 0..4 {
+        app.set_current_screen(screen);
+        app.set_menu_open(true);
+        assert_eq!(ElementHandle::find_by_accessible_label(&app, "Save log").count(), 0, "screen {}", screen);
+    }
 }
 
 #[test]
@@ -561,4 +587,58 @@ fn save_all_is_in_the_menu_on_the_no_fuse_screen() {
     one(&app, "Save all").invoke_accessible_default_action();
     assert!(fired.get(), "Save all did not fire save_all_pressed");
     assert!(!app.get_menu_open(), "the menu stayed open");
+}
+
+// A connected screen's help has no line about fingerprints, and its card
+// closes up under the steps: no gap where the connect screen explains contacts.
+#[test]
+fn connected_help_drops_the_fingerprint_line_and_the_gap() {
+    let app = app();
+    app.set_help_visible(true);
+    let line = "Exchange fingerprints to establish a secure connection";
+    let count = |app: &MainWindow| ElementHandle::find_by_accessible_label(app, line).count();
+    assert_eq!(count(&app), 1, "the connect screen's help lost its line");
+    let on_connect = one(&app, "Question?").absolute_position().y;
+    app.set_current_screen(2);
+    assert_eq!(count(&app), 0, "a connected screen's help still talks about fingerprints");
+    let on_teleport = one(&app, "Question?").absolute_position().y;
+    assert_eq!(on_connect - on_teleport, 74.0, "the card did not close up");
+}
+
+// The first-connect offer (Marius): Save keeps the friend, No thanks tells
+// Rust not to offer them again; both close it.
+#[test]
+fn save_contact_offer_saves_or_declines() {
+    let app = app();
+    app.set_current_screen(2);
+    let declined = Rc::new(Cell::new(0));
+    let d = declined.clone();
+    app.on_save_contact_declined(move || d.set(d.get() + 1));
+    app.set_save_contact_visible(true);
+    one(&app, "No thanks").invoke_accessible_default_action();
+    assert_eq!(declined.get(), 1, "No thanks did not reach Rust");
+    assert!(!app.get_save_contact_visible(), "No thanks left the offer open");
+
+    let saved = Rc::new(RefCell::new(Vec::<String>::new()));
+    let s = saved.clone();
+    app.on_save_peer_as_contact(move |n| s.borrow_mut().push(n.to_string()));
+    app.set_save_contact_visible(true);
+    app.set_save_contact_name("Ana".into());
+    one(&app, "Save").invoke_accessible_default_action();
+    assert_eq!(saved.borrow().as_slice(), ["Ana"]);
+    assert!(!app.get_save_contact_visible(), "Save left the offer open");
+    assert_eq!(declined.get(), 1, "Save counted as a decline");
+}
+
+// Her folder and its title open the Teleport Folder, as Open Folder does.
+#[test]
+fn the_teleport_folder_and_title_open_the_folder() {
+    let app = app();
+    app.set_current_screen(2);
+    let opened = Rc::new(Cell::new(0));
+    let o = opened.clone();
+    app.on_open_folder_pressed(move || o.set(o.get() + 1));
+    one(&app, "Open Teleport Folder").invoke_accessible_default_action();
+    one(&app, "Open Folder").invoke_accessible_default_action();
+    assert_eq!(opened.get(), 2);
 }

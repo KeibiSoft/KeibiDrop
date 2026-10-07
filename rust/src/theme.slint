@@ -314,7 +314,7 @@ export component IconButton inherits Icon {
     callback clicked;
 
     line: 1.5px;
-    ink: touch.has-hover ? Theme.text : Theme.muted;
+    ink: touch.has-hover || touch.pressed ? Theme.text : Theme.muted;
     accessible-role: button;
     accessible-action-default => { root.clicked(); }
 
@@ -370,6 +370,8 @@ export component Spinner inherits Ring {
     in property <bool> active: false;
     // Where the head rests, clockwise from 12 o'clock.
     in property <angle> head: 0deg;
+    // Off: at rest only the track shows, the arc comes with the turn.
+    in property <bool> arc-at-rest: true;
 
     // True from a start until the end of the turn it was let go in.
     out property <bool> turning: false;
@@ -419,6 +421,7 @@ export component Spinner inherits Ring {
         property <color> fade: Theme.progress.transparentize(0.99);
         property <color> clear: Theme.progress.transparentize(1);
 
+        visible: root.turning || root.arc-at-rest;
         width: root.width;
         height: root.height;
         fit: preserve;

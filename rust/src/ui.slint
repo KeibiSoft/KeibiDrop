@@ -75,7 +75,7 @@ component TextAction inherits Rectangle {
         silent: true;
         style: root.style;
         text: root.text;
-        color: touch.has-hover ? root.hover-ink : root.ink;
+        color: touch.has-hover || touch.pressed ? root.hover-ink : root.ink;
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -154,7 +154,8 @@ component FieldAction inherits Rectangle {
         horizontal-alignment: center;
         silent: true;
         style: Theme.button-label;
-        color: Theme.on-button;
+        // White while pressed, the cue every button gives (Marius).
+        color: touch.pressed ? Theme.text : Theme.on-button;
         text: root.text;
     }
     touch := TouchArea {
@@ -294,7 +295,7 @@ component SmallOutlineButton inherits Rectangle {
     height: 24px;
     border-radius: Theme.radius;
     border-width: Theme.hairline;
-    border-color: small-touch.has-hover ? Theme.text : Theme.muted;
+    border-color: small-touch.has-hover || small-touch.pressed ? Theme.text : Theme.muted;
     animate border-color { duration: 150ms; }
 
     btn-label := Label {
@@ -303,7 +304,7 @@ component SmallOutlineButton inherits Rectangle {
         horizontal-alignment: center;
         silent: true;
         style: Theme.caption;
-        color: small-touch.has-hover ? Theme.text : Theme.muted;
+        color: small-touch.has-hover || small-touch.pressed ? Theme.text : Theme.muted;
         text: root.text;
     }
 
@@ -352,7 +353,7 @@ component OutlineButton inherits Rectangle {
         height: parent.height;
         horizontal-alignment: center;
         style: root.style;
-        color: !root.enabled ? Theme.faint : root.accent ? root.accent-ink : Theme.text;
+        color: !root.enabled ? Theme.faint : touch.pressed || !root.accent ? Theme.text : root.accent-ink;
         text: root.text;
     }
 
@@ -472,7 +473,7 @@ component MenuItem inherits Rectangle {
     in property <MenuEntry> entry;
     callback clicked;
 
-    property <color> ink: touch.has-hover ? Theme.text : Theme.muted;
+    property <color> ink: touch.has-hover || touch.pressed ? Theme.text : Theme.muted;
 
     height: 21px;
     accessible-role: button;
@@ -562,10 +563,10 @@ component Overlay inherits Rectangle {
     }
 }
 
-// The (+) of the no-FUSE screen (Figma 214:988): her blue plus, and her
-// spinner ring around it only while files are dragged over the window or
-// dropped ones are added (Marius), gone after the turn it is in. A click
-// picks files.
+// The (+) of the no-FUSE screen (Figma 214:988): her blue plus in her ring,
+// which stays as a static circle; its arc turns while files are dragged over
+// the window or dropped ones are added (Marius) and goes at the end of the
+// turn it is in. A click picks files.
 component AddRing inherits Rectangle {
     in property <bool> spinning;
     callback clicked;
@@ -583,7 +584,7 @@ component AddRing inherits Rectangle {
         radius-y: 50.0735px;
         thickness: 8px;
         active: root.spinning;
-        visible: self.turning;
+        arc-at-rest: false;
     }
     // Her plus: 43px across, 8px round strokes, centred on the ring.
     Path {
@@ -591,7 +592,7 @@ component AddRing inherits Rectangle {
         height: root.height;
         fit: preserve;
         commands: "M 46 68.5 L 89 68.5 M 67.5 47 L 67.5 90";
-        stroke: touch.has-hover ? Theme.progress : Theme.open-ink;
+        stroke: touch.pressed ? Theme.text : touch.has-hover ? Theme.progress : Theme.open-ink;
         stroke-width: 8px;
         stroke-line-cap: round;
         fill: transparent;
@@ -859,11 +860,12 @@ component Chip inherits Glass {
         x: 8px;
         height: root.height;
         style: Theme.small-strong;
-        color: root.ink;
+        color: chip-touch.pressed ? Theme.text : root.ink;
         text: root.text;
     }
-    if root.clickable: TouchArea {
-        mouse-cursor: pointer;
+    chip-touch := TouchArea {
+        enabled: root.clickable;
+        mouse-cursor: root.clickable ? pointer : default;
         clicked => { root.clicked(); }
     }
 }
@@ -1022,7 +1024,6 @@ export component MainWindow inherits Window {
     callback join_room_pressed();
     callback connect_pressed();
     callback disconnect_pressed();
-    callback export_logs_pressed();
     callback cancel_connect_pressed();
     callback open_folder_pressed();
     callback add_file_pressed();
@@ -1052,6 +1053,8 @@ export component MainWindow inherits Window {
     callback incognito_mode_toggled(bool);
     callback connect_to_contact(int);
     callback save_peer_as_contact(string);
+    // No thanks on Save contact: Rust stops offering this friend.
+    callback save_contact_declined();
     callback remove_contact(int);
     callback toggle_auto_connect(int);
 
@@ -1083,7 +1086,9 @@ export component MainWindow inherits Window {
     in-out property<string> feedback_message: "";
     in-out property<string> feedback_contact: "";
     in-out property<int> feedback_rating: 0;   // 1 to 5 stars, 0 = none
-    callback send_feedback(string, string, int);
+    // Send the app's recent log too, sanitized (Rust: KD_SendFeedback).
+    in-out property<bool> feedback_include_logs: false;
+    callback send_feedback(string, string, int, bool);
     callback open_help_url();
     in property<string> cfg_relay: "";
     in property<string> cfg_save_path: "";
@@ -1110,28 +1115,22 @@ export component MainWindow inherits Window {
         ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
            { id: "saveall", label: "Save all", a11y: "Save all" },
            { id: "savepeer", label: "Save contact", a11y: "Save contact" },
-           { id: "log", label: "Save log", a11y: "Save log" },
            { id: "settings", label: "Settings", a11y: "Open settings" }]
         : root.current_screen == 1
         ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
            { id: "saveall", label: "Save all", a11y: "Save all" },
-           { id: "log", label: "Save log", a11y: "Save log" },
            { id: "settings", label: "Settings", a11y: "Open settings" }]
         : root.current_screen == 2 && root.can_save_peer
         ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
            { id: "savepeer", label: "Save contact", a11y: "Save contact" },
-           { id: "log", label: "Save log", a11y: "Save log" },
            { id: "settings", label: "Settings", a11y: "Open settings" }]
         : root.current_screen == 2
         ? [{ id: "disconnect", label: "Disconnect", a11y: "Disconnect" },
-           { id: "log", label: "Save log", a11y: "Save log" },
            { id: "settings", label: "Settings", a11y: "Open settings" }]
         : root.current_screen == 3
         ? [{ id: "folder", label: "Open folder", a11y: "Open folder" },
-           { id: "log", label: "Save log", a11y: "Save log" },
            { id: "settings", label: "Settings", a11y: "Open settings" }]
         : [{ id: "saved", label: "Saved files", a11y: "Saved files" },
-           { id: "log", label: "Save log", a11y: "Save log" },
            { id: "settings", label: "Settings", a11y: "Open settings" }];
 
     // Overlays blur the window behind them. Rust takes the snapshot while
@@ -1153,17 +1152,18 @@ export component MainWindow inherits Window {
     }
 
     // Help card steps (Figma Screen 13 for the connect screen).
+    // Plain words, the same ones the buttons and switches use (Marius).
     property<[string]> help_steps: root.current_screen == 1
         ? ["Drag files onto the window or click the +. Your friend sees your files and can save them.",
-           "Click Save to download one of their files. Save contact in the ... menu keeps them in your contacts.",
-           "Connection badge: LAN = same network, Direct P2P = over the internet, Via Relay = through encrypted bridge."]
+           "Click Save to download one of their files, or Save all in the ... menu. Save contact keeps your friend in your contacts.",
+           "Under the logo: LAN means same Wi-Fi, Direct P2P means straight to your friend, Via Relay means through our relay, still encrypted."]
         : root.current_screen == 2
-        ? ["Teleport allows you to instantly open shared files.",
+        ? ["Teleport allows you to instantly open shared files. It works as a folder on both computers.",
            "Press Open Folder, then open any file with any app.",
-           "Put your files in the Teleport Folder to send them."]
-        : ["Same Wi-Fi: turn on the switch below Connect (it says Same network? \nTurn this on) on both computers, then click Connect next \nto the other computer.",
-           "Anywhere else: press Copy my code, send the code to your friend, paste the code they send you. You both press Connect.",
-           "Drag files onto the window to send them. Teleport allows you to instantly open shared files."];
+           "Put your files in the Teleport Folder to send them to your friend."]
+        : ["Same Wi-Fi? Turn on Local mode on both computers, then click Connect next to your friend's name.",
+           "Anywhere else: press Copy and send your code to your friend. Paste the code they send you. You both press Connect.",
+           "Drag files onto the window to send them. Teleport allows you to instantly open shared files, as a folder on both computers."];
 
     function show_overlay(help: bool, feedback: bool, settings: bool) {
         root.menu_open = false;
@@ -1185,8 +1185,6 @@ export component MainWindow inherits Window {
         root.menu_open = false;
         if (id == "saved") {
             root.view_saved_files();
-        } else if (id == "log") {
-            root.export_logs_pressed();
         } else if (id == "settings") {
             root.show_overlay(false, false, true);
         } else if (id == "disconnect") {
@@ -1489,7 +1487,7 @@ export component MainWindow inherits Window {
                     wrap: word-wrap;
                     vertical-alignment: top;
                     style: Theme.tiny;
-                    color: fuse-hint-touch.has-hover ? Theme.text : Theme.muted;
+                    color: fuse-hint-touch.has-hover || fuse-hint-touch.pressed ? Theme.text : Theme.muted;
                     text: !root.fuse_available ? root.fuse_install_hint
                         : root.fuse_mode ? "Instantly open shared files" : "Select files to send";
                 }
@@ -1545,7 +1543,7 @@ export component MainWindow inherits Window {
                 height: parent.height;
                 silent: true;
                 style: Theme.label;
-                color: Theme.link;
+                color: peer-touch.pressed ? Theme.text : Theme.link;
                 text: "Connect";
             }
             peer-touch := TouchArea {
@@ -1604,11 +1602,13 @@ export component MainWindow inherits Window {
         width: Theme.frame-width;
         height: 100%;
         property <float> alpha: 0.0;
+        // Where the files start: the folder row, then the grid under it.
+        property <length> files-y: 274px;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
 
-        ConnectionLine {
+        line := ConnectionLine {
             x: Theme.box-left;
             y: 106px;
             state: root.session_state;
@@ -1620,16 +1620,18 @@ export component MainWindow inherits Window {
             buy => { root.tokens_buy(); }
         }
 
+        // Centred between the connection line and the files (Marius); her
+        // ring's box is symmetric, so its centre is the drawn ring's centre.
         AddRing {
             x: 504px;
-            y: 100px;
+            y: (line.y + line.height + parent.files-y - self.height) / 2;
             spinning: root.drag_hovering || root.adding_files;
             clicked => { root.add_file_pressed(); }
         }
 
         if root.current_folder != "": FolderBar {
             x: Theme.box-left;
-            y: 274px;
+            y: parent.files-y;
             width: Theme.box-width;
             folder: root.current_folder;
             back => { root.back_folder(); }
@@ -1637,7 +1639,7 @@ export component MainWindow inherits Window {
 
         FileGrid {
             x: Theme.box-left;
-            y: 319px;
+            y: parent.files-y + 45px;
             width: Theme.box-width;
             height: parent.height - self.y;
             files: root.file_list;
@@ -1710,8 +1712,23 @@ export component MainWindow inherits Window {
                 width: 400px;
                 height: 30px;
                 horizontal-alignment: center;
+                silent: true;
                 style: Theme.title-wide;
                 text: "Open Teleport Folder";
+            }
+            // The folder and its title open the folder too (Marius).
+            Rectangle {
+                x: 93px;
+                y: 30px;
+                width: 400px;
+                height: 116px;
+                accessible-role: button;
+                accessible-label: "Open Teleport Folder";
+                accessible-action-default => { root.open_folder_pressed(); }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open_folder_pressed(); }
+                }
             }
             Label {
                 x: 41px;
@@ -1853,13 +1870,18 @@ export component MainWindow inherits Window {
     // ============ OVERLAYS: blurred window, sharp title, glass card ============
 
     // Help (Figma Screen 13)
-    if root.help_visible: Overlay {
+    // The connect screen's card also explains contacts and Incognito between
+    // two lines; a connected screen's card closes up under its steps, and its
+    // title has no line about fingerprints (Marius).
+    if root.help_visible: help := Overlay {
+        property <length> contacts-part: root.current_screen == 0 ? 74px : 0;
         card-x: root.column-x + 313px;
         card-y: 262px;
+        card-height: 346px + self.contacts-part;
         visible: !root.capturing;
         heading: "How to use KEIBI";
         heading-light: "DROP";
-        subheading: "Exchange fingerprints to establish a secure connection";
+        subheading: root.current_screen == 0 ? "Exchange fingerprints to establish a secure connection" : "";
         dismiss => { root.help_visible = false; }
 
         for step[i] in root.help_steps: Rectangle {
@@ -1878,7 +1900,7 @@ export component MainWindow inherits Window {
                 text: step;
             }
         }
-        if root.current_screen == 0: Rectangle {
+        Rectangle {
             x: 58px;
             y: 217.5px;
             width: 401px;
@@ -1901,7 +1923,7 @@ export component MainWindow inherits Window {
             height: 12.1px;
             horizontal-alignment: center;
             color: Theme.text-soft;
-            text: "Incognito: new keys each session. Nobody can save you as a contact.";
+            text: "Incognito: you get a new code every time you connect. Nobody can save you as a contact.";
         }
         if root.current_screen == 0: Rectangle {
             x: 58px;
@@ -1912,7 +1934,7 @@ export component MainWindow inherits Window {
         }
         Rectangle {
             x: 58px;
-            y: 321.45px;
+            y: 247.45px + help.contacts-part;
             width: 401px;
             height: 12.1px;
             HorizontalLayout {
@@ -1936,7 +1958,7 @@ export component MainWindow inherits Window {
         }
         PillButton {
             x: 179px;
-            y: 353px;
+            y: 279px + help.contacts-part;
             text: "Question?";
             clicked => { root.show_overlay(false, true, false); }
         }
@@ -2151,9 +2173,9 @@ export component MainWindow inherits Window {
     if root.feedback_visible: feedback := Overlay {
         visible: !root.capturing;
         card-width: 460px;
-        card-height: 400px;
+        card-height: 430px;
         card-x: (root.width - 460px) / 2;
-        card-y: (root.height - 400px) / 2;
+        card-y: (root.height - 430px) / 2;
         dismiss => { root.feedback_visible = false; }
 
         SmallOutlineButton {
@@ -2217,57 +2239,70 @@ export component MainWindow inherits Window {
             text <=> root.feedback_contact;
         }
 
+        // Off by default: logs go only when the person asks (Marius).
+        ToggleRow {
+            x: 20px;
+            y: 294px;
+            width: feedback.card-width - 40px;
+            text: "Include logs";
+            checked <=> root.feedback_include_logs;
+        }
+
         Label {
             x: 20px;
-            y: 292px;
+            y: 322px;
             width: feedback.card-width - 40px;
             wrap: word-wrap;
             vertical-alignment: top;
             style: Theme.hint;
             color: Theme.faint;
-            text: "Sends your stars, your message, the reply address, the app version and the platform. Nothing else.";
+            text: root.feedback_include_logs
+                ? "Also sends the app's recent logs, up to 4 MB. File names, codes and addresses are taken out first."
+                : "Sends your stars, your message, the reply address, the app version and the platform. Nothing else.";
         }
 
         PillButton {
             x: 20px;
-            y: 336px;
+            y: 366px;
             width: 120px;
             text: root.feedback_sending ? "Sending..." : "Send";
             enabled: !root.feedback_sending && root.feedback_message != "";
-            clicked => { root.send_feedback(root.feedback_message, root.feedback_contact, root.feedback_rating); }
+            clicked => { root.send_feedback(root.feedback_message, root.feedback_contact, root.feedback_rating, root.feedback_include_logs); }
         }
 
         SmallOutlineButton {
             x: 152px;
-            y: 341px;
+            y: 371px;
             text: "Cancel";
             clicked => { root.feedback_visible = false; }
         }
     }
 
-    // Save Contact dialog
+    // Save contact (Marius): opens by itself the first time you connect to a
+    // friend who is not a contact yet (Rust: finish_connect_ui), and from the
+    // menu. No thanks closes it, and the app does not offer that friend again.
     if root.save_contact_visible: save-contact := Overlay {
         visible: !root.capturing;
         card-width: 360px;
-        card-height: 160px;
+        card-height: 170px;
         card-x: (root.width - 360px) / 2;
-        card-y: (root.height - 160px) / 2;
+        card-y: (root.height - 170px) / 2;
         dismiss => { root.save_contact_visible = false; root.save_contact_name = ""; }
-
-        SmallOutlineButton {
-            x: save-contact.card-width - 36px;
-            y: 8px;
-            width: 24px;
-            text: "X";
-            clicked => { root.save_contact_visible = false; root.save_contact_name = ""; }
-        }
+        init => { contact-name-input.focus(); }
 
         Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Save contact"; }
-        Label { x: 20px; y: 50px; height: 14px; style: Theme.small; color: Theme.muted; text: "Name"; }
+        Label {
+            x: 20px;
+            y: 42px;
+            height: 14px;
+            style: Theme.small;
+            color: Theme.muted;
+            text: "Give your friend a name to connect again with one click.";
+        }
 
         Outline {
             x: 20px;
-            y: 68px;
+            y: 66px;
             width: save-contact.card-width - 40px;
             height: 32px;
             background: Theme.field;
@@ -2280,6 +2315,7 @@ export component MainWindow inherits Window {
                 font-size: Theme.label.size;
                 vertical-alignment: center;
                 single-line: true;
+                accessible-label: "Contact name";
                 text <=> root.save_contact_name;
                 accepted => {
                     if root.save_contact_name != "" {
@@ -2293,8 +2329,8 @@ export component MainWindow inherits Window {
 
         PillButton {
             x: 20px;
-            y: 114px;
-            width: save-contact.card-width - 40px;
+            y: 116px;
+            width: 155px;
             text: "Save";
             enabled: root.save_contact_name != "";
             clicked => {
@@ -2303,6 +2339,17 @@ export component MainWindow inherits Window {
                     root.save_contact_visible = false;
                     root.save_contact_name = "";
                 }
+            }
+        }
+        PillButton {
+            x: 185px;
+            y: 116px;
+            width: 155px;
+            text: "No thanks";
+            clicked => {
+                root.save_contact_visible = false;
+                root.save_contact_name = "";
+                root.save_contact_declined();
             }
         }
     }
@@ -2434,15 +2481,16 @@ export component MainWindow inherits Window {
     }
 
     // Toast notification (bottom-center, all screens)
+    // At least 280 wide, wider when the message needs it.
     if root.toast_message != "": Glass {
         kind: GlassKind.pill;
-        x: (parent.width - 280px) / 2;
+        x: (parent.width - self.width) / 2;
         y: parent.height - 56px;
-        width: 280px;
+        width: max(280px, toast-label.preferred-width + 32px);
         height: 32px;
         visible: !root.capturing;
 
-        Label {
+        toast-label := Label {
             width: parent.width;
             height: parent.height;
             horizontal-alignment: center;
@@ -2475,7 +2523,7 @@ export component MainWindow inherits Window {
         upd-note := Label {
             height: 22px;
             style: Theme.caption;
-            color: upd-touch.has-hover ? Theme.text : Theme.accent;
+            color: upd-touch.has-hover || upd-touch.pressed ? Theme.text : Theme.accent;
             text: "Version " + root.update_available + " is out. Click to get it.";
         }
     }

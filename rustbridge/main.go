@@ -23,6 +23,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -871,18 +872,33 @@ func KD_CheckUpdate() *C.char {
 
 // KD_SendFeedback posts a user-written report with an optional reply
 // contact and a 1 to 5 star rating (0 = none). Sent: message, contact,
-// rating, version, platform, surface. Blocks up to 10s: call off the UI
-// thread.
+// rating, version, platform, surface, and with includeLogs set the newest
+// 4 MiB of the app's log, sanitized. Returns 0 when sent, 1 when the
+// endpoint took it without the log, -1 on failure. Blocks up to 10s, 60s
+// with the log: call off the UI thread.
 //
 //export KD_SendFeedback
-func KD_SendFeedback(message, contact *C.char, rating C.int) C.int {
-	err := feedback.Send(feedback.Report{
+func KD_SendFeedback(message, contact *C.char, rating C.int, includeLogs C.int) C.int {
+	r := feedback.Report{
 		Message: C.GoString(message),
 		Contact: C.GoString(contact),
 		Rating:  int(rating),
 		Version: common.Version,
 		Surface: "desktop",
-	})
+	}
+	if includeLogs != 0 {
+		cfg, _ := config.Load()
+		logs, err := common.SanitizedLogTail(cfg.LogFile, feedback.MaxLogs)
+		if err != nil {
+			// The report still goes; the note says why it has no log.
+			logs = common.SanitizeLogContent("log unavailable: " + err.Error())
+		}
+		r.Logs = logs
+	}
+	err := feedback.Send(r)
+	if errors.Is(err, feedback.ErrSentWithoutLogs) {
+		return 1
+	}
 	if err != nil {
 		setLastError(err)
 		return -1

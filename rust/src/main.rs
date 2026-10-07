@@ -530,6 +530,47 @@ unsafe fn config_auto_connect_peer() -> String {
     String::new()
 }
 
+/// Friends the person said No thanks to saving, one code per line beside
+/// config.toml, so the first-connect offer is not repeated.
+unsafe fn contact_offer_declined_path() -> Option<std::path::PathBuf> {
+    let ptr = bindings::KD_GetConfigPath();
+    if ptr.is_null() {
+        return None;
+    }
+    let cfg = CStr::from_ptr(ptr).to_string_lossy().to_string();
+    std::path::Path::new(&cfg)
+        .parent()
+        .map(|d| d.join("contact-offer-declined"))
+}
+
+unsafe fn peer_fingerprint() -> String {
+    let ptr = bindings::KD_GetPeerFingerprint();
+    if ptr.is_null() {
+        return String::new();
+    }
+    CStr::from_ptr(ptr).to_string_lossy().to_string()
+}
+
+unsafe fn contact_offer_declined(fp: &str) -> bool {
+    !fp.is_empty()
+        && contact_offer_declined_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map_or(false, |s| s.lines().any(|l| l.trim() == fp))
+}
+
+unsafe fn decline_contact_offer() {
+    let fp = peer_fingerprint();
+    if fp.is_empty() || contact_offer_declined(&fp) {
+        return;
+    }
+    if let Some(path) = contact_offer_declined_path() {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{}", fp);
+        }
+    }
+}
+
 unsafe fn load_contacts_model() -> std::rc::Rc<slint::VecModel<ContactInfo>> {
     let auto_peer = config_auto_connect_peer();
     let count = bindings::KD_GetContactCount();
@@ -1000,6 +1041,10 @@ unsafe fn finish_connect_ui(
 
     let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
     let peer_already_contact = bindings::KD_IsPeerAlreadyContact() != 0;
+    // The first time with a friend who is not a contact, offer to save them
+    // (Marius), unless the person said No thanks to this friend before.
+    let offer_contact =
+        peer_persistent && !peer_already_contact && !contact_offer_declined(&peer_fingerprint());
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(app) = weak.upgrade() {
             app.set_room_action(0);
@@ -1009,6 +1054,9 @@ unsafe fn finish_connect_ui(
             app.set_peer_is_persistent(peer_persistent);
             app.set_peer_already_saved(peer_already_contact);
             app.set_current_screen(target_screen);
+            if offer_contact && !app.get_incognito_mode() {
+                app.set_save_contact_visible(true);
+            }
         }
     });
 }
@@ -1629,25 +1677,6 @@ fn main() {
         let weak_disconnect = app.as_weak();
         let disconnect_confirmed = Arc::new(AtomicBool::new(false));
         let disconnect_confirmed_inner = disconnect_confirmed.clone();
-        app.on_export_logs_pressed(move || {
-            
-            std::thread::spawn(move || {
-                if let Some(dest) = rfd::FileDialog::new()
-                    .set_file_name("keibidrop-sanitized.log")
-                    .save_file()
-                {
-                    let c_dest = CString::new(dest.to_string_lossy().to_string()).unwrap();
-                    let res = bindings::KD_SanitizeLogs(c_dest.as_ptr() as *mut i8);
-                    if res == 0 {
-                        println!("Sanitized logs saved to: {}", dest.display());
-                    } else {
-                        let err = get_last_error();
-                        eprintln!("Failed to export logs: {}", err);
-                    }
-                }
-            });
-        });
-
         app.on_disconnect_pressed(move || {
             // If downloads in progress and not yet confirmed, show warning instead
             if let Some(app) = weak_disconnect.upgrade() {
@@ -2162,7 +2191,7 @@ fn main() {
             }
         }
 
-        app.on_send_feedback(move |message, contact, rating| {
+        app.on_send_feedback(move |message, contact, rating, include_logs| {
             if let Some(app) = weak_fb.upgrade() {
                 app.set_feedback_sending(true);
             }
@@ -2170,16 +2199,21 @@ fn main() {
             let msg = message.to_string().replace('\0', "");
             let contact = contact.to_string().replace('\0', "");
             std::thread::spawn(move || {
-                let ok = {
+                // 0 sent, 1 sent without the log (the endpoint refused its size).
+                let res = {
                     let m = CString::new(msg).unwrap_or_default();
                     let c = CString::new(contact).unwrap_or_default();
                     bindings::KD_SendFeedback(
                         m.as_ptr() as *mut i8,
                         c.as_ptr() as *mut i8,
                         rating as std::os::raw::c_int,
-                    ) == 0
+                        include_logs as std::os::raw::c_int,
+                    )
                 };
-                if ok {
+                let ok = res == 0 || res == 1;
+                if res == 1 {
+                    show_toast(&weak, "Thanks. Your message was sent, without the logs.");
+                } else if ok {
                     show_toast(&weak, "Thanks. Your message was sent.");
                 } else {
                     show_toast(
@@ -2195,6 +2229,7 @@ fn main() {
                             app.set_feedback_message("".into());
                             app.set_feedback_contact("".into());
                             app.set_feedback_rating(0);
+                            app.set_feedback_include_logs(false);
                         }
                     }
                 });
@@ -2345,6 +2380,8 @@ fn main() {
         });
 
         let weak_save_contact = app.as_weak();
+        app.on_save_contact_declined(|| decline_contact_offer());
+
         app.on_save_peer_as_contact(move |name| {
             let name_str = name.to_string();
             if name_str.is_empty() {
@@ -2664,8 +2701,11 @@ fn main() {
                     WinitWindowEventResult::Propagate
                 }
                 winit::event::WindowEvent::DroppedFile(path) => {
+                    // The Teleport screen has no grid: a toast shows the drop.
+                    let mut on_teleport = false;
                     if let Some(app) = weak_dnd.upgrade() {
                         app.set_drag_hovering(false);
+                        on_teleport = app.get_current_screen() == 2;
                     }
                     let path_str = path.to_string_lossy().to_string();
                     println!("File dropped: {}", path_str);
@@ -2673,6 +2713,7 @@ fn main() {
                     // Started here, before the thread: the ring keeps turning
                     // from the hover straight into the add.
                     let turning = AddingFiles::start(&weak_dnd, &adding_drop);
+                    let weak_toast = weak_dnd.clone();
                     // Shared in place: the engine serves the dropped path (kd and
                     // the FUSE mount do the same). The copy into the save folder
                     // that ran first doubled the disk use on the system drive,
@@ -2681,6 +2722,7 @@ fn main() {
                     // after its own full copy.
                     std::thread::spawn(move || {
                         let _turning = turning;
+                        let mut shared = false;
                         if path.is_dir() {
                             let dir_name = path.file_name()
                                 .map(|n| n.to_string_lossy().to_string())
@@ -2700,6 +2742,8 @@ fn main() {
                                     let res = bindings::KD_AddFileAs(c_local.as_ptr() as *mut i8, c_remote.as_ptr() as *mut i8);
                                     if res != 0 {
                                         eprintln!("Failed to add: {}", remote_name);
+                                    } else {
+                                        shared = true;
                                     }
                                 }
                             }
@@ -2712,7 +2756,12 @@ fn main() {
                                 eprintln!("Failed to add dropped file: {}", err);
                             } else {
                                 println!("Dropped file added: {}", path_str);
+                                shared = true;
                             }
+                        }
+                        // Dropping still works with Teleport; the folder is the way we suggest.
+                        if on_teleport && shared {
+                            show_toast(&weak_toast, "Shared with your friend. Tip: use the Teleport Folder.");
                         }
                     });
                     WinitWindowEventResult::Propagate
