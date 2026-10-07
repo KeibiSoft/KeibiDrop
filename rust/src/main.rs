@@ -207,6 +207,9 @@ fn start_file_watcher(
     current_folder: Arc<Mutex<String>>,
 ) {
     std::thread::spawn(move || {
+        // The list as last pushed to the UI. None until the first push, so a
+        // new session always replaces the previous session's cards.
+        let mut last_pushed: Option<Vec<FileInfo>> = None;
         // FileWatcher running
         while running.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -400,6 +403,15 @@ fn start_file_watcher(
 
                 let any_dl = files.iter().any(|f| f.downloading);
                 drop(dl);
+
+                // Push only what changed: a push rebuilds every card, and the
+                // unconditional push redrew the whole grid twice a second with
+                // nothing moving. A burst of announcements still lands as one
+                // push per tick, which is the batching the grid needs.
+                if last_pushed.as_ref() == Some(&files) {
+                    continue;
+                }
+                last_pushed = Some(files.clone());
 
                 // Push to UI (build VecModel on UI thread since Rc is not Send)
                 let weak_clone = weak.clone();
@@ -1663,23 +1675,19 @@ fn main() {
             });
         }
 
-        // Handle Add File: native file picker (multi-select) → copy to save folder → KD_AddFile
-        let save_path_add = to_save.clone();
+        // Handle Add File: native file picker (multi-select) → KD_AddFile. The
+        // engine serves the picked path itself (share in place, as kd does).
+        // The copy into the save folder that ran first doubled the disk use,
+        // failed on files another program held open (os error 32) and held
+        // every announce back until the copy was done.
         let weak_toast_add = app.as_weak();
         app.on_add_file_pressed(move || {
-            let save_path = save_path_add.clone();
             let weak = weak_toast_add.clone();
             std::thread::spawn(move || {
                 if let Some(paths) = rfd::FileDialog::new().pick_files() {
                     let count = paths.len();
                     for path in paths {
                         let path_str = path.to_string_lossy().to_string();
-                        let _ = std::fs::create_dir_all(&save_path);
-                        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        let dest = format!("{}/{}", save_path, filename);
-                        if let Err(e) = std::fs::copy(&path_str, &dest) {
-                            eprintln!("Failed to copy file to save folder: {}", e);
-                        }
                         let c_path = CString::new(path_str).unwrap();
                         let res = bindings::KD_AddFile(c_path.as_ptr() as *mut i8);
                         if res != 0 {
@@ -2521,7 +2529,6 @@ fn main() {
 
         // Drag-and-drop: intercept winit events for OS file drops
         let weak_dnd = app.as_weak();
-        let save_path_dnd = to_save.clone();
         #[allow(deprecated)]
         app.window().on_winit_window_event(move |_slint_window, event| {
             use slint::winit_030::winit;
@@ -2544,10 +2551,14 @@ fn main() {
                     }
                     let path_str = path.to_string_lossy().to_string();
                     println!("File dropped: {}", path_str);
-                    let save = save_path_dnd.clone();
                     let path = path.to_path_buf();
+                    // Shared in place: the engine serves the dropped path (kd and
+                    // the FUSE mount do the same). The copy into the save folder
+                    // that ran first doubled the disk use on the system drive,
+                    // failed on files another program held open (os error 32),
+                    // and a folder reached the peer one file at a time, each
+                    // after its own full copy.
                     std::thread::spawn(move || {
-                        let _ = std::fs::create_dir_all(&save);
                         if path.is_dir() {
                             let dir_name = path.file_name()
                                 .map(|n| n.to_string_lossy().to_string())
@@ -2555,13 +2566,14 @@ fn main() {
                             for entry in walkdir(&path) {
                                 if entry.is_file() {
                                     let rel = entry.strip_prefix(&path).unwrap_or(&entry);
-                                    let remote_name = format!("{}/{}", dir_name, rel.to_string_lossy());
-                                    let dest = Path::new(&save).join(&dir_name).join(rel);
-                                    if let Some(parent) = dest.parent() {
-                                        let _ = std::fs::create_dir_all(parent);
-                                    }
-                                    let _ = std::fs::copy(&entry, &dest);
-                                    let c_local = CString::new(dest.to_string_lossy().to_string()).unwrap();
+                                    // Component-wise join: the peer gets "/" on
+                                    // Windows too, not a name with "\" inside.
+                                    let rel: Vec<String> = rel
+                                        .iter()
+                                        .map(|c| c.to_string_lossy().to_string())
+                                        .collect();
+                                    let remote_name = format!("{}/{}", dir_name, rel.join("/"));
+                                    let c_local = CString::new(entry.to_string_lossy().to_string()).unwrap();
                                     let c_remote = CString::new(remote_name.clone()).unwrap();
                                     let res = bindings::KD_AddFileAs(c_local.as_ptr() as *mut i8, c_remote.as_ptr() as *mut i8);
                                     if res != 0 {
@@ -2571,12 +2583,6 @@ fn main() {
                             }
                             println!("Directory added: {}", path_str);
                         } else {
-                            if let Some(fname) = path.file_name() {
-                                let dest = format!("{}/{}", save, fname.to_string_lossy());
-                                if let Err(e) = std::fs::copy(&path, &dest) {
-                                    eprintln!("Failed to copy dropped file: {}", e);
-                                }
-                            }
                             let c_path = CString::new(path_str.clone()).unwrap();
                             let res = bindings::KD_AddFile(c_path.as_ptr() as *mut i8);
                             if res != 0 {
