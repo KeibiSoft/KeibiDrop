@@ -20,7 +20,8 @@ export struct ContactInfo {
 
 // File info model for dynamic file list
 export struct FileInfo {
-    name: string,
+    name: string,         // full name: Open, Save, Pause and X act on it
+    label: string,        // what the card shows: the name inside the open folder
     size-bytes: int,
     downloading: bool,    // I'm downloading this file
     uploading: bool,      // peer is downloading this file from me
@@ -154,7 +155,7 @@ component FieldAction inherits Rectangle {
         horizontal-alignment: center;
         silent: true;
         style: Theme.button-label;
-        // White while pressed, the cue every button gives (Marius).
+        // White while pressed, the cue every button gives.
         color: touch.pressed ? Theme.text : Theme.on-button;
         text: root.text;
     }
@@ -565,7 +566,7 @@ component Overlay inherits Rectangle {
 
 // The (+) of the no-FUSE screen (Figma 214:988): her blue plus in her ring,
 // which stays as a static circle; its arc turns while files are dragged over
-// the window or dropped ones are added (Marius) and goes at the end of the
+// the window or dropped ones are added and goes at the end of the
 // turn it is in. A click picks files.
 component AddRing inherits Rectangle {
     in property <bool> spinning;
@@ -603,6 +604,14 @@ component AddRing inherits Rectangle {
     }
 }
 
+// Her folder (Figma Screen 14): a tab behind a body, her gradients. Folder
+// cards show it too.
+component FolderIcon inherits Image {
+    width: 80px;
+    height: 62px;
+    source: @image-url("../assets/folder.svg");
+}
+
 // What a file is, in the middle of its preview.
 component FileTypeIcon inherits Label {
     in property <string> file-type: "other";
@@ -610,8 +619,7 @@ component FileTypeIcon inherits Label {
     horizontal-alignment: center;
     style: Theme.heading-medium;
     color: Theme.muted;
-    text: root.file-type == "folder" ? "DIR"
-        : root.file-type == "pdf" ? "PDF"
+    text: root.file-type == "pdf" ? "PDF"
         : root.file-type == "image" ? "IMG"
         : root.file-type == "video" ? "VID"
         : root.file-type == "audio" ? "SND"
@@ -622,7 +630,7 @@ component FileTypeIcon inherits Label {
 }
 
 // One file (Figma 214:988): a grey preview, then a square, the name and the
-// action. While it downloads the square is its progress ring (Marius) and the
+// action. While it downloads the square is its progress ring and the
 // action shows the percent: Pause on hover, Resume once paused; once saved the
 // square holds a check. A file that can go (yours, or a saved one) ends the
 // row with X.
@@ -656,7 +664,11 @@ component FileCard inherits Rectangle {
         border-radius: Theme.radius;
         background: Theme.file-preview;
 
-        FileTypeIcon {
+        if root.file-type == "folder": FolderIcon {
+            x: round((parent.width - self.width) / 2px) * 1px;
+            y: round((parent.height - self.height) / 2px) * 1px;
+        }
+        if root.file-type != "folder": FileTypeIcon {
             width: parent.width;
             height: parent.height;
             file-type: root.file-type;
@@ -762,7 +774,7 @@ component FileGrid inherits Rectangle {
             y: floor(idx / 4) * root.row-pitch;
             width: ceil(self.left + root.card-width / 1px - 0.25) * 1px - self.x;
             preview-height: root.preview-height;
-            filename: file.name;
+            filename: file.label;
             file-type: file.file-type;
             downloading: !root.browse-mode && file.downloading;
             progress: file.progress;
@@ -939,7 +951,7 @@ export component MainWindow inherits Window {
     in property<string> window_title: "KEIBIDROP";
     default-font-family: "Inter";
     // The whole UI scales with the window (main.rs first_size, fit_zoom), in
-    // Mila's proportions. zoom is that factor, Theme.zoom-min at the least.
+    // the design's proportions. zoom is that factor, Theme.zoom-min at the least.
     in property <float> zoom: 1;
     preferred-width: Theme.frame-width * Theme.zoom-open / root.zoom;
     preferred-height: Theme.frame-height * Theme.zoom-open / root.zoom;
@@ -1152,7 +1164,7 @@ export component MainWindow inherits Window {
     }
 
     // Help card steps (Figma Screen 13 for the connect screen).
-    // Plain words, the same ones the buttons and switches use (Marius).
+    // Plain words, the same ones the buttons and switches use.
     property<[string]> help_steps: root.current_screen == 1
         ? ["Drag files onto the window or click the +. Your friend sees your files and can save them.",
            "Click Save to download one of their files, or Save all in the ... menu. Save contact keeps your friend in your contacts.",
@@ -1453,7 +1465,7 @@ export component MainWindow inherits Window {
         }
 
         // Teleport switch (FUSE): Medium first line, Light wrapped detail (Figma
-        // 8px). Off, it names her mode: Direct transfer (Marius).
+        // 8px). Off, it names her mode: Direct transfer.
         if root.room_action == 0: Rectangle {
             x: 868px;
             y: 482px;
@@ -1596,7 +1608,7 @@ export component MainWindow inherits Window {
 
     // ============ SCREEN 1: Connected, no FUSE (Figma 214:988) ============
     // Her frame with the menu pill at its place on every screen, Save all in
-    // its menu and the connection line under the logo (Marius).
+    // its menu and the connection line under the logo.
     if current_screen == 1: Rectangle {
         x: root.column-x;
         width: Theme.frame-width;
@@ -1620,7 +1632,7 @@ export component MainWindow inherits Window {
             buy => { root.tokens_buy(); }
         }
 
-        // Centred between the connection line and the files (Marius); her
+        // Centred between the connection line and the files; her
         // ring's box is symmetric, so its centre is the drawn ring's centre.
         AddRing {
             x: 504px;
@@ -1658,7 +1670,7 @@ export component MainWindow inherits Window {
 
     // ============ SCREEN 2: Connected, Teleport (Figma Screen 14) ============
     // Her card: the Teleport Folder, four points, its path with Open Folder;
-    // her note under it. The card's X disconnects (Marius). Save contact is in
+    // her note under it. The card's X disconnects. Save contact is in
     // the menu; the connection line stays under the logo as on screen 1.
     if current_screen == 2: Rectangle {
         x: root.column-x;
@@ -1688,13 +1700,9 @@ export component MainWindow inherits Window {
             height: 319px;
             kind: GlassKind.pill;
 
-            // Her folder: a tab behind a body, her gradients (assets/folder.svg).
-            Image {
+            FolderIcon {
                 x: 253.25px;
                 y: 33.25px;
-                width: 80px;
-                height: 62px;
-                source: @image-url("../assets/folder.svg");
             }
             IconButton {
                 x: 564px;
@@ -1716,7 +1724,7 @@ export component MainWindow inherits Window {
                 style: Theme.title-wide;
                 text: "Open Teleport Folder";
             }
-            // The folder and its title open the folder too (Marius).
+            // The folder and its title open the folder too.
             Rectangle {
                 x: 93px;
                 y: 30px;
@@ -1802,7 +1810,7 @@ export component MainWindow inherits Window {
     }
 
     // ============ SCREEN 3: Saved Files (Figma 214:988 without the (+)) ============
-    // Mila: like the no-FUSE screen without the (+), the row up where the old
+    // Her frame: like the no-FUSE screen without the (+), the row up where the old
     // screen had it (as far under the logo). Open folder is in the menu.
     if current_screen == 3: Rectangle {
         x: root.column-x;
@@ -1872,7 +1880,7 @@ export component MainWindow inherits Window {
     // Help (Figma Screen 13)
     // The connect screen's card also explains contacts and Incognito between
     // two lines; a connected screen's card closes up under its steps, and its
-    // title has no line about fingerprints (Marius).
+    // title has no line about fingerprints.
     if root.help_visible: help := Overlay {
         property <length> contacts-part: root.current_screen == 0 ? 74px : 0;
         card-x: root.column-x + 313px;
@@ -2239,7 +2247,7 @@ export component MainWindow inherits Window {
             text <=> root.feedback_contact;
         }
 
-        // Off by default: logs go only when the person asks (Marius).
+        // Off by default: logs go only when the person asks.
         ToggleRow {
             x: 20px;
             y: 294px;
@@ -2278,7 +2286,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    // Save contact (Marius): opens by itself the first time you connect to a
+    // Save contact: opens by itself the first time you connect to a
     // friend who is not a contact yet (Rust: finish_connect_ui), and from the
     // menu. No thanks closes it, and the app does not offer that friend again.
     if root.save_contact_visible: save-contact := Overlay {
@@ -2465,7 +2473,7 @@ export component MainWindow inherits Window {
     if root.menu_open: TouchArea {
         clicked => { root.menu_open = false; }
     }
-    // Only the rows this screen has: no empty slot at the top (Marius).
+    // Only the rows this screen has: no empty slot at the top.
     if root.menu_open: Glass {
         x: root.column-x + Theme.box-right - self.width;
         y: Theme.menu-y;

@@ -345,6 +345,7 @@ use slint::platform::{PointerEventButton, WindowEvent};
 fn remote_file(name: &str) -> keibidrop_rust::FileInfo {
     keibidrop_rust::FileInfo {
         name: name.into(),
+        label: name.rsplit('/').next().unwrap_or(name).into(),
         size_bytes: 160_423,
         downloading: false,
         uploading: false,
@@ -512,7 +513,7 @@ fn logo_and_menu_pill_keep_their_place_on_every_screen_and_size() {
     }
 }
 
-// Her Teleport card (Figma Screen 14): its X ends the session (Marius).
+// Her Teleport card (Figma Screen 14): its X ends the session.
 #[test]
 fn the_teleport_card_x_disconnects() {
     let app = app();
@@ -605,7 +606,7 @@ fn connected_help_drops_the_fingerprint_line_and_the_gap() {
     assert_eq!(on_connect - on_teleport, 74.0, "the card did not close up");
 }
 
-// The first-connect offer (Marius): Save keeps the friend, No thanks tells
+// The first-connect offer: Save keeps the friend, No thanks tells
 // Rust not to offer them again; both close it.
 #[test]
 fn save_contact_offer_saves_or_declines() {

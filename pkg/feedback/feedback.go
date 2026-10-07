@@ -24,7 +24,7 @@ const DefaultEndpoint = "https://keibidrop.com/feedback"
 const maxMessage = 4000
 
 // MaxLogs caps the log a report carries: the newest 4 MiB of sanitized
-// text. The endpoint takes no more (Marius, 2026-10-07).
+// text. The endpoint takes no more.
 const MaxLogs = 4 << 20
 
 // maxLogsWire keeps the request under the endpoint's 4 MiB: a log that does

@@ -72,6 +72,12 @@ fn is_hidden_path(path: &str) -> bool {
     is_hidden_file(path) || path.rsplit('/').next().is_some_and(is_hidden_file)
 }
 
+/// `path` under `base`, with "/" between its parts on every platform.
+fn slash_rel(path: &Path, base: &Path) -> Option<String> {
+    let rel = path.strip_prefix(base).ok()?;
+    Some(rel.iter().map(|c| c.to_string_lossy()).collect::<Vec<_>>().join("/"))
+}
+
 /// Returns true if a filename should be hidden from the UI.
 fn is_hidden_file(name: &str) -> bool {
     name.starts_with('.')
@@ -121,14 +127,14 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
     let mut files: Vec<FileInfo> = Vec::new();
     let mut seen_folders: std::collections::HashSet<String> =
         std::collections::HashSet::new();
+    // "/" between parts on every platform, as in the peer's names: the
+    // grouping below splits on it, and Windows gives "\".
+    let rels: Vec<Option<String>> = all_files.iter().map(|p| slash_rel(p, base)).collect();
 
-    for path in &all_files {
-        let rel = match path.strip_prefix(base) {
-            Ok(r) => r.to_string_lossy().to_string(),
-            Err(_) => continue,
-        };
+    for (path, rel) in all_files.iter().zip(&rels) {
+        let Some(rel) = rel.clone() else { continue };
 
-        if is_hidden_file(&rel) {
+        if is_hidden_path(&rel) {
             continue;
         }
 
@@ -148,19 +154,11 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
                 format!("{}/{}", current_folder, subfolder)
             };
             if seen_folders.insert(full_folder.clone()) {
-                let child_count = all_files
-                    .iter()
-                    .filter(|p| {
-                        p.strip_prefix(base)
-                            .map(|r| {
-                                r.to_string_lossy()
-                                    .starts_with(&format!("{}/", full_folder))
-                            })
-                            .unwrap_or(false)
-                    })
-                    .count();
+                let prefix = format!("{}/", full_folder);
+                let child_count = rels.iter().flatten().filter(|r| r.starts_with(&prefix)).count();
                 files.push(FileInfo {
                     name: slint::SharedString::from(subfolder),
+                    label: slint::SharedString::from(subfolder),
                     size_bytes: child_count as i32,
                     downloading: false,
                     uploading: false,
@@ -181,6 +179,7 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
 
         files.push(FileInfo {
             name: slint::SharedString::from(rel.as_str()),
+            label: slint::SharedString::from(relative.as_str()),
             size_bytes: size,
             downloading: false,
             uploading: false,
@@ -359,6 +358,7 @@ fn start_file_watcher(
                                 .count();
                             files.push(FileInfo {
                                 name: slint::SharedString::from(subfolder),
+                                label: slint::SharedString::from(subfolder),
                                 size_bytes: child_count as i32,
                                 downloading: false,
                                 uploading: false,
@@ -413,6 +413,7 @@ fn start_file_watcher(
 
                     files.push(FileInfo {
                         name: slint::SharedString::from(&name),
+                        label: slint::SharedString::from(&relative),
                         size_bytes: size as i32,
                         downloading,
                         uploading: false, // TODO: wire from Go events
@@ -452,6 +453,7 @@ fn start_file_watcher(
                             if taken.insert(subfolder.to_string()) {
                                 files.push(FileInfo {
                                     name: slint::SharedString::from(subfolder),
+                                    label: slint::SharedString::from(subfolder),
                                     size_bytes: child_count as i32,
                                     downloading: false,
                                     uploading: false,
@@ -475,6 +477,7 @@ fn start_file_watcher(
                     let ftype = file_type_from_name(&relative);
                     files.push(FileInfo {
                         name: slint::SharedString::from(lname.as_str()),
+                        label: slint::SharedString::from(relative.as_str()),
                         size_bytes: 0,
                         downloading: false,
                         uploading: false,
@@ -875,9 +878,9 @@ impl Drop for AddingFiles {
     }
 }
 
-/// The window opens sized from its screen, in Mila's proportions: 70% of the
+/// The window opens sized from its screen, in the design's proportions: 70% of the
 /// screen's height, at least her frame and at most Theme.zoom-open times it
-/// (Marius: 1.5 was too big on his Mac), and never more than fits, which on
+/// (1.5 looked too big), and never more than fits, which on
 /// a small screen means under her frame. Works in the screen's own scale
 /// (macOS, Windows and Linux report it alike).
 fn first_size(app: &MainWindow) {
@@ -902,7 +905,7 @@ fn first_size(app: &MainWindow) {
     refit(app);
 }
 
-/// The whole UI scales with the window so Mila's frame fills it, down to
+/// The whole UI scales with the window so the design's frame fills it, down to
 /// Theme.zoom-min on a small screen: the window's scale factor becomes the
 /// screen's times that zoom, and sizes, text and clicks all follow it.
 fn fit_zoom(app: &MainWindow, size: slint::winit_030::winit::dpi::PhysicalSize<u32>) {
@@ -1132,8 +1135,8 @@ unsafe fn finish_connect_ui(
 
     let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
     let peer_already_contact = bindings::KD_IsPeerAlreadyContact() != 0;
-    // The first time with a friend who is not a contact, offer to save them
-    // (Marius), unless the person said No thanks to this friend before.
+    // The first time with a friend who is not a contact, offer to save them,
+    // unless the person said No thanks to this friend before.
     let offer_contact =
         peer_persistent && !peer_already_contact && !contact_offer_declined(&peer_fingerprint());
     let _ = slint::invoke_from_event_loop(move || {
@@ -2063,8 +2066,11 @@ fn main() {
             let _ = Command::new("xdg-open").arg(&local_path).spawn();
             // On Windows, `explorer file.txt` opens the folder, not the file.
             // `cmd /c start "" "path"` opens the file with its default handler.
+            // Names inside folders carry "/", which no Windows name can hold.
             #[cfg(target_os = "windows")]
-            let _ = Command::new("cmd").args(["/c", "start", "", &local_path]).spawn();
+            let _ = Command::new("cmd")
+                .args(["/c", "start", "", &local_path.replace('/', "\\")])
+                .spawn();
         });
 
         app.on_unshare_file(move |filename| {
@@ -3329,7 +3335,7 @@ mod list_tests {
     fn list_names_round_trip() {
         for name in [
             "plain.txt",
-            r"C:\Users\marius\Desktop\19Aug26\Frame 1.png",
+            r"C:\Users\alice\Desktop\Holiday\photo 1.png",
             "tab\there",
             "line\nbreak",
             r"trailing\",
@@ -3346,10 +3352,43 @@ mod list_tests {
     #[test]
     fn hidden_by_own_name_inside_folders() {
         assert!(is_hidden_path(".DS_Store"));
-        assert!(is_hidden_path("19Aug26/.DS_Store"));
+        assert!(is_hidden_path("Holiday/.DS_Store"));
         assert!(is_hidden_path("a/b/Thumbs.db"));
         assert!(is_hidden_path("x/.fseventsd/fseventsd-uuid"));
-        assert!(!is_hidden_path("19Aug26/Frame 1.png"));
+        assert!(!is_hidden_path("Holiday/photo 1.png"));
+    }
+
+    // Saved Files: a card acts on its whole name and shows the name inside
+    // the open folder; folders group by "/" on every platform.
+    #[test]
+    fn saved_cards_show_the_name_inside_the_folder() {
+        let base = std::env::temp_dir().join(format!("kd-scan-{}", std::process::id()));
+        let deep = base.join("Projects").join("2025 Drafts");
+        std::fs::create_dir_all(&deep).unwrap();
+        for f in [deep.join("photo 1.png"), deep.join(".DS_Store"), base.join("Projects").join("top.txt")] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        let root = base.to_string_lossy().to_string();
+        let cards = |folder: &str| -> Vec<(String, String, String)> {
+            let mut cards: Vec<_> = super::scan_save_folder(&root, folder)
+                .into_iter()
+                .map(|f| (f.name.to_string(), f.label.to_string(), f.file_type.to_string()))
+                .collect();
+            cards.sort();
+            cards
+        };
+        let card = |name: &str, label: &str, kind: &str| (name.to_string(), label.to_string(), kind.to_string());
+
+        assert_eq!(cards(""), vec![card("Projects", "Projects", "folder")]);
+        assert_eq!(
+            cards("Projects"),
+            vec![card("2025 Drafts", "2025 Drafts", "folder"), card("Projects/top.txt", "top.txt", "text")]
+        );
+        assert_eq!(
+            cards("Projects/2025 Drafts"),
+            vec![card("Projects/2025 Drafts/photo 1.png", "photo 1.png", "image")]
+        );
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }
 
