@@ -3193,10 +3193,10 @@ fn main() {
                                 refresh_tokens_status(&app);
                             }
                         } else if let Some(gb) = evt.strip_prefix("tokens_added:") {
-                            show_toast(
-                                &weak_evt,
-                                &format!("Relay credit added: {gb} GiB. You are set."),
-                            );
+                            let msg = format!("Relay credit added: {gb} GiB. You are set.");
+                            show_toast(&weak_evt, &msg);
+                            // The purchase lands while the person is in the browser, paying.
+                            system_notify(&msg);
                             if let Some(app) = weak_evt.upgrade() {
                                 refresh_tokens_status(&app);
                             }
