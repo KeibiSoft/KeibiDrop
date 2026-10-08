@@ -1,5 +1,5 @@
 import { ScrollView, TextEdit, LineEdit } from "std-widgets.slint";
-import { Theme, Backdrop, Icons, Label, Glass, GlassKind, GlassButton, Icon, IconButton, Outline, ProgressRing, Spinner, TextStyle } from "theme.slint";
+import { Theme, Backdrop, Background, Box, BoxKind, Icons, Label, Glass, GlassKind, GlassButton, Icon, IconButton, ProgressRing, Spinner, TextStyle } from "theme.slint";
 
 // Rust fills it with the blurred window behind an overlay.
 export { Backdrop, Theme } from "theme.slint";
@@ -40,18 +40,20 @@ export struct MenuEntry {
     a11y: string,
 }
 
-// Numbered step square.
-component Badge inherits Outline {
+// Numbered step square (Figma NEW 2.0).
+component Badge inherits Box {
     in property <int> number;
-    width: Theme.control;
-    height: Theme.control;
+    kind: BoxKind.badge;
+    width: 39.65px;
+    height: 39.65px;
 
     Label {
+        x: 0.5px;
         width: parent.width;
         height: parent.height;
         horizontal-alignment: center;
-        style: Theme.badge;
-        color: Theme.faint;
+        style: Theme.step;
+        color: Theme.step-ink;
         text: root.number;
     }
 }
@@ -85,39 +87,37 @@ component TextAction inherits Rectangle {
     }
 }
 
-// Input with the grey button attached on its right. Figma: the input is 303
-// wide and the button covers its last 24px. The button parts are the children.
-component Field inherits Rectangle {
+// A code in her field with its grey buttons at the end (Figma NEW 2.0): the
+// buttons sit on the field's last button-width. They are the children, placed
+// in that slot.
+component Field inherits Box {
     in-out property <string> text;
     in property <bool> read-only;
-    in property <length> button-width: 166px;
+    in property <length> button-width: 195.35px;
     callback accepted;
 
-    height: Theme.control;
+    kind: BoxKind.field;
+    height: Theme.field-height;
 
-    Outline {
-        x: 0;
-        width: root.width - root.button-width + 24px;
-        border-top-right-radius: 0;
-        border-bottom-right-radius: 0;
-        background: Theme.field;
+    Rectangle {
+        x: 17.45px;
+        width: root.width - root.button-width - 21px;
+        height: root.height;
         clip: true;
 
         if root.read-only: Label {
-            x: 16px;
-            width: root.width - root.button-width - 20px;
+            width: parent.width;
             height: parent.height;
-            style: Theme.code;
+            style: Theme.field-text;
             color: Theme.text-soft;
             overflow: elide;
             text: root.text;
         }
         if !root.read-only: TextInput {
-            x: 16px;
-            width: root.width - root.button-width - 20px;
+            width: parent.width;
             height: parent.height;
-            font-size: Theme.code.size;
-            font-weight: Theme.code.weight;
+            font-size: Theme.field-text.size;
+            font-weight: Theme.field-text.weight;
             color: Theme.text;
             vertical-alignment: center;
             single-line: true;
@@ -125,39 +125,49 @@ component Field inherits Rectangle {
             accepted => { root.accepted(); }
         }
     }
-    Outline {
+    Rectangle {
         x: root.width - root.button-width;
         width: root.button-width;
-        border-top-left-radius: 0;
-        border-bottom-left-radius: 0;
-        background: Theme.button;
-        clip: true;
+        height: root.height;
         @children
     }
 }
 
-// One clickable part of a field's grey button.
-component FieldAction inherits Rectangle {
+// One of a field's grey buttons (Figma NEW 2.0). Add is a shade lighter and
+// its label a size larger than Copy and Invite link (dim).
+component FieldAction inherits Box {
     in property <string> text;
-    // Figma sets Copy and Invite link as one centred string; nudge matches it.
+    in property <bool> dim: false;
+    // Her Copy sits half a pixel left of its button's centre.
     in property <length> nudge: 0;
     callback clicked;
 
+    kind: root.dim ? BoxKind.button-dim : BoxKind.button;
+    x: 0;
+    y: 0;
+    height: Theme.field-height;
     accessible-role: button;
     accessible-label: root.text;
     accessible-action-default => { root.clicked(); }
-    background: touch.pressed ? #0000001f : touch.has-hover ? #ffffff14 : transparent;
-    animate background { duration: 150ms; }
 
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
+        background: touch.pressed ? #0000001f : touch.has-hover ? #ffffff0d : transparent;
+        animate background { duration: 150ms; }
+    }
     Label {
         x: root.nudge;
         width: parent.width;
         height: parent.height;
         horizontal-alignment: center;
         silent: true;
-        style: Theme.button-label;
+        style: root.dim ? Theme.field-button-small : Theme.field-button;
         // White while pressed, the cue every button gives.
-        color: touch.pressed ? Theme.text : Theme.on-button;
+        color: touch.pressed ? Theme.text : Theme.text-strong;
         text: root.text;
     }
     touch := TouchArea {
@@ -208,7 +218,8 @@ component ToggleSwitch inherits Glass {
     }
 }
 
-// Switch with its label 48px to the right (Figma Screen 12).
+// Switch with its label to the right (Figma NEW 2.0): the label is light on
+// and off, the knob shows the state.
 component ToggleRow inherits Rectangle {
     in property <string> text;
     in-out property <bool> checked;
@@ -225,23 +236,26 @@ component ToggleRow inherits Rectangle {
         enabled: root.enabled;
         toggled(v) => { root.toggled(v); }
     }
-    // Her label box sits half a pixel above the track's centre.
+    // Her label box: 51.81px right of the track, a hair under its top.
     Label {
-        x: 48px;
-        y: -0.5px;
-        height: parent.height;
+        x: 51.81px;
+        y: 0.92px;
+        height: 15px;
         silent: true;
-        style: Theme.label;
-        color: root.checked ? Theme.text : Theme.muted;
+        style: Theme.switch-label;
+        color: Theme.switch-ink;
         text: root.text;
     }
 }
 
-// Blue outline button: Connect, Question? and the overlay actions.
-component PillButton inherits Rectangle {
+// Her Connect, two states: at rest a blue line and a blue label (her nearby
+// device rows), pressed or busy filled blue with a white label (Figma NEW
+// 2.0). plain: a grey one for the second choice (Cancel, No thanks, Quit).
+component PillButton inherits Box {
     in-out property <string> text: "Button";
     in property <bool> enabled: true;
     in property <bool> active: false;
+    in property <bool> plain: false;
     callback clicked;
 
     accessible-role: button;
@@ -252,27 +266,34 @@ component PillButton inherits Rectangle {
         }
     }
 
-    width: 161px;
-    height: Theme.control;
-    border-radius: Theme.radius;
-    border-width: Theme.hairline;
-    border-color: Theme.accent-line;
-    background: root.active || pill-touch.pressed ? Theme.accent
-              : pill-touch.has-hover ? #177df514
-              : Theme.field;
-    opacity: root.enabled || root.active ? 1 : 0.4;
-    animate background { duration: 150ms; }
+    property <bool> lit: root.active || pill-touch.pressed;
 
-    // Figma draws her label half a pixel right of and above the centre.
+    kind: root.plain ? BoxKind.button-dim : root.lit ? BoxKind.primary : BoxKind.highlight;
+    width: 161px;
+    height: Theme.button-height;
+    opacity: root.enabled || root.active ? 1 : 0.4;
+
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
+        background: root.plain
+            ? (pill-touch.pressed ? #0000001f : pill-touch.has-hover ? #ffffff0d : transparent)
+            : !root.lit && pill-touch.has-hover ? #177cf31a : transparent;
+        animate background { duration: 150ms; }
+    }
+    // Figma draws her label a pixel right of and half a pixel under the centre.
     Label {
-        x: 0.5px;
-        y: -0.5px;
+        x: 1px;
+        y: 0.5px;
         width: parent.width;
         height: parent.height;
         horizontal-alignment: center;
         silent: true;
         style: Theme.primary;
-        color: root.active || pill-touch.pressed ? Theme.text : Theme.accent;
+        color: root.lit ? Theme.text : root.plain ? Theme.text-strong : Theme.accent;
         text: root.text;
     }
 
@@ -283,8 +304,9 @@ component PillButton inherits Rectangle {
     }
 }
 
-// Small outline button (Save Peer, Save All, the overlays' X)
-component SmallOutlineButton inherits Rectangle {
+// Small grey button (Figma NEW 2.0 colors): Buy relay credit, Not now, the
+// overlays' X.
+component SmallOutlineButton inherits Box {
     in-out property <string> text: "?";
     callback clicked;
 
@@ -292,21 +314,28 @@ component SmallOutlineButton inherits Rectangle {
     accessible-label: root.text;
     accessible-action-default => { root.clicked(); }
 
+    kind: BoxKind.button-dim;
+    radius: Theme.radius;
     width: self.preferred-width;
     preferred-width: btn-label.preferred-width + 28px;
     height: 24px;
-    border-radius: Theme.radius;
-    border-width: Theme.hairline;
-    border-color: small-touch.has-hover || small-touch.pressed ? Theme.text : Theme.muted;
-    animate border-color { duration: 150ms; }
 
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
+        background: small-touch.pressed ? #0000001f : small-touch.has-hover ? #ffffff0d : transparent;
+        animate background { duration: 150ms; }
+    }
     btn-label := Label {
         width: parent.width;
         height: parent.height;
         horizontal-alignment: center;
         silent: true;
         style: Theme.caption;
-        color: small-touch.has-hover || small-touch.pressed ? Theme.text : Theme.muted;
+        color: small-touch.pressed ? Theme.text : Theme.text-strong;
         text: root.text;
     }
 
@@ -330,32 +359,37 @@ component KeibiDropLogo inherits Rectangle {
     }
 }
 
-// Outline button - white/grey by default, set accent: true for blue
-component OutlineButton inherits Rectangle {
+// A file card's action (Figma 214:988 in the NEW 2.0 colors): a grey button,
+// or with accent her highlighted line and blue label (Open).
+component OutlineButton inherits Box {
     in-out property <string> text: "Button";
     in property <bool> enabled: true;
     in property <bool> accent: false;
     in property <TextStyle> style: Theme.button-label;
-    // Screen 12's blue; a file card's Open passes its own.
-    in property <color> accent-line: Theme.accent-line;
     in property <color> accent-ink: Theme.accent;
     out property <bool> hovered: touch.has-hover;
     callback clicked;
 
+    kind: root.accent && root.enabled ? BoxKind.highlight : BoxKind.button-dim;
+    radius: Theme.radius;
     width: 161px;
     height: Theme.control;
-    border-width: Theme.hairline;
-    border-radius: Theme.radius;
-    border-color: !root.enabled ? Theme.faint : root.accent ? root.accent-line : Theme.outline;
-    background: touch.pressed ? #ffffff14 : touch.has-hover ? #ffffff0a : transparent;
-    animate background { duration: 150ms; }
 
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
+        background: touch.pressed ? #ffffff14 : touch.has-hover ? #ffffff0a : transparent;
+        animate background { duration: 150ms; }
+    }
     Label {
         width: parent.width;
         height: parent.height;
         horizontal-alignment: center;
         style: root.style;
-        color: !root.enabled ? Theme.faint : touch.pressed || !root.accent ? Theme.text : root.accent-ink;
+        color: !root.enabled ? Theme.faint : touch.pressed ? Theme.text : root.accent ? root.accent-ink : Theme.text-strong;
         text: root.text;
     }
 
@@ -366,60 +400,77 @@ component OutlineButton inherits Rectangle {
     }
 }
 
-// One saved contact: status dot, name, code, Auto, Connect (Figma Screen 12).
+// One saved contact (Figma NEW 2.0): status dot, name, code, Auto, Connect.
 // Remove shows on hover only, so the row matches the design at rest.
 component ContactRow inherits Rectangle {
     in property <ContactInfo> contact;
     // The browser build: a tab cannot reconnect on its own, so no Auto.
     in property <bool> web: false;
+    // Her line between rows, along the top of every row but the first.
+    in property <bool> first: true;
     callback connect;
     callback auto;
     callback remove;
 
-    height: 20px;
+    height: 34.15px;
 
     hover := TouchArea { }
+    if !root.first: Rectangle {
+        x: 0;
+        y: -Theme.line / 2;
+        width: parent.width;
+        height: Theme.line;
+        background: Theme.row-divider;
+    }
     Rectangle {
-        x: 18.06px;
-        y: 8px;
-        width: 5.64px;
-        height: 5px;
-        border-radius: 2.5px;
+        x: 22.77px;
+        y: (parent.height - self.height) / 2;
+        width: 9.42px;
+        height: 9.42px;
+        border-radius: self.width / 2;
         background: root.contact.online ? Theme.online : Theme.offline;
     }
     Label {
-        x: 57.8px;
+        x: 66.74px;
         width: 105px;
         height: parent.height;
         overflow: elide;
-        color: Theme.text-soft;
+        style: Theme.row;
+        color: Theme.text-strong;
         text: root.contact.name;
     }
     Label {
-        x: 169.3px;
-        width: 165px;
+        x: 178.23px;
+        width: 191px;
         height: parent.height;
         overflow: elide;
-        color: Theme.text-soft;
+        style: Theme.row;
+        color: Theme.muted;
         text: root.contact.fingerprint;
     }
     if !root.web: TextAction {
-        x: 340.9px;
+        x: 375.3px;
+        y: (parent.height - self.height) / 2;
+        style: Theme.row;
         text: "Auto";
         accessible-label: "Auto connect " + root.contact.name;
         ink: root.contact.auto_connect ? Theme.link : Theme.muted;
         clicked => { root.auto(); }
     }
     TextAction {
-        x: 413.1px;
+        x: 461.67px;
+        y: (parent.height - self.height) / 2;
+        style: Theme.row;
         text: "Connect";
         accessible-label: "Connect to " + root.contact.name;
         ink: Theme.link;
         clicked => { root.connect(); }
     }
     remove-action := TextAction {
-        x: 466px;
+        x: 521px;
+        y: (parent.height - self.height) / 2;
         pad: 4px;
+        style: Theme.row;
         text: "X";
         accessible-label: "Remove " + root.contact.name;
         ink: hover.has-hover ? Theme.muted : transparent;
@@ -436,30 +487,32 @@ component ScrollThumb inherits Rectangle {
     background: Theme.scrollbar;
 }
 
-// Saved contacts on glass: three rows show, the rest scroll (Figma Screen 12).
-component ContactsPanel inherits Glass {
+// Saved contacts in her list (Figma NEW 2.0): rows 34.15px apart with a line
+// between them. Three rows show, the rest scroll.
+component ContactsPanel inherits Box {
     in property <[ContactInfo]> contacts;
     in property <bool> web: false;
     callback connect(int);
     callback auto(int);
     callback remove(int);
 
-    // Row tops in Figma: 5, 25, 46. Three rows show, the rest scroll.
-    pure function row-y(i: int) -> length {
-        return 5px + floor(i * 20.5 + 0.25) * 1px;
-    }
+    property <length> pitch: 34.15px;
+    property <length> top: 4px;
+
+    kind: BoxKind.list;
 
     list := Flickable {
         x: 0;
-        y: 0;
+        y: root.top;
         width: parent.width;
-        height: root.row-y(3);
-        content-height: max(self.height, root.row-y(root.contacts.length - 1) + 20px);
+        height: 3 * root.pitch;
+        content-height: max(self.height, root.contacts.length * root.pitch);
 
         for contact[i] in root.contacts: ContactRow {
             x: 0;
-            y: root.row-y(i);
-            width: 490px;
+            y: i * root.pitch;
+            width: root.width;
+            first: i == 0;
             contact: contact;
             web: root.web;
             connect => { root.connect(i); }
@@ -468,41 +521,100 @@ component ContactsPanel inherits Glass {
         }
     }
     if list.content-height > list.height: ScrollThumb {
-        x: 495.55px;
+        x: root.width - 14px;
         y: 9px + (root.height - 48px) * (-list.content-y / (list.content-height - list.height));
     }
 }
 
-// One row of the header's "..." menu: grey, white with its chevron on hover
-// (Figma Screen 14, Disconnect).
+// One row of the header's "..." menu (Figma NEW 2.0): white, blue on hover,
+// her chevron at the end and her line above every row but the first.
 component MenuItem inherits Rectangle {
     in property <MenuEntry> entry;
+    in property <bool> first: true;
     callback clicked;
 
-    property <color> ink: touch.has-hover || touch.pressed ? Theme.text : Theme.muted;
+    property <color> ink: touch.has-hover || touch.pressed ? Theme.link : Theme.text;
 
-    height: 21px;
+    height: Theme.menu-row;
     accessible-role: button;
     accessible-label: root.entry.a11y;
     accessible-action-default => { root.clicked(); }
 
-    // Figma draws her 10px rows half a pixel low.
+    if !root.first: Rectangle {
+        x: 17px;
+        y: 0.6px - Theme.line / 2;
+        width: 168px;
+        height: Theme.line;
+        background: Theme.divider;
+    }
     Label {
-        x: 18px;
-        y: 0.5px;
-        height: parent.height;
+        x: 16.92px;
+        y: 6.48px;
+        height: 14px;
         silent: true;
+        style: Theme.menu;
         color: root.ink;
         text: root.entry.label;
     }
     Icon {
-        x: 147px;
-        y: 5.5px;
+        x: 180px;
+        y: 8.56px;
         width: 4px;
         height: 8px;
         icon: Icons.chevron;
-        line: 2px;
         ink: root.ink;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A nearby device in local mode (Figma 273:1324): her highlighted row with
+// the name, a blue line and Connect. The whole row connects.
+component DeviceRow inherits Box {
+    in property <string> name;
+    callback clicked;
+
+    kind: BoxKind.highlight;
+    height: 39px;
+    accessible-role: button;
+    accessible-label: "Connect to " + root.name;
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        border-radius: root.outer-radius;
+        background: touch.pressed ? #177cf333 : touch.has-hover ? #177cf31a : transparent;
+        animate background { duration: 150ms; }
+    }
+    Label {
+        x: 18.5px;
+        y: 11.5px;
+        width: 88px;
+        height: 17px;
+        overflow: elide;
+        silent: true;
+        style: Theme.device;
+        text: root.name;
+    }
+    Rectangle {
+        x: 112px - Theme.line / 2;
+        y: 10px;
+        width: Theme.line;
+        height: 19px;
+        background: Theme.accent;
+    }
+    Label {
+        x: 125px;
+        y: 11.5px;
+        width: 59px;
+        height: 17px;
+        horizontal-alignment: center;
+        silent: true;
+        style: Theme.device-action;
+        // White while pressed, the cue every button gives.
+        color: touch.pressed ? Theme.text : Theme.accent;
+        text: "Connect";
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -695,7 +807,9 @@ component FileCard inherits Rectangle {
         height: 24px;
         progress: root.progress;
     }
-    if !(root.downloading || root.paused): Outline {
+    if !(root.downloading || root.paused): Box {
+        kind: BoxKind.badge;
+        radius: Theme.radius;
         x: 0;
         y: root.row-y;
         width: 24px;
@@ -737,7 +851,6 @@ component FileCard inherits Rectangle {
         style: Theme.button-small;
         enabled: !(root.web && root.is-local);
         accent: root.is-local || root.saved || root.web-view;
-        accent-line: Theme.open-line;
         accent-ink: Theme.open-ink;
         text: root.file-type == "folder" ? "Open"
             : root.downloading ? (self.hovered ? "Pause" : Math.round(root.progress * 100) + "%")
@@ -917,20 +1030,22 @@ component TeleportPoint inherits Rectangle {
 }
 
 // A glass tag on the connection line: the path, or the relay credit offer.
+// Her chip (Figma NEW 2.0 "Via Relay") is a switch's glass.
 component Chip inherits Glass {
     in property <string> text;
-    in property <color> ink: Theme.muted;
+    in property <color> ink: Theme.chip-ink;
     in property <bool> clickable: false;
     callback clicked;
 
-    kind: GlassKind.pill;
-    width: chip-label.preferred-width + 16px;
+    kind: GlassKind.track;
+    tint: Theme.switch-off;
+    width: chip-label.preferred-width + 26px;
     height: 20px;
 
     chip-label := Label {
-        x: 8px;
+        x: 13px;
         height: root.height;
-        style: Theme.small-strong;
+        style: Theme.chip;
         color: chip-touch.pressed ? Theme.text : root.ink;
         text: root.text;
     }
@@ -941,8 +1056,8 @@ component Chip inherits Glass {
     }
 }
 
-// Under the logo of a connected screen: the state, speed, path and relay
-// credit.
+// Under the logo of a connected screen: the state, path, relay credit and
+// speed.
 component ConnectionLine inherits HorizontalLayout {
     in property <string> state;
     in property <string> state-text;
@@ -973,16 +1088,11 @@ component ConnectionLine inherits HorizontalLayout {
         color: root.ink;
         text: root.state-text != "" ? root.state-text : "Connected";
     }
-    if root.throughput != "": Label {
-        style: Theme.caption;
-        color: Theme.faint;
-        text: root.throughput;
-    }
     if root.mode != "": Chip {
         y: (parent.height - self.height) / 2;
         ink: root.mode == "lan" ? Theme.online
             : root.mode == "direct" || root.mode == "direct-out" ? Theme.accent
-            : Theme.muted;
+            : Theme.chip-ink;
         text: root.mode == "lan" ? "LAN"
             : root.mode == "direct" ? "Direct P2P"
             : root.mode == "direct-out" ? "Direct reads"
@@ -1002,6 +1112,13 @@ component ConnectionLine inherits HorizontalLayout {
         style: Theme.caption;
         color: Theme.faint;
         text: root.credit;
+    }
+    // The speed comes and goes with transfers, so it goes last: nothing
+    // before it moves when it appears.
+    if root.throughput != "": Label {
+        style: Theme.caption;
+        color: Theme.faint;
+        text: root.throughput;
     }
 }
 
@@ -1325,20 +1442,46 @@ export component MainWindow inherits Window {
         height: 100%;
         background: root.background;
     }
+    // Her background (Figma NEW 2.0) reaches past her frame on every side;
+    // it stretches with the window.
+    Background {
+        x: root.width * (-64.5px / Theme.frame-width);
+        y: root.height * (-42px / Theme.frame-height);
+        width: root.width * (1245px / Theme.frame-width);
+        height: root.height * (830px / Theme.frame-height);
+    }
 
-    // ============ SCREEN 0: Connect (Figma Screen 12) ============
+    // ============ SCREEN 0: Connect (Figma NEW 2.0: 271:778, local mode 273:1324) ============
     if current_screen == 0: Rectangle {
         x: root.column-x;
         width: Theme.frame-width;
         height: 100%;
         property <float> alpha: 0.0;
+        // Her right column: the switches, then Connect, or the nearby
+        // devices in local mode.
+        property <length> right-x: 828px;
+        property <length> switch-x: 828.66px;
+        // While connecting nothing moves: the switches stay, dimmed and
+        // locked; in local mode the countdown takes the line of "Nearby
+        // devices" and Cancel the first device's row.
+        property <bool> connecting: root.room_action != 0;
+        property <float> settled: self.connecting ? 0.5 : 1;
+        property <length> cancel-y: root.local_mode ? 420px : 480px;
+        // Errors and news, 8px under whatever ends the column: Cancel while
+        // connecting, the last nearby device (four show), the hint, or Connect.
+        property <length> devices-end: root.discovered_peers.length == 0 ? 412px
+            : 420px + min(4, root.discovered_peers.length) * 50px - 11px;
+        property <length> notes-y: self.connecting ? self.cancel-y + Theme.button-height + 8px
+            : root.local_mode ? self.devices-end + 8px
+            : root.peer_code_added ? 448px : 428px;
         opacity: alpha;
         animate opacity { duration: 300ms; easing: ease-out; }
         init => { alpha = 1.0; }
 
         // An open overlay shows its own title over the blur.
         if !root.overlay_open: Label {
-            y: 149.5px;
+            x: 1px;
+            y: 113.5px;
             width: parent.width;
             height: 30px;
             horizontal-alignment: center;
@@ -1346,8 +1489,8 @@ export component MainWindow inherits Window {
             text: "Connect Securely";
         }
         if !root.overlay_open: Label {
-            x: -0.5px;
-            y: 185px;
+            x: 0.5px;
+            y: 149px;
             width: parent.width;
             height: 30px;
             horizontal-alignment: center;
@@ -1355,251 +1498,215 @@ export component MainWindow inherits Window {
             text: "Exchange fingerprints to establish a secure connection";
         }
 
-        Badge { x: 261px; y: 262px; number: 1; }
-        Badge { x: 261px; y: 408px; number: 2; }
+        Badge { x: 175px; y: 201px; number: 1; }
+        Badge { x: 175px; y: 352px; number: 2; }
 
-        // Card 1: the peer's code
-        Outline {
-            x: 314px;
-            y: 262px;
-            width: 517px;
-            height: 131px;
-            background: Theme.card;
+        // Card 1: the friend's code. Its second line is the hint, or what
+        // became of the code.
+        Box {
+            x: 240.03px;
+            y: 200.89px;
+            width: 528.12px;
+            height: 134.8px;
 
             Label {
-                x: 36px;
-                y: 13.5px;
-                height: 30px;
-                style: Theme.heading-medium;
+                x: 26.95px;
+                y: 19.82px;
+                height: 19px;
+                style: Theme.card-heading;
+                color: Theme.text-strong;
                 text: root.local_mode ? "Friend's Address" : "Friend's Code";
             }
-            peer-field := Field {
-                x: 36px;
-                y: 48px;
-                width: 445px;
-                text <=> root.peer_code;
-                accepted => { root.add_peer_code(); }
-                FieldAction {
-                    width: peer-field.button-width;
-                    height: Theme.control;
-                    text: "Add";
-                    clicked => { root.add_peer_code(); }
-                }
-            }
             Label {
-                x: 36px;
-                y: 96px;
-                height: 12px;
-                style: root.peer_code_error ? Theme.note : Theme.hint;
-                color: root.peer_code_error ? Theme.error : root.peer_code_added ? Theme.accent : Theme.faint;
+                x: 26.95px;
+                y: 43.61px;
+                height: 13px;
+                style: Theme.card-line;
+                color: root.peer_code_error ? Theme.error : root.peer_code_added ? Theme.accent : Theme.muted;
                 text: root.peer_code_error ? "Invalid code. Check that you copied the full code from your friend."
                     : root.peer_code_added ? "Friend's code added"
                     : root.local_mode ? "" : "Paste the code your friend sent you";
             }
+            peer-field := Field {
+                x: 26.95px;
+                y: 69.78px;
+                width: 477.37px;
+                text <=> root.peer_code;
+                accepted => { root.add_peer_code(); }
+                FieldAction {
+                    width: peer-field.button-width;
+                    text: "Add";
+                    clicked => { root.add_peer_code(); }
+                }
+            }
         }
 
         // Card 2: Your Code, or what stopped the engine, in its place
-        if root.engine_error == "": Outline {
-            x: 314px;
-            y: 408px;
-            width: 517px;
-            height: 161px;
-            background: Theme.card;
+        if root.engine_error == "": Box {
+            x: 240.03px;
+            y: 351.55px;
+            width: 528.12px;
+            height: 149.08px;
 
             Label {
-                x: 36px;
-                y: 23px;
-                height: 30px;
-                style: Theme.heading;
+                x: 26.95px;
+                y: 19.83px;
+                height: 19px;
+                style: Theme.card-heading;
+                color: Theme.text-strong;
                 text: root.local_mode ? "Your Address (local network)" : "Your Code";
             }
+            if !root.local_mode: Label {
+                x: 26.95px;
+                y: 43.62px;
+                height: 13px;
+                style: Theme.card-line;
+                color: Theme.muted;
+                text: "Share this code with your friend";
+            }
             code-field := Field {
-                x: 36px;
-                y: 60px;
-                width: 446px;
-                button-width: 167px;
+                x: 26.95px;
+                y: 69.79px;
+                width: 477.37px;
                 read-only: true;
                 text: root.local_mode
                     ? (root.local_address != "" ? root.local_address : "No link-local address")
                     : root.my_code;
                 FieldAction {
-                    x: 0;
-                    width: root.local_mode ? code-field.button-width : 67px;
-                    height: Theme.control;
+                    width: root.local_mode ? code-field.button-width : 98px;
+                    dim: true;
+                    nudge: root.local_mode ? 0 : -0.5px;
                     text: "Copy";
-                    nudge: root.local_mode ? 0 : 2.77px;
                     accessible-label: "Copy my code";
                     clicked => { root.copy_my_code(); }
                 }
                 // The invite link carries this code to the other person.
-                if !root.local_mode: Rectangle {
-                    x: 67px;
-                    width: 1px;
-                    height: Theme.control;
-                    background: Theme.outline;
-                }
                 if !root.local_mode: FieldAction {
-                    x: 68px;
-                    width: code-field.button-width - 68px;
-                    height: Theme.control;
+                    x: 100px;
+                    width: code-field.button-width - 100px;
+                    dim: true;
                     text: "Invite link";
-                    nudge: -2.14px;
                     accessible-label: "Copy invite link";
                     clicked => { root.copy_invite_link(); }
                 }
             }
             if !root.local_mode: Label {
-                x: 36px;
-                y: 110px;
-                width: 271px;
-                wrap: word-wrap;
-                vertical-alignment: top;
-                style: Theme.hint;
+                x: 26.95px;
+                y: 118.16px;
+                height: 12px;
+                style: Theme.card-note;
                 color: Theme.faint;
                 text: "Send this code to your friend via Telegram, Signal, Email or Carrier Pigeon.";
             }
         }
-        if root.engine_error != "": Outline {
-            x: 314px;
-            y: 408px;
-            width: 517px;
-            height: 161px;
-            background: Theme.card;
-            border-color: Theme.error;
+        if root.engine_error != "": Box {
+            x: 240.03px;
+            y: 351.55px;
+            width: 528.12px;
+            height: 149.08px;
+            line: Theme.error;
+
             Label {
-                x: 36px;
-                y: 13.5px;
-                height: 30px;
-                style: Theme.heading-medium;
+                x: 26.95px;
+                y: 19.83px;
+                height: 19px;
+                style: Theme.card-heading;
                 color: Theme.error;
                 text: "KeibiDrop could not start";
             }
             Label {
-                x: 36px;
-                y: 44px;
-                width: parent.width - 72px;
-                height: 60px;
+                x: 26.95px;
+                y: 46px;
+                width: parent.width - 54px;
+                height: 48px;
                 wrap: word-wrap;
                 overflow: elide;
                 vertical-alignment: top;
-                style: Theme.hint;
+                style: Theme.card-line;
                 color: Theme.text-soft;
                 text: root.engine_error;
             }
             HorizontalLayout {
-                x: 36px;
-                y: 112px;
-                height: 34px;
+                x: 26.95px;
+                y: 98px;
+                height: Theme.button-height;
                 spacing: 10px;
                 alignment: start;
                 PillButton { text: "Retry"; clicked => { root.engine_retry(); } }
-                if !root.web: PillButton { text: "Quit"; clicked => { root.engine_quit(); } }
+                if !root.web: PillButton { plain: true; text: "Quit"; clicked => { root.engine_quit(); } }
             }
         }
 
-        // Right column: identity and network switches, Connect, virtual folder.
-        // The browser has this one switch: it ends where the desktop's last
-        // one ends, the same gap above Connect.
-        if root.room_action == 0 && !root.local_mode: ToggleRow {
-            x: 868px;
-            y: root.web ? 492px : 410px;
-            width: 230px;
+        // Her line between the cards and the right column.
+        Rectangle {
+            x: 798px - Theme.line / 2;
+            y: 210.41px;
+            width: Theme.line;
+            height: 280.71px;
+            background: Theme.divider;
+        }
+
+        // Right column: identity and network switches, Connect, Teleport.
+        // The browser has one switch: it sits where the desktop's last one
+        // sits, the same gap above Connect.
+        if !root.local_mode: ToggleRow {
+            x: parent.switch-x;
+            y: root.web ? 318px : 242px;
+            width: 200px;
+            opacity: parent.settled;
+            enabled: !parent.connecting;
             text: "Incognito";
             checked <=> root.incognito_mode;
             toggled(v) => { root.incognito-mode-toggled(v); }
         }
-        if root.room_action == 0 && !root.web: ToggleRow {
-            x: 868px;
-            y: 447px;
-            width: 230px;
+        if !root.web: ToggleRow {
+            x: parent.switch-x;
+            y: 280px;
+            width: 200px;
+            opacity: parent.settled;
+            enabled: !parent.connecting;
             text: "Local mode";
             checked <=> root.local_mode;
             toggled(v) => { root.local-mode-toggled(v); }
         }
 
-        // Connect button (role determined by fingerprint tiebreaker)
-        if !root.local_mode: PillButton {
-            x: 868px;
-            y: 535px;
-            text: root.room_action != 0 ? "Connecting..." : "Connect";
-            active: root.room_action != 0;
-            // A typed code is enough: Connect registers it first (see on_connect_pressed).
-            enabled: root.room_action == 0 && root.next_enabled && (root.peer_code_added || root.peer_code != "");
-            clicked => { root.connect_pressed() }
-        }
-        if !root.local_mode && root.room_action == 0 && root.peer_code_added: Label {
-            x: 868px;
-            y: 577px;
-            height: 12px;
-            style: Theme.hint;
-            color: Theme.faint;
-            text: "You both press Connect.";
-        }
-
-        // While connecting: the countdown, what is missing, and Cancel.
-        if root.room_action != 0: Label {
-            x: 868px;
-            y: 577px;
-            width: 240px;
-            height: 14px;
-            style: Theme.label;
-            color: Theme.muted;
-            text: root.connect_status != "" ? root.connect_status : "Connecting...";
-        }
-        // Waiting for the other side: name what is missing rather than spinning.
-        if !root.local_mode && root.room_action != 0: Label {
-            x: 868px;
-            y: 597px;
-            width: 230px;
-            wrap: word-wrap;
-            vertical-alignment: top;
-            style: Theme.hint;
-            color: Theme.faint;
-            text: "Waiting for the other side. They need your code too.";
-        }
-        if root.room_action != 0: PillButton {
-            x: 868px;
-            y: 632px;
-            text: "Cancel";
-            clicked => { root.cancel_connect_pressed() }
-        }
-
-        // Teleport switch (FUSE): Medium first line, Light wrapped detail (Figma
-        // 8px). Off, it names her mode: Direct transfer.
-        if root.room_action == 0 && !root.web: Rectangle {
-            x: 868px;
-            y: 482px;
-            width: 230px;
+        // Teleport switch (FUSE), her two lines (Figma NEW 2.0). Off, it
+        // names her mode: Direct transfer.
+        if !root.web: Rectangle {
+            x: parent.switch-x;
+            y: 318px;
+            width: 200px;
             height: 30px;
+            opacity: parent.settled;
 
             ToggleSwitch {
                 x: 0;
                 y: 0;
                 accessible-label: "Teleport";
                 checked <=> root.fuse_mode;
-                enabled: root.fuse_available;
+                enabled: root.fuse_available && root.room_action == 0;
                 toggled(val) => { root.fuse-mode-toggled(val); }
             }
             Label {
-                x: 48px;
-                y: 1px;
-                height: 10px;
-                style: Theme.tiny-strong;
-                color: Theme.muted;
+                x: 51.81px;
+                y: -1.34px;
+                height: 15px;
+                style: Theme.switch-label;
+                color: Theme.switch-ink;
                 text: !root.fuse_available ? "Teleport not available"
                     : root.fuse_mode ? "Teleport" : "Direct transfer";
             }
             Rectangle {
-                x: 48px;
-                y: 11px;
-                width: 117px;
+                x: 51.81px;
+                y: 16.9px;
+                width: 148px;
                 height: fuse-hint.preferred-height;
                 fuse-hint := Label {
                     width: parent.width;
                     wrap: word-wrap;
                     vertical-alignment: top;
-                    style: Theme.tiny;
-                    color: fuse-hint-touch.has-hover || fuse-hint-touch.pressed ? Theme.text : Theme.muted;
+                    style: Theme.switch-detail;
+                    color: fuse-hint-touch.has-hover || fuse-hint-touch.pressed ? Theme.text : Theme.caption-ink;
                     text: !root.fuse_available ? root.fuse_install_hint
                         : root.fuse_mode ? "Instantly open shared files" : "Select files to send";
                 }
@@ -1611,72 +1718,104 @@ export component MainWindow inherits Window {
             }
         }
 
-        // LAN discovery, in place of Connect while local mode is on.
-        if root.local_mode && root.discovery_name != "" && root.room_action == 0: Label {
-            x: 868px;
-            y: 535px;
-            height: 14px;
-            style: Theme.label;
+        // Connect button (role determined by fingerprint tiebreaker)
+        if !root.local_mode: PillButton {
+            x: parent.right-x;
+            y: 381px;
+            width: 201px;
+            text: root.room_action != 0 ? "Connecting..." : "Connect";
+            active: root.room_action != 0;
+            // A typed code is enough: Connect registers it first (see on_connect_pressed).
+            enabled: root.room_action == 0 && root.next_enabled && (root.peer_code_added || root.peer_code != "");
+            clicked => { root.connect_pressed() }
+        }
+        if !root.local_mode && root.room_action == 0 && root.peer_code_added: Label {
+            x: parent.right-x;
+            y: 428px;
+            height: 12px;
+            style: Theme.card-note;
+            color: Theme.faint;
+            text: "You both press Connect.";
+        }
+
+        // While connecting: the countdown, what is missing, and Cancel.
+        if root.room_action != 0: Label {
+            x: root.local_mode ? 829px : parent.right-x;
+            y: root.local_mode ? 399.5px : 428px;
+            width: 201px;
+            height: root.local_mode ? 12px : 14px;
+            style: root.local_mode ? Theme.switch-detail : Theme.card-line;
+            color: root.local_mode ? Theme.caption-ink : Theme.muted;
+            text: root.connect_status != "" ? root.connect_status : "Connecting...";
+        }
+        // Waiting for the other side: name what is missing rather than spinning.
+        if !root.local_mode && root.room_action != 0: Label {
+            x: parent.right-x;
+            y: 446px;
+            width: 201px;
+            wrap: word-wrap;
+            vertical-alignment: top;
+            style: Theme.card-note;
+            color: Theme.faint;
+            text: "Waiting for the other side. They need your code too.";
+        }
+        if root.room_action != 0: PillButton {
+            x: parent.right-x;
+            y: parent.cancel-y;
+            width: 201px;
+            plain: true;
+            text: "Cancel";
+            clicked => { root.cancel_connect_pressed() }
+        }
+
+        // LAN discovery, in place of Connect while local mode is on (Figma
+        // 273:1324): her highlighted rows, four in view, the rest scroll.
+        if root.local_mode && root.discovery_name != "": Label {
+            x: 829px;
+            y: 381px;
+            height: 15px;
+            style: Theme.switch-label;
             color: Theme.accent;
             text: "You appear as: " + root.discovery_name;
         }
         if root.local_mode && root.room_action == 0: Label {
-            x: 868px;
-            y: 557px;
-            height: 14px;
-            style: Theme.small;
-            color: Theme.muted;
-            text: root.discovered_peers.length > 0 ? "Nearby devices:" : "Searching for devices...";
+            x: 829px;
+            y: 399.5px;
+            height: 12px;
+            style: Theme.switch-detail;
+            color: Theme.caption-ink;
+            text: root.discovered_peers.length > 0 ? "Nearby devices" : "Searching for devices...";
         }
-        for peer[idx] in root.discovered_peers: Outline {
-            x: 868px;
-            y: 577px + idx * 32px;
-            width: 230px;
-            height: 28px;
-            visible: root.local_mode && root.room_action == 0;
-            background: peer-touch.has-hover ? Theme.card : transparent;
-            border-color: Theme.faint;
-            accessible-role: button;
-            accessible-label: "Connect to " + peer.name;
-            accessible-action-default => { root.discovery-peer-selected(idx); }
+        if root.local_mode && root.room_action == 0: Flickable {
+            x: parent.right-x;
+            y: 420px;
+            width: 201px;
+            height: 4 * 50px - 11px;
+            content-height: max(self.height, root.discovered_peers.length * 50px - 11px);
 
-            Label {
-                x: 10px;
-                width: parent.width - 80px;
-                height: parent.height;
-                overflow: elide;
-                silent: true;
-                style: Theme.label;
-                color: Theme.text;
-                text: peer.name;
-            }
-            Label {
-                x: parent.width - 60px;
-                height: parent.height;
-                silent: true;
-                style: Theme.label;
-                color: peer-touch.pressed ? Theme.text : Theme.link;
-                text: "Connect";
-            }
-            peer-touch := TouchArea {
-                mouse-cursor: pointer;
+            for peer[idx] in root.discovered_peers: DeviceRow {
+                x: 0;
+                y: idx * 50px;
+                width: 201px;
+                name: peer.name;
                 clicked => { root.discovery-peer-selected(idx); }
             }
         }
 
         // Saved contacts (not while connecting or on the LAN path)
         if root.contacts.length > 0 && root.room_action == 0 && !root.local_mode: Label {
-            x: 350px;
-            y: 594px;
-            height: 30px;
-            style: Theme.section;
+            x: 247.85px;
+            y: 518.11px;
+            height: 19px;
+            style: Theme.list-heading;
+            color: Theme.text-strong;
             text: "Contacts";
         }
         if root.contacts.length > 0 && root.room_action == 0 && !root.local_mode: ContactsPanel {
-            x: 314px;
-            y: 636px;
-            width: 517px;
-            height: 77px;
+            x: 240px;
+            y: 546px;
+            width: 558px;
+            height: 111px;
             contacts: root.contacts;
             web: root.web;
             connect(i) => { root.connect-to-contact(i); }
@@ -1686,22 +1825,22 @@ export component MainWindow inherits Window {
 
         // Status and errors, under the right column.
         if root.error_message != "": Label {
-            x: 868px;
-            y: 340px;
-            width: 240px;
+            x: parent.right-x;
+            y: parent.notes-y;
+            width: 201px;
             wrap: word-wrap;
             vertical-alignment: top;
-            style: Theme.note;
+            style: Theme.card-note;
             color: Theme.error;
             text: root.error_message;
         }
         if root.status_message != "" && root.error_message == "" && root.room_action == 0: Label {
-            x: 868px;
-            y: 340px;
-            width: 240px;
+            x: parent.right-x;
+            y: parent.notes-y;
+            width: 201px;
             wrap: word-wrap;
             vertical-alignment: top;
-            style: Theme.hint;
+            style: Theme.card-note;
             color: Theme.muted;
             text: root.status_message;
         }
@@ -1796,12 +1935,11 @@ export component MainWindow inherits Window {
             buy => { root.tokens_buy(); }
         }
 
-        Glass {
+        Box {
             x: 282px;
             y: 216px;
             width: 587px;
             height: 319px;
-            kind: GlassKind.pill;
 
             FolderIcon {
                 x: 253.25px;
@@ -1856,35 +1994,34 @@ export component MainWindow inherits Window {
             TeleportPoint { x: 302px; y: 204px; icon: Icons.code; icon-width: 22px; icon-height: 14px; icon-y: 3px; text-x: 29px; text: "View documents\nand code"; }
             TeleportPoint { x: 414px; y: 204px; icon: Icons.download; icon-width: 17px; icon-height: 21px; text-x: 28px; text: "No waiting\nfor full downloading"; }
             for line-x in [182px, 293px, 403px]: Rectangle {
-                x: line-x - Theme.hairline / 2;
+                x: line-x - Theme.line / 2;
                 y: 203px;
-                width: Theme.hairline;
+                width: Theme.line;
                 height: 23px;
-                background: Theme.outline;
+                background: Theme.divider;
             }
 
             path-field := Field {
                 x: 69px;
-                y: 255px;
+                y: 253px;
                 width: 445px;
+                button-width: 166px;
                 read-only: true;
                 text: root.mount_path;
                 FieldAction {
                     width: path-field.button-width;
-                    height: Theme.control;
                     text: "Open Folder";
                     clicked => { root.open_folder_pressed(); }
                 }
             }
         }
 
-        Glass {
+        Box {
             x: 350px;
             y: 569px;
             width: 446px;
             height: 66px;
-            kind: GlassKind.pill;
-            tint: Theme.info-tint;
+            fill: Theme.info-tint;
 
             Icon {
                 x: 34px;
@@ -1998,14 +2135,14 @@ export component MainWindow inherits Window {
 
         for step[i] in root.help_steps: Rectangle {
             x: 58px;
-            y: 49px + i * 57px;
+            y: 46px + i * 57px;
             width: 401px;
-            height: Theme.control;
+            height: 39.65px;
             Badge { x: 0; y: 0; number: i + 1; }
             Label {
-                x: 46px;
+                x: 51.65px;
                 y: -0.5px;
-                width: 355px;
+                width: 349.35px;
                 height: parent.height;
                 wrap: word-wrap;
                 color: Theme.text-soft;
@@ -2016,8 +2153,8 @@ export component MainWindow inherits Window {
             x: 58px;
             y: 217.5px;
             width: 401px;
-            height: Theme.hairline;
-            background: Theme.outline;
+            height: Theme.line;
+            background: Theme.divider;
         }
         if root.current_screen == 0: HorizontalLayout {
             x: 58px;
@@ -2041,8 +2178,8 @@ export component MainWindow inherits Window {
             x: 58px;
             y: 291.5px;
             width: 401px;
-            height: Theme.hairline;
-            background: Theme.outline;
+            height: Theme.line;
+            background: Theme.divider;
         }
         Rectangle {
             x: 58px;
@@ -2133,7 +2270,7 @@ export component MainWindow inherits Window {
                     root.passphrase-protect-toggled(val);
                 }
             }
-            Label { x: 48px; height: 24px; style: Theme.label; color: Theme.muted; text: "Encrypt identity with a passphrase"; }
+            Label { x: 48px; height: 24px; style: Theme.switch-label; color: Theme.switch-ink; text: "Encrypt identity with a passphrase"; }
         }
 
         // Share read only
@@ -2150,7 +2287,7 @@ export component MainWindow inherits Window {
                 checked <=> root.cfg_share_read_only;
                 toggled(val) => { root.share_read_only_toggled(val); }
             }
-            Label { x: 48px; y: 0; height: 24px; style: Theme.label; color: Theme.muted; text: "Share is read only"; }
+            Label { x: 48px; y: 0; height: 24px; style: Theme.switch-label; color: Theme.switch-ink; text: "Share is read only"; }
             Label {
                 x: 48px;
                 y: 24px;
@@ -2177,7 +2314,7 @@ export component MainWindow inherits Window {
                 checked <=> root.cfg_mount_read_only;
                 toggled(val) => { root.mount_read_only_toggled(val); }
             }
-            Label { x: 48px; y: 0; height: 24px; style: Theme.label; color: Theme.muted; text: "Teleport Folder is read only"; }
+            Label { x: 48px; y: 0; height: 24px; style: Theme.switch-label; color: Theme.switch-ink; text: "Teleport Folder is read only"; }
             Label {
                 x: 48px;
                 y: 24px;
@@ -2204,7 +2341,7 @@ export component MainWindow inherits Window {
                 checked <=> root.cfg_preserve_metadata;
                 toggled(val) => { root.preserve_metadata_toggled(val); }
             }
-            Label { x: 48px; y: 0; height: 24px; style: Theme.label; color: Theme.muted; text: "Keep original timestamps"; }
+            Label { x: 48px; y: 0; height: 24px; style: Theme.switch-label; color: Theme.switch-ink; text: "Keep original timestamps"; }
             Label {
                 x: 48px;
                 y: 24px;
@@ -2231,7 +2368,6 @@ export component MainWindow inherits Window {
             }
             FieldAction {
                 width: tokens-input.button-width;
-                height: Theme.control;
                 text: "Add";
                 clicked => {
                     root.tokens_add(tokens-input.text);
@@ -2331,7 +2467,6 @@ export component MainWindow inherits Window {
             accepted => { root.web_save_relay(self.text); }
             FieldAction {
                 width: relay-field.button-width;
-                height: Theme.control;
                 text: "Save";
                 clicked => { root.web_save_relay(relay-field.text); }
             }
@@ -2346,7 +2481,6 @@ export component MainWindow inherits Window {
             accepted => { root.web_save_bridge(self.text); }
             FieldAction {
                 width: bridge-field.button-width;
-                height: Theme.control;
                 text: "Save";
                 clicked => { root.web_save_bridge(bridge-field.text); }
             }
@@ -2497,12 +2631,12 @@ export component MainWindow inherits Window {
             text: "Give your friend a name to connect again with one click.";
         }
 
-        Outline {
+        Box {
+            kind: BoxKind.field;
             x: 20px;
             y: 66px;
             width: save-contact.card-width - 40px;
             height: 32px;
-            background: Theme.field;
 
             contact-name-input := TextInput {
                 x: 12px;
@@ -2542,6 +2676,7 @@ export component MainWindow inherits Window {
             x: 185px;
             y: 116px;
             width: 155px;
+            plain: true;
             text: "No thanks";
             clicked => {
                 root.save_contact_visible = false;
@@ -2606,53 +2741,69 @@ export component MainWindow inherits Window {
         visible: !root.capturing;
     }
 
-    // Control pill (Figma Screens 12 to 14): Report problem, then her ?, dots
-    // and X. Same place and size on every screen.
-    Glass {
-        kind: GlassKind.pill;
+    // Control pill (Figma NEW 2.0): Report problem, her line, then her ?,
+    // dots and X, white. Same place and size on every screen.
+    Box {
+        kind: BoxKind.panel;
         x: root.column-x + Theme.box-right - self.width;
         y: Theme.pill-y;
         width: Theme.pill-width;
-        height: 24px;
+        height: Theme.pill-height;
         visible: !root.capturing;
 
-        // Grey while its menu or overlay is open too, as in her frames.
         TextAction {
-            x: 51px - self.width / 2;
-            y: 0.5px;
-            height: 24px;
+            x: 17.02px;
+            y: 5.22px;
+            style: Theme.card-line;
+            ink: Theme.text;
+            hover-ink: Theme.link;
             text: "Report problem";
             clicked => { root.show_overlay(false, !root.feedback_visible, false); }
         }
+        Rectangle {
+            x: 116px - Theme.line / 2;
+            y: 6px;
+            width: Theme.line;
+            height: 19px;
+            background: Theme.divider;
+        }
         IconButton {
-            x: 99px;
-            y: 8px;
+            x: 132px;
+            y: 12px;
             width: 5px;
             height: 8px;
             pad: 5px;
             icon: Icons.help;
+            line: 1px;
+            rest-ink: Theme.text;
+            hover-ink: Theme.link;
             accessible-label: "Help";
             clicked => { root.show_overlay(!root.help_visible, false, false); }
         }
         IconButton {
-            x: 118px;
-            y: 11px;
+            x: 151px;
+            y: 15px;
             width: 14px;
             height: 2px;
             pad: 5px;
             icon: Icons.more;
             line: 1px;
             filled: true;
+            rest-ink: Theme.text;
+            hover-ink: Theme.link;
             accessible-label: "Menu";
             clicked => { root.menu_open = !root.menu_open; }
         }
         IconButton {
-            x: 144px;
-            y: 9px;
+            x: 177px;
+            y: 13px;
             width: 7px;
             height: 7px;
             pad: 5px;
             icon: Icons.cross;
+            line: 1px;
+            rest-ink: Theme.text;
+            hover-ink: Theme.link;
             accessible-label: root.overlay_open ? "Close" : "Quit";
             clicked => { root.close_or_quit(); }
         }
@@ -2663,15 +2814,18 @@ export component MainWindow inherits Window {
         clicked => { root.menu_open = false; }
     }
     // Only the rows this screen has: no empty slot at the top.
-    if root.menu_open: Glass {
+    if root.menu_open: Box {
+        kind: BoxKind.panel;
         x: root.column-x + Theme.box-right - self.width;
         y: Theme.menu-y;
         width: Theme.pill-width;
-        height: 14px + root.menu_entries.length * 21px;
+        height: 20.62px + root.menu_entries.length * Theme.menu-row;
         visible: !root.capturing;
         for entry[i] in root.menu_entries: MenuItem {
-            y: 4.5px + i * 21px;
+            x: 0;
+            y: 10.17px + i * Theme.menu-row;
             width: parent.width;
+            first: i == 0;
             entry: entry;
             clicked => { root.menu_pick(entry.id); }
         }
@@ -2679,8 +2833,8 @@ export component MainWindow inherits Window {
 
     // Toast notification (bottom-center, all screens)
     // At least 280 wide, wider when the message needs it.
-    if root.toast_message != "": Glass {
-        kind: GlassKind.pill;
+    if root.toast_message != "": Box {
+        kind: BoxKind.panel;
         x: (parent.width - self.width) / 2;
         y: parent.height - 56px;
         width: max(280px, toast-label.preferred-width + 32px);
@@ -2701,8 +2855,8 @@ export component MainWindow inherits Window {
     Label {
         x: root.column-x + Theme.box-right - self.width;
         y: parent.height - self.height - 12px;
-        style: Theme.caption;
-        color: Theme.faint;
+        style: Theme.chip;
+        color: Theme.fainter;
         text: root.version_text;
     }
 

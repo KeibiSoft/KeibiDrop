@@ -989,8 +989,10 @@ fn humanize_error(msg: &str) -> String {
     if lower.contains("context canceled") || lower.contains("canceled") || lower.contains("cancelled") {
         return "Connection cancelled.".into();
     }
+    // The screen shows no Cancel for a connect it did not start (the engine's
+    // own retry, a press that is still unwinding), so the words name none.
     if lower.contains("already in progress") {
-        return "Already connecting. Wait for it, or press Cancel first.".into();
+        return "Still finishing the last connection attempt. Try again in a moment.".into();
     }
     msg.to_string()
 }
@@ -1545,7 +1547,17 @@ fn main() {
                                 });
                             }
                         }
-                        app.set_discovered_peers(slint::ModelRc::new(slint::VecModel::from(peers)));
+                        // Only a changed list replaces the model: Slint drops a
+                        // click when its model is replaced between press and
+                        // release, and this ran every 2 s under a Connect press.
+                        let shown = app.get_discovered_peers();
+                        let same = slint::Model::row_count(&shown) == peers.len()
+                            && peers.iter().enumerate().all(|(i, p)| {
+                                slint::Model::row_data(&shown, i).is_some_and(|s| s.name == p.name && s.addr == p.addr)
+                            });
+                        if !same {
+                            app.set_discovered_peers(slint::ModelRc::new(slint::VecModel::from(peers)));
+                        }
                     }
                 });
             }
@@ -2158,12 +2170,14 @@ fn main() {
         let weak_exit = app.as_weak();
         app.on_exit_pressed(move || {
             println!("Exit pressed, shutting down...");
-            bindings::KD_UnmountFilesystem();
-            bindings::KD_Disconnect();
-            bindings::KD_Stop();
+            // The window goes first: the teardown below may wait for a
+            // connect in flight to end, and nobody should watch it do that.
             if let Some(app) = weak_exit.upgrade() {
                 let _ = app.hide();
             }
+            bindings::KD_UnmountFilesystem();
+            bindings::KD_Disconnect();
+            bindings::KD_Stop();
         });
 
         // ---- Identity & Contacts ----

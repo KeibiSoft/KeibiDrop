@@ -245,10 +245,10 @@ fn invite_link_button_fires_and_fits_the_window() {
 
 // The connect screen is absolutely positioned, so a new element can land on
 // top of an existing one and no test would notice. The first placement of this
-// button covered the contacts panel, which starts at y=636 (Figma Screen 12).
+// button covered the contacts panel, which starts at y=546 (Figma NEW 2.0).
 #[test]
 fn invite_link_button_clears_the_contacts_panel() {
-    const CONTACTS_TOP: f32 = 636.0;
+    const CONTACTS_TOP: f32 = 546.0;
     let app = app();
     let btn = one(&app, "Copy invite link");
     let bottom = btn.absolute_position().y + btn.size().height;
@@ -271,10 +271,10 @@ fn invite_link_button_clears_the_contacts_panel() {
 
 // Caught in the cold install test of 2026-09-15: the button stopped short of
 // the input above it, which reads as a misaligned control. Card 2's content
-// row runs to x=796 in Figma Screen 12, the right edge of the Copy button.
+// row runs to x=744.35 in Figma NEW 2.0, the right edge of her field.
 #[test]
 fn invite_button_ends_at_the_card_content_edge() {
-    const CONTENT_RIGHT: f32 = 796.0;
+    const CONTENT_RIGHT: f32 = 744.35;
     let app = app();
     let btn = one(&app, "Copy invite link");
     let right = btn.absolute_position().x + btn.size().width;
@@ -295,6 +295,27 @@ fn invite_link_button_hidden_in_local_mode() {
         0,
         "invite link offered on the LAN path, where no code is needed"
     );
+}
+
+// Local mode (Figma 273:1324): every nearby device is a row that connects to
+// that device and no other.
+#[test]
+fn a_nearby_device_row_connects_to_that_device() {
+    let app = app();
+    let picked = Rc::new(Cell::new(-1));
+    let p = picked.clone();
+    app.on_discovery_peer_selected(move |i| p.set(i));
+    app.set_local_mode(true);
+    app.set_discovery_name("Sneaky Robin".into());
+    let peer = |name: &str| keibidrop_rust::DiscoveredPeer { name: name.into(), addr: "fe80::1".into() };
+    app.set_discovered_peers(slint::ModelRc::new(slint::VecModel::from(vec![
+        peer("Gibbi Radish"),
+        peer("Pale Heron"),
+    ])));
+    let row = one(&app, "Connect to Pale Heron");
+    assert_on_screen(&row, "the second nearby device");
+    row.invoke_accessible_default_action();
+    assert_eq!(picked.get(), 1, "the row connected to another device");
 }
 
 #[test]
@@ -507,8 +528,10 @@ fn logo_and_menu_pill_keep_their_place_on_every_screen_and_size() {
             app.set_current_screen(0);
             let base = header(&app);
             let shift = (w - WIN_W) as f32 / 2.0;
-            assert_eq!(at[0].0.x - base.0.x, shift, "the pill's column is not centred");
-            assert_eq!(at[0].2.x - base.2.x, shift, "the logo's column is not centred");
+            // Her pill is 201.04px wide, which f32 does not hold exactly.
+            let centred = |moved: f32| (moved - shift).abs() < 0.01;
+            assert!(centred(at[0].0.x - base.0.x), "the pill's column is not centred: {} for {}", at[0].0.x - base.0.x, shift);
+            assert!(centred(at[0].2.x - base.2.x), "the logo's column is not centred: {} for {}", at[0].2.x - base.2.x, shift);
             assert_eq!((at[0].0.y, at[0].2.y), (base.0.y, base.2.y), "the header moved down");
         }
     }

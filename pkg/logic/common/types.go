@@ -722,6 +722,8 @@ func (kd *KeibiDrop) Run() {
 			// Signal teardown before joining the resilience goroutines, so a still-running
 			// onReconnected stops instead of rebuilding the stack this teardown nils.
 			kd.tearingDown.Store(true)
+			// End a connect still in flight before this teardown nils what it uses.
+			kd.endConnectInFlight()
 			kd.StopConnectionResilience()
 			// Nil the resilience handles under kd.mu: onDisconnect and onRekeyNeeded snapshot
 			// them under the same lock, so these writes pair with those reads. Bare

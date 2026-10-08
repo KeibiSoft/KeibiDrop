@@ -1035,6 +1035,11 @@ func (kd *KeibiDrop) joinRoom() error {
 			}
 			// Reset crypto state after failed LAN attempts.
 			kd.session.ResetOutboundCrypto()
+			// A cancel or a teardown ended the LAN attempt: stop here rather than
+			// go on to the relay or the bridge.
+			if kd.connectAbortRequested() {
+				return ErrConnectCancelled
+			}
 		}
 
 		// Learn our own reachability before the dial when no fresh verdict is cached:
@@ -1422,6 +1427,39 @@ func (kd *KeibiDrop) abortConnect() {
 	kd.mu.Unlock()
 	if p != nil {
 		p.abortCancel()
+	}
+}
+
+// connectTeardownWait bounds how long a teardown waits for the connect in
+// flight to return. A variable so the test can shrink it.
+var connectTeardownWait = 5 * time.Second
+
+// endConnectInFlight cancels the connect in flight and waits for it to return,
+// up to connectTeardownWait. A wait parked in Accept ends through the
+// listener's deadline, cleared again once the connect returned. The teardown
+// calls it before it nils the session: a join woken by the closing listener
+// went on to use the nil session and crashed the app on quit (2026-10-08, a
+// stuck local-mode join).
+func (kd *KeibiDrop) endConnectInFlight() {
+	kd.mu.Lock()
+	p := kd.inflight
+	ln := kd.listener
+	kd.mu.Unlock()
+	if p == nil {
+		return
+	}
+	kd.CancelPendingConnect()
+	dl, _ := ln.(deadlineListener)
+	if dl != nil {
+		_ = dl.SetDeadline(time.Now())
+	}
+	select {
+	case <-p.done:
+	case <-time.After(connectTeardownWait):
+		kd.logger.Warn("The connect in flight did not return before the teardown")
+	}
+	if dl != nil {
+		_ = dl.SetDeadline(time.Time{})
 	}
 }
 

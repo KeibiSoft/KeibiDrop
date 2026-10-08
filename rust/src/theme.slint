@@ -1,5 +1,6 @@
 // Design tokens and primitives from the Figma file (KEIBIDROP, Screens 12
-// to 14). Every color, size, icon and type style of the UI comes from here.
+// to 14, and NEW 2.0: frames 271:778 and 273:1324, which set the colors).
+// Every color, size, icon and type style of the UI comes from here.
 
 // Inter 3.19, the version Figma renders with (text widths match it, not 4.x).
 import "../assets/fonts/Inter.ttf";
@@ -13,14 +14,35 @@ export struct TextStyle {
 }
 
 export global Theme {
-    // Surfaces
+    // Surfaces. Her background (NEW 2.0) is a gradient on this color, see
+    // Background.
     out property <color> window: #222222;
     // Window base under an overlay's blur (Screen 13 frame).
     out property <color> window-dim: #1c1c1c;
-    out property <color> card: #262626;
-    out property <color> field: #222222;
-    out property <color> outline: #ffffff;
-    out property <color> button: #888888;
+    // A name shown whole, a row under the pointer: her menu's fill over the
+    // background.
+    out property <color> card: #1a1d22;
+    // Her boxes (NEW 2.0): a blue-grey gradient from left to right behind a
+    // grey line. Cards show it at 20%, the pill and its menu at 50%, the
+    // contact list whole.
+    out property <color> box-from: #171d24;
+    out property <color> box-to: #11161c;
+    out property <color> box-line: rgba(76, 84, 94, 0.5);
+    out property <color> list-line: #4c545e;
+    out property <color> badge-fill: rgba(17, 22, 27, 0.2);
+    out property <color> badge-line: rgba(85, 93, 103, 0.5);
+    out property <color> field: rgba(17, 22, 27, 0.5);
+    out property <color> field-line: #69717b;
+    // Her grey buttons: Add is a shade lighter than Copy and Invite link.
+    out property <color> button: #3b4046;
+    out property <color> button-line: #858b92;
+    out property <color> button-dim: #34393f;
+    out property <color> button-dim-line: #6f7780;
+    // Connect, and the line of a nearby device.
+    out property <brush> primary-fill: @linear-gradient(90deg, #2687ff 0%, #0868f5 100%);
+    out property <brush> highlight: @linear-gradient(90deg, #2485fe 0%, #0a6af6 100%);
+    out property <color> divider: #343b43;
+    out property <color> row-divider: #303740;
     // Switch (Figma Screen 12, her Incognito example): a grey knob on grey
     // glass when off, a blue knob on blue glass when on.
     out property <color> knob-on: #177cf3;
@@ -37,27 +59,46 @@ export global Theme {
     // The note under the Teleport card (Figma Screen 14).
     out property <color> info-tint: rgba(38, 46, 58, 0.2);
 
-    // Text
+    // Text: her blue-greys (NEW 2.0).
     out property <color> text: #ffffff;
-    out property <color> text-soft: rgba(255, 255, 255, 0.5);
-    out property <color> muted: #888888;
-    out property <color> faint: #6a6a6a;
-    out property <color> on-button: #262626;
+    // Headings, names and the labels of grey buttons.
+    out property <color> text-strong: #f2f3f4;
+    // A code in its field.
+    out property <color> text-soft: #8f959d;
+    out property <color> muted: #8c929b;
+    out property <color> faint: #7f858e;
+    // The version.
+    out property <color> fainter: #737a83;
+    out property <color> switch-ink: #e2e4e7;
+    // The second line under a switch.
+    out property <color> caption-ink: #7f8791;
+    out property <color> step-ink: #d7d9dc;
+    out property <color> chip-ink: #c8ccd1;
     out property <color> accent: #177cf3;
-    out property <color> accent-line: #177df5;
-    out property <color> link: #1583ff;
+    out property <color> link: #2785ff;
     // Open on a file card (Figma 214:988).
-    out property <color> open-line: #167cf4;
     out property <color> open-ink: #1779ec;
-    out property <color> online: #0885fe;
-    out property <color> offline: #878787;
+    out property <color> online: #1677ff;
+    out property <color> offline: #7b828a;
     out property <color> error: #c74309;
 
     // Geometry
     out property <length> radius: 7px;
     out property <length> radius-small: 5px;
     out property <length> hairline: 0.5px;
+    // Her line (NEW 2.0), centred on a box's edge.
+    out property <length> line: 0.793px;
     out property <length> control: 34px;
+    // Her field and Connect.
+    out property <length> field-height: 37.27px;
+    out property <length> button-height: 39px;
+    // Corners where her lines run. Her buttons and her pill have wider than
+    // tall corners; these are the round corners closest to them.
+    out property <length> radius-card: 9.516px;
+    out property <length> radius-panel: 10.17px;
+    out property <length> radius-list: 8.94px;
+    out property <length> radius-field: 7.93px;
+    out property <length> radius-button: 8.75px;
     // The Figma frame. A larger window centres this column.
     out property <length> frame-width: 1144px;
     out property <length> frame-height: 729px;
@@ -72,11 +113,15 @@ export global Theme {
     out property <length> box-right: 1029px;
     out property <length> box-top: 70.39px;
     out property <length> box-width: self.box-right - self.box-left;
-    // The menu pill, at one place on every screen (her frames put it
-    // at 74 to 78). Its menu opens 8px under it.
-    out property <length> pill-y: 76px;
-    out property <length> pill-width: 161px;
-    out property <length> menu-y: self.pill-y + 32px;
+    // The menu pill, at one place on every screen, as wide as the right
+    // column (NEW 2.0). Its top is the box's top: the logo and the pill
+    // enclose everything (Marius). Its menu opens her 5.55px under it, her
+    // rows 26.96px apart.
+    out property <length> pill-y: self.box-top;
+    out property <length> pill-width: 201.04px;
+    out property <length> pill-height: 31.72px;
+    out property <length> menu-y: self.pill-y + self.pill-height + 5.55px;
+    out property <length> menu-row: 26.96px;
 
     // One turn of her spinner: her prototype steps a quarter in 200, 200, 200
     // and 300 ms (Figma component set "Spinner").
@@ -90,8 +135,8 @@ export global Theme {
     out property <TextStyle> heading: { size: 16px, weight: 400, spacing: -0.48px, leading: 1 };
     out property <TextStyle> heading-medium: { size: 16px, weight: 500, spacing: -0.48px, leading: 1 };
     out property <TextStyle> section: { size: 16px, weight: 400, spacing: 0, leading: 1 };
-    out property <TextStyle> code: { size: 15px, weight: 300, spacing: 0, leading: 1 };
-    out property <TextStyle> primary: { size: 15px, weight: 800, spacing: 0, leading: 1 };
+    // Connect (NEW 2.0).
+    out property <TextStyle> primary: { size: 14px, weight: 700, spacing: 0, leading: 1 };
     out property <TextStyle> button-label: { size: 14px, weight: 800, spacing: 0, leading: 1 };
     out property <TextStyle> button-small: { size: 11px, weight: 800, spacing: 0, leading: 1 };
     out property <TextStyle> label: { size: 12px, weight: 300, spacing: 0, leading: 1 };
@@ -99,10 +144,24 @@ export global Theme {
     out property <TextStyle> caption: { size: 11px, weight: 300, spacing: 0, leading: 1 };
     out property <TextStyle> small: { size: 10px, weight: 300, spacing: 0, leading: 1 };
     out property <TextStyle> small-strong: { size: 10px, weight: 600, spacing: 0, leading: 1 };
-    out property <TextStyle> note: { size: 10px, weight: 500, spacing: 0, leading: 1 };
     out property <TextStyle> hint: { size: 10px, weight: 400, spacing: -0.2px, leading: 1.157 };
     out property <TextStyle> tiny: { size: 8px, weight: 300, spacing: 0, leading: 1.033 };
-    out property <TextStyle> tiny-strong: { size: 8px, weight: 500, spacing: -0.16px, leading: 1.033 };
+    // NEW 2.0 (Figma 271:778).
+    out property <TextStyle> card-heading: { size: 15.859px, weight: 700, spacing: 0, leading: 1 };
+    out property <TextStyle> list-heading: { size: 15.703px, weight: 700, spacing: 0, leading: 1 };
+    out property <TextStyle> card-line: { size: 11.102px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> field-text: { size: 13.48px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> field-button: { size: 13.48px, weight: 700, spacing: 0, leading: 1 };
+    out property <TextStyle> field-button-small: { size: 12.688px, weight: 700, spacing: 0, leading: 1 };
+    out property <TextStyle> card-note: { size: 10.309px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> switch-label: { size: 12.688px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> switch-detail: { size: 9.516px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> step: { size: 11.895px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> menu: { size: 11.895px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> row: { size: 10.992px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> chip: { size: 10.207px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> device: { size: 14px, weight: 300, spacing: 0, leading: 1 };
+    out property <TextStyle> device-action: { size: 14px, weight: 700, spacing: 0, leading: 1 };
 }
 
 // The window behind an open overlay, blurred off the UI thread (lib.rs).
@@ -152,24 +211,19 @@ export enum GlassKind { pill, track, panel, card }
 
 struct RimBand { y: length, outer: color, inner: color }
 
-// Figma GLASS effect, fitted to its 2x render: tint, light from the top edge,
-// shade toward the bottom edge, and a rim of two hairlines that fades out
-// within 4px of both edges. The rim is drawn in clipped 1px bands, not with a
-// gradient border, which the software renderer draws as one solid color.
-export component Glass inherits Rectangle {
-    in property <GlassKind> kind: GlassKind.panel;
-    // Show the blurred window through the glass (cards over an overlay).
-    in property <bool> frosted: false;
-    // Her glass is grey; a switch that is on and the Teleport note are tinted.
-    in property <color> tint: Theme.glass-tint;
+// The light of her GLASS effect along a box's top and bottom edges: two
+// hairlines that fade out within 4px of each edge, so the sides stay dark.
+// It is drawn in clipped 1px bands, not with a gradient border, which the
+// software renderer draws as one solid color.
+component Rim inherits Rectangle {
+    in property <length> radius: Theme.radius;
+    // White alpha of the outer and inner hairline along each edge.
+    in property <float> top-outer;
+    in property <float> top-inner;
+    in property <float> bottom-outer;
+    in property <float> bottom-inner;
 
     property <length> h: max(root.height, 20px);
-    property <bool> track: root.kind == GlassKind.track;
-    // Rim strength (white alpha) of the outer and inner hairline per edge.
-    property <float> top-outer: root.track ? 0.53 : 0.44;
-    property <float> top-inner: root.track ? 0.33 : 0.13;
-    property <float> bottom-outer: root.track ? 0.36 : 0.68;
-    property <float> bottom-inner: root.track ? 0.21 : 0.19;
     property <[RimBand]> rim: [
         { y: 0, outer: rgba(255, 255, 255, root.top-outer), inner: rgba(255, 255, 255, root.top-inner) },
         { y: 1px, outer: rgba(255, 255, 255, root.top-outer * 0.73), inner: rgba(255, 255, 255, root.top-inner * 0.7) },
@@ -180,6 +234,41 @@ export component Glass inherits Rectangle {
         { y: root.h - 2px, outer: rgba(255, 255, 255, root.bottom-outer * 0.74), inner: rgba(255, 255, 255, root.bottom-inner * 0.73) },
         { y: root.h - 1px, outer: rgba(255, 255, 255, root.bottom-outer), inner: rgba(255, 255, 255, root.bottom-inner) },
     ];
+
+    for band in root.rim: Rectangle {
+        y: band.y;
+        height: 1px;
+        clip: true;
+        Rectangle {
+            y: -band.y;
+            height: root.height;
+            border-radius: root.radius;
+            border-width: Theme.hairline;
+            border-color: band.outer;
+        }
+        Rectangle {
+            x: Theme.hairline;
+            y: Theme.hairline - band.y;
+            width: root.width - 2 * Theme.hairline;
+            height: root.height - 2 * Theme.hairline;
+            border-radius: root.radius - Theme.hairline;
+            border-width: Theme.hairline;
+            border-color: band.inner;
+        }
+    }
+}
+
+// Figma GLASS effect, fitted to its 2x render: tint, light from the top edge,
+// shade toward the bottom edge, and her rim.
+export component Glass inherits Rectangle {
+    in property <GlassKind> kind: GlassKind.panel;
+    // Show the blurred window through the glass (cards over an overlay).
+    in property <bool> frosted: false;
+    // Her glass is grey; a switch that is on and the Teleport note are tinted.
+    in property <color> tint: Theme.glass-tint;
+
+    property <length> h: max(root.height, 20px);
+    property <bool> track: root.kind == GlassKind.track;
 
     // Gradient stop at a distance from the top edge.
     pure function at(d: length) -> float {
@@ -225,51 +314,117 @@ export component Glass inherits Rectangle {
             ? @linear-gradient(180deg, #00000000 root.at(32px), #0000000b root.at(40px), #0000000b root.at(root.h - 17px), #00000018 root.at(root.h - 13px), #0000002d root.at(root.h - 1.5px), #0000002e 100%)
             : @linear-gradient(180deg, #00000000 root.at(root.h - 140px), #00000001 root.at(root.h - 91px), #00000005 root.at(root.h - 75px), #0000000b root.at(root.h - 51px), #0000001a root.at(root.h - 31px), #0000001d root.at(root.h - 15px), #00000023 100%);
     }
-    for band in root.rim: Rectangle {
-        y: band.y;
-        height: 1px;
-        clip: true;
-        Rectangle {
-            y: -band.y;
-            height: root.height;
-            border-radius: Theme.radius;
-            border-width: Theme.hairline;
-            border-color: band.outer;
-        }
-        Rectangle {
-            x: Theme.hairline;
-            y: Theme.hairline - band.y;
-            width: root.width - 2 * Theme.hairline;
-            height: root.height - 2 * Theme.hairline;
-            border-radius: Theme.radius - Theme.hairline;
-            border-width: Theme.hairline;
-            border-color: band.inner;
-        }
+    Rim {
+        radius: Theme.radius;
+        top-outer: root.track ? 0.53 : 0.44;
+        top-inner: root.track ? 0.33 : 0.13;
+        bottom-outer: root.track ? 0.36 : 0.68;
+        bottom-inner: root.track ? 0.21 : 0.19;
     }
     @children
 }
 
-// 0.5px white outline, 7px corners: cards, badges, fields.
-export component Outline inherits Rectangle {
-    border-radius: Theme.radius;
-    border-width: Theme.hairline;
-    border-color: Theme.outline;
+// card: her step cards; badge: their numbers; panel: the menu pill and its
+// menu; list: contacts; field, button, button-dim: a code and its buttons;
+// primary: Connect; highlight: a nearby device (Figma NEW 2.0).
+export enum BoxKind { card, badge, panel, list, field, button, button-dim, primary, highlight }
+
+// Her box (NEW 2.0): a fill, a line and, on cards and the pill, the light of
+// her glass along the top and bottom edges. The box is her vector's outline:
+// the line runs centred on it, half outside, except a highlight's 1px line,
+// which runs inside.
+export component Box inherits Rectangle {
+    in property <BoxKind> kind: BoxKind.card;
+    in property <brush> fill: root.kind == BoxKind.card ? root.box-fill(0.2)
+        : root.kind == BoxKind.panel ? root.box-fill(0.5)
+        : root.kind == BoxKind.list ? root.box-fill(1)
+        : root.kind == BoxKind.badge ? Theme.badge-fill
+        : root.kind == BoxKind.field ? Theme.field
+        : root.kind == BoxKind.button ? Theme.button
+        : root.kind == BoxKind.button-dim ? Theme.button-dim
+        : root.kind == BoxKind.primary ? Theme.primary-fill
+        : transparent;
+    in property <brush> line: root.kind == BoxKind.card || root.kind == BoxKind.panel ? Theme.box-line
+        : root.kind == BoxKind.list ? Theme.list-line
+        : root.kind == BoxKind.badge ? Theme.badge-line
+        : root.kind == BoxKind.field ? Theme.field-line
+        : root.kind == BoxKind.button ? Theme.button-line
+        : root.kind == BoxKind.button-dim ? Theme.button-dim-line
+        : root.kind == BoxKind.highlight ? Theme.highlight
+        : transparent;
+    in property <length> radius: root.kind == BoxKind.card || root.kind == BoxKind.badge ? Theme.radius-card
+        : root.kind == BoxKind.panel ? Theme.radius-panel
+        : root.kind == BoxKind.list ? Theme.radius-list
+        : root.kind == BoxKind.field ? Theme.radius-field
+        : Theme.radius-button;
+
+    property <bool> lit: root.kind == BoxKind.card || root.kind == BoxKind.badge || root.kind == BoxKind.panel;
+    property <length> line-width: root.kind == BoxKind.primary ? 0 : root.kind == BoxKind.highlight ? 1px : Theme.line;
+    // How far the drawing reaches past the box.
+    out property <length> out: root.kind == BoxKind.highlight ? 0 : root.line-width / 2;
+    out property <length> outer-radius: root.radius + root.out;
+
+    // Her fill: the gradient at a strength.
+    pure function box-fill(alpha: float) -> brush {
+        return @linear-gradient(90deg, Theme.box-from.with-alpha(alpha) 0%, Theme.box-to.with-alpha(alpha) 100%);
+    }
+
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
+        background: root.fill;
+    }
+    if root.lit: Rim {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        radius: root.outer-radius;
+        top-outer: root.kind == BoxKind.panel ? 0.36 : 0.5;
+        top-inner: root.kind == BoxKind.panel ? 0.1 : 0.36;
+        bottom-outer: root.kind == BoxKind.panel ? 0.26 : 0.36;
+        bottom-inner: root.kind == BoxKind.panel ? 0.1 : 0.24;
+    }
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
+        border-width: root.line-width;
+        border-color: root.line;
+    }
+    @children
 }
 
-// Glass pill with a centred label (Figma 214:988 "< Back"): Light 10px white.
-// The glass lights up a little on hover and press.
-export component GlassButton inherits Glass {
+// Her background (NEW 2.0): light from above the middle of the top edge
+// fading to near black at the bottom, her SVG stretched with the window.
+export component Background inherits Image {
+    source: @image-url("../assets/background.svg");
+    image-fit: fill;
+}
+
+// A pill with a centred label (Figma 214:988 "< Back"): Light 10px white,
+// in her NEW 2.0 pill. It lights up a little on hover and press.
+export component GlassButton inherits Box {
     in property <string> text;
     callback clicked;
 
-    kind: GlassKind.pill;
+    kind: BoxKind.panel;
     height: 24px;
     accessible-role: button;
     accessible-label: root.text;
     accessible-action-default => { root.clicked(); }
 
     Rectangle {
-        border-radius: Theme.radius;
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
         background: touch.pressed ? #ffffff14 : touch.has-hover ? #ffffff0a : transparent;
         animate background { duration: 150ms; }
     }
@@ -312,14 +467,17 @@ export component Icon inherits Rectangle {
     }
 }
 
-// An icon that is a button (her pill, her cards' close): grey, white on hover.
-// The hit area reaches pad past the icon.
+// An icon that is a button (her pill, her cards' close): grey, white on hover;
+// her NEW 2.0 pill draws them white, blue on hover. The hit area reaches pad
+// past the icon.
 export component IconButton inherits Icon {
     in property <length> pad: 6px;
+    in property <color> rest-ink: Theme.muted;
+    in property <color> hover-ink: Theme.text;
     callback clicked;
 
     line: 1.5px;
-    ink: touch.has-hover || touch.pressed ? Theme.text : Theme.muted;
+    ink: touch.has-hover || touch.pressed ? root.hover-ink : root.rest-ink;
     accessible-role: button;
     accessible-action-default => { root.clicked(); }
 
