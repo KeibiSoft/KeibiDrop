@@ -1331,16 +1331,17 @@ func KD_SaveCurrentPeerAsContact(name *C.char) C.int {
 // KD_SessionStateJSON returns the engine's SessionState as JSON: the one line
 // of truth the status line shows, shared with kd status and kdmcp.
 //
-// KD_SessionStateLine returns state, text, mount_ready, recv_bps and sent_bps
-// separated by tabs, for a caller without a JSON parser (the desktop app).
+// KD_SessionStateLine returns state, text, mount_ready, recv_bps, sent_bps and
+// throttled separated by tabs, for a caller without a JSON parser (the desktop
+// app). throttled is last, so a reader of the first five is unaffected.
 //
 //export KD_SessionStateLine
 func KD_SessionStateLine() *C.char {
 	if kd == nil {
-		return C.CString("idle\tNot started\tfalse\t0\t0")
+		return C.CString("idle\tNot started\tfalse\t0\t0\tfalse")
 	}
 	st := kd.SessionState()
-	return C.CString(fmt.Sprintf("%s\t%s\t%t\t%d\t%d", st.State, st.Text, st.MountReady, st.RecvBps, st.SentBps))
+	return C.CString(fmt.Sprintf("%s\t%s\t%t\t%d\t%d\t%t", st.State, st.Text, st.MountReady, st.RecvBps, st.SentBps, st.Throttled))
 }
 
 //export KD_SessionStateJSON

@@ -2992,6 +2992,8 @@ fn main() {
                     let _mount_ready = parts.next().unwrap_or("");
                     let recv: u64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
                     let sent: u64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                    // The free relay lane is slowing a transfer down right now.
+                    let throttled = parts.next() == Some("true");
                     if app.get_current_screen() == 0 {
                         // The connect screen mirrors a connect the engine runs on
                         // its own. The manual paths own room_action while they
@@ -3040,6 +3042,7 @@ fn main() {
                     app.set_session_state(slint::SharedString::from(state));
                     app.set_session_state_text(slint::SharedString::from(text));
                     app.set_throughput_text(slint::SharedString::from(throughput_label(recv, sent)));
+                    app.set_relay_throttled(throttled);
                 },
             );
             timer

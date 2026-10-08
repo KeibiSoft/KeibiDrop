@@ -1056,6 +1056,43 @@ component Chip inherits Glass {
     }
 }
 
+// A chip that is a link (Get relay credit): her highlighted line and blue
+// label (Figma NEW 2.0, the nearby devices), so it reads as something to press.
+component LinkChip inherits Box {
+    in property <string> text;
+    // Solid blue, her Connect pressed: the offer when it is needed most.
+    in property <bool> strong: false;
+    callback clicked;
+
+    kind: root.strong ? BoxKind.primary : BoxKind.highlight;
+    radius: Theme.radius;
+    width: link-label.preferred-width + 26px;
+    height: 20px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        border-radius: root.outer-radius;
+        background: root.strong ? (touch.pressed ? #0000002e : touch.has-hover ? #ffffff14 : transparent)
+            : touch.pressed ? #177cf333 : touch.has-hover ? #177cf31a : transparent;
+        animate background { duration: 150ms; }
+    }
+    link-label := Label {
+        x: 13px;
+        height: root.height;
+        silent: true;
+        style: Theme.chip;
+        // White while pressed, the cue every button gives.
+        color: touch.pressed || root.strong ? Theme.text : Theme.accent;
+        text: root.text;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 // Under the logo of a connected screen: the state, path, relay credit and
 // speed.
 component ConnectionLine inherits HorizontalLayout {
@@ -1066,6 +1103,7 @@ component ConnectionLine inherits HorizontalLayout {
     in property <bool> funded;
     in property <string> credit;
     in property <bool> offer-credit: true;
+    in property <bool> throttled: false;
     callback buy;
 
     property <color> ink: root.state == "connected" || root.state == "" ? Theme.online
@@ -1101,10 +1139,9 @@ component ConnectionLine inherits HorizontalLayout {
             : root.mode;
     }
     // Relay credit: offer the buy page while unfunded, show balance when funded.
-    if root.mode == "bridge" && !root.funded && root.offer-credit: Chip {
+    if root.mode == "bridge" && !root.funded && root.offer-credit: LinkChip {
         y: (parent.height - self.height) / 2;
-        ink: Theme.accent;
-        clickable: true;
+        strong: root.throttled;
         text: "Get relay credit";
         clicked => { root.buy(); }
     }
@@ -1247,6 +1284,9 @@ export component MainWindow inherits Window {
     in-out property<string> tokens_add_result: "";
     // Main-screen chip: buy hint on unfunded relay sessions, quiet balance when funded.
     in-out property<bool> tokens_funded: false;
+    // The free relay lane is slowing a transfer down right now (the engine's
+    // session state): the relay credit offer turns into a solid button.
+    in-out property<bool> relay_throttled: false;
     in-out property<string> tokens_credit_short: "";
 
     // Contacts / Identity
@@ -1886,6 +1926,7 @@ export component MainWindow inherits Window {
             mode: root.connection_mode;
             funded: root.tokens_funded;
             credit: root.tokens_credit_short;
+            throttled: root.relay_throttled;
             offer-credit: !root.web;
             buy => { root.tokens_buy(); }
         }
@@ -1949,6 +1990,7 @@ export component MainWindow inherits Window {
             mode: root.connection_mode;
             funded: root.tokens_funded;
             credit: root.tokens_credit_short;
+            throttled: root.relay_throttled;
             buy => { root.tokens_buy(); }
         }
 
