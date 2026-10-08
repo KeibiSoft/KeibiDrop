@@ -164,6 +164,7 @@ func runDaemon() {
 		os.Exit(1) //nolint:gocritic
 	}
 	kd.IsLocalMode = isLocal
+	kd.Surface = "kd" // names this daemon's purchases
 	kd.BridgeAddr = cfg.BridgeAddr
 	kd.StrictMode = cfg.StrictMode
 	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.

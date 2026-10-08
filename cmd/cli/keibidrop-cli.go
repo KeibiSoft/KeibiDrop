@@ -898,6 +898,7 @@ func main() {
 		color.Red("Fatal: %v", err)
 		os.Exit(1) //nolint:gocritic
 	}
+	kd.Surface = "cli"            // names this CLI's purchases
 	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	kd.ScanSharedOnStart = cfg.ScanSharedOnStart

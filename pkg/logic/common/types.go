@@ -55,9 +55,15 @@ type KeibiDrop struct {
 	busyNotice  string        // server-supplied user-facing text; under mu
 	busyEventAt atomic.Int64  // unix time of the last relay_busy event (throttle)
 
-	creditLowNoted  atomic.Bool   // latched after the 50 GB warning fires
-	creditCritNoted atomic.Bool   // latched after the 2 GB warning fires
-	buyClaimStop    chan struct{} // cancels the active buy-claim poll, under mu
+	creditLowNoted  atomic.Bool // latched after the 50 GB warning fires
+	creditCritNoted atomic.Bool // latched after the 2 GB warning fires
+	buyClaims       []buyClaim  // purchases opened and not yet landed, oldest first; under mu
+	buyPolling      bool        // claimPollLoop is running; under mu
+
+	// Surface names this client in the purchase claims it opens ("desktop",
+	// "kd", "cli", "mcp"), so a sale says where it was made. Set once, before
+	// the first purchase.
+	Surface string
 
 	session *session.Session
 

@@ -14,10 +14,7 @@ package common
 
 import (
 	"bytes"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,74 +31,44 @@ import (
 
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
+	"github.com/KeibiSoft/KeibiDrop/pkg/tokens"
 )
 
 // TokenUnitBytes is the bandwidth one chain step buys. PROTOCOL CONSTANT
 // shared with the relay ledger, the bridge and the token service.
-const TokenUnitBytes int64 = 10 << 20
+const TokenUnitBytes = tokens.UnitBytes
 
 // TokensBuyURL is where money changes hands. Prices live on that page and in
 // the token service's pack table, never in this binary.
-const TokensBuyURL = "https://tokens.keibidrop.com/buy" //nolint:gosec // G101: URL, not a credential
+const TokensBuyURL = tokens.BuyURL
 
 const (
 	walletFile     = ".kd_tokens"
-	maxChainUnits  = 1_000_000
+	maxChainUnits  = tokens.MaxChainUnits
 	revealTick     = 3 * time.Second
-	revealLead     = 2  // units revealed ahead of consumption
-	revealMaxBatch = 64 // relay caps steps per reveal call
+	revealMaxDelay = 30 * time.Second // the longest wait between reveals while the ledger fails
+	revealLead     = 2                // units revealed ahead of consumption
+	revealMaxBatch = 64               // relay caps steps per reveal call
 )
-
-// payMagic opens the funded bridge preamble: magic, version, anchor, tier,
-// then the usual room token. Wire format shared with the bridge.
-var payMagic = []byte("\x01KDPAY1")
 
 const (
-	ackPaidBit       = 1 << 0
-	ackContentionBit = 1 << 1
+	ackPaidBit       = tokens.AckPaid
+	ackContentionBit = tokens.AckContention
 )
 
-// ---- chain math (PayWord; mirrors the token service's chain package) ----
+// ---- chain math and codes (pkg/tokens; the browser build shares it) ----
 
 func chainHashAt(seed [32]byte, position int) [32]byte {
-	cur := seed
-	for i := 0; i < position; i++ {
-		cur = sha256.Sum256(cur[:])
-	}
-	return cur
+	return tokens.ChainHash(seed, position)
 }
 
 // decodeTokenCode validates a pasted "KDT1." code (seed, units, checksum).
 func decodeTokenCode(code string) (seed [32]byte, units int, err error) {
-	body, ok := strings.CutPrefix(strings.TrimSpace(code), "KDT1.")
-	if !ok {
-		return seed, 0, fmt.Errorf("not a KeibiDrop token code (expected \"KDT1.\" prefix)")
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(body)
-	if err != nil || len(raw) != 40 {
-		return seed, 0, fmt.Errorf("malformed token code")
-	}
-	sum := sha256.Sum256(raw[:36])
-	if !bytes.Equal(sum[:4], raw[36:]) {
-		return seed, 0, fmt.Errorf("token code checksum mismatch (typo?)")
-	}
-	copy(seed[:], raw[:32])
-	units = int(binary.BigEndian.Uint32(raw[32:36]))
-	if units < 1 || units > maxChainUnits {
-		return seed, 0, fmt.Errorf("token code units out of range")
-	}
-	return seed, units, nil
+	return tokens.DecodeCode(code)
 }
 
 func encodeTokenCode(seed [32]byte, units int) string {
-	var be [4]byte
-	binary.BigEndian.PutUint32(be[:], uint32(units)) // #nosec G115 -- units <= maxChainUnits
-	sum := sha256.Sum256(append(seed[:], be[:]...))
-	raw := make([]byte, 0, 40)
-	raw = append(raw, seed[:]...)
-	raw = append(raw, be[:]...)
-	raw = append(raw, sum[:4]...)
-	return "KDT1." + base64.RawURLEncoding.EncodeToString(raw)
+	return tokens.EncodeCode(seed, units)
 }
 
 // ---- wallet ----
@@ -444,77 +411,128 @@ func (kd *KeibiDrop) TokensRefreshBalances() []TokenChainSummary {
 // tokensServiceBase is the token service origin. A var so tests can point it
 // at a local server; claimPollTick/Window shrink in tests too.
 var (
-	tokensServiceBase = "https://tokens.keibidrop.com" //nolint:gosec // G101: URL, not a credential
-	claimPollTick     = 3 * time.Second
-	claimPollWindow   = 30 * time.Minute
+	tokensServiceBase = tokens.ServiceBase
+	claimPollTick     = tokens.CollectTick
+	claimPollWindow   = tokens.CollectWindow
 )
 
-// TokensBuyStart returns the buy page URL to open in a browser, carrying a
-// fresh claim ref, and starts a background poll that adds the purchased code
-// to the wallet the moment the payment lands. No copy-paste, no account:
-// the claim is a random one-shot ID, generated here, tied to nothing.
-// Starting a new purchase replaces the previous poll.
-func (kd *KeibiDrop) TokensBuyStart() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return TokensBuyURL // plain page; the paste path still works
-	}
-	claim := base64.RawURLEncoding.EncodeToString(b[:])
-	stop := make(chan struct{})
-	kd.mu.Lock()
-	if kd.buyClaimStop != nil {
-		close(kd.buyClaimStop)
-	}
-	kd.buyClaimStop = stop
-	kd.mu.Unlock()
-	go kd.claimPollLoop(claim, stop)
-	return tokensServiceBase + "/buy?claim=" + claim
+// maxBuyClaims bounds the purchases one client polls for at once.
+const maxBuyClaims = 4
+
+// buyClaim is a purchase this client opened and has not seen land.
+type buyClaim struct {
+	ref     string
+	started time.Time
 }
 
-func (kd *KeibiDrop) claimPollLoop(claim string, stop chan struct{}) {
+// TokensBuyStart returns the buy page URL to open in a browser, carrying a
+// fresh claim ref, and makes sure a poll is running that adds the purchased
+// code to the wallet the moment the payment lands. No copy-paste, no account:
+// the claim is a random one-shot ID, generated here, tied to nothing, after
+// the name of this client (kd.Surface) so the sale says where it was made.
+// Each call opens a new purchase and the earlier ones keep being polled for
+// their window: a person who opens the buy page twice and pays in the first
+// tab still gets the code added.
+func (kd *KeibiDrop) TokensBuyStart() string {
+	claim, err := tokens.NewClaim(kd.Surface)
+	if err != nil {
+		return TokensBuyURL // plain page; the paste path still works
+	}
+	kd.mu.Lock()
+	kd.buyClaims = append(kd.buyClaims, buyClaim{ref: claim, started: time.Now()})
+	if n := len(kd.buyClaims); n > maxBuyClaims {
+		kd.buyClaims = append([]buyClaim(nil), kd.buyClaims[n-maxBuyClaims:]...)
+	}
+	start := !kd.buyPolling
+	kd.buyPolling = true
+	kd.mu.Unlock()
+	if start {
+		go kd.claimPollLoop(tokensServiceBase, claimPollTick, claimPollWindow)
+	}
+	return tokens.BuyURLFor(tokensServiceBase, claim)
+}
+
+// claimPollLoop is the one poll for every open purchase. It waits on the
+// pkg/tokens schedule, measured from the newest purchase, asks the token
+// service at base once per open claim, and ends when no claim is left inside
+// window. Offline or "not ready" answers just wait for the next round. It
+// takes its settings when it starts and reads no package state after that.
+func (kd *KeibiDrop) claimPollLoop(base string, tick, window time.Duration) {
 	client := kd.relayClient
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	deadline := time.Now().Add(claimPollWindow)
-	t := time.NewTicker(claimPollTick)
-	defer t.Stop()
 	for {
-		select {
-		case <-stop:
+		kd.mu.Lock()
+		now := time.Now()
+		var open []buyClaim
+		for _, c := range kd.buyClaims {
+			if now.Sub(c.started) < window {
+				open = append(open, c)
+			}
+		}
+		kd.buyClaims = open
+		if len(open) == 0 {
+			kd.buyPolling = false
+			kd.mu.Unlock()
 			return
-		case <-t.C:
-			if time.Now().After(deadline) {
-				return
-			}
-			req, err := http.NewRequest(http.MethodGet, tokensServiceBase+"/collect?claim="+claim, nil)
-			if err != nil {
-				return
-			}
-			req.Header.Set("Accept", "application/json")
-			resp, err := client.Do(req)
-			if err != nil {
-				continue // offline is fine, the purchase waits server-side
-			}
-			if resp.StatusCode != http.StatusOK {
-				resp.Body.Close()
-				continue // 404 until the webhook lands
-			}
-			var out struct {
-				Code string `json:"code"`
-			}
-			err = json.NewDecoder(io.LimitReader(resp.Body, 1<<14)).Decode(&out)
-			resp.Body.Close()
-			if err != nil || out.Code == "" {
+		}
+		newest := open[len(open)-1].started
+		kd.mu.Unlock()
+
+		time.Sleep(tokens.CollectDelay(time.Since(newest), tick))
+		for _, c := range open {
+			code, ok := collectClaim(client, base, c.ref)
+			if !ok {
 				continue
 			}
-			gb, err := kd.TokensAdd(out.Code)
+			kd.dropBuyClaim(c.ref)
+			gb, err := kd.TokensAdd(code)
 			if err == nil {
 				kd.emitEvent(fmt.Sprintf("tokens_added:%.0f", gb))
 			}
-			return // duplicate add means the user pasted it already; done either way
+			// A failed add means the person pasted it already, or the ledger
+			// refused it; either way this claim is done.
 		}
 	}
+}
+
+// dropBuyClaim forgets a purchase that landed.
+func (kd *KeibiDrop) dropBuyClaim(ref string) {
+	kd.mu.Lock()
+	defer kd.mu.Unlock()
+	for i, c := range kd.buyClaims {
+		if c.ref == ref {
+			kd.buyClaims = append(kd.buyClaims[:i:i], kd.buyClaims[i+1:]...)
+			return
+		}
+	}
+}
+
+// collectClaim asks the token service at base for the code bought under
+// claim. ok is false until the payment's webhook has landed, and on any
+// network error.
+func collectClaim(client *http.Client, base, claim string) (code string, ok bool) {
+	req, err := http.NewRequest(http.MethodGet, tokens.CollectURL(base, claim), nil)
+	if err != nil {
+		return "", false
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", false // 404 until the webhook lands
+	}
+	var out struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<14)).Decode(&out); err != nil || out.Code == "" {
+		return "", false
+	}
+	return out.Code, true
 }
 
 // ---- per-session payment state ----
@@ -540,6 +558,15 @@ type tokenSession struct {
 	paid       atomic.Bool
 	contention atomic.Bool
 
+	// The reveal loop. looping is true while one runs; a reconnect's fresh
+	// legs ack again and start it if it ended when the old legs closed.
+	// announced keeps tokens_in_use to once per session, and dry stops the
+	// loop for good once the chain has no value left.
+	looping   atomic.Bool
+	announced atomic.Bool
+	dry       atomic.Bool
+	tick      time.Duration // revealTick; tests shorten it
+
 	// Reveal health. A failed reveal used to be silent, so a chain that never paid
 	// looked exactly like one that was merely behind, and the bridge marked the
 	// session delinquent with nobody able to say why.
@@ -548,9 +575,8 @@ type tokenSession struct {
 	revealLastAt atomic.Int64 // Unix nano of the last accepted reveal.
 	revealErr    atomic.Pointer[string]
 
-	startOnce sync.Once
-	stop      chan struct{}
-	stopOnce  sync.Once
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // revealAlarmAfter is how many consecutive failed reveals turn the WARN on. At a 3s
@@ -619,7 +645,7 @@ func (kd *KeibiDrop) tokenSessionFor(addr string, logger *slog.Logger) *tokenSes
 	if c == nil {
 		return nil
 	}
-	ts := &tokenSession{kd: kd, chain: c, logger: logger, stop: make(chan struct{}), baseRevealed: c.Revealed}
+	ts := &tokenSession{kd: kd, chain: c, logger: logger, stop: make(chan struct{}), baseRevealed: c.Revealed, tick: revealTick}
 	kd.tokenSess = ts
 	logger.Info("Session funded by prepaid chain",
 		"gb_left", float64(c.Units-c.Revealed)*float64(TokenUnitBytes)/float64(1<<30))
@@ -658,39 +684,88 @@ func (ts *tokenSession) applyAck(b byte) {
 	ts.contention.Store(b&ackContentionBit != 0)
 	if b&ackPaidBit != 0 {
 		ts.paid.Store(true)
-		ts.startOnce.Do(func() {
-			gb := float64(ts.kd.Wallet().unitsLeft()) * float64(TokenUnitBytes) / float64(1<<30)
-			ts.kd.emitEvent(fmt.Sprintf("tokens_in_use:%.0f", gb))
-			go ts.revealLoop()
-		})
+		ts.startRevealLoop()
 	}
+}
+
+// startRevealLoop runs the reveal loop unless one runs already or the chain is
+// dry. Every leg's ack comes here, the legs of a reconnect included: the loop
+// ends when the old legs close, and the new legs must start it again or the
+// session rides the paid class without paying and the bridge demotes it.
+func (ts *tokenSession) startRevealLoop() {
+	if ts.dry.Load() || !ts.looping.CompareAndSwap(false, true) {
+		return
+	}
+	if ts.announced.CompareAndSwap(false, true) {
+		gb := float64(ts.kd.Wallet().unitsLeft()) * float64(TokenUnitBytes) / float64(1<<30)
+		ts.kd.emitEvent(fmt.Sprintf("tokens_in_use:%.0f", gb))
+	}
+	go ts.revealLoop()
 }
 
 // revealLoop keeps the ledger's revealed frontier ahead of half the observed
 // bytes. Runs beside the transfer, never in it: any failure just means the
-// bridge's grace shrinks until the next successful post.
+// bridge's grace shrinks until the next successful post. While the ledger
+// fails, posts space out (revealSkips) instead of hitting it every tick.
 func (ts *tokenSession) revealLoop() {
-	t := time.NewTicker(revealTick)
+	tick := ts.tick
+	if tick <= 0 {
+		tick = revealTick
+	}
+	t := time.NewTicker(tick)
 	defer t.Stop()
+	skip := 0
 	for {
 		select {
 		case <-ts.stop:
 			ts.postReveals() // cover the tail before letting go
+			ts.looping.Store(false)
 			return
 		case <-t.C:
+			if ts.everConn.Load() && ts.conns.Load() == 0 {
+				ts.postReveals()
+				ts.looping.Store(false)
+				// A leg that came back meanwhile saw this loop still running and
+				// started none: keep this one for it.
+				if ts.conns.Load() > 0 && ts.looping.CompareAndSwap(false, true) {
+					continue
+				}
+				return
+			}
+			if skip > 0 {
+				skip--
+				continue
+			}
 			exhausted := ts.postReveals()
+			skip = revealSkips(ts.revealFails.Load())
 			ts.kd.noteCreditLevel()
 			if exhausted {
+				ts.dry.Store(true)
+				ts.looping.Store(false)
 				ts.kd.emitEvent(ts.kd.exhaustEvent())
 				ts.logger.Info("Prepaid chain exhausted; session continues on the free tier")
 				return
 			}
-			if ts.everConn.Load() && ts.conns.Load() == 0 {
-				ts.postReveals()
-				return
-			}
 		}
 	}
+}
+
+// revealSkips is how many ticks to let pass after a round that left fails
+// consecutive failed reveals: none while the ledger answers, then a wait that
+// doubles per failure up to revealMaxDelay. The bridge tolerates graceUnits
+// (64) uncovered units per minute, which a 30 s gap stays well under.
+func revealSkips(fails int64) int {
+	if fails <= 0 {
+		return 0
+	}
+	d := revealTick
+	for i := int64(1); i < fails && d < revealMaxDelay; i++ {
+		d *= 2
+	}
+	if d > revealMaxDelay {
+		d = revealMaxDelay
+	}
+	return int(d/revealTick) - 1
 }
 
 // postReveals advances the ledger to the current target. Returns true when
@@ -769,22 +844,35 @@ func (ts *tokenSession) resyncFromLedger() bool {
 	if err != nil || len(last) != 32 {
 		return false
 	}
-	for pos := c.Units; pos >= 0; pos-- {
-		v := chainHashAt(c.seed, pos)
-		if bytes.Equal(v[:], last) {
-			ts.kd.Wallet().markRevealed(c, c.Units-pos, resp.State == "spent")
-			// Re-base, or the session's own reveals would be demanded a second time.
-			if base := (c.Units - pos) - ts.sessionUnits(); base > ts.baseRevealed {
-				ts.baseRevealed = base
-			}
-			ts.logger.Info("Chain position resynced from ledger", "revealed", c.Units-pos)
-			return resp.State != "spent"
+	// One pass up the chain from the seed. Hashing each position from the seed
+	// on its own, as this did, is quadratic: about 300 million hashes for a
+	// 250 GiB pack, during which the session paid nothing.
+	if pos := chainPosition(c.seed, c.Units, last); pos >= 0 {
+		ts.kd.Wallet().markRevealed(c, c.Units-pos, resp.State == "spent")
+		// Re-base, or the session's own reveals would be demanded a second time.
+		if base := (c.Units - pos) - ts.sessionUnits(); base > ts.baseRevealed {
+			ts.baseRevealed = base
 		}
+		ts.logger.Info("Chain position resynced from ledger", "revealed", c.Units-pos)
+		return resp.State != "spent"
 	}
 	// The ledger's hash is not on our chain: wrong wallet entry. Retire it.
 	ts.kd.Wallet().markRevealed(c, c.Revealed, true)
 	ts.logger.Warn("Chain disowned by ledger; marking dead")
 	return false
+}
+
+// chainPosition is the position on the chain from seed whose value is v, or
+// -1 when v is not on the first units+1 positions.
+func chainPosition(seed [32]byte, units int, v []byte) int {
+	cur := seed
+	for pos := 0; pos <= units; pos++ {
+		if bytes.Equal(cur[:], v) {
+			return pos
+		}
+		cur = tokens.ChainHash(cur, 1)
+	}
+	return -1
 }
 
 // isRevealDesync detects the ledger refusing a reveal that no longer chains
@@ -797,13 +885,7 @@ func isRevealDesync(err error) bool {
 
 // buildPayPreamble assembles magic || ver || anchor || tier || token.
 func buildPayPreamble(anchor [32]byte, token [32]byte) []byte {
-	pre := make([]byte, 0, len(payMagic)+1+32+1+32)
-	pre = append(pre, payMagic...)
-	pre = append(pre, 1)
-	pre = append(pre, anchor[:]...)
-	pre = append(pre, 0) // tier: reserved
-	pre = append(pre, token[:]...)
-	return pre
+	return tokens.PayPreamble(anchor, token)
 }
 
 // payConn wraps a funded bridge connection: it counts bytes for the reveal

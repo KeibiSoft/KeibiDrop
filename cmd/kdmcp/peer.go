@@ -123,6 +123,7 @@ func newPeer(ctx context.Context) (*peer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("engine init: %w", err)
 	}
+	kd.Surface = "mcp" // names this MCP server's purchases
 	kd.BridgeAddr = cfg.BridgeAddr
 	kd.StrictMode = cfg.StrictMode
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB

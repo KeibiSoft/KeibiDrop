@@ -163,6 +163,7 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		return -2
 	}
 	kd = instance
+	kd.Surface = "desktop" // names the desktop app's purchases
 	kd.OnEvent = pushEvent
 	kdCtx = ctx
 	kdCancel = c

@@ -480,6 +480,50 @@ component ContactRow inherits Rectangle {
 }
 
 // Her scroll thumb (Screen 12 contacts), shown while a list has more.
+// Relay credit in Settings, the same on the desktop and the web: what is
+// left, a field for a pasted code, and the buy page.
+component RelayCreditSection inherits Rectangle {
+    in property <string> status;
+    in property <string> result;
+    // The field and its button, as wide as the card's other fields.
+    in property <length> field-width: 438px;
+    in property <length> button-width: 142px;
+    callback add(string);
+    callback buy();
+
+    height: 130px;
+
+    Label { x: 0; y: 0; height: 14px; style: Theme.small; color: Theme.muted; text: "Relay credit"; }
+    Label { x: 0; y: 16px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; overflow: elide; text: root.status; }
+    code-input := Field {
+        x: 0;
+        y: 38px;
+        width: root.field-width;
+        button-width: root.button-width;
+        accepted => {
+            root.add(code-input.text);
+            code-input.text = "";
+        }
+        FieldAction {
+            width: code-input.button-width;
+            text: "Add";
+            clicked => {
+                root.add(code-input.text);
+                code-input.text = "";
+            }
+        }
+    }
+    Label { x: 0; y: 78px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; overflow: elide; text: root.result; }
+    SmallOutlineButton {
+        x: 0;
+        y: 104px;
+        width: 150px;
+        text: "Buy relay credit";
+        clicked => { root.buy(); }
+    }
+    Label { x: 160px; y: 104px; height: 26px; style: Theme.small; color: Theme.faint; text: "Prepaid, anonymous, no account. Added here once you pay."; }
+}
+
 component ScrollThumb inherits Rectangle {
     width: 6.77px;
     height: 30px;
@@ -498,14 +542,21 @@ component ContactsPanel inherits Box {
 
     property <length> pitch: 34.15px;
     property <length> top: 4px;
+    // Up to three rows on show (her NEW 2.0 list holds three); past that the
+    // list scrolls. The box fits the rows it shows: with three it is her
+    // 111px, 4px over the rows and 4.55px under them.
+    property <int> shown: min(root.contacts.length, 3);
 
     kind: BoxKind.list;
+    height: root.top + root.shown * root.pitch + 4.55px;
+    accessible-role: AccessibleRole.list;
+    accessible-label: "Contacts list";
 
     list := Flickable {
         x: 0;
         y: root.top;
         width: parent.width;
-        height: 3 * root.pitch;
+        height: root.shown * root.pitch;
         content-height: max(self.height, root.contacts.length * root.pitch);
 
         for contact[i] in root.contacts: ContactRow {
@@ -520,7 +571,9 @@ component ContactsPanel inherits Box {
             remove => { root.remove(i); }
         }
     }
-    if list.content-height > list.height: ScrollThumb {
+    // By count, not by length: the two lengths are equal but can differ in
+    // their last bit, which showed a thumb on one or two contacts.
+    if root.contacts.length > root.shown: ScrollThumb {
         x: root.width - 14px;
         y: 9px + (root.height - 48px) * (-list.content-y / (list.content-height - list.height));
     }
@@ -755,6 +808,8 @@ component FileCard inherits Rectangle {
     in property <string> filename: "";
     in property <string> file-type: "other";
     in property <bool> downloading: false;
+    // Yours, and the friend is downloading it: the ring shows how far.
+    in property <bool> uploading: false;
     in property <float> progress: 0.0;
     in property <bool> saved: false;
     in property <bool> is-local: false;
@@ -776,6 +831,8 @@ component FileCard inherits Rectangle {
     // Open plays or shows it in the browser; the small button beside it saves.
     property <bool> web-view: root.web && root.viewable && !root.is-local && !root.saved
         && !root.downloading && !root.paused;
+    // The browser opens a file of its own that it can show (a picture, a video) from the page's copy.
+    property <bool> own-view: root.web && root.is-local && root.viewable;
 
     width: 214px;
     height: self.row-y + 24px;
@@ -800,14 +857,14 @@ component FileCard inherits Rectangle {
     }
 
     // Her small ring (18px, 5px stroke) in the 24px square's place.
-    if root.downloading || root.paused: ProgressRing {
+    if root.downloading || root.paused || root.uploading: ProgressRing {
         x: 0;
         y: root.row-y;
         width: 24px;
         height: 24px;
         progress: root.progress;
     }
-    if !(root.downloading || root.paused): Box {
+    if !(root.downloading || root.paused || root.uploading): Box {
         kind: BoxKind.badge;
         radius: Theme.radius;
         x: 0;
@@ -849,13 +906,14 @@ component FileCard inherits Rectangle {
         width: root.removable || root.web-view ? 80px : 110px;
         height: 24px;
         style: Theme.button-small;
-        enabled: !(root.web && root.is-local);
+        enabled: !(root.web && root.is-local) || root.own-view;
         accent: root.is-local || root.saved || root.web-view;
         accent-ink: Theme.open-ink;
         text: root.file-type == "folder" ? "Open"
             : root.downloading ? (self.hovered ? "Pause" : Math.round(root.progress * 100) + "%")
             : root.paused ? "Resume"
-            : root.web && root.is-local ? "Shared"
+            : root.own-view ? "Open"
+            : root.web && root.is-local ? (root.uploading ? "Sending " + Math.round(root.progress * 100) + "%" : "Shared")
             : root.is-local || root.saved || root.web-view ? "Open"
             : "Save";
         clicked => {
@@ -947,6 +1005,7 @@ component FileGrid inherits Rectangle {
             filename: file.label;
             file-type: file.file-type;
             downloading: !root.browse-mode && file.downloading;
+            uploading: !root.browse-mode && file.uploading;
             progress: file.progress;
             saved: root.browse-mode || file.saved;
             is-local: (root.browse-mode && !root.web) || file.is-local;
@@ -1102,7 +1161,6 @@ component ConnectionLine inherits HorizontalLayout {
     in property <string> mode;
     in property <bool> funded;
     in property <string> credit;
-    in property <bool> offer-credit: true;
     in property <bool> throttled: false;
     callback buy;
 
@@ -1139,7 +1197,7 @@ component ConnectionLine inherits HorizontalLayout {
             : root.mode;
     }
     // Relay credit: offer the buy page while unfunded, show balance when funded.
-    if root.mode == "bridge" && !root.funded && root.offer-credit: LinkChip {
+    if root.mode == "bridge" && !root.funded: LinkChip {
         y: (parent.height - self.height) / 2;
         strong: root.throttled;
         text: "Get relay credit";
@@ -1431,6 +1489,14 @@ export component MainWindow inherits Window {
         : ["Same Wi-Fi? Turn on Local mode on both computers, then click Connect next to your friend's name.",
            "Anywhere else: press Copy and send your code to your friend. Paste the code they send you. You both press Connect.",
            "Drag files onto the window to send them. Teleport allows you to instantly open shared files, as a folder on both computers."];
+
+    // The line under the help title (Figma Screen 13): what this screen is
+    // for, in one sentence, the way the connect screen says it under its title.
+    property<string> help_subheading: root.current_screen == 1
+        ? "Send files to your friend and save the ones they send you"
+        : root.current_screen == 2
+        ? "Open shared files instantly from one folder on both computers"
+        : "Exchange fingerprints to establish a secure connection";
 
     function show_overlay(help: bool, feedback: bool, settings: bool) {
         root.menu_open = false;
@@ -1872,7 +1938,6 @@ export component MainWindow inherits Window {
             x: 240px;
             y: 546px;
             width: 558px;
-            height: 111px;
             contacts: root.contacts;
             web: root.web;
             connect(i) => { root.connect-to-contact(i); }
@@ -1927,7 +1992,6 @@ export component MainWindow inherits Window {
             funded: root.tokens_funded;
             credit: root.tokens_credit_short;
             throttled: root.relay_throttled;
-            offer-credit: !root.web;
             buy => { root.tokens_buy(); }
         }
 
@@ -2189,7 +2253,7 @@ export component MainWindow inherits Window {
         visible: !root.capturing;
         heading: "How to use KEIBI";
         heading-light: "DROP";
-        subheading: root.current_screen == 0 ? "Exchange fingerprints to establish a secure connection" : "";
+        subheading: root.help_subheading;
         dismiss => { root.help_visible = false; }
 
         for step[i] in root.help_steps: Rectangle {
@@ -2412,40 +2476,14 @@ export component MainWindow inherits Window {
         }
 
         // Relay credit (prepaid priority tokens)
-        Label { x: 20px; y: 528px; height: 14px; style: Theme.small; color: Theme.muted; text: "Relay credit"; }
-        Label { x: 20px; y: 544px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; overflow: elide; text: root.tokens_status_text; }
-        tokens-input := Field {
+        RelayCreditSection {
             x: 20px;
-            y: 566px;
-            width: 438px;
-            button-width: 142px;
-            accepted => {
-                root.tokens_add(tokens-input.text);
-                tokens-input.text = "";
-            }
-            FieldAction {
-                width: tokens-input.button-width;
-                text: "Add";
-                clicked => {
-                    root.tokens_add(tokens-input.text);
-                    tokens-input.text = "";
-                }
-            }
-        }
-        Label { x: 20px; y: 606px; height: 16px; width: 460px; style: Theme.label; color: Theme.text-soft; overflow: elide; text: root.tokens_add_result; }
-        Rectangle {
-            x: 20px;
-            y: 632px;
+            y: 528px;
             width: parent.width - 40px;
-            height: 26px;
-            SmallOutlineButton {
-                x: 0;
-                y: 0;
-                width: 150px;
-                text: "Buy relay credit";
-                clicked => { root.tokens_buy(); }
-            }
-            Label { x: 160px; height: 26px; style: Theme.small; color: Theme.faint; text: "Prepaid, anonymous, no account. Paste the code above."; }
+            status: root.tokens_status_text;
+            result: root.tokens_add_result;
+            add(code) => { root.tokens_add(code); }
+            buy => { root.tokens_buy(); }
         }
 
         // Config file editing
@@ -2478,7 +2516,7 @@ export component MainWindow inherits Window {
     if root.settings_visible && root.web: web-settings := Overlay {
         visible: !root.capturing;
         card-width: 500px;
-        card-height: 408px;
+        card-height: 548px;
         card-x: (root.width - 500px) / 2;
         card-y: (root.height - self.card-height) / 2;
         dismiss => { root.settings_visible = false; }
@@ -2514,10 +2552,22 @@ export component MainWindow inherits Window {
         }
         Label { x: 68px; y: 196px; width: 412px; height: 12px; style: Theme.small; color: Theme.faint; text: root.web_notify_note; }
 
-        Label { x: 20px; y: 222px; height: 14px; style: Theme.small; color: Theme.muted; text: "Relay server (empty: the built-in one)"; }
+        RelayCreditSection {
+            x: 20px;
+            y: 222px;
+            width: 460px;
+            field-width: 460px;
+            button-width: 90px;
+            status: root.tokens_status_text;
+            result: root.tokens_add_result;
+            add(code) => { root.tokens_add(code); }
+            buy => { root.tokens_buy(); }
+        }
+
+        Label { x: 20px; y: 362px; height: 14px; style: Theme.small; color: Theme.muted; text: "Relay server (empty: the built-in one)"; }
         relay-field := Field {
             x: 20px;
-            y: 240px;
+            y: 380px;
             width: 460px;
             button-width: 90px;
             text <=> root.web_relay;
@@ -2528,10 +2578,10 @@ export component MainWindow inherits Window {
                 clicked => { root.web_save_relay(relay-field.text); }
             }
         }
-        Label { x: 20px; y: 288px; height: 14px; style: Theme.small; color: Theme.muted; text: "Bridge server (empty: the built-in one)"; }
+        Label { x: 20px; y: 428px; height: 14px; style: Theme.small; color: Theme.muted; text: "Bridge server (empty: the built-in one)"; }
         bridge-field := Field {
             x: 20px;
-            y: 306px;
+            y: 446px;
             width: 460px;
             button-width: 90px;
             text <=> root.web_bridge;
@@ -2543,8 +2593,8 @@ export component MainWindow inherits Window {
             }
         }
 
-        Label { x: 20px; y: 356px; height: 14px; style: Theme.small; color: Theme.muted; text: "Version"; }
-        Label { x: 20px; y: 372px; height: 16px; style: Theme.label; color: Theme.text-soft; text: root.version_text; }
+        Label { x: 20px; y: 496px; height: 14px; style: Theme.small; color: Theme.muted; text: "Version"; }
+        Label { x: 20px; y: 512px; height: 16px; style: Theme.label; color: Theme.text-soft; text: root.version_text; }
 
         SmallOutlineButton {
             x: web-settings.card-width - 36px;
@@ -2909,7 +2959,7 @@ export component MainWindow inherits Window {
     }
 
     // Version text, bottom right inside the box (all screens)
-    Label {
+    version-line := Label {
         x: root.column-x + Theme.box-right - self.width;
         y: parent.height - self.height - 12px;
         style: Theme.chip;
@@ -2917,22 +2967,14 @@ export component MainWindow inherits Window {
         text: root.version_text;
     }
 
-    // Update notice, bottom left inside the box (all screens), set when a newer release exists
-    if root.update_available != "": upd-touch := TouchArea {
+    // Update offer, bottom left inside the box (all screens), set when a newer
+    // release exists: the link chip Get relay credit uses, on the version
+    // text's line, its left edge under the logo's.
+    if root.update_available != "": LinkChip {
         x: root.column-x + Theme.box-left;
-        y: parent.height - 34px;
-        width: upd-note.width;
-        height: 22px;
-        mouse-cursor: pointer;
-        accessible-role: button;
+        y: version-line.y + (version-line.height - self.height) / 2;
+        text: "Update to " + root.update_available;
         accessible-label: "Update notice";
-        accessible-action-default => { root.open_update_page(); }
         clicked => { root.open_update_page(); }
-        upd-note := Label {
-            height: 22px;
-            style: Theme.caption;
-            color: upd-touch.has-hover || upd-touch.pressed ? Theme.text : Theme.accent;
-            text: "Version " + root.update_available + " is out. Click to get it.";
-        }
     }
 }

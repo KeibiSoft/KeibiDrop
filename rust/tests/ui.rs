@@ -139,6 +139,73 @@ fn update_notice_only_when_a_version_is_set() {
     assert!(fired.get(), "notice click did not fire open_update_page");
 }
 
+// The update offer is a button on the version text's line, its left edge
+// under the logo's: the two ends of the box's bottom edge.
+#[test]
+fn update_notice_sits_on_the_version_line_under_the_logo() {
+    let app = app();
+    app.set_version_text("0.5.0 (test)".into());
+    app.set_update_available("9.9.9".into());
+    let (notice, version, logo) = (one(&app, "Update notice"), one(&app, "0.5.0 (test)"), one(&app, "KEIBIDROP"));
+    let mid = |e: &ElementHandle| e.absolute_position().y + e.size().height / 2.0;
+    assert!(
+        (mid(&notice) - mid(&version)).abs() < 0.01,
+        "the update offer's centre {} is off the version line {}",
+        mid(&notice),
+        mid(&version)
+    );
+    assert!(
+        (notice.absolute_position().x - logo.absolute_position().x).abs() < 0.01,
+        "the update offer starts at {}, the logo at {}",
+        notice.absolute_position().x,
+        logo.absolute_position().x
+    );
+}
+
+// Every help card says under its title what the screen is for: how to
+// connect, the files screen, Teleport.
+#[test]
+fn help_has_a_subtitle_on_every_screen() {
+    let app = app();
+    app.set_help_visible(true);
+    for (screen, line) in [
+        (0, "Exchange fingerprints to establish a secure connection"),
+        (1, "Send files to your friend and save the ones they send you"),
+        (2, "Open shared files instantly from one folder on both computers"),
+    ] {
+        app.set_current_screen(screen);
+        assert_on_screen(&one(&app, line), line);
+    }
+}
+
+// The contacts box fits one or two contacts, holds three, and scrolls past
+// three at the size of three.
+#[test]
+fn contacts_box_fits_up_to_three_rows() {
+    let app = app();
+    let contact = |i: usize| keibidrop_rust::ContactInfo {
+        name: format!("Friend {i}").into(),
+        fingerprint: "XXXX-XXXX-XXXX-XXXX".into(),
+        online: false,
+        auto_connect: false,
+    };
+    let mut heights = Vec::new();
+    for n in 1..=5 {
+        let list: Vec<_> = (0..n).map(contact).collect();
+        app.set_contacts(slint::ModelRc::new(slint::VecModel::from(list)));
+        heights.push(one(&app, "Contacts list").size().height);
+    }
+    let pitch = 34.15;
+    assert!((heights[2] - 111.0).abs() < 0.01, "three rows: {} (her box is 111)", heights[2]);
+    assert!((heights[2] - heights[1] - pitch).abs() < 0.01, "two rows: {}", heights[1]);
+    assert!((heights[1] - heights[0] - pitch).abs() < 0.01, "one row: {}", heights[0]);
+    assert!(
+        (heights[3] - heights[2]).abs() < 0.01 && (heights[4] - heights[2]).abs() < 0.01,
+        "past three the box keeps the size of three: {:?}",
+        heights
+    );
+}
+
 #[test]
 fn help_report_button_opens_feedback() {
     let app = app();
