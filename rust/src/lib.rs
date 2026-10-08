@@ -8,11 +8,23 @@ use slint::ComponentHandle;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static BACKDROP_GENERATION: AtomicU64 = AtomicU64::new(0);
+static SCREEN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Called when an overlay opens: snapshot the window with the header and the
 /// overlays hidden, blur it on a worker thread, then give it to the overlay.
 /// A later capture wins over a slower earlier one.
 pub fn install_backdrop(app: &MainWindow) {
+    capture_blurred(app, &BACKDROP_GENERATION, |bd, image| bd.set_blur(image));
+}
+
+/// Called as the Teleport screen opens: the connect screen it leaves, blurred,
+/// is its background (Figma Screen 14). It has its own slot, so an overlay
+/// opened on the Teleport screen does not replace it.
+pub fn install_screen_backdrop(app: &MainWindow) {
+    capture_blurred(app, &SCREEN_GENERATION, |bd, image| bd.set_screen(image));
+}
+
+fn capture_blurred(app: &MainWindow, generations: &'static AtomicU64, put: fn(&Backdrop, slint::Image)) {
     app.set_capturing(true);
     let shot = app.window().take_snapshot();
     app.set_capturing(false);
@@ -20,21 +32,21 @@ pub fn install_backdrop(app: &MainWindow) {
 
     let scale = app.window().scale_factor();
     let size = app.window().size().to_logical(scale);
-    let generation = BACKDROP_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    let generation = generations.fetch_add(1, Ordering::Relaxed) + 1;
     // The dim base shows until the new blur lands.
-    app.global::<Backdrop>().set_blur(slint::Image::default());
+    put(&app.global::<Backdrop>(), slint::Image::default());
 
     let weak = app.as_weak();
     std::thread::spawn(move || {
         let blur = backdrop::blur(&shot, scale);
         let _ = weak.upgrade_in_event_loop(move |app| {
-            if BACKDROP_GENERATION.load(Ordering::Relaxed) != generation {
+            if generations.load(Ordering::Relaxed) != generation {
                 return;
             }
             let bd = app.global::<Backdrop>();
             bd.set_width(size.width);
             bd.set_height(size.height);
-            bd.set_blur(slint::Image::from_rgba8(blur));
+            put(&bd, slint::Image::from_rgba8(blur));
         });
     });
 }

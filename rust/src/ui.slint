@@ -1,5 +1,5 @@
 import { ScrollView, TextEdit, LineEdit } from "std-widgets.slint";
-import { Theme, Backdrop, Background, Box, BoxKind, Icons, Label, Glass, GlassKind, GlassButton, Icon, IconButton, ProgressRing, Spinner, TextStyle } from "theme.slint";
+import { Theme, Backdrop, Background, Box, BoxKind, Rule, Icons, Label, Glass, GlassKind, GlassButton, Icon, IconButton, ProgressRing, Spinner, TextStyle } from "theme.slint";
 
 // Rust fills it with the blurred window behind an overlay.
 export { Backdrop, Theme } from "theme.slint";
@@ -415,12 +415,12 @@ component ContactRow inherits Rectangle {
     height: 34.15px;
 
     hover := TouchArea { }
-    if !root.first: Rectangle {
+    if !root.first: Rule {
         x: 0;
-        y: -Theme.line / 2;
+        y: 0;
         width: parent.width;
-        height: Theme.line;
-        background: Theme.row-divider;
+        height: 0;
+        ink: Theme.row-divider;
     }
     Rectangle {
         x: 22.77px;
@@ -540,12 +540,11 @@ component MenuItem inherits Rectangle {
     accessible-label: root.entry.a11y;
     accessible-action-default => { root.clicked(); }
 
-    if !root.first: Rectangle {
+    if !root.first: Rule {
         x: 17px;
-        y: 0.6px - Theme.line / 2;
+        y: 0.6px;
         width: 168px;
-        height: Theme.line;
-        background: Theme.divider;
+        height: 0;
     }
     Label {
         x: 16.92px;
@@ -597,12 +596,13 @@ component DeviceRow inherits Box {
         style: Theme.device;
         text: root.name;
     }
-    Rectangle {
-        x: 112px - Theme.line / 2;
+    Rule {
+        vertical: true;
+        x: 112px;
         y: 10px;
-        width: Theme.line;
+        width: 0;
         height: 19px;
-        background: Theme.accent;
+        ink: Theme.accent;
     }
     Label {
         x: 125px;
@@ -622,8 +622,9 @@ component DeviceRow inherits Box {
     }
 }
 
-// Full-window overlay (Figma Screen 13): the window blurred behind, a sharp
-// title, and a frosted glass card that holds the children.
+// Full-window overlay (Figma Screen 13 in the NEW 2.0 colors): the window
+// blurred behind under her veil, a sharp title, and her card that holds the
+// children.
 component Overlay inherits Rectangle {
     in property <string> heading;
     in property <string> heading-light;
@@ -646,7 +647,7 @@ component Overlay inherits Rectangle {
         source: Backdrop.blur;
         image-fit: fill;
     }
-    Rectangle { background: Theme.glass-tint; }
+    Rectangle { background: Theme.veil; }
     TouchArea { clicked => { root.dismiss(); } }
 
     // Figma draws her titles half a pixel up from their boxes (her 2x render).
@@ -668,13 +669,12 @@ component Overlay inherits Rectangle {
         style: Theme.subtitle;
         text: root.subheading;
     }
-    Glass {
+    // Her NEW 2.0 card: the blur shows through its fill.
+    Box {
         x: root.card-x;
         y: root.card-y;
         width: root.card-width;
         height: root.card-height;
-        kind: GlassKind.card;
-        frosted: true;
         // Clicks on the card stay on the card.
         TouchArea { }
         @children
@@ -1450,6 +1450,23 @@ export component MainWindow inherits Window {
         width: root.width * (1245px / Theme.frame-width);
         height: root.height * (830px / Theme.frame-height);
     }
+    // The Teleport screen sits over the connect screen it came from, blurred
+    // under her NEW 2.0 veil (Figma Screen 14): Rust snapshots that screen as it
+    // leaves (lib.rs install_screen_backdrop). The blur fades in when it lands.
+    if root.current_screen == 2: Rectangle {
+        width: 100%;
+        height: 100%;
+        opacity: Backdrop.screen.width > 0 ? 1 : 0;
+        animate opacity { duration: 220ms; easing: ease-out; }
+
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: Backdrop.screen;
+            image-fit: fill;
+        }
+        Rectangle { background: Theme.veil; }
+    }
 
     // ============ SCREEN 0: Connect (Figma NEW 2.0: 271:778, local mode 273:1324) ============
     if current_screen == 0: Rectangle {
@@ -1638,12 +1655,12 @@ export component MainWindow inherits Window {
         }
 
         // Her line between the cards and the right column.
-        Rectangle {
-            x: 798px - Theme.line / 2;
+        Rule {
+            vertical: true;
+            x: 798px;
             y: 210.41px;
-            width: Theme.line;
+            width: 0;
             height: 280.71px;
-            background: Theme.divider;
         }
 
         // Right column: identity and network switches, Connect, Teleport.
@@ -1993,12 +2010,12 @@ export component MainWindow inherits Window {
             TeleportPoint { x: 195px; y: 204px; icon: Icons.play; icon-width: 21px; icon-height: 21px; text-x: 34px; text: "Open videos\nfiles directly"; }
             TeleportPoint { x: 302px; y: 204px; icon: Icons.code; icon-width: 22px; icon-height: 14px; icon-y: 3px; text-x: 29px; text: "View documents\nand code"; }
             TeleportPoint { x: 414px; y: 204px; icon: Icons.download; icon-width: 17px; icon-height: 21px; text-x: 28px; text: "No waiting\nfor full downloading"; }
-            for line-x in [182px, 293px, 403px]: Rectangle {
-                x: line-x - Theme.line / 2;
+            for line-x in [182px, 293px, 403px]: Rule {
+                vertical: true;
+                x: line-x;
                 y: 203px;
-                width: Theme.line;
+                width: 0;
                 height: 23px;
-                background: Theme.divider;
             }
 
             path-field := Field {
@@ -2149,12 +2166,11 @@ export component MainWindow inherits Window {
                 text: step;
             }
         }
-        Rectangle {
+        Rule {
             x: 58px;
-            y: 217.5px;
+            y: 217.9px;
             width: 401px;
-            height: Theme.line;
-            background: Theme.divider;
+            height: 0;
         }
         if root.current_screen == 0: HorizontalLayout {
             x: 58px;
@@ -2174,12 +2190,11 @@ export component MainWindow inherits Window {
             color: Theme.text-soft;
             text: "Incognito: you get a new code every time you connect. Nobody can save you as a contact.";
         }
-        if root.current_screen == 0: Rectangle {
+        if root.current_screen == 0: Rule {
             x: 58px;
-            y: 291.5px;
+            y: 291.9px;
             width: 401px;
-            height: Theme.line;
-            background: Theme.divider;
+            height: 0;
         }
         Rectangle {
             x: 58px;
@@ -2760,12 +2775,12 @@ export component MainWindow inherits Window {
             text: "Report problem";
             clicked => { root.show_overlay(false, !root.feedback_visible, false); }
         }
-        Rectangle {
-            x: 116px - Theme.line / 2;
+        Rule {
+            vertical: true;
+            x: 116px;
             y: 6px;
-            width: Theme.line;
+            width: 0;
             height: 19px;
-            background: Theme.divider;
         }
         IconButton {
             x: 132px;

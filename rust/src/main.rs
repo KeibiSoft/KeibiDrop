@@ -1155,6 +1155,10 @@ unsafe fn finish_connect_ui(
             app.set_error_message(slint::SharedString::default());
             app.set_peer_is_persistent(peer_persistent);
             app.set_peer_already_saved(peer_already_contact);
+            // Teleport's background is the connect screen it leaves, blurred.
+            if target_screen == 2 {
+                install_screen_backdrop(&app);
+            }
             app.set_current_screen(target_screen);
             if offer_contact && !app.get_incognito_mode() {
                 app.set_save_contact_visible(true);

@@ -56,6 +56,9 @@ export global Theme {
     out property <color> file-preview: #454545;
     out property <color> scrollbar: #888888;
     out property <color> glass-tint: rgba(52, 52, 54, 0.2);
+    // Her background's veil (NEW 2.0): the glass overlays and the Teleport
+    // screen lay it over the window they blur.
+    out property <color> veil: rgba(13, 17, 22, 0.32);
     // The note under the Teleport card (Figma Screen 14).
     out property <color> info-tint: rgba(38, 46, 58, 0.2);
 
@@ -167,6 +170,8 @@ export global Theme {
 // The window behind an open overlay, blurred off the UI thread (lib.rs).
 export global Backdrop {
     in-out property <image> blur;   // Figma background blur 32
+    // The connect screen behind the Teleport screen, blurred the same way.
+    in-out property <image> screen;
     in-out property <length> width;
     in-out property <length> height;
 }
@@ -398,6 +403,24 @@ export component Box inherits Rectangle {
         border-color: root.line;
     }
     @children
+}
+
+// Her line (NEW 2.0) drawn as a filled box, at least one screen pixel thick:
+// the GPU renderer drops a box thinner than a pixel on a 1x screen. x (for a
+// vertical line) or y (a horizontal one) is the line's centre; the other
+// size is its length.
+export component Rule inherits Rectangle {
+    in property <bool> vertical: false;
+    in property <brush> ink: Theme.divider;
+    property <length> thickness: max(Theme.line, 1phx);
+
+    Rectangle {
+        x: root.vertical ? -root.thickness / 2 : 0;
+        y: root.vertical ? 0 : -root.thickness / 2;
+        width: root.vertical ? root.thickness : root.width;
+        height: root.vertical ? root.height : root.thickness;
+        background: root.ink;
+    }
 }
 
 // Her background (NEW 2.0): light from above the middle of the top edge
