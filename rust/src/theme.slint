@@ -1,73 +1,640 @@
-// Design system tokens: single source of truth.
-// Matches Figma export (iPhone 11 Pro.svg, the_color_scheme.svg).
+// Design tokens and primitives from the Figma file (KEIBIDROP, Screens 12
+// to 14, and NEW 2.0: frames 271:778 and 273:1324, which set the colors).
+// Every color, size, icon and type style of the UI comes from here.
+
+// Inter 3.19, the version Figma renders with (text widths match it, not 4.x).
+import "../assets/fonts/Inter.ttf";
+
+export struct TextStyle {
+    size: length,
+    weight: int,
+    spacing: length,
+    // Line height as a factor of Inter's natural 1.21 em.
+    leading: float,
+}
 
 export global Theme {
-    // Primitive palette
-    in property <color> palette-white: #FFFFFF;
-    in property <color> palette-black: #000000;
-    in property <color> palette-blue-400: #60a5fa;
-    in property <color> palette-blue-500: #3b82f6;
-    in property <color> palette-blue-600: #177DF5;
-    in property <color> palette-blue-700: #2563eb;
-    in property <color> palette-blue-900: #125ec0;
-    in property <color> palette-green-500: #22c55e;
-    in property <color> palette-orange-500: #d97706;
-    in property <color> palette-orange-600: #D97A31;
-    in property <color> palette-red-500: #ef4444;
-    in property <color> palette-gray-200: #9ca3af;
-    in property <color> palette-gray-300: #6A6A6A;
-    in property <color> palette-gray-400: #888888;
-    in property <color> palette-gray-600: #363434;
-    in property <color> palette-gray-700: #2a2a2a;
-    in property <color> palette-gray-800: #262626;
-    in property <color> palette-gray-900: #222222;
+    // Surfaces. Her background (NEW 2.0) is a gradient on this color, see
+    // Background.
+    out property <color> window: #222222;
+    // Window base under an overlay's blur (Screen 13 frame).
+    out property <color> window-dim: #1c1c1c;
+    // A name shown whole, a row under the pointer: her menu's fill over the
+    // background.
+    out property <color> card: #1a1d22;
+    // Her boxes (NEW 2.0): a blue-grey gradient from left to right behind a
+    // grey line. Cards show it at 20%, the pill and its menu at 50%, the
+    // contact list whole.
+    out property <color> box-from: #171d24;
+    out property <color> box-to: #11161c;
+    out property <color> box-line: rgba(76, 84, 94, 0.5);
+    out property <color> list-line: #4c545e;
+    out property <color> badge-fill: rgba(17, 22, 27, 0.2);
+    out property <color> badge-line: rgba(85, 93, 103, 0.5);
+    out property <color> field: rgba(17, 22, 27, 0.5);
+    out property <color> field-line: #69717b;
+    // Her grey buttons: Add is a shade lighter than Copy and Invite link.
+    out property <color> button: #3b4046;
+    out property <color> button-line: #858b92;
+    out property <color> button-dim: #34393f;
+    out property <color> button-dim-line: #6f7780;
+    // Connect, and the line of a nearby device.
+    out property <brush> primary-fill: @linear-gradient(90deg, #2687ff 0%, #0868f5 100%);
+    out property <brush> highlight: @linear-gradient(90deg, #2485fe 0%, #0a6af6 100%);
+    out property <color> divider: #343b43;
+    out property <color> row-divider: #303740;
+    // Switch (Figma Screen 12, her Incognito example): a grey knob on grey
+    // glass when off, a blue knob on blue glass when on.
+    out property <color> knob-on: #177cf3;
+    out property <color> knob-off: #888888;
+    out property <color> switch-on: rgba(23, 124, 243, 0.2);
+    out property <color> switch-off: rgba(54, 52, 52, 0.2);
+    out property <color> progress: #1681ff;
+    // Her spinner's track: progress at 25%, so a file preview's grey shows
+    // through it.
+    out property <color> spinner-track: rgba(22, 129, 255, 0.25);
+    out property <color> file-preview: #454545;
+    out property <color> scrollbar: #888888;
+    out property <color> glass-tint: rgba(52, 52, 54, 0.2);
+    // Her background's veil (NEW 2.0): the glass overlays and the Teleport
+    // screen lay it over the window they blur.
+    out property <color> veil: rgba(13, 17, 22, 0.32);
+    // The note under the Teleport card (Figma Screen 14).
+    out property <color> info-tint: rgba(38, 46, 58, 0.2);
 
-    // Semantic: backgrounds
-    in property <color> bg-base: Theme.palette-gray-900;
-    in property <color> bg-card: Theme.palette-gray-800;
-    in property <color> bg-elevated: Theme.palette-gray-600;
-    in property <color> bg-input: Theme.palette-gray-900;
-
-    // Semantic: text
-    in property <color> text-primary: Theme.palette-white;
-    in property <color> text-secondary: Theme.palette-gray-200;
-    in property <color> text-tertiary: Theme.palette-gray-300;
-    in property <color> text-disabled: Theme.palette-gray-300;
-
-    // Semantic: accent
-    in property <color> accent-primary: Theme.palette-blue-500;
-    in property <color> accent-active: Theme.palette-blue-600;
-    in property <color> accent-success: Theme.palette-green-500;
-    in property <color> accent-warning: Theme.palette-orange-500;
-    in property <color> accent-error: Theme.palette-red-500;
-
-    // Semantic: interactive
-    in property <color> button-primary: Theme.palette-blue-500;
-    in property <color> button-secondary: Theme.palette-gray-400;
-    in property <color> button-hover: #999999;
-    in property <color> button-pressed: #777777;
-
-    // Semantic: borders
-    in property <color> border-default: rgba(255,255,255,0.08);
-    in property <color> border-subtle: rgba(255,255,255,0.05);
-    in property <color> border-input: rgba(255,255,255,0.5);
+    // Text: her blue-greys (NEW 2.0).
+    out property <color> text: #ffffff;
+    // Headings, names and the labels of grey buttons.
+    out property <color> text-strong: #f2f3f4;
+    // A code in its field.
+    out property <color> text-soft: #8f959d;
+    out property <color> muted: #8c929b;
+    out property <color> faint: #7f858e;
+    // The version.
+    out property <color> fainter: #737a83;
+    out property <color> switch-ink: #e2e4e7;
+    // The second line under a switch.
+    out property <color> caption-ink: #7f8791;
+    out property <color> step-ink: #d7d9dc;
+    out property <color> chip-ink: #c8ccd1;
+    out property <color> accent: #177cf3;
+    out property <color> link: #2785ff;
+    // Open on a file card (Figma 214:988).
+    out property <color> open-ink: #1779ec;
+    out property <color> online: #1677ff;
+    out property <color> offline: #7b828a;
+    out property <color> error: #c74309;
 
     // Geometry
-    in property <length> radius-sm: 5px;
-    in property <length> radius-md: 7px;
-    in property <length> radius-lg: 12px;
-    in property <length> border-thin: 0.5px;
-    in property <length> border-normal: 1px;
+    out property <length> radius: 7px;
+    out property <length> radius-small: 5px;
+    out property <length> hairline: 0.5px;
+    // Her line (NEW 2.0), centred on a box's edge.
+    out property <length> line: 0.793px;
+    out property <length> control: 34px;
+    // Her field and Connect.
+    out property <length> field-height: 37.27px;
+    out property <length> button-height: 39px;
+    // Corners where her lines run. Her buttons and her pill have wider than
+    // tall corners; these are the round corners closest to them.
+    out property <length> radius-card: 9.516px;
+    out property <length> radius-panel: 10.17px;
+    out property <length> radius-list: 8.94px;
+    out property <length> radius-field: 7.93px;
+    out property <length> radius-button: 8.75px;
+    // The Figma frame. A larger window centres this column.
+    out property <length> frame-width: 1144px;
+    out property <length> frame-height: 729px;
+    // How far the UI scales with its window (main.rs first_size, fit_zoom):
+    // it opens at no more than zoom-open, and shrinks to zoom-min so a small
+    // screen still holds it.
+    out property <float> zoom-open: 1.25;
+    out property <float> zoom-min: 0.75;
+    // The box every screen keeps inside: the logo's left edge and
+    // top, the menu pill's right edge (Figma Screen 12).
+    out property <length> box-left: 115px;
+    out property <length> box-right: 1029px;
+    out property <length> box-top: 70.39px;
+    out property <length> box-width: self.box-right - self.box-left;
+    // The menu pill, at one place on every screen, as wide as the right
+    // column (NEW 2.0). Its top is the box's top: the logo and the pill
+    // enclose everything (Marius). Its menu opens her 5.55px under it, her
+    // rows 26.96px apart.
+    out property <length> pill-y: self.box-top;
+    out property <length> pill-width: 201.04px;
+    out property <length> pill-height: 31.72px;
+    out property <length> menu-y: self.pill-y + self.pill-height + 5.55px;
+    out property <length> menu-row: 26.96px;
 
-    // Spacing
-    in property <length> spacing-xs: 4px;
-    in property <length> spacing-sm: 8px;
-    in property <length> spacing-md: 12px;
-    in property <length> spacing-lg: 16px;
-    in property <length> spacing-xl: 24px;
-    in property <length> spacing-xxl: 40px;
+    // One turn of her spinner: her prototype steps a quarter in 200, 200, 200
+    // and 300 ms (Figma component set "Spinner").
+    out property <duration> spin: 900ms;
 
-    // Touch / interactive
-    in property <length> input-height: 33px;
-    in property <length> button-width: 80px;
+    // Type
+    out property <TextStyle> title: { size: 23px, weight: 800, spacing: -0.48px, leading: 1 };
+    out property <TextStyle> title-wide: { size: 23px, weight: 800, spacing: 1px, leading: 1 };
+    out property <TextStyle> title-light: { size: 23px, weight: 200, spacing: 1px, leading: 1 };
+    out property <TextStyle> subtitle: { size: 14px, weight: 200, spacing: 1px, leading: 1 };
+    out property <TextStyle> heading: { size: 16px, weight: 400, spacing: -0.48px, leading: 1 };
+    out property <TextStyle> heading-medium: { size: 16px, weight: 500, spacing: -0.48px, leading: 1 };
+    out property <TextStyle> section: { size: 16px, weight: 400, spacing: 0, leading: 1 };
+    // Connect (NEW 2.0).
+    out property <TextStyle> primary: { size: 14px, weight: 700, spacing: 0, leading: 1 };
+    out property <TextStyle> button-label: { size: 14px, weight: 800, spacing: 0, leading: 1 };
+    out property <TextStyle> button-small: { size: 11px, weight: 800, spacing: 0, leading: 1 };
+    out property <TextStyle> label: { size: 12px, weight: 300, spacing: 0, leading: 1 };
+    out property <TextStyle> badge: { size: 11px, weight: 400, spacing: -0.22px, leading: 1 };
+    out property <TextStyle> caption: { size: 11px, weight: 300, spacing: 0, leading: 1 };
+    out property <TextStyle> small: { size: 10px, weight: 300, spacing: 0, leading: 1 };
+    out property <TextStyle> small-strong: { size: 10px, weight: 600, spacing: 0, leading: 1 };
+    out property <TextStyle> hint: { size: 10px, weight: 400, spacing: -0.2px, leading: 1.157 };
+    out property <TextStyle> tiny: { size: 8px, weight: 300, spacing: 0, leading: 1.033 };
+    // NEW 2.0 (Figma 271:778).
+    out property <TextStyle> card-heading: { size: 15.859px, weight: 700, spacing: 0, leading: 1 };
+    out property <TextStyle> list-heading: { size: 15.703px, weight: 700, spacing: 0, leading: 1 };
+    out property <TextStyle> card-line: { size: 11.102px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> field-text: { size: 13.48px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> field-button: { size: 13.48px, weight: 700, spacing: 0, leading: 1 };
+    out property <TextStyle> field-button-small: { size: 12.688px, weight: 700, spacing: 0, leading: 1 };
+    out property <TextStyle> card-note: { size: 10.309px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> switch-label: { size: 12.688px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> switch-detail: { size: 9.516px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> step: { size: 11.895px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> menu: { size: 11.895px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> row: { size: 10.992px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> chip: { size: 10.207px, weight: 400, spacing: 0, leading: 1 };
+    out property <TextStyle> device: { size: 14px, weight: 300, spacing: 0, leading: 1 };
+    out property <TextStyle> device-action: { size: 14px, weight: 700, spacing: 0, leading: 1 };
+}
+
+// The window behind an open overlay, blurred off the UI thread (lib.rs).
+export global Backdrop {
+    in-out property <image> blur;   // Figma background blur 32
+    // The connect screen behind the Teleport screen, blurred the same way.
+    in-out property <image> screen;
+    in-out property <length> width;
+    in-out property <length> height;
+}
+
+// Her icons (Figma Screens 12 to 14) as path data in px, moved 2px right and
+// down so the round caps stay inside the drawing (Icon).
+export global Icons {
+    // Close: 7 by 7.
+    out property <string> cross: "M 2 2 L 9 9 M 9 2 L 2 9";
+    // Help in the pill: 5 by 8.
+    out property <string> help: "M 4.469 10 L 4.469 9.939 L 4.406 9.939 L 4.406 10 L 4.469 10 Z M 2 3.689 C 2.146 3.26 2.413 2.878 2.773 2.586 C 3.132 2.293 3.569 2.101 4.036 2.03 C 4.503 1.96 4.981 2.013 5.418 2.186 C 5.855 2.358 6.232 2.642 6.51 3.007 C 6.788 3.371 6.955 3.802 6.992 4.251 C 7.029 4.7 6.935 5.15 6.721 5.551 C 6.506 5.953 6.18 6.29 5.777 6.526 C 5.374 6.761 4.91 6.886 4.437 6.886 L 4.437 7.496";
+    // The menu's three dots: 14 by 2, filled.
+    out property <string> more: "M 14 3 C 14 3.552 14.448 4 15 4 C 15.552 4 16 3.552 16 3 C 16 2.448 15.552 2 15 2 C 14.448 2 14 2.448 14 3 Z M 8 3 C 8 3.552 8.448 4 9 4 C 9.552 4 10 3.552 10 3 C 10 2.448 9.552 2 9 2 C 8.448 2 8 2.448 8 3 Z M 2 3 C 2 3.552 2.448 4 3 4 C 3.552 4 4 3.552 4 3 C 4 2.448 3.552 2 3 2 C 2.448 2 2 2.448 2 3 Z";
+    // A menu row's chevron: 4 by 8.
+    out property <string> chevron: "M 2 2 L 6 6 L 2 10";
+    // Info, in a circle: 18 by 18.
+    out property <string> info: "M 2 11 C 2 15.971 6.029 20 11 20 C 15.971 20 20 15.971 20 11 C 20 6.029 15.971 2 11 2 C 6.029 2 2 6.029 2 11 Z M 11 10 L 11 15 M 11.05 7 L 11.05 7.1 L 10.95 7.1 L 10.95 7 L 11.05 7 Z";
+    // Teleport's four points: a file 16 by 21, play 21 by 21, code 22 by 14,
+    // a file with an arrow down 17 by 21.
+    out property <string> file: "M 13.357 3.094 L 16.929 6.74 C 17.324 7.144 17.521 7.345 17.662 7.58 C 17.787 7.789 17.88 8.017 17.936 8.255 C 17.983 8.456 17.996 8.667 17.999 9 C 18 9.112 18 9.237 18 9.38 L 18 19.271 C 18 20.575 18 21.227 17.751 21.726 C 17.532 22.165 17.181 22.522 16.751 22.746 C 16.263 23 15.624 23 14.346 23 L 5.654 23 C 4.376 23 3.736 23 3.248 22.746 C 2.818 22.522 2.468 22.165 2.249 21.726 C 2 21.227 2 20.574 2 19.267 L 2 5.734 C 2 4.427 2 3.773 2.249 3.274 C 2.468 2.835 2.818 2.478 3.248 2.254 C 3.737 2 4.377 2 5.657 2 L 10.771 2 C 10.911 2 11.034 2 11.143 2.001 C 11.469 2.004 11.676 2.016 11.873 2.064 C 12.106 2.122 12.329 2.216 12.533 2.344 C 12.764 2.488 12.962 2.69 13.357 3.094 Z M 11.143 2.001 L 11.143 5.267 C 11.143 6.573 11.143 7.226 11.392 7.726 C 11.611 8.165 11.96 8.522 12.39 8.746 C 12.879 9 13.519 9 14.796 9 L 17.999 9 L 18 9";
+    out property <string> play: "M 2 12.5 C 2 18.299 6.701 23 12.5 23 C 18.299 23 23 18.299 23 12.5 C 23 6.701 18.299 2 12.5 2 C 6.701 2 2 6.701 2 12.5 Z M 10.167 16 L 10.167 9 L 16 12.5 L 10.167 16 Z";
+    out property <string> code: "M 17.125 2 L 24 9 L 17.125 16 M 8.875 16 L 2 9 L 8.875 2";
+    out property <string> download: "M 14.067 3.094 L 17.862 6.74 C 18.282 7.144 18.491 7.345 18.641 7.58 C 18.774 7.789 18.873 8.017 18.932 8.255 C 18.982 8.456 18.995 8.667 18.999 9 C 19 9.112 19 9.237 19 9.38 L 19 19.271 C 19 20.575 19 21.227 18.735 21.726 C 18.502 22.165 18.13 22.522 17.673 22.746 C 17.154 23 16.475 23 15.118 23 L 5.882 23 C 4.524 23 3.845 23 3.326 22.746 C 2.869 22.522 2.498 22.165 2.265 21.726 C 2 21.227 2 20.574 2 19.267 L 2 5.734 C 2 4.427 2 3.773 2.265 3.274 C 2.498 2.835 2.869 2.478 3.326 2.254 C 3.845 2 4.526 2 5.886 2 L 11.319 2 C 11.468 2 11.598 2 11.714 2.001 C 12.061 2.004 12.28 2.016 12.49 2.064 C 12.738 2.122 12.974 2.216 13.192 2.344 C 13.437 2.488 13.647 2.69 14.067 3.094 Z M 10.5 12.5 L 10.5 19.5 M 10.5 19.5 L 14.143 17.167 M 10.5 19.5 L 6.857 17.167 M 11.714 2.001 L 11.714 5.267 C 11.714 6.573 11.714 7.226 11.979 7.726 C 12.212 8.165 12.583 8.522 13.04 8.746 C 13.559 9 14.239 9 15.596 9 L 18.999 9 L 19 9";
+}
+
+export component Label inherits Text {
+    in property <TextStyle> style: Theme.small;
+    // Text inside a button: the button carries the accessible label.
+    in property <bool> silent: false;
+    accessible-label: root.silent ? "" : root.text;
+    font-size: root.style.size;
+    font-weight: root.style.weight;
+    letter-spacing: root.style.spacing;
+    line-height-factor: root.style.leading;
+    color: Theme.text;
+    vertical-alignment: center;
+}
+
+// pill: 24px controls, track: switches (lit from below), panel: menus and
+// lists, card: an overlay's frosted card.
+export enum GlassKind { pill, track, panel, card }
+
+struct RimBand { y: length, outer: color, inner: color }
+
+// The light of her GLASS effect along a box's top and bottom edges: two
+// hairlines that fade out within 4px of each edge, so the sides stay dark.
+// It is drawn in clipped 1px bands, not with a gradient border, which the
+// software renderer draws as one solid color.
+component Rim inherits Rectangle {
+    in property <length> radius: Theme.radius;
+    // White alpha of the outer and inner hairline along each edge.
+    in property <float> top-outer;
+    in property <float> top-inner;
+    in property <float> bottom-outer;
+    in property <float> bottom-inner;
+
+    property <length> h: max(root.height, 20px);
+    property <[RimBand]> rim: [
+        { y: 0, outer: rgba(255, 255, 255, root.top-outer), inner: rgba(255, 255, 255, root.top-inner) },
+        { y: 1px, outer: rgba(255, 255, 255, root.top-outer * 0.73), inner: rgba(255, 255, 255, root.top-inner * 0.7) },
+        { y: 2px, outer: rgba(255, 255, 255, root.top-outer * 0.45), inner: rgba(255, 255, 255, root.top-inner * 0.4) },
+        { y: 3px, outer: rgba(255, 255, 255, root.top-outer * 0.16), inner: rgba(255, 255, 255, root.top-inner * 0.15) },
+        { y: root.h - 4px, outer: rgba(255, 255, 255, root.bottom-outer * 0.15), inner: rgba(255, 255, 255, root.bottom-inner * 0.16) },
+        { y: root.h - 3px, outer: rgba(255, 255, 255, root.bottom-outer * 0.45), inner: rgba(255, 255, 255, root.bottom-inner * 0.41) },
+        { y: root.h - 2px, outer: rgba(255, 255, 255, root.bottom-outer * 0.74), inner: rgba(255, 255, 255, root.bottom-inner * 0.73) },
+        { y: root.h - 1px, outer: rgba(255, 255, 255, root.bottom-outer), inner: rgba(255, 255, 255, root.bottom-inner) },
+    ];
+
+    for band in root.rim: Rectangle {
+        y: band.y;
+        height: 1px;
+        clip: true;
+        Rectangle {
+            y: -band.y;
+            height: root.height;
+            border-radius: root.radius;
+            border-width: Theme.hairline;
+            border-color: band.outer;
+        }
+        Rectangle {
+            x: Theme.hairline;
+            y: Theme.hairline - band.y;
+            width: root.width - 2 * Theme.hairline;
+            height: root.height - 2 * Theme.hairline;
+            border-radius: root.radius - Theme.hairline;
+            border-width: Theme.hairline;
+            border-color: band.inner;
+        }
+    }
+}
+
+// Figma GLASS effect, fitted to its 2x render: tint, light from the top edge,
+// shade toward the bottom edge, and her rim.
+export component Glass inherits Rectangle {
+    in property <GlassKind> kind: GlassKind.panel;
+    // Show the blurred window through the glass (cards over an overlay).
+    in property <bool> frosted: false;
+    // Her glass is grey; a switch that is on and the Teleport note are tinted.
+    in property <color> tint: Theme.glass-tint;
+
+    property <length> h: max(root.height, 20px);
+    property <bool> track: root.kind == GlassKind.track;
+
+    // Gradient stop at a distance from the top edge.
+    pure function at(d: length) -> float {
+        return d / root.h;
+    }
+
+    border-radius: Theme.radius;
+    clip: true;
+
+    if root.frosted: Image {
+        x: -root.absolute-position.x;
+        y: -root.absolute-position.y;
+        width: Backdrop.width;
+        height: Backdrop.height;
+        source: Backdrop.blur;
+        image-fit: fill;
+    }
+    // A card repeats the overlay's tint over the blur it shows. Every layer is
+    // rounded itself: the software renderer clips to the bounding rectangle.
+    if root.frosted: Rectangle { border-radius: Theme.radius; background: Theme.glass-tint; }
+    Rectangle {
+        border-radius: Theme.radius;
+        background: root.tint;
+        animate background { duration: 150ms; }
+    }
+    Rectangle {
+        border-radius: Theme.radius;
+        background: root.kind == GlassKind.pill
+            ? @linear-gradient(180deg, #ffffff09 0%, #ffffff07 root.at(2px), #ffffff04 root.at(4px), #ffffff00 root.at(9.5px))
+            : root.track
+            ? @linear-gradient(180deg, #ffffff00 root.at(11px), #ffffff02 root.at(14px), #ffffff03 root.at(15px), #ffffff05 root.at(17px), #ffffff09 root.at(18.5px), #ffffff0a 100%)
+            : root.kind == GlassKind.panel
+            ? @linear-gradient(180deg, #ffffff08 0%, #ffffff04 root.at(8px), #ffffff02 root.at(16px), #ffffff00 root.at(32px))
+            : @linear-gradient(180deg, #ffffff0d 0%, #ffffff0c root.at(5px), #ffffff0b root.at(13px), #ffffff08 root.at(25px), #ffffff0a root.at(45px), #ffffff08 root.at(57px), #ffffff07 root.at(73px), #ffffff04 root.at(89px), #ffffff01 root.at(113px), #ffffff01 100%);
+    }
+    Rectangle {
+        border-radius: Theme.radius;
+        background: root.kind == GlassKind.pill
+            ? @linear-gradient(180deg, #00000000 0%, #00000004 root.at(9.5px), #00000004 root.at(root.h - 10px), #00000016 root.at(root.h - 6px), #0000003a root.at(root.h - 1.5px), #00000040 100%)
+            : root.track
+            ? @linear-gradient(180deg, #0000002d 0%, #00000026 root.at(3px), #00000018 root.at(4px), #00000012 root.at(5px), #0000000b root.at(6px), #0000000b root.at(9px), #00000004 root.at(10px), #00000000 root.at(11px))
+            : root.kind == GlassKind.panel
+            ? @linear-gradient(180deg, #00000000 root.at(32px), #0000000b root.at(40px), #0000000b root.at(root.h - 17px), #00000018 root.at(root.h - 13px), #0000002d root.at(root.h - 1.5px), #0000002e 100%)
+            : @linear-gradient(180deg, #00000000 root.at(root.h - 140px), #00000001 root.at(root.h - 91px), #00000005 root.at(root.h - 75px), #0000000b root.at(root.h - 51px), #0000001a root.at(root.h - 31px), #0000001d root.at(root.h - 15px), #00000023 100%);
+    }
+    Rim {
+        radius: Theme.radius;
+        top-outer: root.track ? 0.53 : 0.44;
+        top-inner: root.track ? 0.33 : 0.13;
+        bottom-outer: root.track ? 0.36 : 0.68;
+        bottom-inner: root.track ? 0.21 : 0.19;
+    }
+    @children
+}
+
+// card: her step cards; badge: their numbers; panel: the menu pill and its
+// menu; list: contacts; field, button, button-dim: a code and its buttons;
+// primary: Connect; highlight: a nearby device (Figma NEW 2.0).
+export enum BoxKind { card, badge, panel, list, field, button, button-dim, primary, highlight }
+
+// Her box (NEW 2.0): a fill, a line and, on cards and the pill, the light of
+// her glass along the top and bottom edges. The box is her vector's outline:
+// the line runs centred on it, half outside, except a highlight's 1px line,
+// which runs inside.
+export component Box inherits Rectangle {
+    in property <BoxKind> kind: BoxKind.card;
+    in property <brush> fill: root.kind == BoxKind.card ? root.box-fill(0.2)
+        : root.kind == BoxKind.panel ? root.box-fill(0.5)
+        : root.kind == BoxKind.list ? root.box-fill(1)
+        : root.kind == BoxKind.badge ? Theme.badge-fill
+        : root.kind == BoxKind.field ? Theme.field
+        : root.kind == BoxKind.button ? Theme.button
+        : root.kind == BoxKind.button-dim ? Theme.button-dim
+        : root.kind == BoxKind.primary ? Theme.primary-fill
+        : transparent;
+    in property <brush> line: root.kind == BoxKind.card || root.kind == BoxKind.panel ? Theme.box-line
+        : root.kind == BoxKind.list ? Theme.list-line
+        : root.kind == BoxKind.badge ? Theme.badge-line
+        : root.kind == BoxKind.field ? Theme.field-line
+        : root.kind == BoxKind.button ? Theme.button-line
+        : root.kind == BoxKind.button-dim ? Theme.button-dim-line
+        : root.kind == BoxKind.highlight ? Theme.highlight
+        : transparent;
+    in property <length> radius: root.kind == BoxKind.card || root.kind == BoxKind.badge ? Theme.radius-card
+        : root.kind == BoxKind.panel ? Theme.radius-panel
+        : root.kind == BoxKind.list ? Theme.radius-list
+        : root.kind == BoxKind.field ? Theme.radius-field
+        : Theme.radius-button;
+
+    property <bool> lit: root.kind == BoxKind.card || root.kind == BoxKind.badge || root.kind == BoxKind.panel;
+    property <length> line-width: root.kind == BoxKind.primary ? 0 : root.kind == BoxKind.highlight ? 1px : Theme.line;
+    // How far the drawing reaches past the box.
+    out property <length> out: root.kind == BoxKind.highlight ? 0 : root.line-width / 2;
+    out property <length> outer-radius: root.radius + root.out;
+
+    // Her fill: the gradient at a strength.
+    pure function box-fill(alpha: float) -> brush {
+        return @linear-gradient(90deg, Theme.box-from.with-alpha(alpha) 0%, Theme.box-to.with-alpha(alpha) 100%);
+    }
+
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
+        background: root.fill;
+    }
+    if root.lit: Rim {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        radius: root.outer-radius;
+        top-outer: root.kind == BoxKind.panel ? 0.36 : 0.5;
+        top-inner: root.kind == BoxKind.panel ? 0.1 : 0.36;
+        bottom-outer: root.kind == BoxKind.panel ? 0.26 : 0.36;
+        bottom-inner: root.kind == BoxKind.panel ? 0.1 : 0.24;
+    }
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
+        border-width: root.line-width;
+        border-color: root.line;
+    }
+    @children
+}
+
+// Her line (NEW 2.0) drawn as a filled box, at least one screen pixel thick:
+// the GPU renderer drops a box thinner than a pixel on a 1x screen. x (for a
+// vertical line) or y (a horizontal one) is the line's centre; the other
+// size is its length.
+export component Rule inherits Rectangle {
+    in property <bool> vertical: false;
+    in property <brush> ink: Theme.divider;
+    property <length> thickness: max(Theme.line, 1phx);
+
+    Rectangle {
+        x: root.vertical ? -root.thickness / 2 : 0;
+        y: root.vertical ? 0 : -root.thickness / 2;
+        width: root.vertical ? root.thickness : root.width;
+        height: root.vertical ? root.height : root.thickness;
+        background: root.ink;
+    }
+}
+
+// Her background (NEW 2.0): light from above the middle of the top edge
+// fading to near black at the bottom, her SVG stretched with the window.
+export component Background inherits Image {
+    source: @image-url("../assets/background.svg");
+    image-fit: fill;
+}
+
+// A pill with a centred label (Figma 214:988 "< Back"): Light 10px white,
+// in her NEW 2.0 pill. It lights up a little on hover and press.
+export component GlassButton inherits Box {
+    in property <string> text;
+    callback clicked;
+
+    kind: BoxKind.panel;
+    height: 24px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+
+    Rectangle {
+        x: -root.out;
+        y: -root.out;
+        width: root.width + 2 * root.out;
+        height: root.height + 2 * root.out;
+        border-radius: root.outer-radius;
+        background: touch.pressed ? #ffffff14 : touch.has-hover ? #ffffff0a : transparent;
+        animate background { duration: 150ms; }
+    }
+    // Figma draws her label half a pixel right of and below the centre.
+    Label {
+        x: 0.5px;
+        y: 0.5px;
+        width: root.width;
+        height: root.height;
+        horizontal-alignment: center;
+        silent: true;
+        text: root.text;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// One of her icons (Icons) at its own size: round strokes, white by default.
+export component Icon inherits Rectangle {
+    in property <string> icon;
+    in property <length> line: 1px;
+    in property <color> ink: Theme.text;
+    // Her dots are filled.
+    in property <bool> filled: false;
+
+    Path {
+        x: -2px;
+        y: -2px;
+        width: root.width + 4px;
+        height: root.height + 4px;
+        fit: preserve;
+        commands: root.icon;
+        stroke: root.ink;
+        stroke-width: root.line;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        fill: root.filled ? root.ink : transparent;
+    }
+}
+
+// An icon that is a button (her pill, her cards' close): grey, white on hover;
+// her NEW 2.0 pill draws them white, blue on hover. The hit area reaches pad
+// past the icon.
+export component IconButton inherits Icon {
+    in property <length> pad: 6px;
+    in property <color> rest-ink: Theme.muted;
+    in property <color> hover-ink: Theme.text;
+    callback clicked;
+
+    line: 1.5px;
+    ink: touch.has-hover || touch.pressed ? root.hover-ink : root.rest-ink;
+    accessible-role: button;
+    accessible-action-default => { root.clicked(); }
+
+    touch := TouchArea {
+        x: -root.pad;
+        y: -root.pad;
+        width: root.width + 2 * root.pad;
+        height: root.height + 2 * root.pad;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Her ring (Figma component set "Spinner"): a track at 25% around the box's
+// centre. Spinner and ProgressRing draw their arc on it.
+export component Ring inherits Rectangle {
+    // Centre line of the track. Her big ring is a hair taller than wide.
+    in property <length> radius-x: 6.579px;
+    in property <length> radius-y: self.radius-x;
+    in property <length> thickness: 5px;
+
+    out property <float> cx: root.width / 1px / 2;
+    out property <float> cy: root.height / 1px / 2;
+    out property <float> rx: root.radius-x / 1px;
+    out property <float> ry: root.radius-y / 1px;
+
+    // A point on the track, clockwise from 12 o'clock, in path units (px).
+    public pure function at(a: angle) -> string {
+        return (root.cx + root.rx * sin(a)) + " " + (root.cy - root.ry * cos(a));
+    }
+    // The track clockwise from the last point to a, under half a turn.
+    public pure function to(a: angle) -> string {
+        return " A " + root.rx + " " + root.ry + " 0 0 1 " + root.at(a);
+    }
+
+    Path {
+        width: root.width;
+        height: root.height;
+        fit: preserve;
+        commands: "M " + root.at(0deg) + root.to(90deg) + root.to(180deg) + root.to(270deg) + root.to(360deg) + " Z";
+        stroke: Theme.spinner-track;
+        stroke-width: root.thickness;
+        fill: transparent;
+    }
+}
+
+// Her spinner: a quarter arc with a round head that fades out behind it. Her
+// prototype turns it a quarter clockwise per step, linear, and comes to rest
+// where it began; set active, it turns until let go, then ends the turn it is
+// in. Her arcs are dashed 4/4, but the round caps close the gaps, so the arc
+// is drawn whole. It is redrawn each frame because not every renderer rotates.
+export component Spinner inherits Ring {
+    in property <bool> active: false;
+    // Where the head rests, clockwise from 12 o'clock.
+    in property <angle> head: 0deg;
+    // Off: at rest only the track shows, the arc comes with the turn.
+    in property <bool> arc-at-rest: true;
+
+    // True from a start until the end of the turn it was let go in.
+    out property <bool> turning: false;
+    property <duration> began;
+    property <float> turn: Theme.spin / 1ms;
+    property <float> t: root.turning ? mod((animation-tick() - root.began) / 1ms, root.turn) : 0;
+    // Her steps: three quarters of 200 ms, the last of 300 ms (Theme.spin is 900).
+    property <angle> tip: root.head + 1deg * (root.t < root.turn * 2 / 3
+        ? root.t * 405 / root.turn
+        : 270 + (root.t - root.turn * 2 / 3) * 270 / root.turn);
+
+    function start() {
+        root.began = animation-tick();
+        root.turning = true;
+    }
+    init => {
+        if (root.active) {
+            root.start();
+        }
+    }
+    changed active => {
+        if (root.active && !root.turning) {
+            root.start();
+        }
+    }
+    // Whole turns only: stop at the end of the turn in which it was let go.
+    Timer {
+        interval: Theme.spin;
+        running: root.turning;
+        triggered => {
+            if (!root.active) {
+                root.turning = false;
+            }
+        }
+    }
+
+    Path {
+        // Her gradient crosses the centre, opaque just past the head and clear
+        // on the far side, 1% at 75.5% of the way. Slint measures a gradient
+        // across the whole box (CSS), so the stops follow the angle.
+        property <angle> a: root.tip + 210.2deg;
+        property <float> k: (root.rx + root.ry) / 2
+            / ((abs(root.width * sin(self.a)) + abs(root.height * cos(self.a))) / 1px);
+        property <float> t0: 0.5 - self.k;
+        property <float> t1: 0.5 + 0.5104 * self.k;
+        property <float> t2: 0.5 + self.k;
+        property <color> fade: Theme.progress.transparentize(0.99);
+        property <color> clear: Theme.progress.transparentize(1);
+
+        visible: root.turning || root.arc-at-rest;
+        width: root.width;
+        height: root.height;
+        fit: preserve;
+        commands: "M " + root.at(root.tip - 90deg) + root.to(root.tip);
+        stroke: @linear-gradient(self.a, Theme.progress self.t0, self.fade self.t1, self.clear self.t2);
+        stroke-width: root.thickness;
+        stroke-line-cap: round;
+        fill: transparent;
+    }
+}
+
+// A download's progress on her ring: the arc grows clockwise from 12 o'clock
+// in her blue, a dot at the start.
+export component ProgressRing inherits Ring {
+    in property <float> progress: 0.0; // 0.0 to 1.0
+
+    Path {
+        property <angle> sweep: clamp(root.progress, 0.01, 0.999) * 360deg;
+
+        width: root.width;
+        height: root.height;
+        fit: preserve;
+        commands: "M " + root.at(0deg)
+            + (self.sweep > 180deg ? root.to(180deg) + root.to(self.sweep) : root.to(self.sweep));
+        stroke: Theme.progress;
+        stroke-width: root.thickness;
+        stroke-line-cap: round;
+        fill: transparent;
+    }
 }

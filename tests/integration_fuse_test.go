@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package tests
 
@@ -70,11 +67,20 @@ func waitForFUSEMount(t *testing.T, dir string, timeout time.Duration) {
 	if runtime.GOOS == "windows" {
 		// On Windows, WinFSP mounts don't appear in `mount` output.
 		// Check accessibility by stat-ing the root of the mount point instead.
+		// A folder mount point exists as a plain folder before the mount
+		// (t.TempDir), so the stat alone passes too early: the mounted folder
+		// is a reparse point, which Lstat reports as irregular.
 		root := dir
-		if len(dir) == 2 && dir[1] == ':' {
-			root = dir + `\`
+		drive := (len(dir) == 2 || len(dir) == 3 && (dir[2] == '\\' || dir[2] == '/')) && dir[1] == ':'
+		if drive {
+			root = dir[:2] + `\`
 		}
 		WaitForCondition(t, timeout, 200*time.Millisecond, func() bool {
+			if !drive {
+				if fi, err := os.Lstat(root); err != nil || fi.Mode()&(os.ModeIrregular|os.ModeSymlink) == 0 {
+					return false
+				}
+			}
 			_, err := os.Stat(root)
 			return err == nil
 		}, "waiting for FUSE mount at: "+dir)

@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // ABOUTME: Tests to ensure the listener is always dual-stack (tcp, not tcp6)
 // ABOUTME: and that LAN addresses are only used in local mode.
@@ -166,9 +163,9 @@ func TestAcceptDeadlineExitsOnTimeout(t *testing.T) {
 	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
 	require.NoError(t, err, "NewKeibiDropWithIP failed")
 
-	_ = kd.listener.(*net.TCPListener).SetDeadline(time.Now().Add(200 * time.Millisecond))
+	_ = kd.listener.(deadlineListener).SetDeadline(time.Now().Add(200 * time.Millisecond))
 	_, acceptErr := kd.listener.Accept()
-	_ = kd.listener.(*net.TCPListener).SetDeadline(time.Time{})
+	_ = kd.listener.(deadlineListener).SetDeadline(time.Time{})
 
 	require.Error(t, acceptErr, "Expected deadline error from Accept, got nil")
 	require.True(t, os.IsTimeout(acceptErr), "Expected timeout error, got: %v", acceptErr)

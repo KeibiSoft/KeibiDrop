@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 
 // ABOUTME: The creator's rendezvous legs: the direct listener and the bridge leg are
@@ -73,14 +73,14 @@ func isTimeout(err error) bool {
 // to the round through arrivals. It exits when the listener's deadline passes or
 // stop closes it.
 type directAcceptor struct {
-	ln       *net.TCPListener
+	ln       deadlineListener
 	arrivals chan<- roundArrival
 	quit     chan struct{}
 	done     chan struct{}
 	once     sync.Once
 }
 
-func startDirectAcceptor(ln *net.TCPListener, arrivals chan<- roundArrival, window time.Duration) *directAcceptor {
+func startDirectAcceptor(ln deadlineListener, arrivals chan<- roundArrival, window time.Duration) *directAcceptor {
 	a := &directAcceptor{ln: ln, arrivals: arrivals, quit: make(chan struct{}), done: make(chan struct{})}
 	_ = ln.SetDeadline(time.Now().Add(window))
 	go func() {
@@ -209,6 +209,14 @@ func (kd *KeibiDrop) watchBridgeLeg(logger *slog.Logger, holder *bridgeLegHolder
 		if attempt == 0 && holder.open() {
 			logger.Info("Bridge leg closed before a joiner spoke, dialing a fresh one", "error", err)
 		}
+	}
+	n := kd.bridgeLegsDiedTwice.Add(1)
+	// Two dead legs in one round means the bridge is expiring them faster than
+	// the round reads them: the tm-1 shape, where every round cost a park, an
+	// expiry and two ledger writes. The presence gate is what stops it; this
+	// counter is how an operator sees that it is happening at all.
+	if n%4 == 1 {
+		logger.Info("Bridge legs are expiring before a joiner arrives", "rounds_so_far", n)
 	}
 	arrivals <- roundArrival{via: "bridge", err: errors.New("bridge leg closed twice this round")}
 }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // This file pins the two read lanes of a stream pool: a miss the reader waits
 // on fetches through the pool, the read-ahead window through the bulk lane.

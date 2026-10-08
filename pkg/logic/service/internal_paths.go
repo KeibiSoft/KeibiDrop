@@ -1,14 +1,13 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package service
 
 import (
 	"os"
 	"strings"
+
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 )
 
 // internalPathMarkers name OS and KeibiDrop internal files that must never sync.
@@ -20,9 +19,12 @@ var internalPathMarkers = []string{
 	".kdbitmap",
 }
 
-// IsInternalPath reports whether the path names an internal file that must
-// never sync: FUSE hidden renames, macOS metadata, download bitmap sidecars.
+// IsInternalPath reports whether the path must never sync: FUSE hidden renames,
+// OS metadata, download bitmap sidecars, a file manager's trash folder.
 func IsInternalPath(path string) bool {
+	if types.IsOSTrashPath(path) {
+		return true
+	}
 	for _, m := range internalPathMarkers {
 		if strings.Contains(path, m) {
 			return true

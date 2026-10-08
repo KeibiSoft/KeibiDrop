@@ -10,7 +10,7 @@
   <a href="https://keibidrop.com">Website</a> · <a href="https://github.com/KeibiSoft/KeibiDrop/releases">Download</a> · <a href="https://keibisoft.com/blog.html">Blog</a>
 </p>
 
-<h2 align="center">Work on shared files instantly.<br>No more upload or download waiting.</h2>
+<h2 align="center">Open files on another computer<br>without downloading them first.</h2>
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=9Wt0NMx2_I8">
@@ -25,9 +25,9 @@ Another computer's files show up as a folder on yours. Open and edit them in you
 - End-to-end encrypted (post-quantum). No cloud, and the relay never reads your files.
 - Same network: one click. Over the internet: swap a code once, then save the contact.
 - Their files become a real folder on your machine. Open, edit, `git clone`, anything.
-- macOS, Linux, Windows, Android. iOS coming soon. Open source engine (MPL-2.0).
+- macOS, Linux, Windows, Android. iOS coming soon. Open source (AGPL-3.0).
 
-**Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.7/keibidrop-0.4.7-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.7/keibidrop-0.4.7-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.7/keibidrop_0.4.7_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html)
+**Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop-0.4.8-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop-0.4.8-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop_0.4.8_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html)
 
 **Three steps:** install it on both computers. Connect once: same Wi-Fi, turn on the switch; anywhere else, send your code in any chat and paste theirs. Then drop a file in, or open their files as a folder. [How to use it, with a short clip for each step.](https://keibidrop.com/how-to-use.html) [The clips as a YouTube playlist.](https://www.youtube.com/playlist?list=PLB-moSLYtzF0)
 
@@ -206,9 +206,9 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
-Go engine, CLI, and mobile bindings: [Mozilla Public License 2.0](./LICENSE) (per-file copyleft)
+From version 0.5.0 the engine, CLI, mobile bindings and desktop UI are licensed under the [GNU Affero General Public License v3.0](./LICENSE) (AGPL-3.0-only). A closed-source product that embeds or links them needs a commercial license.
 
-Rust UI, mobile apps, and brand assets: Proprietary - see [LICENSING.md](./LICENSING.md)
+Mobile apps and brand assets: Proprietary - see [LICENSING.md](./LICENSING.md)
 
 Desktop UI built with [Slint](https://slint.dev)
 
@@ -266,6 +266,7 @@ Build it with `make build-kdmcp`, then `kdmcp install` prints the config snippet
 - [Website](https://keibidrop.com)
 - [Documentation](https://keibidrop.com/docs/)
 - [Compared with sshfs](https://keibidrop.com/compare/sshfs.html) - measured on a 200 ms link
+- [Compared with sixteen tools](https://keibidrop.com/compare/) - LucidLink, Strada, Syncthing, Resilio Sync, rclone, WeTransfer, LocalSend, PairDrop, KDE Connect and more, one table each
 - [Technical deep dive](https://keibisoft.com/tools/keibidrop.html)
 - [Blog posts](https://keibisoft.com/blog.html) (53 posts on FUSE, crypto, performance)
 - [FAQ](https://keibisoft.com/tools/keibidrop-faq.html)

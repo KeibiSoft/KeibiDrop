@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package session
 
@@ -34,6 +31,10 @@ const (
 type Session struct {
 	// Known fingerprint of the expected peer, shared out-of-band.
 	ExpectedPeerFingerprint string
+	// peerFPMu guards ExpectedPeerFingerprint for the reconnect loop, which reads
+	// it from its own goroutine while a register or a TOFU handshake writes it.
+	// Writers go through SetExpectedPeerFingerprint; the loop reads PeerFingerprint.
+	peerFPMu sync.RWMutex
 
 	OwnKeys        *kbc.OwnKeys
 	OwnFingerprint string
@@ -92,6 +93,18 @@ type Session struct {
 	OwnMixedLegs       bool
 	PeerInboundBlocked bool
 	PeerMixedLegs      bool
+	// PeerDeclaredCipher is true when the peer's last inbound flight carried
+	// the cipher field (0.4.9 and newer). Not on the wire.
+	PeerDeclaredCipher bool
+
+	// OwnNoQUIC suppresses this side's QUIC control-channel seeds. A browser
+	// peer cannot be the far end of a relayed UDP room, and a desktop that
+	// receives the seeds brings up quic1/quic2 and re-probes them every 30 s
+	// for a counterpart that can never answer. Sending no seeds is the one
+	// signal that already means "stay on TCP" (quic_control.go), so a browser
+	// sets this and the desktop needs no new case. Phase 4 (WebTransport)
+	// removes it.
+	OwnNoQUIC bool
 
 	// Internal timeout deadline
 	Deadline time.Time
@@ -202,6 +215,21 @@ func (s *Session) NegotiatedSuite() kbc.CipherSuite {
 		return kbc.SupportedCiphers()[0]
 	}
 	return s.CipherSuite
+}
+
+// SetExpectedPeerFingerprint writes the peer this session is for, under peerFPMu.
+func (s *Session) SetExpectedPeerFingerprint(fp string) {
+	s.peerFPMu.Lock()
+	s.ExpectedPeerFingerprint = fp
+	s.peerFPMu.Unlock()
+}
+
+// PeerFingerprint reads the peer this session is for, under peerFPMu. The
+// reconnect loop uses it; it follows a later register, as it always did.
+func (s *Session) PeerFingerprint() string {
+	s.peerFPMu.RLock()
+	defer s.peerFPMu.RUnlock()
+	return s.ExpectedPeerFingerprint
 }
 
 // ResetOutboundCrypto clears the outbound shared key and negotiated cipher suite so a fresh

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // ABOUTME: Tests the statTimes platform helper: a Chtimes-set atime round-trips
 // ABOUTME: through the announce path, and btime stays in a sane range.

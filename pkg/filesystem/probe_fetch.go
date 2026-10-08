@@ -1,5 +1,7 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
+
+//go:build !android
 
 package filesystem
 
@@ -67,31 +69,47 @@ func (f *File) fetchAt(start int64) *blockFetch {
 	return f.inflight[start]
 }
 
-// markCached writes fetched bytes at base and marks the chunks the data fully
-// covers (a short read or the EOF chunk stays unmarked), so a later read never
-// takes the fast path into a sparse hole. bm may be nil.
-func markCached(cacheFD *os.File, bm *ChunkBitmap, data []byte, base, remoteFileSize int64) error {
-	if _, err := cacheFD.WriteAt(data, base); err != nil {
-		return err
-	}
+// markCached lands a fetched range in the cache file chunk by chunk and marks
+// every chunk fully inside it, with its fingerprint. A chunk already present
+// is skipped: an on-demand read landed it, or a local write holds it
+// (fillForWrite), and the peer's bytes must never go over the app's. Returns
+// the bytes written. base is chunk-aligned (fetch bounds are multiples of
+// ChunkSize); a partial tail chunk is written, never marked.
+func markCached(cacheFD *os.File, bm *ChunkBitmap, data []byte, base, remoteFileSize int64) (int, error) {
 	if bm == nil {
-		return nil
+		n, err := cacheFD.WriteAt(data, base)
+		return n, err
 	}
 	cs := int64(ChunkSize)
 	end := base + int64(len(data))
-	for c := int(base / cs); ; c++ {
+	written := 0
+	for pos := base; pos < end; {
+		c := int(pos / cs)
 		chunkBegin := int64(c) * cs
-		chunkEnd := chunkBegin + cs
+		chunkEnd := min(chunkBegin+cs, end)
 		if remoteFileSize > 0 && chunkEnd > remoteFileSize {
 			chunkEnd = remoteFileSize
 		}
-		if chunkBegin >= end || chunkEnd > end {
+		if chunkEnd <= pos {
 			break
 		}
-		bm.Set(c)
-		bm.SetHash(c, xxh3.Hash(data[chunkBegin-base:chunkEnd-base]))
+		if bm.Has(c) {
+			pos = chunkEnd
+			continue
+		}
+		n, err := cacheFD.WriteAt(data[pos-base:chunkEnd-base], pos)
+		written += n
+		if err != nil {
+			return written, err
+		}
+		full := chunkEnd == chunkBegin+cs || (remoteFileSize > 0 && chunkEnd == remoteFileSize)
+		if pos == chunkBegin && full {
+			bm.Set(c)
+			bm.SetHash(c, xxh3.Hash(data[pos-base:chunkEnd-base]))
+		}
+		pos = chunkEnd
 	}
-	return nil
+	return written, nil
 }
 
 // preadCached serves a request from the cache file once its chunks are marked,

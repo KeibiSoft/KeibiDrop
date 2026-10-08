@@ -47,6 +47,32 @@ jobs:
       - name: Bench-tagged transport harness
         run: make test-bench
 
+  android:
+    # The mobile engine is built by gomobile outside CI, so a FUSE-only symbol that
+    # loses its build tag breaks the Android build unnoticed (four did between
+    # 0.4.2 and 0.4.9). A plain cross-compile with the runner's NDK catches it;
+    # cgofuse compiles its glue for Android too and needs the libfuse headers.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Install FUSE dev headers
+        run: sudo apt-get install -y libfuse-dev
+
+      - name: Compile the mobile engine for android/arm64
+        env:
+          GOOS: android
+          GOARCH: arm64
+          CGO_ENABLED: "1"
+        run: |
+          CC="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang" \
+            go build -o /dev/null ./mobile
+
   lint:
     runs-on: ubuntu-22.04
     steps:

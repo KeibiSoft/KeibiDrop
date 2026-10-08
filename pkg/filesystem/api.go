@@ -1,10 +1,7 @@
 //go:build !android
 
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package filesystem
 
@@ -55,6 +52,11 @@ type FS struct {
 	// goroutines (Run, teardown, gRPC handlers) read them, so access is atomic.
 	host atomic.Pointer[winfuse.FileSystemHost]
 	root atomic.Pointer[Dir]
+	// hostDone closes when that host's FUSE loop returns.
+	hostDone atomic.Pointer[chan struct{}]
+
+	// refresher tells the file manager about peer changes while mounted.
+	refresher atomic.Pointer[fileManagerRefresher]
 
 	// ctxMu guards ctx/cancel. CancelInFlight and ClearFiles rebuild the pair
 	// from RPC and teardown goroutines while Mount and Unmount read it. Never
@@ -226,13 +228,40 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	host := winfuse.NewFileSystemHost(root)
 	host.SetCapReaddirPlus(true)
 	host.SetUseIno(true)
+	hostDone := make(chan struct{})
+	fs.hostDone.Store(&hostDone)
 	fs.host.Store(host)
 	fs.mountPoint = cleanMountPoint
+
+	// Its own context: CancelInFlight replaces fs.ctx while the mount stays.
+	// A platform without a file manager refresh starts nothing.
+	if flush := fs.platformRefresh(cleanMountPoint); flush != nil {
+		refresh := newFileManagerRefresher(flush)
+		refresh.logger = fs.logger
+		refreshCtx, stopRefresh := context.WithCancel(context.Background())
+		defer stopRefresh()
+		go refresh.run(refreshCtx)
+		fs.refresher.Store(refresh)
+		defer fs.refresher.CompareAndSwap(refresh, nil)
+		if runtime.GOOS == "windows" {
+			// WinFsp frees the volume right after Destroy, and a notify still
+			// running then uses it. Destroy stops the refresher first.
+			root.SetOnDestroy(func() {
+				stopRefresh()
+				select {
+				case <-refresh.done:
+				case <-time.After(refreshStopWait):
+					fs.logger.Warn("File manager refresh still running at unmount")
+				}
+			})
+		}
+	}
 
 	opts := getMountOptions(fs.AutoCache)
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
 	ok := host.Mount(cleanMountPoint, opts)
+	close(hostDone)
 	if !ok {
 		// Reset host/Root so IsMounted() reports false. Otherwise a failed mount
 		// leaves them set. The next reconnect then takes the "already mounted,
@@ -259,6 +288,10 @@ func isWindowsDirMountPoint(goos, p string) bool {
 	return goos == "windows" && (len(p) != 2 || p[1] != ':')
 }
 
+// hostLoopEndWait bounds the wait for the FUSE loop after the unmount. A process
+// still inside a lazily detached Linux mount keeps the loop serving it.
+const hostLoopEndWait = 3 * time.Second
+
 func (fs *FS) Unmount() {
 	host := fs.host.Load()
 	fs.logger.Warn("FUSE Unmount starting", "hostNil", host == nil)
@@ -272,7 +305,10 @@ func (fs *FS) Unmount() {
 	fs.ctxMu.Unlock()
 	cancel()
 
-	if fs.root.Load() != nil {
+	// Read before the host stops: Mount clears fs.root when the host returns,
+	// and on Linux that can come before host.Unmount returns.
+	root := fs.root.Load()
+	if root != nil {
 		fs.drainInFlightOperations()
 	}
 
@@ -288,6 +324,18 @@ func (fs *FS) Unmount() {
 		fs.logger.Warn("FUSE Unmount timed out, force-unmounting", "mountPoint", fs.mountPoint)
 		fs.forceUnmount()
 		<-done
+	}
+	// On Linux host.Unmount is a lazy detach: the loop still serves queued
+	// calls, and a late Release writes its sidecar. Flush after the loop ends.
+	if p := fs.hostDone.Load(); p != nil {
+		select {
+		case <-*p:
+		case <-time.After(hostLoopEndWait):
+			fs.logger.Warn("FUSE loop still running after unmount", "mountPoint", fs.mountPoint)
+		}
+	}
+	if root != nil {
+		root.flushPendingSidecars()
 	}
 	fs.root.Store(nil)
 	fs.logger.Warn("FUSE Unmount completed")

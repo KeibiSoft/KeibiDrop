@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package common
 
@@ -91,9 +88,9 @@ func (kd *KeibiDrop) InitConnectionResilience() error {
 		if ln == nil {
 			return nil, fmt.Errorf("accept-conn: inbound listener not open")
 		}
-		if tcpL, ok := ln.(*net.TCPListener); ok {
-			_ = tcpL.SetDeadline(time.Now().Add(timeout))
-			return tcpL.Accept()
+		if dl, ok := ln.(deadlineListener); ok {
+			_ = dl.SetDeadline(time.Now().Add(timeout))
+			return dl.Accept()
 		}
 		return ln.Accept()
 	}
@@ -547,10 +544,8 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 	}
 	kd.SyncTracker.LocalFilesMu.RUnlock()
 
+	reqs := make([]*bindings.NotifyRequest, 0, len(files))
 	for _, file := range files {
-		if ctx.Err() != nil {
-			return
-		}
 		info, err := os.Stat(filepath.Clean(file.RealPathOfFile))
 		if err != nil {
 			continue
@@ -558,7 +553,7 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 		atime, btime := statTimes(info)
 		// Base = our last announce watermark, not the disk mtime: an offline
 		// edit above it becomes provable and is preserved, not overwritten.
-		_, _ = client.Notify(ctx, &bindings.NotifyRequest{
+		reqs = append(reqs, &bindings.NotifyRequest{
 			Type:        bindings.NotifyType(types.AddFile),
 			Path:        file.RelativePath,
 			BaseMtimeNs: int64(file.LastEditTime),
@@ -571,8 +566,24 @@ func (kd *KeibiDrop) notifyRestoredFiles(logger *slog.Logger) {
 				BirthTime:        btime,
 			},
 		})
-		logger.Info("Re-notified peer about restored file", "path", file.RelativePath)
 	}
+	// In BatchNotify batches, as a share goes out: one Notify and one log
+	// line per file took 12,789 of each for a restored folder.
+	sent := 0
+	for start, seq := 0, uint64(1); start < len(reqs); start, seq = start+announceBatchSize, seq+1 {
+		end := min(start+announceBatchSize, len(reqs))
+		_, err := kd.sendAnnounceBatch(ctx, logger, &bindings.BatchNotifyRequest{
+			Notifications: reqs[start:end],
+			Seq:           seq,
+			Timestamp:     uint64(time.Now().UnixNano()),
+		})
+		if err != nil {
+			logger.Warn("Re-notifying peer about restored files stopped", "sent", sent, "of", len(reqs), "error", err)
+			return
+		}
+		sent = end
+	}
+	logger.Info("Re-notified peer about restored files", "count", sent)
 }
 
 // resumePartialDownloads finds this peer's bitmaps in the registry and resumes them.

@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package common
 
@@ -11,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,6 +31,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
 
@@ -192,15 +191,17 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 
 	resp, err := GetJSONWithURL(kd.relayClient, fetchUrl, map[string]string{"Authorization": "Bearer " + lookupToken}, RegisterErrorMapper)
 	if err != nil {
+		// The mapper returns the response with the error; close it for connection reuse.
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if errors.Is(err, ErrNotFound) {
+			// Normal while the peer has not registered yet; the caller logs the wait once.
+			logger.Debug("Not found")
+			return ErrNotFound
+		}
 		logger.Error("Failed to fetch", "error", err)
-		// TODO: On the caller of this method; handle the retry logic, and appropriate display of message.
 		return err
-	}
-
-	if resp.StatusCode == http.StatusNotFound {
-		// Normal while the peer has not registered yet; the caller logs the wait once.
-		logger.Debug("Not found")
-		return ErrNotFound
 	}
 
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
@@ -361,10 +362,46 @@ func refreshAttrFromDisk(req *bindings.NotifyRequest, downloadFolder string) {
 	}
 }
 
+// retargetPendingAdd points a queued temp ADD at the path a RENAME moved the
+// temp to, so it describes the swapped version: the rename's declared base
+// (the temp's own base, -1 for a fresh working copy, does not describe the
+// swap) and the rename's Attr, so the version goes out with ONE stamp. With
+// its own Attr the ADD carried the Go-clock stamp Write took after the
+// pwrite, above the RENAME's disk stamp by up to a kernel tick, and the
+// receiver reset its bitmap a second time for bytes it already had (gap C,
+// 2026-10-01). The Attr is copied: the RENAME request is sent on its own and
+// the flush-time refresh writes into the ADD's.
+func retargetPendingAdd(add, ren *bindings.NotifyRequest) {
+	add.Path = ren.Path
+	add.BaseMtimeNs = ren.BaseMtimeNs
+	if ren.Attr == nil {
+		return
+	}
+	add.Attr = &bindings.Attr{
+		Dev:              ren.Attr.Dev,
+		Ino:              ren.Attr.Ino,
+		Mode:             ren.Attr.Mode,
+		Size:             ren.Attr.Size,
+		AccessTime:       ren.Attr.AccessTime,
+		ModificationTime: ren.Attr.ModificationTime,
+		ChangeTime:       ren.Attr.ChangeTime,
+		BirthTime:        ren.Attr.BirthTime,
+		Flags:            ren.Attr.Flags,
+	}
+}
+
 // isDebouncedNotify reports whether a notify type is per-path debounced (ADD_FILE/EDIT_FILE).
 // Everything else is sent immediately and is what pendingNotifies tracks.
 func isDebouncedNotify(t bindings.NotifyType) bool {
 	return t == bindings.NotifyType_ADD_FILE || t == bindings.NotifyType_EDIT_FILE
+}
+
+// skipPeerSync reports whether a local change is macOS metadata that is never sent to the peer: .DS_Store,
+// AppleDouble "._" files, and the .fseventsd folder with the files fseventsd writes inside it.
+func skipPeerSync(path string) bool {
+	base := filepath.Base(path)
+	return base == ".DS_Store" || base == ".fseventsd" || strings.HasPrefix(base, "._") ||
+		strings.Contains("/"+path, "/.fseventsd/")
 }
 
 // countImmediateNotifies returns how many entries in a flush batch are the immediate
@@ -561,9 +598,7 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 					return
 				}
 
-				// Filter macOS metadata files from peer sync.
-				baseName := filepath.Base(req.Path)
-				if baseName == ".DS_Store" || baseName == ".fseventsd" || strings.HasPrefix(baseName, "._") {
+				if skipPeerSync(req.Path) {
 					continue
 				}
 
@@ -587,14 +622,11 @@ func (kd *KeibiDrop) setupFilesystem(logger *slog.Logger, ready chan struct{}) e
 						deadline: time.Now().Add(200 * time.Millisecond),
 					}
 				case bindings.NotifyType_RENAME_FILE, bindings.NotifyType_RENAME_DIR:
-					// RENAME: send immediately. Re-target any pending ADD_FILE for the old path
-					// to the new path so the peer still downloads the content.
+					// RENAME: send at the next tick. Re-target any pending ADD_FILE for the old
+					// path to the new path so the peer still downloads the content.
 					if old, exists := pending[req.OldPath]; exists {
 						delete(pending, req.OldPath)
-						old.req.Path = req.Path // retarget to new path
-						// The temp's own base (-1 for a fresh working copy) does
-						// not describe the swap; the rename's declared base does.
-						old.req.BaseMtimeNs = req.BaseMtimeNs
+						retargetPendingAdd(old.req, req)
 						pending[req.Path] = old
 					}
 					immediate = append(immediate, req)
@@ -825,6 +857,17 @@ func (kd *KeibiDrop) handleNotifyDisconnect() {
 	kd.cancelContext()
 }
 
+// kdServerKeepalive is the keepalive of both gRPC servers. The inbound server
+// pings an idle client, so a browser peer (no client pings) survives a bridge
+// that reaps silent conns after 120 s. A ping goes out only after Time with
+// nothing read, so a transfer never pings. Timeout stays above the browser's
+// 20 s, so a stalled link is not cut here first. A var: tests shrink Time.
+var kdServerKeepalive = keepalive.ServerParameters{Time: 45 * time.Second, Timeout: 60 * time.Second}
+
+// kdServerKeepalivePolicy accepts a client that pings every 30 s or slower with
+// no stream open, so a browser that adds client pings is not sent GOAWAY.
+var kdServerKeepalivePolicy = keepalive.EnforcementPolicy{MinTime: 30 * time.Second, PermitWithoutStream: true}
+
 // kdServerOptions is the single source of the tuned gRPC server options. The TCP server and
 // the QUIC control server both use it, so the two transports can't drift apart.
 func kdServerOptions() []grpc.ServerOption {
@@ -835,6 +878,8 @@ func kdServerOptions() []grpc.ServerOption {
 		grpc.InitialConnWindowSize(config.GRPCWindowSize),
 		grpc.WriteBufferSize(config.GRPCIOBufferSize),
 		grpc.ReadBufferSize(config.GRPCIOBufferSize),
+		grpc.KeepaliveParams(kdServerKeepalive),
+		grpc.KeepaliveEnforcementPolicy(kdServerKeepalivePolicy),
 	}
 }
 

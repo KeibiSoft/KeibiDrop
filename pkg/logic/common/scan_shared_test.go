@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // ABOUTME: Tests for ScanAndShareSaveDir — announce pre-existing save dir files.
 // ABOUTME: Covers idempotence, internal-file skip, nested paths, BFS order, remote skip.
@@ -28,17 +28,27 @@ type fakeNotifyCli struct {
 	mu       sync.Mutex
 	reqs     []*bindings.NotifyRequest
 	batches  int
+	singles  int
 	failNext int // BatchNotify calls to fail before succeeding again
+	// onSend runs at the start of every Notify and BatchNotify, outside mu.
+	onSend func()
 }
 
 func (f *fakeNotifyCli) Notify(_ context.Context, req *bindings.NotifyRequest, _ ...grpc.CallOption) (*bindings.NotifyResponse, error) {
+	if f.onSend != nil {
+		f.onSend()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.singles++
 	f.reqs = append(f.reqs, req)
 	return &bindings.NotifyResponse{}, nil
 }
 
 func (f *fakeNotifyCli) BatchNotify(_ context.Context, req *bindings.BatchNotifyRequest, _ ...grpc.CallOption) (*bindings.BatchNotifyResponse, error) {
+	if f.onSend != nil {
+		f.onSend()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.batches++
@@ -371,4 +381,19 @@ func TestWaitForPeerFingerprint_CancelledByDisconnect(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("wait did not return after CancelPendingConnect")
 	}
+}
+
+// A trash folder in the save dir and a download's bitmap sidecar are not files to share.
+func TestScanAndShareSaveDir_SkipsOSTrashAndSidecars(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".Trashes", "501", "gone.png"), []byte("trashed"))
+	writeFile(t, filepath.Join(dir, ".Trash-1000", "files", "gone2"), []byte("trashed"))
+	writeFile(t, filepath.Join(dir, "part.png.kdbitmap"), []byte{0xff})
+	writeFile(t, filepath.Join(dir, "ok.txt"), []byte("mine"))
+
+	kd, cli := newScanTestKD(t, dir)
+	n, err := kd.ScanAndShareSaveDir(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.Equal(t, []string{"ok.txt"}, cli.paths())
 }

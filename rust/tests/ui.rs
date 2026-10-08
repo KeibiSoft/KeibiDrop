@@ -10,7 +10,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 const WIN_W: u32 = 1144;
-const WIN_H: u32 = 760;
+const WIN_H: u32 = 729; // Figma frames are 1144x729
 
 fn app() -> MainWindow {
     i_slint_backend_testing::init_no_event_loop();
@@ -32,15 +32,6 @@ fn one(app: &MainWindow, label: &str) -> ElementHandle {
         label
     );
     first
-}
-
-// The last element with this label. The help panel is drawn after the screens,
-// so its button is the last match when a screen shows a twin (screen 0 has its
-// own "Feedback" button).
-fn last(app: &MainWindow, label: &str) -> ElementHandle {
-    ElementHandle::find_by_accessible_label(app, label)
-        .last()
-        .unwrap_or_else(|| panic!("no element labeled {:?}", label))
 }
 
 // The one checkbox with this label; skips the row's plain-text twin.
@@ -65,11 +56,13 @@ fn assert_on_screen(el: &ElementHandle, what: &str) {
 }
 
 #[test]
-fn gear_opens_settings() {
+fn menu_opens_settings() {
     let app = app();
     assert!(!app.get_settings_visible());
+    one(&app, "Menu").invoke_accessible_default_action();
     one(&app, "Open settings").invoke_accessible_default_action();
-    assert!(app.get_settings_visible(), "gear did not open settings");
+    assert!(app.get_settings_visible(), "menu did not open settings");
+    assert!(!app.get_menu_open(), "menu stayed open over settings");
 }
 
 #[test]
@@ -95,7 +88,7 @@ fn settings_toggles_fire_their_callbacks() {
     let f = fired.clone();
     app.on_mount_read_only_toggled(move |v| f.set(Some(v)));
     fired.set(None);
-    toggle(&app, "Virtual folder is read only").invoke_accessible_default_action();
+    toggle(&app, "Teleport Folder is read only").invoke_accessible_default_action();
     assert_eq!(fired.get(), Some(true), "mount toggle callback");
     assert!(app.get_cfg_mount_read_only(), "mount toggle state");
 
@@ -146,11 +139,78 @@ fn update_notice_only_when_a_version_is_set() {
     assert!(fired.get(), "notice click did not fire open_update_page");
 }
 
+// The update offer is a button on the version text's line, its left edge
+// under the logo's: the two ends of the box's bottom edge.
+#[test]
+fn update_notice_sits_on_the_version_line_under_the_logo() {
+    let app = app();
+    app.set_version_text("0.5.0 (test)".into());
+    app.set_update_available("9.9.9".into());
+    let (notice, version, logo) = (one(&app, "Update notice"), one(&app, "0.5.0 (test)"), one(&app, "KEIBIDROP"));
+    let mid = |e: &ElementHandle| e.absolute_position().y + e.size().height / 2.0;
+    assert!(
+        (mid(&notice) - mid(&version)).abs() < 0.01,
+        "the update offer's centre {} is off the version line {}",
+        mid(&notice),
+        mid(&version)
+    );
+    assert!(
+        (notice.absolute_position().x - logo.absolute_position().x).abs() < 0.01,
+        "the update offer starts at {}, the logo at {}",
+        notice.absolute_position().x,
+        logo.absolute_position().x
+    );
+}
+
+// Every help card says under its title what the screen is for: how to
+// connect, the files screen, Teleport.
+#[test]
+fn help_has_a_subtitle_on_every_screen() {
+    let app = app();
+    app.set_help_visible(true);
+    for (screen, line) in [
+        (0, "Exchange fingerprints to establish a secure connection"),
+        (1, "Send files to your friend and save the ones they send you"),
+        (2, "Open shared files instantly from one folder on both computers"),
+    ] {
+        app.set_current_screen(screen);
+        assert_on_screen(&one(&app, line), line);
+    }
+}
+
+// The contacts box fits one or two contacts, holds three, and scrolls past
+// three at the size of three.
+#[test]
+fn contacts_box_fits_up_to_three_rows() {
+    let app = app();
+    let contact = |i: usize| keibidrop_rust::ContactInfo {
+        name: format!("Friend {i}").into(),
+        fingerprint: "XXXX-XXXX-XXXX-XXXX".into(),
+        online: false,
+        auto_connect: false,
+    };
+    let mut heights = Vec::new();
+    for n in 1..=5 {
+        let list: Vec<_> = (0..n).map(contact).collect();
+        app.set_contacts(slint::ModelRc::new(slint::VecModel::from(list)));
+        heights.push(one(&app, "Contacts list").size().height);
+    }
+    let pitch = 34.15;
+    assert!((heights[2] - 111.0).abs() < 0.01, "three rows: {} (her box is 111)", heights[2]);
+    assert!((heights[2] - heights[1] - pitch).abs() < 0.01, "two rows: {}", heights[1]);
+    assert!((heights[1] - heights[0] - pitch).abs() < 0.01, "one row: {}", heights[0]);
+    assert!(
+        (heights[3] - heights[2]).abs() < 0.01 && (heights[4] - heights[2]).abs() < 0.01,
+        "past three the box keeps the size of three: {:?}",
+        heights
+    );
+}
+
 #[test]
 fn help_report_button_opens_feedback() {
     let app = app();
     app.set_help_visible(true);
-    last(&app, "Feedback").invoke_accessible_default_action();
+    one(&app, "Question?").invoke_accessible_default_action();
     assert!(app.get_feedback_visible(), "feedback overlay did not open");
     assert!(!app.get_help_visible(), "help panel stayed open");
 }
@@ -163,7 +223,7 @@ fn feedback_send_passes_message_and_contact() {
     app.set_feedback_contact("a@b.co".into());
     let got = Rc::new(RefCell::new(None::<(String, String)>));
     let g = got.clone();
-    app.on_send_feedback(move |m, c, _rating| {
+    app.on_send_feedback(move |m, c, _rating, _logs| {
         *g.borrow_mut() = Some((m.to_string(), c.to_string()));
     });
     one(&app, "Send").invoke_accessible_default_action();
@@ -180,9 +240,35 @@ fn feedback_send_disabled_on_empty_message() {
     app.set_feedback_visible(true);
     let fired = Rc::new(Cell::new(false));
     let f = fired.clone();
-    app.on_send_feedback(move |_, _, _| f.set(true));
+    app.on_send_feedback(move |_, _, _, _| f.set(true));
     one(&app, "Send").invoke_accessible_default_action();
     assert!(!fired.get(), "send fired with an empty message");
+}
+
+// Logs go with a report only when the person switches them on.
+#[test]
+fn include_logs_goes_only_when_switched_on() {
+    let app = app();
+    app.set_feedback_visible(true);
+    app.set_feedback_message("it hangs".into());
+    let got = Rc::new(RefCell::new(Vec::<bool>::new()));
+    let g = got.clone();
+    app.on_send_feedback(move |_, _, _, logs| g.borrow_mut().push(logs));
+    one(&app, "Send").invoke_accessible_default_action();
+    toggle(&app, "Include logs").invoke_accessible_default_action();
+    one(&app, "Send").invoke_accessible_default_action();
+    assert_eq!(got.borrow().as_slice(), [false, true]);
+}
+
+// Save log is gone from the menus: logs ride with Report problem instead.
+#[test]
+fn no_menu_offers_save_log() {
+    let app = app();
+    for screen in 0..4 {
+        app.set_current_screen(screen);
+        app.set_menu_open(true);
+        assert_eq!(ElementHandle::find_by_accessible_label(&app, "Save log").count(), 0, "screen {}", screen);
+    }
 }
 
 #[test]
@@ -226,10 +312,10 @@ fn invite_link_button_fires_and_fits_the_window() {
 
 // The connect screen is absolutely positioned, so a new element can land on
 // top of an existing one and no test would notice. The first placement of this
-// button sat at y=645 and covered the contacts panel, which starts at y=656.
+// button covered the contacts panel, which starts at y=546 (Figma NEW 2.0).
 #[test]
 fn invite_link_button_clears_the_contacts_panel() {
-    const CONTACTS_TOP: f32 = 656.0;
+    const CONTACTS_TOP: f32 = 546.0;
     let app = app();
     let btn = one(&app, "Copy invite link");
     let bottom = btn.absolute_position().y + btn.size().height;
@@ -252,10 +338,10 @@ fn invite_link_button_clears_the_contacts_panel() {
 
 // Caught in the cold install test of 2026-09-15: the button stopped short of
 // the input above it, which reads as a misaligned control. Card 2's content
-// column runs to x=795, the right edge of the input and of the Add/Copy button.
+// row runs to x=744.35 in Figma NEW 2.0, the right edge of her field.
 #[test]
 fn invite_button_ends_at_the_card_content_edge() {
-    const CONTENT_RIGHT: f32 = 795.0;
+    const CONTENT_RIGHT: f32 = 744.35;
     let app = app();
     let btn = one(&app, "Copy invite link");
     let right = btn.absolute_position().x + btn.size().width;
@@ -276,6 +362,27 @@ fn invite_link_button_hidden_in_local_mode() {
         0,
         "invite link offered on the LAN path, where no code is needed"
     );
+}
+
+// Local mode (Figma 273:1324): every nearby device is a row that connects to
+// that device and no other.
+#[test]
+fn a_nearby_device_row_connects_to_that_device() {
+    let app = app();
+    let picked = Rc::new(Cell::new(-1));
+    let p = picked.clone();
+    app.on_discovery_peer_selected(move |i| p.set(i));
+    app.set_local_mode(true);
+    app.set_discovery_name("Sneaky Robin".into());
+    let peer = |name: &str| keibidrop_rust::DiscoveredPeer { name: name.into(), addr: "fe80::1".into() };
+    app.set_discovered_peers(slint::ModelRc::new(slint::VecModel::from(vec![
+        peer("Gibbi Radish"),
+        peer("Pale Heron"),
+    ])));
+    let row = one(&app, "Connect to Pale Heron");
+    assert_on_screen(&row, "the second nearby device");
+    row.invoke_accessible_default_action();
+    assert_eq!(picked.get(), 1, "the row connected to another device");
 }
 
 #[test]
@@ -310,4 +417,345 @@ fn waiting_line_names_what_is_missing() {
         1,
         "no waiting line while connecting"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Direct transfer (no FUSE): two peers connect for the first time, one file
+// from the peer is on the card, the person clicks Save. The card's button has
+// no accessible label, so it is driven the way a mouse drives it: pointer
+// press and release at its centre. save_file is the boundary the Rust side
+// owns (main.rs on_save_file marks the download and calls the engine in a
+// thread). The card itself changes only when the file watcher thread rebuilds
+// the list model, which it does every 500 ms (main.rs start_file_watcher).
+
+use slint::platform::{PointerEventButton, WindowEvent};
+
+fn remote_file(name: &str) -> keibidrop_rust::FileInfo {
+    keibidrop_rust::FileInfo {
+        name: name.into(),
+        label: name.rsplit('/').next().unwrap_or(name).into(),
+        size_bytes: 160_423,
+        downloading: false,
+        uploading: false,
+        progress: 0.0,
+        saved: false,
+        paused: false,
+        file_type: "image".into(),
+        is_local: false,
+        viewable: false,
+    }
+}
+
+// What the watcher thread does on every tick (main.rs start_file_watcher).
+fn set_files(app: &MainWindow, names: &[&str]) {
+    let rows: Vec<keibidrop_rust::FileInfo> = names.iter().map(|n| remote_file(n)).collect();
+    keibidrop_rust::sync_file_list(app, rows);
+}
+
+fn connected_no_fuse(app: &MainWindow) {
+    app.set_fuse_mode(false);
+    app.set_current_screen(1);
+    set_files(app, &["signal.jpeg"]);
+}
+
+// The card's action button (Save, Open, the percent while it downloads): 110px,
+// or 80px beside X. X is a SmallOutlineButton.
+fn save_button(app: &MainWindow) -> ElementHandle {
+    let card = ElementHandle::find_by_element_type_name(app, "FileCard")
+        .next()
+        .expect("no FileCard on the connected screen");
+    card.query_descendants()
+        .match_type_name("OutlineButton")
+        .find_all()
+        .into_iter()
+        .find(|b| b.size().width > 70.0)
+        .expect("no Save button in the card")
+}
+
+fn button_text(el: &ElementHandle) -> String {
+    el.query_descendants()
+        .match_inherits("Text")
+        .find_first()
+        .and_then(|t| t.accessible_label())
+        .map(|s| s.to_string())
+        .unwrap_or_default()
+}
+
+fn centre(el: &ElementHandle) -> slint::LogicalPosition {
+    let p = el.absolute_position();
+    let s = el.size();
+    slint::LogicalPosition::new(p.x + s.width / 2.0, p.y + s.height / 2.0)
+}
+
+fn press(app: &MainWindow, at: slint::LogicalPosition) {
+    app.window().dispatch_event(WindowEvent::PointerMoved { position: at });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at,
+        button: PointerEventButton::Left,
+    });
+}
+
+fn release(app: &MainWindow, at: slint::LogicalPosition) {
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at,
+        button: PointerEventButton::Left,
+    });
+}
+
+fn record_saves(app: &MainWindow) -> Rc<RefCell<Vec<String>>> {
+    let saves = Rc::new(RefCell::new(Vec::<String>::new()));
+    let seen = saves.clone();
+    app.on_save_file(move |name| seen.borrow_mut().push(name.to_string()));
+    saves
+}
+
+#[test]
+fn first_save_click_fires_once_and_leaves_the_card_to_the_handler() {
+    let app = app();
+    connected_no_fuse(&app);
+    let saves = record_saves(&app);
+
+    let btn = save_button(&app);
+    assert_eq!(button_text(&btn), "Save");
+    let at = centre(&btn);
+    press(&app, at);
+    release(&app, at);
+
+    assert_eq!(saves.borrow().as_slice(), ["signal.jpeg"], "one click, one save");
+    // The .slint layer changes nothing by itself; the cue is the handler's job
+    // (main.rs on_save_file calls mark_row_downloading), pinned below.
+    assert_eq!(button_text(&save_button(&app)), "Save", "the card waits for the handler");
+}
+
+#[test]
+fn marking_a_row_downloading_shows_the_cue_at_once() {
+    let app = app();
+    connected_no_fuse(&app);
+    assert_eq!(button_text(&save_button(&app)), "Save");
+
+    assert!(keibidrop_rust::mark_row_downloading(&app.get_file_list(), "signal.jpeg"));
+    assert_eq!(button_text(&save_button(&app)), "0%", "progress shows on the click itself");
+    let card = ElementHandle::find_by_element_type_name(&app, "FileCard").next().unwrap();
+    assert!(card.query_descendants().match_type_name("ProgressRing").find_first().is_some(), "progress ring on the card");
+
+    assert!(!keibidrop_rust::mark_row_downloading(&app.get_file_list(), "missing.bin"), "unknown name touches nothing");
+}
+
+#[test]
+fn save_click_across_a_list_rebuild() {
+    let app = app();
+    connected_no_fuse(&app);
+    let saves = record_saves(&app);
+
+    let at = centre(&save_button(&app));
+    press(&app, at);
+    // The watcher tick lands between press and release.
+    set_files(&app, &["signal.jpeg"]);
+    release(&app, at);
+
+    eprintln!("RECORD save_file calls with a rebuild mid-click: {:?}", saves.borrow());
+    assert_eq!(saves.borrow().as_slice(), ["signal.jpeg"], "a click that spans a list rebuild");
+}
+
+#[test]
+fn save_click_after_a_list_rebuild() {
+    let app = app();
+    connected_no_fuse(&app);
+    let saves = record_saves(&app);
+
+    // A tick before the click: the card is a new instance, the click is whole.
+    set_files(&app, &["signal.jpeg"]);
+    let at = centre(&save_button(&app));
+    press(&app, at);
+    release(&app, at);
+    assert_eq!(saves.borrow().as_slice(), ["signal.jpeg"]);
+}
+
+// The logo and the "..." pill sit at one place and size on every screen, and
+// a wider window centres the Figma column around them rather than leaving
+// them at the left.
+#[test]
+fn logo_and_menu_pill_keep_their_place_on_every_screen_and_size() {
+    let app = app();
+    let header = |app: &MainWindow| {
+        let (menu, logo) = (one(app, "Menu"), one(app, "KEIBIDROP"));
+        (menu.absolute_position(), menu.size(), logo.absolute_position(), logo.size())
+    };
+    for (w, h) in [(WIN_W, WIN_H), (1600, 1000)] {
+        app.window().set_size(slint::PhysicalSize::new(w, h));
+        let at: Vec<_> = (0..4)
+            .map(|screen| {
+                app.set_current_screen(screen);
+                header(&app)
+            })
+            .collect();
+        assert!(at.iter().all(|p| *p == at[0]), "{}x{}: the header moves between screens: {:?}", w, h, at);
+        if w != WIN_W {
+            app.window().set_size(slint::PhysicalSize::new(WIN_W, WIN_H));
+            app.set_current_screen(0);
+            let base = header(&app);
+            let shift = (w - WIN_W) as f32 / 2.0;
+            // Her pill is 201.04px wide, which f32 does not hold exactly.
+            let centred = |moved: f32| (moved - shift).abs() < 0.01;
+            assert!(centred(at[0].0.x - base.0.x), "the pill's column is not centred: {} for {}", at[0].0.x - base.0.x, shift);
+            assert!(centred(at[0].2.x - base.2.x), "the logo's column is not centred: {} for {}", at[0].2.x - base.2.x, shift);
+            assert_eq!((at[0].0.y, at[0].2.y), (base.0.y, base.2.y), "the header moved down");
+        }
+    }
+}
+
+// Her Teleport card (Figma Screen 14): its X ends the session.
+#[test]
+fn the_teleport_card_x_disconnects() {
+    let app = app();
+    app.set_current_screen(2);
+    let fired = Rc::new(Cell::new(false));
+    let f = fired.clone();
+    app.on_disconnect_pressed(move || f.set(true));
+    one(&app, "Disconnect").invoke_accessible_default_action();
+    assert!(fired.get(), "the card's X did not disconnect");
+}
+
+#[test]
+fn how_it_works_opens_help_on_the_teleport_screen() {
+    let app = app();
+    app.set_current_screen(2);
+    one(&app, "How it works?").invoke_accessible_default_action();
+    assert!(app.get_help_visible(), "help did not open");
+}
+
+// The Teleport switch keeps its job; while it is off it names her mode.
+#[test]
+fn the_teleport_switch_says_direct_transfer_while_off() {
+    let app = app();
+    app.set_fuse_available(true);
+    app.set_fuse_mode(false);
+    let count = |label: &str| ElementHandle::find_by_accessible_label(&app, label).count();
+    assert_eq!((count("Direct transfer"), count("Select files to send")), (1, 1));
+    toggle(&app, "Teleport").invoke_accessible_default_action();
+    assert!(app.get_fuse_mode(), "the switch did not turn Teleport on");
+    assert_eq!(count("Direct transfer"), 0, "Direct transfer still shown with Teleport on");
+    assert_eq!(count("Instantly open shared files"), 1);
+}
+
+#[test]
+fn add_ring_opens_the_picker() {
+    let app = app();
+    connected_no_fuse(&app);
+    let picked = Rc::new(Cell::new(0));
+    let p = picked.clone();
+    app.on_add_file_pressed(move || p.set(p.get() + 1));
+    one(&app, "Add files").invoke_accessible_default_action();
+    assert_eq!(picked.get(), 1);
+}
+
+// While a file downloads its action shows the percent; a click pauses it.
+#[test]
+fn a_download_pauses_from_its_card() {
+    let app = app();
+    connected_no_fuse(&app);
+    let paused = Rc::new(RefCell::new(Vec::<String>::new()));
+    let seen = paused.clone();
+    app.on_pause_file(move |name| seen.borrow_mut().push(name.to_string()));
+    assert!(keibidrop_rust::mark_row_downloading(&app.get_file_list(), "signal.jpeg"));
+
+    let at = centre(&save_button(&app));
+    press(&app, at);
+    release(&app, at);
+    assert_eq!(paused.borrow().as_slice(), ["signal.jpeg"]);
+}
+
+// The grid makes cards for the rows in view only (a folder of 12,789 files
+// froze it) and hands them to other files as it scrolls: each file must still
+// land in its own row and column.
+#[test]
+fn a_scrolled_grid_shows_each_file_in_its_place() {
+    let app = app();
+    connected_no_fuse(&app);
+    let names: Vec<String> = (0..1000).map(|i| format!("f{i:04}.txt")).collect();
+    set_files(&app, &names.iter().map(String::as_str).collect::<Vec<_>>());
+    let at = |name: &str| ElementHandle::find_by_accessible_label(&app, name).next().map(|e| e.absolute_position());
+
+    let (top_left, top_fifth) = (at("f0000.txt").expect("first file"), at("f0004.txt").expect("fifth file"));
+    assert!(at("f0040.txt").is_none(), "row 10 is out of view");
+
+    // Ten rows down: the 41st file takes the first file's place.
+    app.window().dispatch_event(WindowEvent::PointerScrolled {
+        position: slint::LogicalPosition::new(500.0, 500.0),
+        delta_x: 0.0,
+        delta_y: -1830.0,
+    });
+    assert!(at("f0000.txt").is_none(), "row 0 still in view");
+    assert_eq!(at("f0040.txt"), Some(top_left), "41st file not at the top left");
+    assert_eq!(at("f0044.txt"), Some(top_fifth), "45th file not under it");
+}
+
+#[test]
+fn save_all_is_in_the_menu_on_the_no_fuse_screen() {
+    let app = app();
+    connected_no_fuse(&app);
+    let fired = Rc::new(Cell::new(false));
+    let f = fired.clone();
+    app.on_save_all_pressed(move || f.set(true));
+    one(&app, "Menu").invoke_accessible_default_action();
+    // Her order: Disconnect first.
+    let row = |label: &str| one(&app, label).absolute_position().y;
+    assert!(row("Disconnect") < row("Save all"), "Disconnect is not the first row");
+    one(&app, "Save all").invoke_accessible_default_action();
+    assert!(fired.get(), "Save all did not fire save_all_pressed");
+    assert!(!app.get_menu_open(), "the menu stayed open");
+}
+
+// A connected screen's help has no line about fingerprints, and its card
+// closes up under the steps: no gap where the connect screen explains contacts.
+#[test]
+fn connected_help_drops_the_fingerprint_line_and_the_gap() {
+    let app = app();
+    app.set_help_visible(true);
+    let line = "Exchange fingerprints to establish a secure connection";
+    let count = |app: &MainWindow| ElementHandle::find_by_accessible_label(app, line).count();
+    assert_eq!(count(&app), 1, "the connect screen's help lost its line");
+    let on_connect = one(&app, "Question?").absolute_position().y;
+    app.set_current_screen(2);
+    assert_eq!(count(&app), 0, "a connected screen's help still talks about fingerprints");
+    let on_teleport = one(&app, "Question?").absolute_position().y;
+    assert_eq!(on_connect - on_teleport, 74.0, "the card did not close up");
+}
+
+// The first-connect offer: Save keeps the friend, No thanks tells
+// Rust not to offer them again; both close it.
+#[test]
+fn save_contact_offer_saves_or_declines() {
+    let app = app();
+    app.set_current_screen(2);
+    let declined = Rc::new(Cell::new(0));
+    let d = declined.clone();
+    app.on_save_contact_declined(move || d.set(d.get() + 1));
+    app.set_save_contact_visible(true);
+    one(&app, "No thanks").invoke_accessible_default_action();
+    assert_eq!(declined.get(), 1, "No thanks did not reach Rust");
+    assert!(!app.get_save_contact_visible(), "No thanks left the offer open");
+
+    let saved = Rc::new(RefCell::new(Vec::<String>::new()));
+    let s = saved.clone();
+    app.on_save_peer_as_contact(move |n| s.borrow_mut().push(n.to_string()));
+    app.set_save_contact_visible(true);
+    app.set_save_contact_name("Ana".into());
+    one(&app, "Save").invoke_accessible_default_action();
+    assert_eq!(saved.borrow().as_slice(), ["Ana"]);
+    assert!(!app.get_save_contact_visible(), "Save left the offer open");
+    assert_eq!(declined.get(), 1, "Save counted as a decline");
+}
+
+// Her folder and its title open the Teleport Folder, as Open Folder does.
+#[test]
+fn the_teleport_folder_and_title_open_the_folder() {
+    let app = app();
+    app.set_current_screen(2);
+    let opened = Rc::new(Cell::new(0));
+    let o = opened.clone();
+    app.on_open_folder_pressed(move || o.set(o.get() + 1));
+    one(&app, "Open Teleport Folder").invoke_accessible_default_action();
+    one(&app, "Open Folder").invoke_accessible_default_action();
+    assert_eq!(opened.get(), 2);
 }

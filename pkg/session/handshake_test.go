@@ -1,7 +1,7 @@
 // ABOUTME: Tests for the inbound handshake flow, covering TOFU acceptance
 // ABOUTME: and relay-mode fingerprint rejection.
 
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 
 package session

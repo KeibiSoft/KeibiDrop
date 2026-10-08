@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // This file drives the creator's real rendezvous round and the real local-mode key
 // exchange the way two peers on one LAN run them, and pins what broke on
@@ -344,4 +344,89 @@ func TestAcceptLocalKeyExchange_ClosedOrNilListenerReturns(t *testing.T) {
 
 	kd.listener = nil
 	require.ErrorIs(t, kd.acceptLocalKeyExchange(kd.logger), ErrListenerNotOpen)
+}
+
+// A cancel ends the creator's wait for its joiner at once, and the listener
+// takes the next connection afterwards. Before, the wait stayed in Accept after
+// the cancel, kept the connect slot and took the next create's joiner
+// (2026-10-08, local mode).
+func TestAcceptLocalKeyExchange_EndsWhenTheConnectIsCancelled(t *testing.T) {
+	creator := newLocalModePeer(t)
+	kd := newBareKD()
+	kd.logger = roundTestLogger()
+	kd.session = creator.s
+	kd.listener = creator.ln
+	kd.IsLocalMode = true
+
+	p, joined, err := kd.beginConnect(originUser)
+	require.NoError(t, err)
+	require.False(t, joined)
+
+	done := make(chan error, 1)
+	go func() { done <- kd.acceptLocalKeyExchange(kd.logger) }()
+	time.Sleep(100 * time.Millisecond) // parked in Accept
+	kd.CancelPendingConnect()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, ErrConnectCancelled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the wait in Accept outlived the cancel")
+	}
+	kd.endConnect(p, ErrConnectCancelled)
+
+	accepted := make(chan error, 1)
+	go func() {
+		c, err := creator.ln.Accept()
+		if err == nil {
+			_ = c.Close()
+		}
+		accepted <- err
+	}()
+	c, err := net.Dial("tcp", creator.addr())
+	require.NoError(t, err)
+	defer c.Close()
+	select {
+	case err := <-accepted:
+		require.NoError(t, err, "the listener kept the deadline the cancel set")
+	case <-time.After(2 * time.Second):
+		t.Fatal("the listener took nothing after the cancel")
+	}
+}
+
+// The teardown ends a connect parked on the listener before it nils the
+// session: a join woken by the closing listener used the nil session and
+// crashed the app on quit (2026-10-08). endConnectInFlight returns once the
+// connect did, well before connectTeardownWait.
+func TestEndConnectInFlight_EndsAWaitParkedOnTheListener(t *testing.T) {
+	creator := newLocalModePeer(t)
+	kd := newBareKD()
+	kd.logger = roundTestLogger()
+	kd.session = creator.s
+	kd.listener = creator.ln
+
+	returned := make(chan error, 1)
+	go func() {
+		returned <- kd.runConnect(originUser, func() error {
+			// A wait that does not watch the connect, as the join's LAN
+			// inbound accept does.
+			_, err := creator.ln.Accept()
+			return err
+		})
+	}()
+	require.Eventually(t, func() bool {
+		kd.mu.Lock()
+		defer kd.mu.Unlock()
+		return kd.inflight != nil
+	}, time.Second, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // parked in Accept
+
+	began := time.Now()
+	kd.endConnectInFlight()
+	require.Less(t, time.Since(began), time.Second, "the teardown waited the connect out instead of ending it")
+	select {
+	case err := <-returned:
+		require.Error(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("endConnectInFlight returned while the connect still ran")
+	}
 }

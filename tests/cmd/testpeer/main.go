@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // testpeer is a scriptable KeibiDrop peer for multi-process integration tests.
 // It reads line-based commands from stdin and writes responses to stdout.
@@ -321,6 +318,24 @@ func main() {
 			}
 			fmt.Printf("DLBYTES:%d\n", n)
 
+		case "wirebytes":
+			// wirebytes <rel> — bytes received from the peer for a tracked file on
+			// every lane (demand, read-ahead, prefetch, warm). 0 when untracked.
+			if len(args) < 2 {
+				fmt.Println("ERR:usage: wirebytes <rel>")
+				continue
+			}
+			rel := "/" + strings.TrimPrefix(args[1], "/")
+			var n uint64
+			if kd.FS != nil && kd.FS.Root() != nil {
+				kd.FS.Root().RemoteFilesLock.RLock()
+				if f, ok := kd.FS.Root().RemoteFiles[rel]; ok {
+					n = f.WireBytes.Load()
+				}
+				kd.FS.Root().RemoteFilesLock.RUnlock()
+			}
+			fmt.Printf("WIREBYTES:%d\n", n)
+
 		case "md5":
 			// md5 <rel> — hash the file through our own mount (Windows has
 			// no md5sum; verbs drive the same FUSE surface as the shell).
@@ -456,7 +471,15 @@ func main() {
 
 		case "quit":
 			_ = kd.UnmountFilesystem()
+			// Stop the mount watcher, then take the mount down: a process that
+			// exits with its own mount up can leave the watcher's stat of it
+			// waiting on itself forever. The peer then never dies, not even on
+			// SIGKILL, and the harness waits out the test timeout (60 min on
+			// Linux, 4 Oct).
 			cancel()
+			if kd.FS != nil {
+				kd.FS.Unmount()
+			}
 			fmt.Println("BYE")
 			return
 

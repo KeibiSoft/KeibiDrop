@@ -8222,6 +8222,15 @@ fn bindgen_test_layout_GoSlice() {
     );
 }
 extern "C" {
+    pub fn KD_FileListStamp() -> ::std::os::raw::c_ulonglong;
+}
+extern "C" {
+    pub fn KD_ListAllFiles() -> *mut ::std::os::raw::c_char;
+}
+extern "C" {
+    pub fn KD_AddFilesAs(list: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn KD_Initialize(
         relayURL: *mut ::std::os::raw::c_char,
         inbound: ::std::os::raw::c_int,
@@ -8413,6 +8422,7 @@ extern "C" {
         message: *mut ::std::os::raw::c_char,
         contact: *mut ::std::os::raw::c_char,
         rating: ::std::os::raw::c_int,
+        includeLogs: ::std::os::raw::c_int,
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
@@ -8442,6 +8452,9 @@ extern "C" {
 }
 extern "C" {
     pub fn KD_SetAutoConnectPeer(peer: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_PauseAutoConnect();
 }
 extern "C" {
     pub fn KD_SetNoFUSE(v: ::std::os::raw::c_int) -> ::std::os::raw::c_int;

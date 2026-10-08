@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // ABOUTME: OpenLogFile is the one way a binary opens its log: append mode,
 // ABOUTME: rotated in place past a size cap so a long-running install stays bounded.
@@ -37,6 +34,11 @@ type rotatingLog struct {
 }
 
 func openRotatingLog(path string, max int64) (*rotatingLog, error) {
+	// A fresh install has no log directory yet. Without this the first run
+	// logged to stdout at debug level and "Export logs" found no file.
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil { // #nosec G301
+		return nil, err
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err

@@ -7,7 +7,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/KeibiSoft/KeibiDrop/issues</Support>
   <Project>https://keibidrop.com</Project>
-  <Overview>Your Unraid box becomes the always-on peer of an encrypted peer-to-peer folder mount. Your computer mounts the shared folder with the KeibiDrop app and reads it on demand: only the bytes you touch move, end to end encrypted (hybrid post-quantum key exchange). No account, no cloud. The serving side needs no FUSE. MPL-2.0.&#xD;
+  <Overview>Your Unraid box becomes the always-on peer of an encrypted peer-to-peer folder mount. Your computer mounts the shared folder with the KeibiDrop app and reads it on demand: only the bytes you touch move, end to end encrypted (hybrid post-quantum key exchange). No account, no cloud. The serving side needs no FUSE. AGPL-3.0.&#xD;
 &#xD;
 After the first start, open the container log: it prints this box's code and the three pairing steps.</Overview>
   <Category>Network:FileSharing Tools:Utilities</Category>

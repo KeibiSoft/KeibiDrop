@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // Tests for predictive sequential read-ahead (fetch the next block(s) before the
 // read head arrives, self-tuning by hit/miss feedback, reset on seek) and for the

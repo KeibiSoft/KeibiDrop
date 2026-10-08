@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // ABOUTME: Tests share_read_only origin enforcement: every peer mutation is
 // ABOUTME: refused before disk, bytes and mtime stay intact, DISCONNECT passes.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // This file drives the creator's real rendezvous round through a bridge that
 // pairs legs by room token, with the joiner handshaking on the far end, and

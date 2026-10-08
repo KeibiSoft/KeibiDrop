@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package main
 
@@ -23,6 +20,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -71,9 +69,17 @@ func sortedLocalKeys() []string {
 
 var kd *common.KeibiDrop
 
-// kdCtx is the engine's root context, kept so a later call can arm the
-// auto-connect watchdog for the rest of the process.
-var kdCtx context.Context
+// kdCtx is the process context: the presence heartbeat, the auto-connect
+// watchdog, the throughput sampler and the reachability probe run on it, and
+// a later call can arm the watchdog on it. Only KD_Stop ends it, through
+// kdCancel. It must never be the engine's session cancel: kd.Cancel is what
+// Stop() calls on every disconnect, and while it was this cancel the first
+// disconnect of a run ended all four loops (0.4.8, 2026-09-16: no heartbeat
+// and no redial for the rest of the process).
+var (
+	kdCtx    context.Context
+	kdCancel context.CancelFunc
+)
 
 // Last error string. The mutex makes access thread-safe.
 var (
@@ -157,9 +163,10 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 		return -2
 	}
 	kd = instance
-	kd.Cancel = c
+	kd.Surface = "desktop" // names the desktop app's purchases
 	kd.OnEvent = pushEvent
 	kdCtx = ctx
+	kdCancel = c
 	kd.StartThroughputSampler(ctx)
 
 	if !cfg.Incognito {
@@ -395,6 +402,9 @@ func KD_Stop() {
 	if kd != nil {
 		kd.Shutdown()
 	}
+	if kdCancel != nil {
+		kdCancel()
+	}
 }
 
 //export KD_CancelDownload
@@ -458,7 +468,7 @@ func KD_GetLocalFileCount() C.int {
 	if kd == nil {
 		return 0
 	}
-	kd.SyncTracker.PruneStaleLocalFiles()
+	pruneLocalFilesThrottled(kd.SyncTracker)
 	kd.SyncTracker.LocalFilesMu.RLock()
 	defer kd.SyncTracker.LocalFilesMu.RUnlock()
 	return C.int(len(kd.SyncTracker.LocalFiles))
@@ -860,18 +870,33 @@ func KD_CheckUpdate() *C.char {
 
 // KD_SendFeedback posts a user-written report with an optional reply
 // contact and a 1 to 5 star rating (0 = none). Sent: message, contact,
-// rating, version, platform, surface. Blocks up to 10s: call off the UI
-// thread.
+// rating, version, platform, surface, and with includeLogs set the newest
+// 4 MiB of the app's log, sanitized. Returns 0 when sent, 1 when the
+// endpoint took it without the log, -1 on failure. Blocks up to 10s, 60s
+// with the log: call off the UI thread.
 //
 //export KD_SendFeedback
-func KD_SendFeedback(message, contact *C.char, rating C.int) C.int {
-	err := feedback.Send(feedback.Report{
+func KD_SendFeedback(message, contact *C.char, rating C.int, includeLogs C.int) C.int {
+	r := feedback.Report{
 		Message: C.GoString(message),
 		Contact: C.GoString(contact),
 		Rating:  int(rating),
 		Version: common.Version,
 		Surface: "desktop",
-	})
+	}
+	if includeLogs != 0 {
+		cfg, _ := config.Load()
+		logs, err := common.SanitizedLogTail(cfg.LogFile, feedback.MaxLogs)
+		if err != nil {
+			// The report still goes; the note says why it has no log.
+			logs = common.SanitizeLogContent("log unavailable: " + err.Error())
+		}
+		r.Logs = logs
+	}
+	err := feedback.Send(r)
+	if errors.Is(err, feedback.ErrSentWithoutLogs) {
+		return 1
+	}
 	if err != nil {
 		setLastError(err)
 		return -1
@@ -1019,6 +1044,17 @@ func KD_SetAutoConnectPeer(peer *C.char) C.int {
 		kd.AutoConnectPeer = cfg.AutoConnectPeer
 	}
 	return 0
+}
+
+// KD_PauseAutoConnect parks the auto-connect watchdog after the person
+// cancelled its dial from the connect screen. It resumes once a session
+// exists again.
+//
+//export KD_PauseAutoConnect
+func KD_PauseAutoConnect() {
+	if kd != nil {
+		kd.PauseAutoConnect()
+	}
 }
 
 // KD_SetNoFUSE persists the FUSE-off preference. No live mirror:
@@ -1226,6 +1262,7 @@ func KD_AddContact(name, fingerprint *C.char) C.int {
 		setLastError(err)
 		return -1
 	}
+	kd.ContactAdded()
 	return 0
 }
 
@@ -1286,34 +1323,26 @@ func KD_SaveCurrentPeerAsContact(name *C.char) C.int {
 		setLastError(err)
 		return -1
 	}
-	// The first saved contact becomes the connect-on-start peer (BUGS 10): a
-	// laptop that paired with an always-on box comes back on its own after the
-	// box restarts. An existing choice is kept; the contacts panel changes it.
-	if cfg, err := config.Load(); err == nil && cfg.AutoConnectPeer == "" {
-		cfg.AutoConnectPeer = n
-		if err := config.Save(cfg); err == nil {
-			kd.AutoConnectPeer = n
-			if kdCtx != nil && !kd.AutoConnectArmed() {
-				_ = kd.StartAutoConnect(kdCtx)
-			}
-		}
-	}
+	// Auto-connect stays off until the person switches it on in the contacts
+	// panel: arming it on the first save left the app redialling a friend who
+	// had disconnected on purpose. The kd CLI keeps arming it for a headless box.
 	return 0
 }
 
 // KD_SessionStateJSON returns the engine's SessionState as JSON: the one line
 // of truth the status line shows, shared with kd status and kdmcp.
 //
-// KD_SessionStateLine returns state, text, mount_ready, recv_bps and sent_bps
-// separated by tabs, for a caller without a JSON parser (the desktop app).
+// KD_SessionStateLine returns state, text, mount_ready, recv_bps, sent_bps and
+// throttled separated by tabs, for a caller without a JSON parser (the desktop
+// app). throttled is last, so a reader of the first five is unaffected.
 //
 //export KD_SessionStateLine
 func KD_SessionStateLine() *C.char {
 	if kd == nil {
-		return C.CString("idle\tNot started\tfalse\t0\t0")
+		return C.CString("idle\tNot started\tfalse\t0\t0\tfalse")
 	}
 	st := kd.SessionState()
-	return C.CString(fmt.Sprintf("%s\t%s\t%t\t%d\t%d", st.State, st.Text, st.MountReady, st.RecvBps, st.SentBps))
+	return C.CString(fmt.Sprintf("%s\t%s\t%t\t%d\t%d\t%t", st.State, st.Text, st.MountReady, st.RecvBps, st.SentBps, st.Throttled))
 }
 
 //export KD_SessionStateJSON

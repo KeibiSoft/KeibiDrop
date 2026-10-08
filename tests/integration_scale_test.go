@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // Characterizes EAGER metadata at scale: KeibiDrop announces every file up front (ADD_FILE
 // per file), so this test measures propagation time + receiver heap and reports it. Opt-in

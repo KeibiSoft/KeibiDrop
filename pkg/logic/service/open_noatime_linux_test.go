@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // ABOUTME: Proves a no-atime serve read leaves the file's access time alone.
 // ABOUTME: atime is set 30h back so relatime would bump it on a plain read.

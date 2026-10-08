@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 
 package tests
@@ -6,6 +6,7 @@ package tests
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -163,7 +164,7 @@ func TestFUSEtoFUSE_GitClone(t *testing.T) {
 
 	// Alice checks HEAD content via exec (not read_file, to avoid scanner issues).
 	t.Run("AliceHEADIntegrity", func(t *testing.T) {
-		resp := alice.send(t, "exec go-fp cat .git/HEAD", 10*time.Second)
+		resp := alice.send(t, execCat("go-fp", ".git/HEAD"), 10*time.Second)
 		require.True(strings.HasPrefix(resp, "EXEC:0:"), "cat HEAD failed: %s", resp)
 		head := strings.TrimPrefix(resp, "EXEC:0:")
 		require.Equal("ref: refs/heads/main", head, "Alice HEAD has wrong content")
@@ -204,7 +205,7 @@ func TestFUSEtoFUSE_GitClone(t *testing.T) {
 		require.True(strings.HasPrefix(resp, "EXEC:0:"), "checkout main failed: %s", resp)
 
 		// cross_peer.txt should NOT exist on main
-		resp = alice.send(t, "exec go-fp ls cross_peer.txt", 10*time.Second)
+		resp = alice.send(t, execLs("go-fp", "cross_peer.txt"), 10*time.Second)
 		t.Logf("Alice ls cross_peer.txt on main: %s", resp)
 		require.True(strings.HasPrefix(resp, "EXEC:"), "ls failed: %s", resp)
 		// exit code should be non-zero (file not found on main)
@@ -226,7 +227,7 @@ func TestFUSEtoFUSE_GitClone(t *testing.T) {
 		t.Logf("Bob git status: %s", resp)
 		require.True(strings.HasPrefix(resp, "EXEC:0:"), "Bob git status failed: %s", resp)
 
-		resp = bob.send(t, "exec go-fp ls cross_peer.txt", 10*time.Second)
+		resp = bob.send(t, execLs("go-fp", "cross_peer.txt"), 10*time.Second)
 		require.True(strings.HasPrefix(resp, "EXEC:"), "ls failed: %s", resp)
 		require.False(strings.HasPrefix(resp, "EXEC:0:"), "cross_peer.txt should NOT exist on Bob's main")
 		t.Log("Bob: cross_peer.txt correctly absent on main")
@@ -238,7 +239,7 @@ func TestFUSEtoFUSE_GitClone(t *testing.T) {
 		t.Logf("Bob checkout test_cross_peer: %s", resp)
 		require.True(strings.HasPrefix(resp, "EXEC:0:"), "Bob checkout failed: %s", resp)
 
-		resp = bob.send(t, "exec go-fp cat cross_peer.txt", 10*time.Second)
+		resp = bob.send(t, execCat("go-fp", "cross_peer.txt"), 10*time.Second)
 		t.Logf("Bob cat cross_peer.txt: %s", resp)
 		require.True(strings.HasPrefix(resp, "EXEC:0:"), "cross_peer.txt not found: %s", resp)
 		content := strings.TrimPrefix(resp, "EXEC:0:")
@@ -255,4 +256,21 @@ func TestFUSEtoFUSE_GitClone(t *testing.T) {
 		require.Contains(output, "cross-peer-test", "Alice's commit not visible on Bob")
 		t.Log("Bob sees Alice's commit on her branch")
 	})
+}
+
+// execCat and execLs are the testpeer exec lines that read or list a file
+// through the mount. Windows has no cat or ls; dir /b exits non-zero for a
+// missing file, as ls does.
+func execCat(dir, file string) string {
+	if runtime.GOOS == "windows" {
+		return "exec " + dir + " cmd /c type " + filepath.FromSlash(file)
+	}
+	return "exec " + dir + " cat " + file
+}
+
+func execLs(dir, file string) string {
+	if runtime.GOOS == "windows" {
+		return "exec " + dir + " cmd /c dir /b " + filepath.FromSlash(file)
+	}
+	return "exec " + dir + " ls " + file
 }

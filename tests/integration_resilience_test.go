@@ -1,14 +1,12 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package tests
 
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -68,10 +66,16 @@ func TestResilience_HeartbeatsWork(t *testing.T) {
 
 	// RTT should be non-zero (heartbeat round-trip measured).
 	lastRTT := tp.Alice.HealthMonitor.LastRTT()
-	require.Greater(int64(lastRTT), int64(0), "RTT should be positive")
+	// Go's monotonic clock on Windows ticks with the system timer (up to
+	// 15.6 ms), so a loopback round trip can read 0 there.
+	minRTT := int64(1)
+	if runtime.GOOS == "windows" {
+		minRTT = 0
+	}
+	require.GreaterOrEqual(int64(lastRTT), minRTT, "RTT should be positive")
 
 	avgRTT := tp.Alice.HealthMonitor.AvgRTT()
-	require.Greater(int64(avgRTT), int64(0), "Avg RTT should be positive")
+	require.GreaterOrEqual(int64(avgRTT), minRTT, "Avg RTT should be positive")
 
 	// Loopback RTT should be very low (< 100ms).
 	require.Less(lastRTT, 100*time.Millisecond, "Loopback RTT should be < 100ms")

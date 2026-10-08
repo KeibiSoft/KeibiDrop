@@ -1,10 +1,7 @@
 //go:build !android
 
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package service
 
@@ -168,9 +165,11 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 	case bindings.NotifyType_ADD_DIR:
 		logger.Info("Mkdir called")
 
-		if kd.FS() == nil {
-			logger.Warn("Nil FS")
-			return nil, ErrGRPCFailedPrecondition
+		// Without a mount there is no tree to add a folder to; files under it
+		// still arrive with their paths. Same rule as ADD_FILE.
+		if kd.FS() == nil || kd.FS().Root() == nil {
+			logger.Debug("No filesystem, directory not mirrored")
+			return &bindings.NotifyResponse{}, nil
 		}
 
 		if kd.FS().Root() == nil {
@@ -608,9 +607,36 @@ func (kd *KeibidropServiceImpl) Notify(_ context.Context, req *bindings.NotifyRe
 		}
 	}
 
+	kd.reportPeerChange(req)
 	logger.Info("Success")
 
 	return &bindings.NotifyResponse{}, nil
+}
+
+// reportPeerChange queues a handled peer change for the file manager refresh,
+// so an open Explorer or Nautilus window shows it. A buffered REMOVE
+// reports itself when it runs (executeRemove). No mount: no-op.
+func (kd *KeibidropServiceImpl) reportPeerChange(req *bindings.NotifyRequest) {
+	fs := kd.FS()
+	if fs == nil {
+		return
+	}
+	switch req.Type {
+	case bindings.NotifyType_ADD_FILE:
+		fs.PeerChanged(req.Path, filesystem.PeerAdded)
+	case bindings.NotifyType_EDIT_FILE:
+		fs.PeerChanged(req.Path, filesystem.PeerEdited)
+	case bindings.NotifyType_ADD_DIR:
+		fs.PeerChanged(req.Path, filesystem.PeerDirAdded)
+	case bindings.NotifyType_REMOVE_DIR:
+		fs.PeerChanged(req.Path, filesystem.PeerDirRemoved)
+	case bindings.NotifyType_RENAME_FILE:
+		fs.PeerChanged(req.OldPath, filesystem.PeerRemoved)
+		fs.PeerChanged(req.Path, filesystem.PeerAdded)
+	case bindings.NotifyType_RENAME_DIR:
+		fs.PeerChanged(req.OldPath, filesystem.PeerDirRemoved)
+		fs.PeerChanged(req.Path, filesystem.PeerDirAdded)
+	}
 }
 
 // BatchNotify processes multiple notifications in a single RPC call.
@@ -715,22 +741,29 @@ func (kd *KeibidropServiceImpl) cancelAllPendingRemoves() {
 func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, logger *slog.Logger, armedAt time.Time) {
 	// Snapshot FS/root once: teardown may SetFS(nil) while this timer
 	// goroutine runs, and repeated loads would race it (nil-receiver panic).
+	fs := kd.FS()
 	var root *filesystem.Dir
-	if fs := kd.FS(); fs != nil {
+	if fs != nil {
 		root = fs.Root()
 	}
 	if root != nil {
 		cachePath := filepath.Clean(filepath.Join(root.LocalDownloadFolder, path))
-		if st, err := os.Stat(cachePath); err == nil && !armedAt.IsZero() && st.ModTime().After(armedAt) {
-			logger.Info("Skipping buffered remove, local write is newer", "path", path)
-			return
-		}
-		// A delete below local authority raced an unseen edit: preserve as
-		// a sibling first. Base 0 keeps the plain delete. Maps key by "/".
+		// Maps key by "/".
 		fusePath := path
 		if !strings.HasPrefix(fusePath, "/") {
 			fusePath = "/" + fusePath
 		}
+		if st, err := os.Stat(cachePath); err == nil && !armedAt.IsZero() && st.ModTime().After(armedAt) {
+			// A read also makes and fills the cache file. Only a write of
+			// this peer outranks the delete: a newer mtime alone kept a
+			// peer's deleted vim swap file on the reader (4 Oct).
+			if known, local := root.LocalAuthority(fusePath); !known || local {
+				logger.Info("Skipping buffered remove, local write is newer", "path", path)
+				return
+			}
+		}
+		// A delete below local authority raced an unseen edit: preserve as
+		// a sibling first. Base 0 keeps the plain delete.
 		if baseMtimeNs != 0 && root.SwapWouldConflict(fusePath, baseMtimeNs) {
 			if _, pErr := root.PreserveConflictSiblingForDelete(logger, fusePath); pErr != nil {
 				logger.Error("Delete raced a local edit and preservation failed, refusing the delete",
@@ -738,9 +771,10 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, lo
 				return
 			}
 		}
+		// Web and no-FUSE peers send bare names; the FUSE maps key by "/".
 		hasOpenHandles := false
 		root.AfmLock.Lock()
-		file, exists := root.AllFileMap[path]
+		file, exists := root.AllFileMap[fusePath]
 		if exists && file != nil {
 			openCount := file.CountOpenDescriptors()
 			if openCount > 0 {
@@ -748,18 +782,18 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, lo
 				hasOpenHandles = true
 				logger.Info("File has open handles, marking for removal after download", "path", path, "openHandles", openCount)
 			} else {
-				delete(root.AllFileMap, path)
+				delete(root.AllFileMap, fusePath)
 			}
 		}
 		root.AfmLock.Unlock()
 
 		root.RemoteFilesLock.Lock()
-		if rf, rfOk := root.RemoteFiles[path]; rfOk {
+		if rf, rfOk := root.RemoteFiles[fusePath]; rfOk {
 			if rf.PrefetchCancel != nil {
 				rf.PrefetchCancel()
 				rf.PrefetchCancel = nil
 			}
-			delete(root.RemoteFiles, path)
+			delete(root.RemoteFiles, fusePath)
 		}
 		root.RemoteFilesLock.Unlock()
 
@@ -768,6 +802,7 @@ func (kd *KeibidropServiceImpl) executeRemove(path string, baseMtimeNs int64, lo
 				logger.Warn("Failed to remove cache file", "path", cachePath, "error", rmErr)
 			}
 		}
+		fs.PeerChanged(path, filesystem.PeerRemoved)
 	}
 
 	if kd.SyncTracker != nil {
@@ -1088,6 +1123,14 @@ func (kd *KeibidropServiceImpl) StreamFile(req *bindings.StreamFileRequest, stre
 		return status.Error(codes.Internal, "error stat file")
 	}
 	fileSize := uint64(finfo.Size())
+
+	// A start offset PAST EOF is an invalid request (for example a stale resume): reject it
+	// rather than return an empty stream a client could mistake for a successful zero-byte
+	// pull. An offset exactly AT EOF is the legitimate "already complete" case (streams nothing).
+	if req.StartOffset > fileSize {
+		logger.Warn("StreamFile start offset past EOF", "startOffset", req.StartOffset, "fileSize", fileSize)
+		return status.Errorf(codes.OutOfRange, "start_offset %d exceeds file size %d", req.StartOffset, fileSize)
+	}
 
 	// StreamFile sends at most BlockSize per frame; a larger buffer is waste.
 	buf := make([]byte, config.BlockSize)

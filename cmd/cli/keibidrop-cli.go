@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package main
 
@@ -901,6 +898,7 @@ func main() {
 		color.Red("Fatal: %v", err)
 		os.Exit(1) //nolint:gocritic
 	}
+	kd.Surface = "cli"            // names this CLI's purchases
 	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
 	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
 	kd.ScanSharedOnStart = cfg.ScanSharedOnStart

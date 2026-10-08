@@ -1,13 +1,11 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package common
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -15,6 +13,7 @@ import (
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
+	"github.com/KeibiSoft/KeibiDrop/pkg/session"
 	synctracker "github.com/KeibiSoft/KeibiDrop/pkg/sync-tracker"
 	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 	"github.com/winfsp/cgofuse/fuse"
@@ -92,20 +91,7 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 			Seq:           batchSeq,
 			Timestamp:     uint64(time.Now().UnixNano()),
 		}
-		var resp *bindings.BatchNotifyResponse
-		var err error
-		for attempt := 1; ; attempt++ {
-			resp, err = kd.sendBatchNotify(ctx, req)
-			if err == nil || attempt >= announceRetries || ctx.Err() != nil {
-				break
-			}
-			logger.Warn("Announce batch send failed, retrying",
-				"attempt", attempt, "of", announceRetries, "error", err)
-			select {
-			case <-ctx.Done():
-			case <-time.After(time.Duration(attempt) * announceRetryDelay):
-			}
-		}
+		resp, err := kd.sendAnnounceBatch(ctx, logger, req)
 		if err != nil {
 			kd.SyncTracker.LocalFilesMu.Lock()
 			for _, f := range batchFiles {
@@ -146,6 +132,10 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 			}
 			path := filepath.Join(dir, entry.Name())
 			if entry.IsDir() {
+				// A trash folder or another internal tree is neither walked nor shared.
+				if rel, err := filepath.Rel(root, path); err == nil && service.IsInternalPath(filepath.ToSlash(rel)) {
+					continue
+				}
 				queue = append(queue, path)
 				continue
 			}
@@ -231,17 +221,37 @@ func (kd *KeibiDrop) ScanAndShareSaveDir(ctx context.Context) (int, error) {
 	return announced, nil
 }
 
+// sendAnnounceBatch sends one announce batch, retrying a failed send up to
+// announceRetries times with a growing pause.
+func (kd *KeibiDrop) sendAnnounceBatch(ctx context.Context, logger *slog.Logger, req *bindings.BatchNotifyRequest) (*bindings.BatchNotifyResponse, error) {
+	for attempt := 1; ; attempt++ {
+		resp, err := kd.sendBatchNotify(ctx, req)
+		if err == nil || attempt >= announceRetries || ctx.Err() != nil {
+			return resp, err
+		}
+		logger.Warn("Announce batch send failed, retrying",
+			"attempt", attempt, "of", announceRetries, "error", err)
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Duration(attempt) * announceRetryDelay):
+		}
+	}
+}
+
 // persistSharedFilesBatch appends the files to the shared store in one write.
 // A per-file persist rewrites the encrypted store once per file, quadratic on
 // large folders.
 func (kd *KeibiDrop) persistSharedFilesBatch(files []*synctracker.File) {
-	if len(files) == 0 || kd.sharedStore == nil || kd.dlRegistry == nil {
-		return
-	}
 	kd.mu.Lock()
 	sess := kd.session
 	kd.mu.Unlock()
-	if sess == nil {
+	kd.persistSharedFilesFor(sess, files)
+}
+
+// persistSharedFilesFor keeps the files for the friend of sess only: a
+// session with another friend never restores them.
+func (kd *KeibiDrop) persistSharedFilesFor(sess *session.Session, files []*synctracker.File) {
+	if len(files) == 0 || sess == nil || kd.sharedStore == nil || kd.dlRegistry == nil {
 		return
 	}
 	tag := kd.dlRegistry.peerTag(sess.ExpectedPeerFingerprint, kd.registryKey)

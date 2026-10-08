@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
 // ABOUTME: Unit tests for the config package.
 // ABOUTME: Verifies env-var overrides and flag binding for all Config fields.
@@ -10,6 +7,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/KeibiSoft/KeibiDrop/internal/fp"
@@ -106,6 +105,22 @@ func TestSaveLoad_ReadAheadWindowPersists(t *testing.T) {
 		got := testkit.Must(Load())
 		return fp.Equal("read_ahead_window_mb persisted", got.ReadAheadWindowMB, 96)
 	})
+}
+
+// An empty save_path or mount_path in the file used to resolve to the working
+// directory (filepath.Abs of ""); the platform default stands in instead.
+func TestLoad_EmptyPathsFallBackToDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("KEIBIDROP_CONFIG_DIR", dir)
+	t.Setenv("TO_SAVE_PATH", "")
+	t.Setenv("KD_SAVE_PATH", "")
+	t.Setenv("TO_MOUNT_PATH", "")
+	t.Setenv("KD_MOUNT_PATH", "")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.toml"), []byte("save_path = \"\"\nmount_path = \"\"\n"), 0o644))
+	got, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, DefaultConfig().SavePath, got.SavePath)
+	require.Equal(t, DefaultConfig().MountPath, got.MountPath)
 }
 
 func TestDirectoriesToEnsure_SkipsMountPathOnWindows(t *testing.T) {

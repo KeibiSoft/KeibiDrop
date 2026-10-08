@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package common
 
@@ -35,6 +32,7 @@ var (
 	ErrFilesystemAlreadyMounted      = errors.New("filesystem already mounted")
 	ErrNilFilesystem                 = errors.New("filesystem not mounted")
 	ErrAlreadyRunning                = errors.New("already running")
+	ErrConnectInProgress             = errors.New("a connect is already in progress")
 	ErrInvalidSession                = errors.New("invalid session")
 	ErrServerAtCapacity              = errors.New("relay server at capacity, please try again in 5 minutes")
 	ErrIdenticalFingerprints         = errors.New("own and peer fingerprints are identical")

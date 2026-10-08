@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // This file guards the postgres/git handoff pattern over FUSE sync: a file
 // rewritten via delete+recreate, and a lockfile deletion, must not take live

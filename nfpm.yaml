@@ -4,7 +4,7 @@ version: "${VERSION}"
 maintainer: "KeibiSoft SRL <contact@keibisoft.com>"
 description: "End-to-end encrypted peer-to-peer file sharing"
 homepage: "https://github.com/KeibiSoft/KeibiDrop"
-license: MPL-2.0
+license: AGPL-3.0-only
 section: net
 priority: optional
 

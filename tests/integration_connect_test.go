@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package tests
 
@@ -158,7 +155,10 @@ func TestConnect_IdenticalFingerprints(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	kd, err := common.NewKeibiDropWithIP(ctx, logger, false, relayURL, 26700, 26701, "", t.TempDir(), false, false, "::1")
+	// Free ports, as the other tests here: a fixed 26700 collides with a
+	// bridge on the same host (the Timisoara lane), and the test is about
+	// fingerprints, not ports.
+	kd, err := common.NewKeibiDropWithIP(ctx, logger, false, relayURL, getFreePortInRange(t, 26400, 26549), getFreePortInRange(t, 26550, 26699), "", t.TempDir(), false, false, "::1")
 	require.NoError(err)
 
 	// Set peer fingerprint to own fingerprint.
@@ -180,7 +180,7 @@ func TestConnect_EmptyPeerFingerprint(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	kd, err := common.NewKeibiDropWithIP(ctx, logger, false, relayURL, 26702, 26703, "", t.TempDir(), false, false, "::1")
+	kd, err := common.NewKeibiDropWithIP(ctx, logger, false, relayURL, getFreePortInRange(t, 26400, 26549), getFreePortInRange(t, 26550, 26699), "", t.TempDir(), false, false, "::1")
 	require.NoError(err)
 
 	err = kd.Connect()

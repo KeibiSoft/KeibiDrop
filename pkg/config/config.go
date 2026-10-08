@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package config
 
@@ -107,6 +104,17 @@ func Load() (Config, error) {
 
 	// Overrides accept the KEIBIDROP_ prefix (Rust UI, CLI) and the KD_ prefix (kd daemon).
 	applyEnvOverrides(&cfg)
+
+	// An empty path in the file is no place to save: Abs below would make it
+	// the working directory. The platform default stands in, so an install
+	// always has a save folder and a mount point.
+	def := DefaultConfig()
+	if cfg.SavePath == "" {
+		cfg.SavePath = def.SavePath
+	}
+	if cfg.MountPath == "" {
+		cfg.MountPath = def.MountPath
+	}
 
 	// Resolve relative paths to absolute.
 	if cfg.SavePath != "" {

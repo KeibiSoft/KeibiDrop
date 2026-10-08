@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // This file pins the free-space guard: under the floor no fetch starts and a
 // read gets ENOSPC; the OS is asked once per second; the session hears each

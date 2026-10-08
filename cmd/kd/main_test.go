@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/KeibiSoft/KeibiDrop/internal/fp"
 	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
@@ -310,6 +311,25 @@ func TestFeedbackStars(t *testing.T) {
 		stars, rest := feedbackStars(c.args)
 		if stars != c.stars || strings.Join(rest, " ") != c.rest {
 			t.Errorf("feedbackStars(%v) = %d, %q; want %d, %q", c.args, stars, strings.Join(rest, " "), c.stars, c.rest)
+		}
+	}
+}
+
+// A connect verb with no registered peer answers at once instead of waiting
+// the whole connect timeout, which a disconnect (it resets the session) made easy to hit.
+func TestConnectVerbs_NoPeerRegisteredAnswerAtOnce(t *testing.T) {
+	kd := newTestKD(t)
+	for _, verb := range []string{"connect", "create", "join"} {
+		start := time.Now()
+		resp := dispatchTest(kd, verb)
+		if resp.OK {
+			t.Fatalf("%s: expected an error with no peer registered", verb)
+		}
+		if !strings.Contains(resp.Error, "no peer registered") {
+			t.Fatalf("%s: unexpected error %q", verb, resp.Error)
+		}
+		if time.Since(start) > 2*time.Second {
+			t.Fatalf("%s: took %s, should not wait", verb, time.Since(start))
 		}
 	}
 }

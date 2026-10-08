@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
 // ABOUTME: Tests mount_read_only: every local mutating FUSE op returns EROFS,
 // ABOUTME: read intent passes the gate, peer-driven updates bypass it.

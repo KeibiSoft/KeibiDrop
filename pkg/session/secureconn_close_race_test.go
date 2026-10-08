@@ -1,11 +1,8 @@
 // ABOUTME: Regression race test for concurrent SecureConn.Close.
 // ABOUTME: The proactive rekey drop and gRPC's transport both close the same conn.
 
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package session
 

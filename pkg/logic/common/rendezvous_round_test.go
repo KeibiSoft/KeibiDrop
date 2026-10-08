@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
 // This file drives the creator's real rendezvous round across a round boundary
 // with a real joiner handshake, and pins the joiner's retry of a direct dial

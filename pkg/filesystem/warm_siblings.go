@@ -1,10 +1,7 @@
 //go:build !android
 
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // ABOUTME: Background sibling warmer. A cold read of a small file batches its
 // ABOUTME: announced small siblings into one ReadBatch request and caches them.
@@ -153,7 +150,7 @@ func (d *Dir) collectWarmCandidates(dirPath, triggerPath string) []*warmClaim {
 		bm := c.f.Bitmap
 		notSynced := c.f.NotLocalSynced
 		edited := c.f.LocalNewer || c.f.HadEdits
-		gone := c.f.PeerStoppedSharing
+		gone := c.f.PeerStoppedSharing || c.f.localGone
 		c.f.metaMu.RUnlock()
 		if bm == nil || !notSynced || edited || gone {
 			continue
@@ -286,44 +283,58 @@ func (d *Dir) landWarmFile(c *warmClaim, data []byte) {
 	if r == nil {
 		r = d
 	}
+	// The claim must still be the object at its path: a peer remove, a local
+	// unlink or a rename over it replaced it.
+	d.RemoteFilesLock.RLock()
+	realPath := c.f.RealPathOfFile
+	mapped := d.RemoteFiles[c.path] == c.f
+	d.RemoteFilesLock.RUnlock()
+	d.AfmLock.RLock()
+	if af, ok := d.AllFileMap[c.path]; ok && af != c.f {
+		mapped = false
+	}
+	d.AfmLock.RUnlock()
+	if realPath == "" || !mapped {
+		c.finish(d, errBlockFetchIncomplete)
+		return
+	}
+
+	// Check and write under one read hold. Write claims the file under metaMu
+	// before its pwrite, Truncate cuts the disk under it, and an unlink or a
+	// rename over the path marks the object first: a local change shows here
+	// or lands after these bytes, never under them. A landing over a local
+	// rewrite put the peer's old bytes back ("cube([4,4," for "sphere(3);",
+	// 4 Oct). The bitmap pointer catches an announce that swapped it.
+	c.f.beginDiskWriter()
+	var lf *os.File
+	err := errBlockFetchIncomplete
 	c.f.metaMu.RLock()
-	cur := c.f.Bitmap
-	fileMode := os.FileMode(0o644)
-	if c.f.stat != nil {
-		if m := os.FileMode(c.f.stat.Mode & 0o777); m != 0 {
-			fileMode = m
+	if c.f.Bitmap == c.bm && !c.f.LocalNewer && !c.f.HadEdits && !c.f.WasTruncatedToZero && !c.f.localGone {
+		fileMode := os.FileMode(0o644)
+		if c.f.stat != nil {
+			if m := os.FileMode(c.f.stat.Mode & 0o777); m != 0 {
+				fileMode = m
+			}
+		}
+		err = os.MkdirAll(filepath.Dir(realPath), 0o755)
+		if err == nil {
+			lf, err = os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, fileMode) // #nosec G304
+		}
+		if err == nil {
+			if info, statErr := lf.Stat(); statErr == nil && info.Size() < c.size {
+				_ = lf.Truncate(c.size)
+			}
+			_, err = lf.WriteAt(data, 0)
 		}
 	}
 	c.f.metaMu.RUnlock()
-	if cur != c.bm {
-		c.finish(d, errBlockFetchIncomplete)
-		return
+	if lf != nil {
+		c.lf = lf
+		c.openPath = realPath
+	} else {
+		c.f.dropDiskWriter()
 	}
-
-	d.RemoteFilesLock.RLock()
-	realPath := c.f.RealPathOfFile
-	d.RemoteFilesLock.RUnlock()
-	if realPath == "" {
-		c.finish(d, errBlockFetchIncomplete)
-		return
-	}
-	if mkErr := os.MkdirAll(filepath.Dir(realPath), 0o755); mkErr != nil {
-		c.finish(d, errBlockFetchIncomplete)
-		return
-	}
-	lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, fileMode) // #nosec G304
 	if err != nil {
-		c.finish(d, errBlockFetchIncomplete)
-		return
-	}
-	c.lf = lf
-	c.openPath = realPath
-	c.f.beginDiskWriter()
-	if info, statErr := lf.Stat(); statErr == nil && info.Size() < c.size {
-		_ = lf.Truncate(c.size)
-	}
-
-	if _, wErr := lf.WriteAt(data, 0); wErr != nil {
 		c.finish(d, errBlockFetchIncomplete)
 		return
 	}
@@ -331,7 +342,7 @@ func (d *Dir) landWarmFile(c *warmClaim, data []byte) {
 	// Write landed before any mark (sparse-hole rule). Re-verify the bitmap
 	// is still the one we claimed before marking chunks present.
 	c.f.metaMu.RLock()
-	cur = c.f.Bitmap
+	cur := c.f.Bitmap
 	c.f.metaMu.RUnlock()
 	if cur != c.bm {
 		c.finish(d, errBlockFetchIncomplete)
@@ -345,6 +356,7 @@ func (d *Dir) landWarmFile(c *warmClaim, data []byte) {
 		c.bm.SetHash(chunk, xxh3.Hash(data[begin:end]))
 	}
 	c.f.Download.UpdateProgress(0, len(data))
+	c.f.WireBytes.Add(uint64(len(data)))
 	c.f.noteLanded()
 
 	c.f.metaMu.Lock()

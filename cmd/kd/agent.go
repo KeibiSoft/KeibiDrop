@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // ABOUTME: Additive non-interactive surface for agents: stable error codes,
 // ABOUTME: process exit codes, timeouts on blocking verbs, async transfers.
@@ -169,8 +166,8 @@ var (
 	transferSeq atomic.Uint64
 )
 
-// newTransferID returns a short monotonic id. Monotonic, not random: an agent
-// reading a log can order them, and there is no secret in a transfer id.
+// newTransferID returns a short monotonic id such that an agent
+// reading a log can order them.
 func newTransferID() string {
 	return "t" + strconv.FormatUint(transferSeq.Add(1), 10)
 }
@@ -318,6 +315,18 @@ const defaultConnectTimeout = 60 * time.Second
 // Driving the underlying room primitives directly means picking that role by
 // hand, and two peers that pick the same one wait for each other forever.
 func runConnectWithTimeout(kd *common.KeibiDrop, d time.Duration) Response {
+	return runBoundedConnect(kd, d, kd.Connect)
+}
+
+// runBoundedConnect runs one connect verb under a deadline. connect-timeout
+// always comes here; create, join and connect come here when --timeout is given.
+// connectAbortGrace bounds the wait for an aborted connect to release its slot.
+const connectAbortGrace = 5 * time.Second
+
+func runBoundedConnect(kd *common.KeibiDrop, d time.Duration, connect func() error) Response {
+	if r := noPeerRegistered(kd); r != nil {
+		return *r
+	}
 	if kd.OpInProgress.Add(1) != 1 {
 		kd.OpInProgress.Add(-1)
 		return errCoded(codeBusy, "a connect is already in progress")
@@ -325,8 +334,10 @@ func runConnectWithTimeout(kd *common.KeibiDrop, d time.Duration) Response {
 
 	errCh := make(chan error, 1)
 	go func() {
-		defer kd.OpInProgress.Add(-1)
-		errCh <- kd.Connect()
+		err := connect()
+		// Release the slot before the answer is read, so the next verb never sees busy.
+		kd.OpInProgress.Add(-1)
+		errCh <- err
 	}()
 
 	timer := time.NewTimer(d)
@@ -344,6 +355,12 @@ func runConnectWithTimeout(kd *common.KeibiDrop, d time.Duration) Response {
 		})
 	case <-timer.C:
 		kd.NotifyDisconnect()
+		// The aborted connect hands its slot back once it wakes; wait for that,
+		// bounded, so a retry right after the timeout is not answered with busy.
+		select {
+		case <-errCh:
+		case <-time.After(connectAbortGrace):
+		}
 		return errCoded(codeTimeout,
 			fmt.Sprintf("connect timed out after %s waiting for the peer", d))
 	}

@@ -16,7 +16,7 @@ By submitting a signed commit to this project, I certify that:
    - I understand the code and have verified its correctness
    - I take full responsibility for the contribution as if I had written it entirely by hand
 
-6. If my contribution modifies or improves code originally written by **KeibiSoft SRL**, I grant KeibiSoft SRL the right to relicense that contribution under other licenses (including commercial licenses), in addition to MPL 2.0.
+6. If my contribution modifies or improves code originally written by **KeibiSoft SRL**, I grant KeibiSoft SRL the right to relicense that contribution under other licenses (including commercial licenses), in addition to AGPL-3.0.
 
 ---
 

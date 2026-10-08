@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use slint::winit_030::WinitWindowAccessor;
@@ -55,7 +55,9 @@ fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_dir() {
+            // The entry's own type, not its target's: a link to a folder
+            // above would walk forever.
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
                 files.extend(walkdir(&p));
             } else {
                 files.push(p);
@@ -63,6 +65,17 @@ fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+/// Hidden by its own name or by its path: ".DS_Store" inside a folder too.
+fn is_hidden_path(path: &str) -> bool {
+    is_hidden_file(path) || path.rsplit('/').next().is_some_and(is_hidden_file)
+}
+
+/// `path` under `base`, with "/" between its parts on every platform.
+fn slash_rel(path: &Path, base: &Path) -> Option<String> {
+    let rel = path.strip_prefix(base).ok()?;
+    Some(rel.iter().map(|c| c.to_string_lossy()).collect::<Vec<_>>().join("/"))
 }
 
 /// Returns true if a filename should be hidden from the UI.
@@ -73,6 +86,7 @@ fn is_hidden_file(name: &str) -> bool {
         || name == "Thumbs.db"
         || name.contains(".fuse_hidden")
         || name.contains("/.fseventsd")
+        || name.ends_with(".kdbitmap")
 }
 
 /// Per-file download state tracked on the Rust side.
@@ -113,14 +127,14 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
     let mut files: Vec<FileInfo> = Vec::new();
     let mut seen_folders: std::collections::HashSet<String> =
         std::collections::HashSet::new();
+    // "/" between parts on every platform, as in the peer's names: the
+    // grouping below splits on it, and Windows gives "\".
+    let rels: Vec<Option<String>> = all_files.iter().map(|p| slash_rel(p, base)).collect();
 
-    for path in &all_files {
-        let rel = match path.strip_prefix(base) {
-            Ok(r) => r.to_string_lossy().to_string(),
-            Err(_) => continue,
-        };
+    for (path, rel) in all_files.iter().zip(&rels) {
+        let Some(rel) = rel.clone() else { continue };
 
-        if is_hidden_file(&rel) {
+        if is_hidden_path(&rel) {
             continue;
         }
 
@@ -140,19 +154,11 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
                 format!("{}/{}", current_folder, subfolder)
             };
             if seen_folders.insert(full_folder.clone()) {
-                let child_count = all_files
-                    .iter()
-                    .filter(|p| {
-                        p.strip_prefix(base)
-                            .map(|r| {
-                                r.to_string_lossy()
-                                    .starts_with(&format!("{}/", full_folder))
-                            })
-                            .unwrap_or(false)
-                    })
-                    .count();
+                let prefix = format!("{}/", full_folder);
+                let child_count = rels.iter().flatten().filter(|r| r.starts_with(&prefix)).count();
                 files.push(FileInfo {
                     name: slint::SharedString::from(subfolder),
+                    label: slint::SharedString::from(subfolder),
                     size_bytes: child_count as i32,
                     downloading: false,
                     uploading: false,
@@ -161,6 +167,7 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
                     paused: false,
                     file_type: slint::SharedString::from("folder"),
                     is_local: true,
+                    viewable: false,
                 });
             }
             continue;
@@ -173,6 +180,7 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
 
         files.push(FileInfo {
             name: slint::SharedString::from(rel.as_str()),
+            label: slint::SharedString::from(relative.as_str()),
             size_bytes: size,
             downloading: false,
             uploading: false,
@@ -181,6 +189,7 @@ fn scan_save_folder(save_path: &str, current_folder: &str) -> Vec<FileInfo> {
             paused: false,
             file_type: slint::SharedString::from(ftype),
             is_local: true,
+            viewable: false,
         });
     }
 
@@ -197,6 +206,71 @@ fn refresh_saved_files(weak: &slint::Weak<MainWindow>, save_path: &str, folder: 
     }
 }
 
+/// The bridge's escaping for list lines (rustbridge/filelist.go listEscape):
+/// a name stays inside one tab-separated field of one line.
+fn list_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn list_unescape(s: &str) -> String {
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('t') => out.push('\t'),
+            Some('n') => out.push('\n'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Both file lists in one call (KD_ListAllFiles): the peer's files with their
+/// sizes, then ours, names without a leading "/", hidden files left out.
+unsafe fn read_all_files() -> (Vec<(String, i64)>, Vec<String>) {
+    let ptr = bindings::KD_ListAllFiles();
+    if ptr.is_null() {
+        return (Vec::new(), Vec::new());
+    }
+    let text = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+    libc::free(ptr as *mut libc::c_void);
+    let mut remote = Vec::new();
+    let mut local = Vec::new();
+    for line in text.lines() {
+        let mut parts = line.splitn(3, '\t');
+        let (Some(tag), Some(size), Some(name)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let name = list_unescape(name).trim_start_matches('/').to_string();
+        if is_hidden_path(&name) {
+            continue;
+        }
+        match tag {
+            "R" => remote.push((name, size.parse().unwrap_or(0))),
+            "L" => local.push(name),
+            _ => {}
+        }
+    }
+    (remote, local)
+}
+
 /// Start a background thread that polls Go for file list updates and pushes to Slint model.
 fn start_file_watcher(
     running: Arc<AtomicBool>,
@@ -206,6 +280,21 @@ fn start_file_watcher(
     current_folder: Arc<Mutex<String>>,
 ) {
     std::thread::spawn(move || {
+        // The list as last pushed to the UI. None until the first push, so a
+        // new session always replaces the previous session's cards.
+        let mut last_pushed: Option<Vec<FileInfo>> = None;
+        // Both lists as last read, and the engine's list-write count, folder
+        // and download counts they were grouped for: a poll with all of them
+        // unchanged and nothing downloading does no work.
+        let mut all_names: Vec<(String, i64)> = Vec::new();
+        let mut local_names: Vec<String> = Vec::new();
+        let mut read_at: Option<u64> = None;
+        let mut grouped_for: Option<(u64, String, [usize; 4])> = None;
+        // Whether a file the session does not track is in the save folder, as
+        // (half download with a .kdbitmap, file): checked once per file per
+        // read of the lists and every 30 s, not twice per file per poll.
+        let mut on_disk: HashMap<String, (bool, bool)> = HashMap::new();
+        let mut on_disk_since = std::time::Instant::now();
         // FileWatcher running
         while running.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -213,30 +302,37 @@ fn start_file_watcher(
             // Event polling is handled by a dedicated Slint Timer (see main).
             // This thread only updates the file list.
             unsafe {
-                let count = bindings::KD_GetFileCount();
+                let writes = bindings::KD_FileListStamp() as u64;
                 let folder = current_folder.lock().unwrap().clone();
-
-                // Collect all remote file names
-                let mut all_names: Vec<(String, i64)> = Vec::new();
-                for i in 0..count {
-                    let name_ptr = bindings::KD_GetFileName(i);
-                    if name_ptr.is_null() {
-                        continue;
-                    }
-                    let raw_name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
-                    let name = raw_name.trim_start_matches('/').to_string();
-                    if is_hidden_file(&name) {
-                        continue;
-                    }
-                    let size = bindings::KD_GetFileSize(i) as i64;
-                    all_names.push((name, size));
+                if read_at != Some(writes) {
+                    (all_names, local_names) = read_all_files();
+                    read_at = Some(writes);
+                    on_disk.clear();
+                    on_disk_since = std::time::Instant::now();
                 }
+                let recheck = on_disk_since.elapsed() >= std::time::Duration::from_secs(30);
+                if recheck {
+                    on_disk.clear();
+                    on_disk_since = std::time::Instant::now();
+                }
+                let dl = downloads.lock().unwrap();
+                // Downloads by state; while one runs, its percent moves every poll.
+                let mut dl_counts = [dl.len(), 0, 0, 0];
+                for info in dl.values() {
+                    dl_counts[1] += info.downloading as usize;
+                    dl_counts[2] += info.paused as usize;
+                    dl_counts[3] += info.saved as usize;
+                }
+                let state = (writes, folder.clone(), dl_counts);
+                if !recheck && dl_counts[1] == 0 && grouped_for.as_ref() == Some(&state) {
+                    continue;
+                }
+                grouped_for = Some(state);
 
                 // Group by current folder: show items at this level,
                 // collapse subdirectories into folder cards
                 let mut files: Vec<FileInfo> = Vec::new();
                 let mut seen_folders: std::collections::HashSet<String> = std::collections::HashSet::new();
-                let dl = downloads.lock().unwrap();
 
                 for (name, size) in all_names.iter() {
                     let name = name.clone();
@@ -264,6 +360,7 @@ fn start_file_watcher(
                                 .count();
                             files.push(FileInfo {
                                 name: slint::SharedString::from(subfolder),
+                                label: slint::SharedString::from(subfolder),
                                 size_bytes: child_count as i32,
                                 downloading: false,
                                 uploading: false,
@@ -272,6 +369,7 @@ fn start_file_watcher(
                                 paused: false,
                                 file_type: slint::SharedString::from("folder"),
                                 is_local: false,
+                                viewable: false,
                             });
                         }
                         continue;
@@ -302,20 +400,23 @@ fn start_file_watcher(
                     } else {
                         // Not tracked in-session. A leftover ".kdbitmap" sidecar means
                         // an incomplete download (e.g. from a previous run), not saved.
-                        let local = format!("{}/{}", save_path, name);
-                        if Path::new(&format!("{}.kdbitmap", local)).exists() {
+                        let (partial, already_saved) = *on_disk.entry(name.clone()).or_insert_with(|| {
+                            let local = format!("{}/{}", save_path, name);
+                            (Path::new(&format!("{}.kdbitmap", local)).exists(), Path::new(&local).exists())
+                        });
+                        if partial {
                             let c_name = CString::new(name.clone()).unwrap();
                             let prog = bindings::KD_GetDownloadProgress(c_name.as_ptr() as *mut i8);
                             let p = if prog >= 0 { prog as f32 / 100.0 } else { 0.0 };
                             (false, p, false, false)
                         } else {
-                            let already_saved = Path::new(&local).exists();
                             (false, if already_saved { 1.0 } else { 0.0 }, already_saved, false)
                         }
                     };
 
                     files.push(FileInfo {
                         name: slint::SharedString::from(&name),
+                        label: slint::SharedString::from(&relative),
                         size_bytes: size as i32,
                         downloading,
                         uploading: false, // TODO: wire from Go events
@@ -324,24 +425,15 @@ fn start_file_watcher(
                         paused,
                         file_type: slint::SharedString::from(ftype),
                         is_local: false,
+                        viewable: false,
                     });
                 }
 
-                // Also include local files (files I shared), shown as already saved
-                let local_count = bindings::KD_GetLocalFileCount();
-                let mut local_names: Vec<String> = Vec::new();
-                for i in 0..local_count {
-                    let name_ptr = bindings::KD_GetLocalFileName(i);
-                    if name_ptr.is_null() {
-                        continue;
-                    }
-                    let raw_name = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
-                    let name = raw_name.trim_start_matches('/').to_string();
-                    if !is_hidden_file(&name) {
-                        local_names.push(name);
-                    }
-                }
-
+                // Also include local files (files I shared), shown as already
+                // saved. A set of the cards so far: comparing each of 12k files
+                // with every card was quadratic.
+                let mut taken: std::collections::HashSet<String> =
+                    files.iter().map(|f| f.name.to_string()).collect();
                 for lname in &local_names {
                     let relative = if folder.is_empty() {
                         lname.clone()
@@ -362,9 +454,10 @@ fn start_file_watcher(
                             let child_count = local_names.iter()
                                 .filter(|n| n.starts_with(&format!("{}/", full_folder)))
                                 .count();
-                            if !files.iter().any(|f| f.name.as_str() == subfolder) {
+                            if taken.insert(subfolder.to_string()) {
                                 files.push(FileInfo {
                                     name: slint::SharedString::from(subfolder),
+                                    label: slint::SharedString::from(subfolder),
                                     size_bytes: child_count as i32,
                                     downloading: false,
                                     uploading: false,
@@ -373,19 +466,23 @@ fn start_file_watcher(
                                     paused: false,
                                     file_type: slint::SharedString::from("folder"),
                                     is_local: true,
+                                    viewable: false,
                                 });
                             }
                         }
                         continue;
                     }
 
-                    // Skip if already in remote list
-                    if files.iter().any(|f| f.name.as_str() == relative) {
+                    // Skip if already in remote list. Cards carry the full name, as
+                    // the peer's do: Open and X look it up (the bare name inside a
+                    // folder matched nothing).
+                    if !taken.insert(lname.clone()) {
                         continue;
                     }
                     let ftype = file_type_from_name(&relative);
                     files.push(FileInfo {
-                        name: slint::SharedString::from(&relative),
+                        name: slint::SharedString::from(lname.as_str()),
+                        label: slint::SharedString::from(relative.as_str()),
                         size_bytes: 0,
                         downloading: false,
                         uploading: false,
@@ -394,18 +491,27 @@ fn start_file_watcher(
                         paused: false,
                         file_type: slint::SharedString::from(ftype),
                         is_local: true,
+                        viewable: false,
                     });
                 }
 
                 let any_dl = files.iter().any(|f| f.downloading);
                 drop(dl);
 
+                // Push only what changed: a push rebuilds every card, and the
+                // unconditional push redrew the whole grid twice a second with
+                // nothing moving. A burst of announcements still lands as one
+                // push per tick, which is the batching the grid needs.
+                if last_pushed.as_ref() == Some(&files) {
+                    continue;
+                }
+                last_pushed = Some(files.clone());
+
                 // Push to UI (build VecModel on UI thread since Rc is not Send)
                 let weak_clone = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(app) = weak_clone.upgrade() {
-                        let model = std::rc::Rc::new(slint::VecModel::from(files));
-                        app.set_file_list(slint::ModelRc::from(model));
+                        sync_file_list(&app, files);
                         app.set_any_downloading(any_dl);
                     }
                 });
@@ -465,7 +571,7 @@ fn engine_start_message(raw: &str) -> String {
     }
     if lower.contains("fuse") || lower.contains("winfsp") {
         return format!(
-            "The folder driver is not ready ({}). Install macFUSE or WinFsp, or turn off Files as a folder, then press Retry.",
+            "Teleport is not ready ({}). Install macFUSE or WinFsp, or turn off Teleport, then press Retry.",
             raw
         );
     }
@@ -516,6 +622,47 @@ unsafe fn config_auto_connect_peer() -> String {
         }
     }
     String::new()
+}
+
+/// Friends the person said No thanks to saving, one code per line beside
+/// config.toml, so the first-connect offer is not repeated.
+unsafe fn contact_offer_declined_path() -> Option<std::path::PathBuf> {
+    let ptr = bindings::KD_GetConfigPath();
+    if ptr.is_null() {
+        return None;
+    }
+    let cfg = CStr::from_ptr(ptr).to_string_lossy().to_string();
+    std::path::Path::new(&cfg)
+        .parent()
+        .map(|d| d.join("contact-offer-declined"))
+}
+
+unsafe fn peer_fingerprint() -> String {
+    let ptr = bindings::KD_GetPeerFingerprint();
+    if ptr.is_null() {
+        return String::new();
+    }
+    CStr::from_ptr(ptr).to_string_lossy().to_string()
+}
+
+unsafe fn contact_offer_declined(fp: &str) -> bool {
+    !fp.is_empty()
+        && contact_offer_declined_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map_or(false, |s| s.lines().any(|l| l.trim() == fp))
+}
+
+unsafe fn decline_contact_offer() {
+    let fp = peer_fingerprint();
+    if fp.is_empty() || contact_offer_declined(&fp) {
+        return;
+    }
+    if let Some(path) = contact_offer_declined_path() {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{}", fp);
+        }
+    }
 }
 
 unsafe fn load_contacts_model() -> std::rc::Rc<slint::VecModel<ContactInfo>> {
@@ -703,10 +850,105 @@ fn show_toast(weak: &slint::Weak<MainWindow>, msg: &str) {
     });
 }
 
+/// Keeps the (+) ring turning while dropped or picked files are added. The
+/// ring ends the turn it is in (ui.slint Spinner), so one small file still
+/// shows a whole turn. Drops that overlap share one count.
+struct AddingFiles {
+    weak: slint::Weak<MainWindow>,
+    busy: Arc<AtomicUsize>,
+}
+
+impl AddingFiles {
+    fn start(weak: &slint::Weak<MainWindow>, busy: &Arc<AtomicUsize>) -> Self {
+        busy.fetch_add(1, Ordering::SeqCst);
+        // A drop arrives on the UI thread: set it in the same frame that ends
+        // the hover. upgrade() is None on a worker, which queues it instead.
+        match weak.upgrade() {
+            Some(app) => app.set_adding_files(true),
+            None => {
+                let _ = weak.upgrade_in_event_loop(|app| app.set_adding_files(true));
+            }
+        }
+        AddingFiles { weak: weak.clone(), busy: busy.clone() }
+    }
+}
+
+impl Drop for AddingFiles {
+    fn drop(&mut self) {
+        if self.busy.fetch_sub(1, Ordering::SeqCst) == 1 {
+            let busy = self.busy.clone();
+            let _ = self.weak.upgrade_in_event_loop(move |app| {
+                app.set_adding_files(busy.load(Ordering::SeqCst) > 0);
+            });
+        }
+    }
+}
+
+/// The window opens sized from its screen, in the design's proportions: 70% of the
+/// screen's height, at least her frame and at most Theme.zoom-open times it
+/// (1.5 looked too big), and never more than fits, which on
+/// a small screen means under her frame. Works in the screen's own scale
+/// (macOS, Windows and Linux report it alike).
+fn first_size(app: &MainWindow) {
+    let Some((system, screen)) = app
+        .window()
+        .with_winit_window(|w| (w.scale_factor() as f32, w.current_monitor().map(|m| m.size())))
+    else {
+        return;
+    };
+    let theme = app.global::<Theme>();
+    let (w, h) = (theme.get_frame_width() * system, theme.get_frame_height() * system);
+    let zoom = match screen {
+        Some(screen) => {
+            let (sw, sh) = (screen.width as f32, screen.height as f32);
+            // Room for the menu bar, the dock or taskbar and the title bar.
+            let fits = (sw * 0.85 / w).min(sh * 0.85 / h).max(theme.get_zoom_min());
+            (sh * 0.7 / h).clamp(1.0, theme.get_zoom_open()).min(fits)
+        }
+        None => 1.0,
+    };
+    app.window().set_size(slint::PhysicalSize::new((w * zoom).round() as u32, (h * zoom).round() as u32));
+    refit(app);
+}
+
+/// The whole UI scales with the window so the design's frame fills it, down to
+/// Theme.zoom-min on a small screen: the window's scale factor becomes the
+/// screen's times that zoom, and sizes, text and clicks all follow it.
+fn fit_zoom(app: &MainWindow, size: slint::winit_030::winit::dpi::PhysicalSize<u32>) {
+    if size.width == 0 || size.height == 0 {
+        return; // minimised
+    }
+    let Some(system) = app.window().with_winit_window(|w| w.scale_factor() as f32) else {
+        return;
+    };
+    let theme = app.global::<Theme>();
+    let zoom = (size.width as f32 / (theme.get_frame_width() * system))
+        .min(size.height as f32 / (theme.get_frame_height() * system))
+        .max(theme.get_zoom_min());
+    app.set_zoom(zoom);
+    if (app.window().scale_factor() - system * zoom).abs() > 0.001 {
+        app.window().dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
+            scale_factor: system * zoom,
+        });
+    }
+}
+
+/// fit_zoom outside a resize: lay the window out again at the new scale.
+fn refit(app: &MainWindow) {
+    let Some(size) = app.window().with_winit_window(|w| w.inner_size()) else {
+        return;
+    };
+    fit_zoom(app, size);
+    let scale = app.window().scale_factor();
+    app.window().dispatch_event(slint::platform::WindowEvent::Resized {
+        size: slint::LogicalSize::new(size.width as f32 / scale, size.height as f32 / scale),
+    });
+}
+
 fn humanize_error(msg: &str) -> String {
     let lower = msg.to_lowercase();
     if lower.contains("timeout") || lower.contains("timed out") {
-        return "Peer didn't respond in time. Check that they pressed Connect.".into();
+        return "Your friend didn't respond in time. Check that they pressed Connect.".into();
     }
     if lower.contains("relay at full capacity") || lower.contains("relay at maximum capacity") {
         return "Relay is busy. Try again in a minute, or switch to Local Network mode.".into();
@@ -718,16 +960,16 @@ fn humanize_error(msg: &str) -> String {
         return "Not connected yet. Exchange codes and press Connect first.".into();
     }
     if lower.contains("not found") && lower.contains("relay") {
-        return "Peer not found on relay. Check the code and try again.".into();
+        return "Your friend could not be found. Check the code and try again.".into();
     }
     if lower.contains("not found") {
-        return "Peer not found. Check that they are online and try again.".into();
+        return "Your friend could not be found. Check that they are online and try again.".into();
     }
     if lower.contains("fingerprint mismatch") {
-        return "Security check failed. The peer's identity doesn't match. Try exchanging codes again.".into();
+        return "Security check failed: your friend's identity doesn't match. Exchange codes again.".into();
     }
     if lower.contains("identical fingerprint") {
-        return "You entered your own code. Paste your peer's code, not yours.".into();
+        return "You entered your own code. Paste your friend's code, not yours.".into();
     }
     if lower.contains("nil pointer") || lower.contains("nil filesystem") {
         return "Something went wrong internally. Try restarting the app.".into();
@@ -739,13 +981,18 @@ fn humanize_error(msg: &str) -> String {
         return "Session expired. Reconnect to continue.".into();
     }
     if lower.contains("connection refused") || lower.contains("no route") {
-        return "Can't reach peer. Check your internet connection or try Local Network mode.".into();
+        return "Can't reach your friend. Check your internet connection or try Local mode.".into();
     }
     if lower.contains("invalid fingerprint") || lower.contains("invalid length") {
         return "Invalid code format. Check that you copied the full code.".into();
     }
-    if lower.contains("context canceled") || lower.contains("canceled") {
+    if lower.contains("context canceled") || lower.contains("canceled") || lower.contains("cancelled") {
         return "Connection cancelled.".into();
+    }
+    // The screen shows no Cancel for a connect it did not start (the engine's
+    // own retry, a press that is still unwinding), so the words name none.
+    if lower.contains("already in progress") {
+        return "Still finishing the last connection attempt. Try again in a moment.".into();
     }
     msg.to_string()
 }
@@ -803,26 +1050,7 @@ fn connect_room(
             "Room {} successfully",
             if create { "created" } else { "joined" }
         );
-
-        // Wire health/reconnect events into the Go event channel.
-        bindings::KD_SetupEventCallbacks();
-
-        // Start file watcher
-        running.store(true, Ordering::Relaxed);
-        start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder.clone());
-
-        let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
-        let peer_already_contact = bindings::KD_IsPeerAlreadyContact() != 0;
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(app) = weak.upgrade() {
-                app.set_room_action(0);
-                app.set_status_message(slint::SharedString::default());
-                app.set_error_message(slint::SharedString::default());
-                app.set_peer_is_persistent(peer_persistent);
-                app.set_peer_already_saved(peer_already_contact);
-                app.set_current_screen(target_screen);
-            }
-        });
+        finish_connect_ui(weak, running, downloads, save_path, current_folder, target_screen);
     });
 }
 
@@ -860,7 +1088,7 @@ fn connect_room_auto(
             let remaining = total_secs - elapsed;
             let mins = remaining / 60;
             let secs = remaining % 60;
-            let msg = format!("Waiting for peer... ({}:{:02} remaining)", mins, secs);
+            let msg = format!("Waiting for your friend... ({}:{:02} remaining)", mins, secs);
             let w = countdown_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(app) = w.upgrade() {
@@ -892,23 +1120,50 @@ fn connect_room_auto(
         }
 
         println!("Connected successfully");
-        bindings::KD_SetupEventCallbacks();
-        running.store(true, Ordering::Relaxed);
-        start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder.clone());
+        finish_connect_ui(weak, running, downloads, save_path, current_folder, target_screen);
+    });
+}
 
-        let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
-        let peer_already_contact = bindings::KD_IsPeerAlreadyContact() != 0;
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(app) = weak.upgrade() {
-                app.set_room_action(0);
-                app.set_status_message(slint::SharedString::default());
-                app.set_connect_status(slint::SharedString::default());
-                app.set_error_message(slint::SharedString::default());
-                app.set_peer_is_persistent(peer_persistent);
-                app.set_peer_already_saved(peer_already_contact);
-                app.set_current_screen(target_screen);
+/// The post-connect tail every session gets, whoever started it: wire the
+/// engine's events, start the file watcher, land on the connected screen.
+/// The connect screen's mirror runs it for a session the engine started on
+/// its own (auto-connect), which used to leave the screen where it was.
+unsafe fn finish_connect_ui(
+    weak: slint::Weak<MainWindow>,
+    running: Arc<AtomicBool>,
+    downloads: Arc<Mutex<HashMap<String, DownloadInfo>>>,
+    save_path: String,
+    current_folder: Arc<Mutex<String>>,
+    target_screen: i32,
+) {
+    // Wire health/reconnect events into the Go event channel.
+    bindings::KD_SetupEventCallbacks();
+    running.store(true, Ordering::Relaxed);
+    start_file_watcher(running.clone(), weak.clone(), downloads, save_path, current_folder);
+
+    let peer_persistent = bindings::KD_IsPeerPersistent() != 0;
+    let peer_already_contact = bindings::KD_IsPeerAlreadyContact() != 0;
+    // The first time with a friend who is not a contact, offer to save them,
+    // unless the person said No thanks to this friend before.
+    let offer_contact =
+        peer_persistent && !peer_already_contact && !contact_offer_declined(&peer_fingerprint());
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(app) = weak.upgrade() {
+            app.set_room_action(0);
+            app.set_status_message(slint::SharedString::default());
+            app.set_connect_status(slint::SharedString::default());
+            app.set_error_message(slint::SharedString::default());
+            app.set_peer_is_persistent(peer_persistent);
+            app.set_peer_already_saved(peer_already_contact);
+            // Teleport's background is the connect screen it leaves, blurred.
+            if target_screen == 2 {
+                install_screen_backdrop(&app);
             }
-        });
+            app.set_current_screen(target_screen);
+            if offer_contact && !app.get_incognito_mode() {
+                app.set_save_contact_visible(true);
+            }
+        }
     });
 }
 
@@ -1296,7 +1551,17 @@ fn main() {
                                 });
                             }
                         }
-                        app.set_discovered_peers(slint::ModelRc::new(slint::VecModel::from(peers)));
+                        // Only a changed list replaces the model: Slint drops a
+                        // click when its model is replaced between press and
+                        // release, and this ran every 2 s under a Connect press.
+                        let shown = app.get_discovered_peers();
+                        let same = slint::Model::row_count(&shown) == peers.len()
+                            && peers.iter().enumerate().all(|(i, p)| {
+                                slint::Model::row_data(&shown, i).is_some_and(|s| s.name == p.name && s.addr == p.addr)
+                            });
+                        if !same {
+                            app.set_discovered_peers(slint::ModelRc::new(slint::VecModel::from(peers)));
+                        }
                     }
                 });
             }
@@ -1412,6 +1677,13 @@ fn main() {
         // Create/Join Room setup
         let watcher_running = Arc::new(AtomicBool::new(false));
         let disconnecting = Arc::new(AtomicBool::new(false));
+        // The engine's own connects (auto-connect on start, the redial after a
+        // give-up) never set room_action, so the connect screen showed an idle
+        // Connect button while the engine dialed and did not change when it
+        // connected (2026-09-16: that button opened a second bridge leg). The
+        // state timer mirrors the engine on the connect screen; this says the
+        // mirror owns room_action right now.
+        let engine_connecting = std::rc::Rc::new(std::cell::Cell::new(false));
         let watcher_running_disconnect = watcher_running.clone();
         let disconnecting_disconnect = disconnecting.clone();
 
@@ -1490,7 +1762,13 @@ fn main() {
 
         // Handle Cancel (abort room creation/join)
         let weak_cancel = app.as_weak();
+        let engine_connecting_cancel = engine_connecting.clone();
         app.on_cancel_connect_pressed(move || {
+            // Cancelling the engine's own dial parks the watchdog until the
+            // next session: the person's word stands over the retry loop.
+            if engine_connecting_cancel.replace(false) {
+                bindings::KD_PauseAutoConnect();
+            }
             if let Some(app) = weak_cancel.upgrade() {
                 app.set_room_action(0);
                 app.set_status_message(slint::SharedString::default());
@@ -1515,25 +1793,6 @@ fn main() {
         let weak_disconnect = app.as_weak();
         let disconnect_confirmed = Arc::new(AtomicBool::new(false));
         let disconnect_confirmed_inner = disconnect_confirmed.clone();
-        app.on_export_logs_pressed(move || {
-            
-            std::thread::spawn(move || {
-                if let Some(dest) = rfd::FileDialog::new()
-                    .set_file_name("keibidrop-sanitized.log")
-                    .save_file()
-                {
-                    let c_dest = CString::new(dest.to_string_lossy().to_string()).unwrap();
-                    let res = bindings::KD_SanitizeLogs(c_dest.as_ptr() as *mut i8);
-                    if res == 0 {
-                        println!("Sanitized logs saved to: {}", dest.display());
-                    } else {
-                        let err = get_last_error();
-                        eprintln!("Failed to export logs: {}", err);
-                    }
-                }
-            });
-        });
-
         app.on_disconnect_pressed(move || {
             // If downloads in progress and not yet confirmed, show warning instead
             if let Some(app) = weak_disconnect.upgrade() {
@@ -1650,34 +1909,40 @@ fn main() {
             });
         }
 
-        // Handle Add File: native file picker (multi-select) → copy to save folder → KD_AddFile
-        let save_path_add = to_save.clone();
+        // Handle Add File: native file picker (multi-select) → KD_AddFile. The
+        // engine serves the picked path itself (share in place, as kd does).
+        // The copy into the save folder that ran first doubled the disk use,
+        // failed on files another program held open (os error 32) and held
+        // every announce back until the copy was done.
         let weak_toast_add = app.as_weak();
+        let adding = Arc::new(AtomicUsize::new(0));
+        let adding_pick = adding.clone();
         app.on_add_file_pressed(move || {
-            let save_path = save_path_add.clone();
             let weak = weak_toast_add.clone();
+            let adding = adding_pick.clone();
             std::thread::spawn(move || {
                 if let Some(paths) = rfd::FileDialog::new().pick_files() {
-                    let count = paths.len();
-                    for path in paths {
-                        let path_str = path.to_string_lossy().to_string();
-                        let _ = std::fs::create_dir_all(&save_path);
-                        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        let dest = format!("{}/{}", save_path, filename);
-                        if let Err(e) = std::fs::copy(&path_str, &dest) {
-                            eprintln!("Failed to copy file to save folder: {}", e);
-                        }
-                        let c_path = CString::new(path_str).unwrap();
-                        let res = bindings::KD_AddFile(c_path.as_ptr() as *mut i8);
-                        if res != 0 {
-                            let err = get_last_error();
-                            eprintln!("Failed to add file: {}", err);
-                        }
+                    let _turning = AddingFiles::start(&weak, &adding);
+                    // One call for all picked files (KD_AddFilesAs), each under
+                    // its own name, as KD_AddFile names it.
+                    let mut list = String::new();
+                    for path in &paths {
+                        let Some(name) = path.file_name() else { continue };
+                        list.push_str(&list_escape(&path.to_string_lossy()));
+                        list.push('\t');
+                        list.push_str(&list_escape(&name.to_string_lossy()));
+                        list.push('\n');
                     }
+                    let c_list = CString::new(list.replace('\0', "")).unwrap_or_default();
+                    let res = bindings::KD_AddFilesAs(c_list.as_ptr() as *mut i8);
+                    if res < paths.len() as std::os::raw::c_int {
+                        eprintln!("Shared {} of {} picked files: {}", res.max(0), paths.len(), get_last_error());
+                    }
+                    let count = res.max(0) as usize;
                     if count == 1 {
-                        show_toast(&weak, "File shared with peer");
+                        show_toast(&weak, "File shared with your friend");
                     } else if count > 1 {
-                        show_toast(&weak, &format!("{} files shared with peer", count));
+                        show_toast(&weak, &format!("{} files shared with your friend", count));
                     }
                 }
             });
@@ -1687,6 +1952,7 @@ fn main() {
         let downloads_save = downloads.clone();
         let save_path_save = to_save.clone();
         let weak_save_offer = app.as_weak();
+        let weak_save_ui = app.as_weak();
         let offer_save = fuse_offer_pending.clone();
         app.on_save_file(move |filename| {
             let name = filename.to_string();
@@ -1717,6 +1983,11 @@ fn main() {
                         paused: false,
                     },
                 );
+            }
+            // Flip the card now; a small file can finish before the watcher's next tick.
+            if let Some(app) = weak_save_ui.upgrade() {
+                mark_row_downloading(&app.get_file_list(), &name);
+                app.set_any_downloading(true);
             }
 
             // Download in background thread
@@ -1817,8 +2088,11 @@ fn main() {
             let _ = Command::new("xdg-open").arg(&local_path).spawn();
             // On Windows, `explorer file.txt` opens the folder, not the file.
             // `cmd /c start "" "path"` opens the file with its default handler.
+            // Names inside folders carry "/", which no Windows name can hold.
             #[cfg(target_os = "windows")]
-            let _ = Command::new("cmd").args(["/c", "start", "", &local_path]).spawn();
+            let _ = Command::new("cmd")
+                .args(["/c", "start", "", &local_path.replace('/', "\\")])
+                .spawn();
         });
 
         app.on_unshare_file(move |filename| {
@@ -1834,22 +2108,16 @@ fn main() {
         let weak_offer_all = app.as_weak();
         let offer_all = fuse_offer_pending.clone();
         app.on_save_all_pressed(move || {
-            let file_count = bindings::KD_GetFileCount();
-            let mut to_save_names: Vec<String> = Vec::new();
-            for i in 0..file_count {
-                let name_ptr = bindings::KD_GetFileName(i);
-                if name_ptr.is_null() {
-                    continue;
-                }
-                let raw = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
-                let name = raw.trim_start_matches('/').to_string();
-                let dl = downloads_all.lock().unwrap();
-                let dominated = dl.get(&name).map_or(false, |d| d.saved || d.downloading);
-                drop(dl);
-                if !dominated && !is_hidden_file(&name) {
-                    to_save_names.push(name);
-                }
-            }
+            // One read of the list: the per-index getters sorted every name
+            // once per file, seconds on the UI thread for a large folder.
+            let (remote, _) = read_all_files();
+            let dl = downloads_all.lock().unwrap();
+            let to_save_names: Vec<String> = remote
+                .into_iter()
+                .map(|(name, _)| name)
+                .filter(|name| !dl.get(name).map_or(false, |d| d.saved || d.downloading))
+                .collect();
+            drop(dl);
             let total = to_save_names.len();
             if total == 0 {
                 show_toast(&weak_toast_all, "All files already saved");
@@ -1906,12 +2174,14 @@ fn main() {
         let weak_exit = app.as_weak();
         app.on_exit_pressed(move || {
             println!("Exit pressed, shutting down...");
-            bindings::KD_UnmountFilesystem();
-            bindings::KD_Disconnect();
-            bindings::KD_Stop();
+            // The window goes first: the teardown below may wait for a
+            // connect in flight to end, and nobody should watch it do that.
             if let Some(app) = weak_exit.upgrade() {
                 let _ = app.hide();
             }
+            bindings::KD_UnmountFilesystem();
+            bindings::KD_Disconnect();
+            bindings::KD_Stop();
         });
 
         // ---- Identity & Contacts ----
@@ -2042,7 +2312,7 @@ fn main() {
             }
         }
 
-        app.on_send_feedback(move |message, contact, rating| {
+        app.on_send_feedback(move |message, contact, rating, include_logs| {
             if let Some(app) = weak_fb.upgrade() {
                 app.set_feedback_sending(true);
             }
@@ -2050,16 +2320,21 @@ fn main() {
             let msg = message.to_string().replace('\0', "");
             let contact = contact.to_string().replace('\0', "");
             std::thread::spawn(move || {
-                let ok = {
+                // 0 sent, 1 sent without the log (the endpoint refused its size).
+                let res = {
                     let m = CString::new(msg).unwrap_or_default();
                     let c = CString::new(contact).unwrap_or_default();
                     bindings::KD_SendFeedback(
                         m.as_ptr() as *mut i8,
                         c.as_ptr() as *mut i8,
                         rating as std::os::raw::c_int,
-                    ) == 0
+                        include_logs as std::os::raw::c_int,
+                    )
                 };
-                if ok {
+                let ok = res == 0 || res == 1;
+                if res == 1 {
+                    show_toast(&weak, "Thanks. Your message was sent, without the logs.");
+                } else if ok {
                     show_toast(&weak, "Thanks. Your message was sent.");
                 } else {
                     show_toast(
@@ -2075,6 +2350,7 @@ fn main() {
                             app.set_feedback_message("".into());
                             app.set_feedback_contact("".into());
                             app.set_feedback_rating(0);
+                            app.set_feedback_include_logs(false);
                         }
                     }
                 });
@@ -2103,27 +2379,27 @@ fn main() {
             });
         }
 
-        // ---- FUSE offer after the first received file ----
+        // ---- Teleport (FUSE) offer after the first received file ----
 
         {
             let body_tail = if fuse_present {
-                "Turn on the virtual folder."
+                "Turn on Teleport."
             } else if cfg!(target_os = "macos") {
-                "Install macFUSE."
+                "Teleport needs macFUSE."
             } else if cfg!(target_os = "windows") {
-                "Install WinFsp."
+                "Teleport needs WinFsp."
             } else {
-                "Install fuse3."
+                "Teleport needs fuse3."
             };
             app.set_fuse_offer_body(
                 format!(
-                    "Want their files as a folder you can open in any app? {}",
+                    "Teleport allows you to instantly open shared files. {}",
                     body_tail
                 )
                 .into(),
             );
             let action = if fuse_present {
-                "Turn on"
+                "Turn on Teleport"
             } else if cfg!(target_os = "macos") {
                 "Get macFUSE"
             } else if cfg!(target_os = "windows") {
@@ -2155,7 +2431,7 @@ fn main() {
                     bindings::KD_SetNoFUSE(0);
                     show_toast(
                         &weak_offer_ok,
-                        "The virtual folder starts at the next connection.",
+                        "Teleport starts at the next connection.",
                     );
                 } else {
                     // Next launch mounts once the driver is installed.
@@ -2225,6 +2501,8 @@ fn main() {
         });
 
         let weak_save_contact = app.as_weak();
+        app.on_save_contact_declined(|| decline_contact_offer());
+
         app.on_save_peer_as_contact(move |name| {
             let name_str = name.to_string();
             if name_str.is_empty() {
@@ -2233,7 +2511,7 @@ fn main() {
             let c_name = CString::new(name_str.clone()).unwrap();
             let res = bindings::KD_SaveCurrentPeerAsContact(c_name.as_ptr() as *mut i8);
             if res == 0 {
-                // The engine arms auto-connect for a first saved contact (BUGS 10).
+                // Auto-connect is the contacts panel's switch; saving leaves it as it was.
                 let auto = config_auto_connect_peer();
                 let saved_msg = if auto.eq_ignore_ascii_case(&name_str) {
                     format!("Saved as '{}'. Reconnects to {} on its own.", name_str, name_str)
@@ -2301,6 +2579,14 @@ fn main() {
                     &weak_auto,
                     &format!("Connects to '{}' when the app starts.", name),
                 );
+            }
+        });
+
+        // Overlays blur the window behind them (Figma Screen 13).
+        let weak_backdrop = app.as_weak();
+        app.on_capture_backdrop(move || {
+            if let Some(app) = weak_backdrop.upgrade() {
+                install_backdrop(&app);
             }
         });
 
@@ -2494,11 +2780,35 @@ fn main() {
 
         // Drag-and-drop: intercept winit events for OS file drops
         let weak_dnd = app.as_weak();
-        let save_path_dnd = to_save.clone();
+        let adding_drop = adding.clone();
+        let sized = std::cell::Cell::new(false);
         #[allow(deprecated)]
         app.window().on_winit_window_event(move |_slint_window, event| {
             use slint::winit_030::winit;
+            // The first event means the window exists: size it for its screen.
+            if !sized.get() {
+                if let Some(app) = weak_dnd.upgrade() {
+                    sized.set(true);
+                    first_size(&app);
+                }
+            }
             match event {
+                winit::event::WindowEvent::Resized(size) => {
+                    if let Some(app) = weak_dnd.upgrade() {
+                        fit_zoom(&app, *size);
+                    }
+                    WinitWindowEventResult::Propagate
+                }
+                // Another screen: the adapter applies its factor, then the zoom goes back on.
+                winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                    let weak = weak_dnd.clone();
+                    slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                        if let Some(app) = weak.upgrade() {
+                            refit(&app);
+                        }
+                    });
+                    WinitWindowEventResult::Propagate
+                }
                 winit::event::WindowEvent::HoveredFile(_path) => {
                     if let Some(app) = weak_dnd.upgrade() {
                         app.set_drag_hovering(true);
@@ -2512,44 +2822,67 @@ fn main() {
                     WinitWindowEventResult::Propagate
                 }
                 winit::event::WindowEvent::DroppedFile(path) => {
+                    // The Teleport screen has no grid: a toast shows the drop.
+                    let mut on_teleport = false;
                     if let Some(app) = weak_dnd.upgrade() {
                         app.set_drag_hovering(false);
+                        on_teleport = app.get_current_screen() == 2;
                     }
                     let path_str = path.to_string_lossy().to_string();
                     println!("File dropped: {}", path_str);
-                    let save = save_path_dnd.clone();
                     let path = path.to_path_buf();
+                    // Started here, before the thread: the ring keeps turning
+                    // from the hover straight into the add.
+                    let turning = AddingFiles::start(&weak_dnd, &adding_drop);
+                    let weak_toast = weak_dnd.clone();
+                    // Shared in place: the engine serves the dropped path (kd and
+                    // the FUSE mount do the same). The copy into the save folder
+                    // that ran first doubled the disk use on the system drive,
+                    // failed on files another program held open (os error 32),
+                    // and a folder reached the peer one file at a time, each
+                    // after its own full copy.
                     std::thread::spawn(move || {
-                        let _ = std::fs::create_dir_all(&save);
+                        let _turning = turning;
+                        let mut shared = false;
                         if path.is_dir() {
                             let dir_name = path.file_name()
                                 .map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_default();
+                            // One call for the whole folder (KD_AddFilesAs): the
+                            // engine announces it in batches. A call per file sent
+                            // one message to the peer each and locked the list for
+                            // each round trip.
+                            let mut list = String::new();
+                            let mut count = 0usize;
                             for entry in walkdir(&path) {
                                 if entry.is_file() {
                                     let rel = entry.strip_prefix(&path).unwrap_or(&entry);
-                                    let remote_name = format!("{}/{}", dir_name, rel.to_string_lossy());
-                                    let dest = Path::new(&save).join(&dir_name).join(rel);
-                                    if let Some(parent) = dest.parent() {
-                                        let _ = std::fs::create_dir_all(parent);
+                                    // Component-wise join: the peer gets "/" on
+                                    // Windows too, not a name with "\" inside.
+                                    let rel: Vec<String> = rel
+                                        .iter()
+                                        .map(|c| c.to_string_lossy().to_string())
+                                        .collect();
+                                    let remote_name = format!("{}/{}", dir_name, rel.join("/"));
+                                    if is_hidden_path(&remote_name) {
+                                        continue;
                                     }
-                                    let _ = std::fs::copy(&entry, &dest);
-                                    let c_local = CString::new(dest.to_string_lossy().to_string()).unwrap();
-                                    let c_remote = CString::new(remote_name.clone()).unwrap();
-                                    let res = bindings::KD_AddFileAs(c_local.as_ptr() as *mut i8, c_remote.as_ptr() as *mut i8);
-                                    if res != 0 {
-                                        eprintln!("Failed to add: {}", remote_name);
-                                    }
+                                    list.push_str(&list_escape(&entry.to_string_lossy()));
+                                    list.push('\t');
+                                    list.push_str(&list_escape(&remote_name));
+                                    list.push('\n');
+                                    count += 1;
                                 }
                             }
-                            println!("Directory added: {}", path_str);
+                            let c_list = CString::new(list.replace('\0', "")).unwrap_or_default();
+                            let res = bindings::KD_AddFilesAs(c_list.as_ptr() as *mut i8);
+                            shared = res > 0;
+                            if res < count as std::os::raw::c_int {
+                                eprintln!("Shared {} of {} files from {}: {}", res.max(0), count, path_str, get_last_error());
+                            } else {
+                                println!("Shared {} files from {}", res, path_str);
+                            }
                         } else {
-                            if let Some(fname) = path.file_name() {
-                                let dest = format!("{}/{}", save, fname.to_string_lossy());
-                                if let Err(e) = std::fs::copy(&path, &dest) {
-                                    eprintln!("Failed to copy dropped file: {}", e);
-                                }
-                            }
                             let c_path = CString::new(path_str.clone()).unwrap();
                             let res = bindings::KD_AddFile(c_path.as_ptr() as *mut i8);
                             if res != 0 {
@@ -2557,7 +2890,12 @@ fn main() {
                                 eprintln!("Failed to add dropped file: {}", err);
                             } else {
                                 println!("Dropped file added: {}", path_str);
+                                shared = true;
                             }
+                        }
+                        // Dropping still works with Teleport; the folder is the way we suggest.
+                        if on_teleport && shared {
+                            show_toast(&weak_toast, "Shared with your friend. Tip: use the Teleport Folder.");
                         }
                     });
                     WinitWindowEventResult::Propagate
@@ -2630,14 +2968,18 @@ fn main() {
         let _state_timer = {
             let timer = slint::Timer::default();
             let weak_state = app.as_weak();
+            let engine_connecting_state = engine_connecting.clone();
+            let tail_spawned = std::rc::Rc::new(std::cell::Cell::new(false));
+            let disconnecting_state = disconnecting.clone();
+            let watcher_running_state = watcher_running.clone();
+            let downloads_state = downloads.clone();
+            let to_save_state = to_save.clone();
+            let current_folder_state = current_folder.clone();
             timer.start(
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_secs(1),
                 move || {
                     let Some(app) = weak_state.upgrade() else { return };
-                    if app.get_current_screen() == 0 {
-                        return;
-                    }
                     let p = bindings::KD_SessionStateLine();
                     if p.is_null() {
                         return;
@@ -2650,9 +2992,57 @@ fn main() {
                     let _mount_ready = parts.next().unwrap_or("");
                     let recv: u64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
                     let sent: u64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                    // The free relay lane is slowing a transfer down right now.
+                    let throttled = parts.next() == Some("true");
+                    if app.get_current_screen() == 0 {
+                        // The connect screen mirrors a connect the engine runs on
+                        // its own. The manual paths own room_action while they
+                        // run and land the screen themselves.
+                        let disconnecting_now = disconnecting_state.load(Ordering::Relaxed);
+                        match state.as_str() {
+                            "waiting_for_peer" if !disconnecting_now => {
+                                if app.get_room_action() == 0 && !engine_connecting_state.get() {
+                                    engine_connecting_state.set(true);
+                                    app.set_room_action(1);
+                                    app.set_error_message(slint::SharedString::default());
+                                    app.set_status_message(slint::SharedString::default());
+                                }
+                                if engine_connecting_state.get() {
+                                    app.set_connect_status(slint::SharedString::from(text.clone()));
+                                }
+                            }
+                            "connected" if !disconnecting_now => {
+                                // The engine's session, or one it finished before
+                                // this tick. Land it once.
+                                if (engine_connecting_state.get() || app.get_room_action() == 0)
+                                    && !tail_spawned.replace(true)
+                                {
+                                    engine_connecting_state.set(false);
+                                    let target = if app.get_fuse_mode() { 2 } else { 1 };
+                                    let weak = weak_state.clone();
+                                    let running = watcher_running_state.clone();
+                                    let downloads = downloads_state.clone();
+                                    let save_path = to_save_state.clone();
+                                    let current_folder = current_folder_state.clone();
+                                    std::thread::spawn(move || {
+                                        finish_connect_ui(weak, running, downloads, save_path, current_folder, target);
+                                    });
+                                }
+                            }
+                            _ => {
+                                if engine_connecting_state.replace(false) {
+                                    app.set_room_action(0);
+                                    app.set_connect_status(slint::SharedString::default());
+                                }
+                                tail_spawned.set(false);
+                            }
+                        }
+                        return;
+                    }
                     app.set_session_state(slint::SharedString::from(state));
                     app.set_session_state_text(slint::SharedString::from(text));
                     app.set_throughput_text(slint::SharedString::from(throughput_label(recv, sent)));
+                    app.set_relay_throttled(throttled);
                 },
             );
             timer
@@ -2675,6 +3065,11 @@ fn main() {
                 slint::TimerMode::Repeated,
                 std::time::Duration::from_millis(200),
                 move || {
+                    // Arrivals print as one line per tick: a folder from the peer
+                    // is one event per file, and a line each held this, the UI
+                    // thread, for thousands of terminal writes.
+                    let mut arrivals = 0usize;
+                    let mut first_arrival = String::new();
                     loop {
                         let evt_ptr = bindings::KD_PollEvent();
                         if evt_ptr.is_null() {
@@ -2682,7 +3077,14 @@ fn main() {
                         }
                         let evt = CStr::from_ptr(evt_ptr).to_string_lossy().to_string();
                         libc::free(evt_ptr as *mut libc::c_void);
-                        println!("[Event] {}", evt);
+                        if let Some(name) = evt.strip_prefix("file_arrived:") {
+                            if arrivals == 0 {
+                                first_arrival = name.to_string();
+                            }
+                            arrivals += 1;
+                        } else {
+                            println!("[Event] {}", evt);
+                        }
 
                         // Identity error (failed to load, using ephemeral)
                         if evt.starts_with("identity_error:") {
@@ -2721,15 +3123,15 @@ fn main() {
                         // remounts it and says when it is back. The peer's session
                         // is untouched either way.
                         if evt.starts_with("mount_gone:") {
-                            show_toast(&weak_evt, "The folder was unmounted. Remounting it now.");
-                            system_notify("The folder was unmounted. Bringing it back.");
+                            show_toast(&weak_evt, "The Teleport Folder closed. Opening it again.");
+                            system_notify("The Teleport Folder closed. Opening it again.");
                         } else if evt.starts_with("mount_back:") {
-                            show_toast(&weak_evt, "The folder is back.");
-                            system_notify("The folder is back.");
+                            show_toast(&weak_evt, "The Teleport Folder is back.");
+                            system_notify("The Teleport Folder is back.");
                         } else if let Some(reason) = evt.strip_prefix("mount_failed:") {
-                            show_toast(&weak_evt, "The folder could not be remounted.");
+                            show_toast(&weak_evt, "The Teleport Folder could not open again.");
                             system_notify(&format!(
-                                "The folder could not be remounted ({}). Files still arrive in the save folder.",
+                                "The Teleport Folder could not open again ({}). Files still arrive in the save folder.",
                                 reason
                             ));
                         } else if let Some(free_mb) = evt.strip_prefix("disk_low:") {
@@ -2737,7 +3139,7 @@ fn main() {
                             // need bytes from the peer fail until space is freed.
                             show_toast(&weak_evt, "The save folder's disk is almost full.");
                             system_notify(&format!(
-                                "The save folder's disk is almost full ({} MB free). Reads from the peer stop until space is freed.",
+                                "The save folder's disk is almost full ({} MB free). Files from your friend pause until space is freed.",
                                 free_mb
                             ));
                         } else if evt.starts_with("disk_ok:") {
@@ -2791,10 +3193,10 @@ fn main() {
                                 refresh_tokens_status(&app);
                             }
                         } else if let Some(gb) = evt.strip_prefix("tokens_added:") {
-                            show_toast(
-                                &weak_evt,
-                                &format!("Relay credit added: {gb} GiB. You are set."),
-                            );
+                            let msg = format!("Relay credit added: {gb} GiB. You are set.");
+                            show_toast(&weak_evt, &msg);
+                            // The purchase lands while the person is in the browser, paying.
+                            system_notify(&msg);
                             if let Some(app) = weak_evt.upgrade() {
                                 refresh_tokens_status(&app);
                             }
@@ -2862,13 +3264,13 @@ fn main() {
                             watcher_running_evt.store(false, Ordering::Relaxed);
 
                             let msg = if evt.starts_with("peer_disconnected:") {
-                                "Peer disconnected"
+                                "Your friend disconnected"
                             } else {
                                 "Connection lost"
                             };
                             away_notified.set(false);
                             system_notify(if evt.starts_with("peer_disconnected:") {
-                                "The other side disconnected."
+                                "Your friend disconnected."
                             } else {
                                 "Gave up reconnecting. Connect again from the app."
                             });
@@ -2913,6 +3315,12 @@ fn main() {
                         }
                     }
 
+                    match arrivals {
+                        0 => {}
+                        1 => println!("[Event] file_arrived:{}", first_arrival),
+                        n => println!("[Event] file_arrived: {} files, first {}", n, first_arrival),
+                    }
+
                     // Send batched notification for files that arrived this tick
                     let mut files = arrived_files.lock().unwrap();
                     if !files.is_empty() {
@@ -2941,6 +3349,73 @@ fn main() {
         // Cleanup
         bindings::KD_Stop();
         println!("KeibiDrop stopped.");
+    }
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::{is_hidden_path, list_escape, list_unescape};
+
+    // The list lines between the app and the engine keep every name whole,
+    // a Windows path with its backslashes too (rustbridge listEscape).
+    #[test]
+    fn list_names_round_trip() {
+        for name in [
+            "plain.txt",
+            r"C:\Users\alice\Desktop\Holiday\photo 1.png",
+            "tab\there",
+            "line\nbreak",
+            r"trailing\",
+        ] {
+            let escaped = list_escape(name);
+            assert!(!escaped.contains('\t') && !escaped.contains('\n'), "{escaped:?}");
+            assert_eq!(list_unescape(&escaped), name);
+        }
+        // What Go's listEscape writes for a Windows path.
+        assert_eq!(list_unescape(r"C:\\Users\\x"), r"C:\Users\x");
+    }
+
+    // A hidden file stays hidden inside a folder, not only at the top.
+    #[test]
+    fn hidden_by_own_name_inside_folders() {
+        assert!(is_hidden_path(".DS_Store"));
+        assert!(is_hidden_path("Holiday/.DS_Store"));
+        assert!(is_hidden_path("a/b/Thumbs.db"));
+        assert!(is_hidden_path("x/.fseventsd/fseventsd-uuid"));
+        assert!(!is_hidden_path("Holiday/photo 1.png"));
+    }
+
+    // Saved Files: a card acts on its whole name and shows the name inside
+    // the open folder; folders group by "/" on every platform.
+    #[test]
+    fn saved_cards_show_the_name_inside_the_folder() {
+        let base = std::env::temp_dir().join(format!("kd-scan-{}", std::process::id()));
+        let deep = base.join("Projects").join("2025 Drafts");
+        std::fs::create_dir_all(&deep).unwrap();
+        for f in [deep.join("photo 1.png"), deep.join(".DS_Store"), base.join("Projects").join("top.txt")] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        let root = base.to_string_lossy().to_string();
+        let cards = |folder: &str| -> Vec<(String, String, String)> {
+            let mut cards: Vec<_> = super::scan_save_folder(&root, folder)
+                .into_iter()
+                .map(|f| (f.name.to_string(), f.label.to_string(), f.file_type.to_string()))
+                .collect();
+            cards.sort();
+            cards
+        };
+        let card = |name: &str, label: &str, kind: &str| (name.to_string(), label.to_string(), kind.to_string());
+
+        assert_eq!(cards(""), vec![card("Projects", "Projects", "folder")]);
+        assert_eq!(
+            cards("Projects"),
+            vec![card("2025 Drafts", "2025 Drafts", "folder"), card("Projects/top.txt", "top.txt", "text")]
+        );
+        assert_eq!(
+            cards("Projects/2025 Drafts"),
+            vec![card("Projects/2025 Drafts/photo 1.png", "photo 1.png", "image")]
+        );
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }
 

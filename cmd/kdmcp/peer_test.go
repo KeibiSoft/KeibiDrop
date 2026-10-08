@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package main
 
@@ -89,6 +86,7 @@ func TestSafeSendPathContainment(t *testing.T) {
 			}
 			if terr == nil {
 				t.Fatalf("expected refusal with %s, got path %q", tc.wantCode, got)
+				return
 			}
 			if terr.Code != tc.wantCode {
 				t.Fatalf("expected code %s, got %s (%s)", tc.wantCode, terr.Code, terr.Message)

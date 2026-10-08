@@ -1,10 +1,7 @@
 //go:build !android
 
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package filesystem
 
@@ -179,6 +176,8 @@ type Dir struct {
 	// onSlowFetch is the session's ear for a demand fetch that held a reader
 	// for seconds (SlowFetchNotice). Root-only and atomic like the two above.
 	onSlowFetch atomic.Pointer[func(waited time.Duration)]
+	// onDestroy runs in Destroy, before the host frees the volume. Root-only.
+	onDestroy atomic.Pointer[func()]
 	// disk is the free-space guard of the save folder (disk_guard.go). Root-only.
 	disk diskGuard
 
@@ -348,6 +347,11 @@ func (d *Dir) SetOnSlowFetch(fn func(waited time.Duration)) {
 	d.onSlowFetch.Store(&fn)
 }
 
+// SetOnDestroy sets what Destroy runs. Call it on the root before the mount.
+func (d *Dir) SetOnDestroy(fn func()) {
+	d.onDestroy.Store(&fn)
+}
+
 // noteSlowFetch reports a demand fetch that held a reader for waited. It
 // routes through the root and does nothing while no session listens.
 func (d *Dir) noteSlowFetch(waited time.Duration) {
@@ -426,8 +430,16 @@ type File struct {
 	LastAnnouncedMtimeNs int64
 
 	// WasTruncatedToZero records an explicit Truncate(size=0) call. With
-	// HadEdits, it separates legitimate empty files from transient states.
+	// HadEdits, it separates legitimate empty files from transient states. A
+	// cache copy truncated to zero holds no unfetched bytes any more: every
+	// byte on disk from then on is the app's, so a write needs no fill.
 	WasTruncatedToZero bool
+
+	// AnnounceAfterFill is set by Release when the edited file still has
+	// chunks never fetched (A6, swap-save-stamps 2026-10-01): the announce
+	// would present the holes as content, so it waits for the background
+	// fill, which announces on completion. Guarded by metaMu.
+	AnnounceAfterFill bool
 
 	// LastNotifiedSize is the file size last sent to the peer in ADD_FILE. It
 	// prevents duplicate same-size notifications during a file copy.
@@ -436,6 +448,9 @@ type File struct {
 	// PeerStoppedSharing is set when the peer sends REMOVE_FILE during a download.
 	// On Release with 0 open handles, the code removes the file reference.
 	PeerStoppedSharing bool
+	// localGone: a local unlink or a rename over this object's path replaced
+	// it, so no warm landing may write it (landWarmFile). Guarded by metaMu.
+	localGone bool
 
 	openFileCounter OpenFileCounter
 
@@ -483,13 +498,28 @@ type File struct {
 
 	// Download resumption state.
 	Download DownloadState
+	// WireBytes counts the bytes received from the peer for this file on every
+	// lane (demand, read-ahead, prefetch, sibling warm). A test reads it to
+	// prove a change moved only what differs; Download.BytesDownloaded counts
+	// served and prefetched bytes and misses the read-ahead lane.
+	WireBytes atomic.Uint64
 
 	// Bitmap tracks which 512 KiB chunks are downloaded from the remote peer.
 	// It is nil for local-origin files and empty files (size=0).
 	Bitmap *ChunkBitmap
 
+	// Ledger is the per-chunk version state of a cache copy (chunk_ledger.go):
+	// made at the first local write into one, restored from a v2 sidecar, nil
+	// for a local-origin file. Guarded by metaMu like Bitmap; reset with it.
+	Ledger *ChunkLedger
+
 	// PrefetchCancel cancels the background prefetch goroutine for this file.
 	PrefetchCancel context.CancelFunc
+	// fillActive is set while a prefetchFile goroutine runs. The gates that
+	// start a fill (Release, OpenEx, the announce resume) read it, so a fill
+	// that ended short of complete (the link dropped) can be started again:
+	// a cancel func left behind kept the deferred announce waiting for ever.
+	fillActive atomic.Bool
 
 	// sidecarTimer coalesces .kdbitmap writes after on-demand landings (sidecar.go).
 	sidecarMu    sync.Mutex
@@ -553,6 +583,13 @@ func (ofc *OpenFileCounter) Release() uint64 {
 
 	ofc.counter--
 	return ofc.counter
+}
+
+// Reset drops the count: the handle it counted is gone.
+func (ofc *OpenFileCounter) Reset() {
+	ofc.mu.Lock()
+	defer ofc.mu.Unlock()
+	ofc.counter = 0
 }
 
 func (ofc *OpenFileCounter) CountOpenDescriptors() uint64 {

@@ -1,11 +1,8 @@
 // ABOUTME: Micro-benchmark for a full inbound handshake, the once-per-connection
 // ABOUTME: cost that any deadline bookkeeping on that path has to stay trivial against.
 
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package session
 

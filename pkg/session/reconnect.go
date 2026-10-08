@@ -1,8 +1,5 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2025 KeibiSoft S.R.L.
-// This Source Code Form is subject to the terms of the Mozilla Public
-// License, v. 2.0. If a copy of the MPL was not distributed with this
-// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 package session
 
@@ -111,7 +108,10 @@ func (r *ReconnectManager) IsReconnectInitiator() bool {
 	if r.session == nil {
 		return false
 	}
-	return r.session.OwnFingerprint < r.session.ExpectedPeerFingerprint
+	// The peer is read under its lock: a register can write it while this
+	// loop runs (a race the web fuzzer hit). A TOFU handshake writes it after
+	// the manager exists, so it is never cached here.
+	return r.session.OwnFingerprint < r.session.PeerFingerprint()
 }
 
 // OnDisconnect is called when the health monitor detects a connection loss.
@@ -344,10 +344,12 @@ func (r *ReconnectManager) reconnectBridge(logger *slog.Logger, initiator bool) 
 
 		outConn, err := r.DialBridge("pair2")
 		if err != nil {
+			r.dropInboundLeg(inConn)
 			return fmt.Errorf("bridge dial (outbound): %w", err)
 		}
 		if err := PerformOutboundHandshakeOnConn(r.session, outConn); err != nil {
 			_ = outConn.Close()
+			r.dropInboundLeg(inConn)
 			return fmt.Errorf("bridge outbound handshake: %w", err)
 		}
 
@@ -366,15 +368,40 @@ func (r *ReconnectManager) reconnectBridge(logger *slog.Logger, initiator bool) 
 
 	inConn, err := r.DialBridge("pair2")
 	if err != nil {
+		r.dropOutboundLeg(outConn)
 		return fmt.Errorf("bridge dial (inbound): %w", err)
 	}
 	if err := PerformInboundHandshakeWait(r.session, inConn, inboundHandshakeTimeout); err != nil {
 		_ = inConn.Close()
+		r.dropOutboundLeg(outConn)
 		return fmt.Errorf("bridge inbound handshake: %w", err)
 	}
 
 	logger.Info("Both directions reconnected via bridge (responder)")
 	return nil
+}
+
+// dropOutboundLeg ends the leg an attempt built before its other half failed.
+// Left open, the leg stays parked at the bridge under the room token, and the
+// next attempt's fresh leg gets paired with it: the daemon then talks to
+// itself for a whole handshake bound (seen in the bridge journal, 2026-09-30).
+// The session also loses the half-built socket, so the next attempt starts
+// clean and no caller hands a dead socket to the transport.
+func (r *ReconnectManager) dropOutboundLeg(c net.Conn) {
+	_ = c.Close()
+	if r.session != nil {
+		r.session.SetOutboundConn(nil)
+		r.session.ResetOutboundCrypto()
+	}
+}
+
+// dropInboundLeg is dropOutboundLeg for the initiator's inbound half.
+func (r *ReconnectManager) dropInboundLeg(c net.Conn) {
+	_ = c.Close()
+	if r.session != nil {
+		r.session.SetInboundConn(nil)
+		r.session.ResetInboundCrypto()
+	}
 }
 
 // reconnectDirectInitiator dials the peer, then accepts the return leg.
@@ -426,7 +453,7 @@ func (r *ReconnectManager) dialPeerDirect(logger *slog.Logger) error {
 	if r.RelayLookup == nil {
 		return fmt.Errorf("outbound failed and no relay lookup: %w", err)
 	}
-	ip, port, lookupErr := r.RelayLookup(r.session.ExpectedPeerFingerprint)
+	ip, port, lookupErr := r.RelayLookup(r.session.PeerFingerprint())
 	if lookupErr != nil {
 		return fmt.Errorf("relay lookup failed: %w", lookupErr)
 	}
