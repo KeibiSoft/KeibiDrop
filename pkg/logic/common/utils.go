@@ -290,9 +290,10 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		kd.OnPeerVerified(computedFp)
 	}
 
+	// The default listen port, not the outbound one: nothing listens on that.
 	if !config.ValidPeerPort(peerReg.Listen.Port) {
-		logger.Warn("Provided outbound port is out of known range, defaulting to config", "provided-port", peerReg.Listen.Port, "default-to", config.OutboundPort)
-		peerReg.Listen.Port = config.OutboundPort
+		logger.Warn("Peer listen port is out of range, using the default", "provided-port", peerReg.Listen.Port, "default-to", config.InboundPort)
+		peerReg.Listen.Port = config.InboundPort
 	}
 
 	s.PeerPort = peerReg.Listen.Port

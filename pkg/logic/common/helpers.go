@@ -217,31 +217,9 @@ func ParsePeerDirectAddress(addr string) (ip string, zone string, port int, err 
 	return ip, zone, port, nil
 }
 
-func GetLocalIPv6() (string, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "", err
-	}
-
-	for _, iface := range ifaces {
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				continue
-			}
-			if ip.To16() != nil && ip.To4() == nil {
-				// Loopback, ULA, and link-local are all acceptable.
-				return ip.String(), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no IPv6 address found")
-}
-
-// GetGlobalIPv6 returns a stable, non-temporary global IPv6 address.
-// RFC 4941 privacy extensions rotate temporary addresses. Connections bound to a
-// temporary address break when the OS deprecates it.
+// GetGlobalIPv6 returns a stable, non-temporary global IPv6 address, or "" when
+// the host has none. RFC 4941 privacy extensions rotate temporary addresses.
+// Connections bound to a temporary address break when the OS deprecates it.
 func GetGlobalIPv6() (string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -285,9 +263,13 @@ func GetGlobalIPv6() (string, error) {
 		}
 	}
 
+	// No global address: advertise none. The fallback here was the first IPv6
+	// of any kind, ::1 on macOS and Linux and fe80:: on Windows, and the peer
+	// dialed it before its IPv4 dial or the bridge (BUGS 35). With none, the
+	// joiner skips the IPv6 dial, and the creator takes the bridge unless the
+	// relay saw a public IPv4. Tests pass their address to NewKeibiDropWithIP.
 	if len(candidates) == 0 {
-		// Fall back to any local IPv6 for testing.
-		return GetLocalIPv6()
+		return "", nil
 	}
 
 	// The first address on a preferred interface is usually the stable one.

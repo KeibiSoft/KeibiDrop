@@ -352,3 +352,39 @@ func TestAcceptConn_ConcurrentTeardownNilsListener_RaceClean(t *testing.T) {
 	}
 	<-writerDone
 }
+
+// A listen port outside 26000-27000 is never dialed by a peer nor probed by the
+// relay, so the engine refuses it at start; it went to the bridge with no error
+// (BUGS 34).
+func TestNewKeibiDropRefusesAListenPortOutsideThePeerRange(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	relayURL, _ := url.Parse("https://localhost:9999")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for _, port := range []int{25999, 27001, 44300} {
+		_, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
+		require.Error(t, err, "port %d", port)
+		require.Contains(t, err.Error(), "26000-27000", "port %d", port)
+	}
+}
+
+// After ShutdownAndWait the listen port is free, so kd stop can answer and the
+// next start binds it. After Shutdown alone the Run loop had not closed the
+// listener yet (BUGS 36; with a FUSE mount up, for 60 s).
+func TestShutdownAndWaitFreesTheListenPort(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	relayURL, _ := url.Parse("https://localhost:9999")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	port := pickFreePortPair(t)
+	kd, err := NewKeibiDropWithIP(ctx, logger, false, relayURL, port, port+1, "", t.TempDir(), false, false, "::1")
+	require.NoError(t, err)
+	go kd.Run()
+
+	require.True(t, kd.ShutdownAndWait(5*time.Second), "Run did not return")
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	require.NoError(t, err, "the listen port is still bound after ShutdownAndWait")
+	require.NoError(t, ln.Close())
+}

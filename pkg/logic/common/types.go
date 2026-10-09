@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/identity"
 	"github.com/KeibiSoft/KeibiDrop/pkg/logic/service"
@@ -195,6 +196,7 @@ type KeibiDrop struct {
 	parentCtx    context.Context    // The context the frontend built the engine from, kept to report that mistake.
 	shutdown     chan struct{}      // Shutdown closes it to exit Run permanently.
 	shutdownOnce sync.Once
+	runExited    chan struct{} // Run closes it when it returns for good: FUSE unmounted, listener closed.
 	mu           sync.Mutex
 
 	refreshSession func() *session.Session
@@ -313,6 +315,14 @@ func NewKeibiDrop(ctx context.Context, logger *slog.Logger, isFuse bool, relayUR
 // NewKeibiDropWithIP is NewKeibiDrop with an explicit IPv6 address instead of a
 // network probe. It enables tests on machines without a global IPv6 address.
 func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, relayURL *url.URL, inboundPort int, defaultOutboundPort int, toMount string, toSave string, prefetchOnOpen bool, pushOnWrite bool, ipv6Address string) (*KeibiDrop, error) {
+	// A peer dials a listen port only in the peer range and the relay probes only
+	// that range, so a listener outside it is never reached and every session went
+	// to the bridge with no error (BUGS 34). Port 0, any free port, is for tests.
+	if inboundPort != 0 && !config.ValidPeerPort(inboundPort) {
+		return nil, fmt.Errorf("inbound port %d is outside %d-%d, the only ports peers dial",
+			inboundPort, config.MinPeerPort, config.MaxPeerPort)
+	}
+
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -358,6 +368,7 @@ func NewKeibiDropWithIP(ctx context.Context, logger *slog.Logger, isFuse bool, r
 		Cancel:          cancel,
 		parentCtx:       parent,
 		shutdown:        make(chan struct{}),
+		runExited:       make(chan struct{}),
 		mu:              sync.Mutex{},
 		refreshSession:  refreshSession,
 		ToMount:         toMount,
@@ -718,6 +729,20 @@ func (kd *KeibiDrop) Shutdown() {
 	kd.cancelContext()
 }
 
+// ShutdownAndWait is Shutdown, then a wait of up to timeout for Run to return:
+// the FUSE mount is gone and the listener closed. A process that exits before
+// that, mid-unmount, stays alive on macOS for the 60 s macFUSE timeout and keeps
+// its port bound (BUGS 36). It reports whether Run returned in time.
+func (kd *KeibiDrop) ShutdownAndWait(timeout time.Duration) bool {
+	kd.Shutdown()
+	select {
+	case <-kd.runExited:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 // Run is the main loop. Call it as a goroutine.
 func (kd *KeibiDrop) Run() {
 	logger := kd.logger.With("method", "run-state")
@@ -798,6 +823,13 @@ func (kd *KeibiDrop) Run() {
 					close(done)
 				}
 				logger.Info("Run loop: permanent shutdown")
+				if kd.runExited != nil { // Nil in tests that build a bare KeibiDrop.
+					select {
+					case <-kd.runExited:
+					default:
+						close(kd.runExited)
+					}
+				}
 				return
 			default:
 			}

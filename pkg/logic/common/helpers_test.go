@@ -6,11 +6,26 @@ package common
 
 import (
 	"encoding/base64"
+	"net"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+// A host with no global IPv6 advertises none, and its peer goes to IPv4 or the
+// bridge. It advertised ::1 on macOS and Linux and fe80:: on Windows (BUGS 35).
+func TestGetGlobalIPv6_NeverLoopbackOrLinkLocal(t *testing.T) {
+	ip, err := GetGlobalIPv6()
+	require.NoError(t, err)
+	if ip == "" {
+		return // No global IPv6 on this host: the case of the fix.
+	}
+	parsed := net.ParseIP(ip)
+	require.NotNil(t, parsed, "not an IP: %q", ip)
+	require.False(t, parsed.IsLoopback() || parsed.IsLinkLocalUnicast(),
+		"advertised %s, which no other host can dial", ip)
+}
 
 func TestGetLinkLocalAddress(t *testing.T) {
 	addr, err := GetLinkLocalAddress(26431)

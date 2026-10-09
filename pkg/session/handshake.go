@@ -168,9 +168,11 @@ func PerformInboundHandshakeWait(session *Session, conn net.Conn, firstByte time
 		return fmt.Errorf("fingerprint mismatch: got %s, expected %s", computed, session.ExpectedPeerFingerprint)
 	}
 
+	// OutboundPort carries the sender's listen port (see DefaultInboundPort where
+	// the message is built), so the fallback is the default listen port.
 	if !config.ValidPeerPort(int(msg.OutboundPort)) {
-		logger.Warn("Provided outbound port is out of known range, defaulting to config", "provided-port", msg.OutboundPort, "default-to", config.OutboundPort)
-		msg.OutboundPort = config.OutboundPort
+		logger.Warn("Peer listen port is out of range, using the default", "provided-port", msg.OutboundPort, "default-to", config.InboundPort)
+		msg.OutboundPort = config.InboundPort
 	}
 
 	session.PeerPubKeys = peerKeys

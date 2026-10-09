@@ -34,7 +34,7 @@ func TestJoinRoom_FirstRelayPollsAreQuick(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	port := freeTCPPort(t)
+	port := pickFreePortPair(t)
 	kd, err := NewKeibiDropWithIP(ctx, roundTestLogger(), false, relay, port, port+1, "", t.TempDir(), false, false, "::1")
 	require.NoError(t, err)
 	kd.BridgeAddr = "127.0.0.1:9"
