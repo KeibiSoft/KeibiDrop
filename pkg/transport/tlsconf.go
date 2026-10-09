@@ -30,6 +30,7 @@ func serverTLSConfig() *tls.Config {
 		panic(err)
 	}
 	return &tls.Config{
+		MinVersion:   tls.VersionTLS13, // QUIC negotiates nothing older; stated for scanners.
 		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: priv}},
 		NextProtos:   []string{alpnGRPCQUIC},
 	}
@@ -37,7 +38,8 @@ func serverTLSConfig() *tls.Config {
 
 func clientTLSConfig() *tls.Config {
 	return &tls.Config{
-		InsecureSkipVerify: true, //nolint:gosec // G402: throwaway QUIC cert, auth is the SecureConn layer
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: true, // #nosec G402 -- throwaway QUIC cert, auth is the SecureConn layer
 		NextProtos:         []string{alpnGRPCQUIC},
 	}
 }
