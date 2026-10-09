@@ -4,6 +4,12 @@
 package common
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -91,4 +97,77 @@ func TestQUICLaneIP_FollowsTheFamilyThatAnsweredTheTCPDial(t *testing.T) {
 	kd.peerDialedIP.Store("")
 	kd.PeerIPv6IP = ""
 	require.Equal(t, "", kd.quicLaneIP(), "bridge session, no advertised address: no lane dial, as before")
+}
+
+// A peer up to 0.4.8 with no global IPv6 advertises ::1 or fe80::. Neither is
+// dialed: ::1 reaches this host and fe80:: without a zone reaches none (BUGS 35).
+func TestDialablePeerIPv6(t *testing.T) {
+	for _, tc := range []struct {
+		peer, own string
+		want      bool
+	}{
+		{"2001:db8::2", "", true},
+		{"fd7a:115c:a1e0::1", "", true}, // ULA, a tailnet for one: dialed as before
+		{"fe80::8929:1796:58be:8feb", "", false},
+		{"fe80::8929:1796:58be:8feb", "2001:db8::1", false},
+		{"::1", "", false},
+		{"::1", "2001:db8::1", false},
+		{"::1", "::1", true}, // the tests run both peers on loopback
+		{"203.0.113.9", "", false},
+		{"", "", false},
+		{"not-an-ip", "", false},
+	} {
+		kd := newBareKD()
+		kd.LocalIPv6IP = tc.own
+		require.Equal(t, tc.want, kd.dialablePeerIPv6(tc.peer), "peer %q, own %q", tc.peer, tc.own)
+	}
+}
+
+// The joiner takes the creator's IPv6 from the relay only when it can dial it,
+// so it skips an old peer's ::1 or fe80:: instead of dialing it first.
+func TestGetRoomFromRelay_SkipsAnIPv6ThisHostCannotDial(t *testing.T) {
+	var mu sync.Mutex
+	store := map[string][]byte{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/register":
+			body, _ := io.ReadAll(r.Body)
+			store[token] = body
+			w.WriteHeader(http.StatusCreated)
+		case "/fetch":
+			if b, ok := store[token]; ok {
+				_, _ = w.Write(b)
+				return
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r) // No /probe, like an old relay.
+		}
+	}))
+	t.Cleanup(srv.Close)
+	relay, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+
+	engine := func(ipv6 string) *KeibiDrop {
+		t.Helper()
+		port := pickFreePortPair(t)
+		kd, err := NewKeibiDropWithIP(t.Context(), roundTestLogger(), false, relay, port, port+1, "", t.TempDir(), false, false, ipv6)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = kd.listener.Close() })
+		return kd
+	}
+	for _, tc := range []struct{ creator, joiner, want string }{
+		{"2001:db8::1", "", "2001:db8::1"},
+		{"fe80::8929:1796:58be:8feb", "", ""}, // a 0.4.8 Windows peer
+		{"::1", "", ""},                       // a 0.4.8 Mac or Linux peer
+		{"::1", "::1", "::1"},                 // both peers on this host, as in the tests
+	} {
+		creator, joiner := engine(tc.creator), engine(tc.joiner)
+		require.NoError(t, creator.registerRoomToRelay())
+		require.NoError(t, joiner.getRoomFromRelay(creator.session.OwnFingerprint))
+		require.Equal(t, tc.want, joiner.PeerIPv6IP, "creator advertises %q, joiner %q", tc.creator, tc.joiner)
+	}
 }

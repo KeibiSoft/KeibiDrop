@@ -166,6 +166,15 @@ func TestAnnounceHandler(t *testing.T) {
 	_, err = svc.Announce(context.Background(), &cpb.AnnounceRequest{Ip: "", TcpPort: 0})
 	require.NoError(t, err)
 	require.Equal(t, "fd00::bb", kd.PeerIPv6IP)
+
+	// So are ::1 and fe80::, what a 0.4.8 peer announces after a move to a network
+	// with no global IPv6: this host cannot dial either (BUGS 35).
+	for _, ip := range []string{"::1", "fe80::8929:1796:58be:8feb"} {
+		_, err = svc.Announce(context.Background(), &cpb.AnnounceRequest{Ip: ip, TcpPort: 26400})
+		require.NoError(t, err)
+		require.Equal(t, "fd00::bb", kd.PeerIPv6IP, "announce of %s", ip)
+		require.Equal(t, "[fd00::bb]:26400", kd.quicPeerAddr, "announce of %s", ip)
+	}
 }
 
 // quicEchoPair brings up the real QUIC control channel and echoes on the accepted conn, so
