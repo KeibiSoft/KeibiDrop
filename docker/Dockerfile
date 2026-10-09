@@ -10,7 +10,7 @@
 # cgofuse is compiled in like every other KeibiDrop binary and loads libfuse
 # with dlopen at mount time only, so the runtime stage ships no fuse library.
 
-FROM golang:1.26-bookworm AS build
+FROM golang:1.26.9-bookworm AS build
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libfuse-dev \

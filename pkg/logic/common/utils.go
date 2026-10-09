@@ -290,9 +290,10 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 		kd.OnPeerVerified(computedFp)
 	}
 
+	// The default listen port, not the outbound one: nothing listens on that.
 	if !config.ValidPeerPort(peerReg.Listen.Port) {
-		logger.Warn("Provided outbound port is out of known range, defaulting to config", "provided-port", peerReg.Listen.Port, "default-to", config.OutboundPort)
-		peerReg.Listen.Port = config.OutboundPort
+		logger.Warn("Peer listen port is out of range, using the default", "provided-port", peerReg.Listen.Port, "default-to", config.InboundPort)
+		peerReg.Listen.Port = config.InboundPort
 	}
 
 	s.PeerPort = peerReg.Listen.Port
@@ -310,10 +311,10 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 			logger.Info("Peer advertises an IPv4 address", "ip", kd.PeerIPv4IP, "inbound_blocked", l4.InboundBlocked)
 		}
 	}
-	if isValidIPv6(peerReg.Listen.IP) {
+	if kd.dialablePeerIPv6(peerReg.Listen.IP) {
 		kd.PeerIPv6IP = peerReg.Listen.IP
 	} else if peerReg.Listen.IP != "" {
-		logger.Warn("Peer has no valid IPv6 (mobile peer?)", "got", peerReg.Listen.IP)
+		logger.Info("Peer advertises an IPv6 address this host cannot dial; skipping the IPv6 dial", "got", peerReg.Listen.IP)
 	}
 
 	// Store peer's local addresses for LAN discovery.
@@ -327,11 +328,21 @@ func (kd *KeibiDrop) getRoomFromRelay(outOfBandFingerPrint string) error {
 	return nil
 }
 
-// isValidIPv6 reports whether ipStr parses as an IPv6 address (i.e. a valid IP
-// that is not IPv4). Loopback/ULA/link-local are intentionally accepted.
-func isValidIPv6(ipStr string) bool {
+// dialablePeerIPv6 reports whether ipStr is a peer IPv6 address this host can
+// dial. A link-local address without a zone reaches no host, and a loopback
+// address reaches this one, so both are skipped. Peers up to 0.4.8 advertise one
+// of them when they have no global IPv6 (BUGS 35). The exception is a loopback
+// peer while this host advertises loopback too: tests run both peers on ::1.
+func (kd *KeibiDrop) dialablePeerIPv6(ipStr string) bool {
 	ip := net.ParseIP(ipStr)
-	return ip != nil && ip.To4() == nil
+	if ip == nil || ip.To4() != nil || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	if ip.IsLoopback() {
+		own := net.ParseIP(kd.LocalIPv6IP)
+		return own != nil && own.IsLoopback()
+	}
+	return true
 }
 
 //

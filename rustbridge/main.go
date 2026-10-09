@@ -400,7 +400,10 @@ func KD_Disconnect() {
 //export KD_Stop
 func KD_Stop() {
 	if kd != nil {
-		kd.Shutdown()
+		// Exit runs this last, then the process ends. Wait for the unmount and the
+		// listener close: a process that ends mid-unmount stays alive on macOS for
+		// the 60 s macFUSE timeout, holding the port a relaunch needs (BUGS 36).
+		kd.ShutdownAndWait(10 * time.Second)
 	}
 	if kdCancel != nil {
 		kdCancel()

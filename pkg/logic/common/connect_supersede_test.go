@@ -10,11 +10,9 @@ package common
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,18 +42,6 @@ func countingRelay(t *testing.T) (*url.URL, *atomic.Int32) {
 	return u, &hits
 }
 
-func freeTCPPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	_, portText, err := net.SplitHostPort(ln.Addr().String())
-	require.NoError(t, err)
-	require.NoError(t, ln.Close())
-	port, err := strconv.Atoi(portText)
-	require.NoError(t, err)
-	return port
-}
-
 // linklessKD is an engine with its Run loop, marked running with peerFP as
 // its session's peer, and a reconnect manager in the given state: the shape
 // of a session whose link dropped.
@@ -63,7 +49,7 @@ func linklessKD(t *testing.T, relay *url.URL, peerFP string, state session.Recon
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	port := freeTCPPort(t)
+	port := pickFreePortPair(t) // The engine refuses a listen port outside the peer range.
 	kd, err := NewKeibiDropWithIP(ctx, roundTestLogger(), false, relay, port, port+1, "", t.TempDir(), false, false, "::1")
 	require.NoError(t, err)
 	kd.BridgeAddr = "127.0.0.1:9"

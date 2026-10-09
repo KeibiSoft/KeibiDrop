@@ -1040,6 +1040,13 @@ func (s quicControlService) Announce(_ context.Context, req *cpb.AnnounceRequest
 	if kd == nil || req.Ip == "" || req.TcpPort == 0 {
 		return &cpb.AnnounceReply{}, nil
 	}
+	// A 0.4.8 peer announces ::1 or fe80:: after a move to a network without a
+	// global IPv6. A reconnect there cannot work; heartbeat loss and the relay
+	// lookup find the peer instead.
+	if !kd.dialablePeerIPv6(req.Ip) {
+		kd.logger.Info("peer announced an address this host cannot dial; ignored", "ip", req.Ip)
+		return &cpb.AnnounceReply{}, nil
+	}
 	port := int(req.TcpPort)
 	// Read under kd.mu. Teardown nils kd.session under the lock.
 	kd.mu.Lock()

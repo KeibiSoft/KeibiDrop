@@ -8,6 +8,12 @@ DIST    := dist
 GOARCH  := $(shell go env GOARCH)
 GOOS    := $(shell go env GOOS)
 
+# Every go command here runs the Go that go.mod names, as CI does (setup-go reads
+# go.mod), so a newer or older local Go builds the same binaries. An explicit
+# GOTOOLCHAIN wins: the release job sets local.
+GO_MOD_VERSION := $(shell awk '/^go /{print $$2; exit}' go.mod)
+export GOTOOLCHAIN ?= go$(GO_MOD_VERSION)
+
 # ── Windows: CGO env for WinFSP (cgofuse requires its headers + lib) ──────────
 # Uses the 8.3 short path to avoid spaces breaking the linker -L flag.
 # LIBCLANG_PATH is needed by bindgen (Rust build.rs) to locate libclang.dll.
@@ -148,7 +154,7 @@ lint:
 	golangci-lint run ./...
 
 sec:
-	gosec -exclude-generated -conf .gosec.json ./...
+	gosec -exclude-generated -exclude-dir=research_artefacts -conf .gosec.json ./...
 
 # ── Protobuf ──────────────────────────────────────────────
 
@@ -324,7 +330,6 @@ MOBILE_REPO ?= ../KeibiDropMobile
 
 # Mobile: pin GOTOOLCHAIN to go.mod's Go (gomobile needs >= 1.24), and add x/mobile to
 # go.mod transiently (restored after) so the committed go.mod stays in sync with origin.
-GO_MOD_VERSION := $(shell awk '/^go /{print $$2; exit}' go.mod)
 MOBILE_GOTOOLCHAIN ?= go$(GO_MOD_VERSION)
 MOBILE_PREP = cp go.mod go.mod.bak && cp go.sum go.sum.bak && trap '[ -f go.mod.bak ] && mv -f go.mod.bak go.mod; [ -f go.sum.bak ] && mv -f go.sum.bak go.sum; :' EXIT INT TERM && GOTOOLCHAIN=$(MOBILE_GOTOOLCHAIN) go get -tool golang.org/x/mobile/cmd/gobind@$(MOBILE_PKG_VERSION)
 

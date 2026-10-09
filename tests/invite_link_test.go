@@ -21,8 +21,9 @@ func TestAddPeerFingerprint_AcceptsInviteLink(t *testing.T) {
 	require.NoError(t, err)
 
 	dir := t.TempDir()
+	port := getFreePortInRange(t, 26400, 26549) // The engine refuses one outside 26000-27000.
 	kd, err := common.NewKeibiDropWithIP(ctx, logger, false, relayURL,
-		31871, 31872, dir, dir, false, true, "::1")
+		port, port+1, dir, dir, false, true, "::1")
 	require.NoError(t, err)
 
 	peer, err := kd.ExportFingerprint()

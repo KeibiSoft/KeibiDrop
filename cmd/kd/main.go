@@ -48,6 +48,10 @@ var (
 // across a sleep or a discovery.Service call that can block: see cmdDiscover.
 var discMu sync.Mutex
 
+// shutdownWait bounds how long stop and SIGTERM wait for the engine's teardown.
+// The FUSE unmount alone may take 3 s, then a forced unmount.
+const shutdownWait = 10 * time.Second
+
 // socketPath returns the Unix socket path for daemon<->client communication.
 func socketPath() string {
 	if s := os.Getenv("KD_SOCKET"); s != "" {
@@ -268,7 +272,7 @@ func runDaemon() {
 		logger.Info("Shutting down")
 		kd.NotifyDisconnect()
 		_ = kd.UnmountFilesystem()
-		kd.Shutdown()
+		kd.ShutdownAndWait(shutdownWait) // As in stop: exit after the unmount.
 		_ = ln.Close()
 	}()
 
@@ -798,7 +802,10 @@ func dispatch(kd *common.KeibiDrop, req Request, cancel context.CancelFunc, ln n
 		}
 		kd.NotifyDisconnect()
 		_ = kd.UnmountFilesystem()
-		kd.Shutdown()
+		// Answer after the Run loop has unmounted and closed the listener. The
+		// answer used to come first, the process left mid-unmount, and the next
+		// kd start on the same port failed with "address already in use".
+		kd.ShutdownAndWait(shutdownWait)
 		go func() {
 			_ = ln.Close()
 		}()
