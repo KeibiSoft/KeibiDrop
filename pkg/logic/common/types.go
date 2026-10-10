@@ -280,6 +280,7 @@ type KeibiDrop struct {
 	// Active downloads registry for pause/cancel support.
 	activeDownloads   map[string]context.CancelFunc
 	activeBitmaps     map[string]*filesystem.ChunkBitmap
+	pulling           map[string]struct{} // Local files with a pull running; see claimPull.
 	activeDownloadsMu sync.Mutex
 
 	// Download registry: maps bitmaps to their peer with HMAC tags, not fingerprints.

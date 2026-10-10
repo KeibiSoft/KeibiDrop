@@ -37,6 +37,7 @@ var (
 	ErrServerAtCapacity              = errors.New("relay server at capacity, please try again in 5 minutes")
 	ErrIdenticalFingerprints         = errors.New("own and peer fingerprints are identical")
 	ErrDownloadPaused                = errors.New("download paused")
+	ErrDownloadInProgress            = errors.New("this file is already downloading")
 	ErrListenerNotOpen               = errors.New("can't accept a peer connection right now, please try again")
 )
 

@@ -2681,13 +2681,13 @@ func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap 
 		}
 		// Own every unit of the block nobody holds yet; a read that owns one, or
 		// a unit that landed on demand, ends the range (the rest is theirs).
-		bf, leader, owned := f.beginFetchSpan(blockStart, end, d.fetchUnit(), bitmap)
+		bf, leader, from, owned := f.beginFetchSpan(blockStart, end, d.fetchUnit(), bitmap)
 		if !leader {
-			continue // a read or earlier prefetch already owns this block's first unit
+			continue // a read or earlier prefetch already owns this block's first missing unit
 		}
 		d.raPrefetchCalls.Add(1) // observability: blocks actually fetched by read-ahead
 		rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		data, err := pool.ReadAtBulk(rctx, blockStart, owned-blockStart)
+		data, err := pool.ReadAtBulk(rctx, from, owned-from)
 		cancel()
 		if err != nil || len(data) == 0 {
 			// Best-effort: release this block's waiters and stop the range (a real
@@ -2697,7 +2697,7 @@ func (d *Dir) prefetchRange(f *File, pool *StreamPool, cacheFD *os.File, bitmap 
 			return
 		}
 		f.WireBytes.Add(uint64(len(data)))
-		if _, werr := markCached(cacheFD, bitmap, data, blockStart, remoteFileSize); werr != nil {
+		if _, werr := markCached(cacheFD, bitmap, data, from, remoteFileSize); werr != nil {
 			f.finishFetch(bf, werr)
 			return
 		}
@@ -3275,11 +3275,11 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			// Singleflight over units: lead a fetch over the units nobody owns
 			// yet, or join the fetch that owns the unit this request starts in.
 			var leader bool
-			var owned int64
-			bf, leader, owned = f.beginFetchSpan(fetchStart, fetchEnd, unit, bitmap)
+			var from, owned int64
+			bf, leader, from, owned = f.beginFetchSpan(fetchStart, fetchEnd, unit, bitmap)
 			if leader {
 				isLeader = true
-				fetchEnd = owned
+				fetchStart, fetchEnd = from, owned
 				// A cold read of a small file is the extraction-walk signature:
 				// warm the announced small siblings of its directory in one
 				// batched request, in parallel with this read's own fetch.

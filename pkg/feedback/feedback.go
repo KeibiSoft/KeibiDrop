@@ -123,6 +123,12 @@ func post(p payload) (*http.Response, error) {
 	return resp, nil
 }
 
+// PackLogs is packLogs for a caller with no log file: the browser peer sends
+// its in-memory log the way Send sends the desktop's file.
+func PackLogs(text string) (string, error) {
+	return packLogs(text)
+}
+
 // packLogs keeps the newest MaxLogs bytes of text from a line start, gzips
 // and base64-encodes them, and halves what it keeps until it fits
 // maxLogsWire.

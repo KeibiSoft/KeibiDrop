@@ -331,7 +331,21 @@ func (kd *KeibiDrop) ListFiles() (remote []string, local []string) {
 	return remote, local
 }
 
+// PullFile downloads remoteName to localPath. Only one pull of a local file runs
+// at a time. A second pull of a file that is still downloading returns
+// ErrDownloadInProgress and does not touch the file.
 func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
+	localPath = filepath.Clean(localPath)
+	if !kd.claimPull(localPath) {
+		kd.logger.Warn("This file is already downloading", "method", "pull-file", "remoteName", remoteName, "localPath", localPath)
+		return ErrDownloadInProgress
+	}
+	defer kd.releasePull(localPath)
+	return kd.pullFile(remoteName, localPath)
+}
+
+// pullFile does the pull. The caller holds the claim on localPath.
+func (kd *KeibiDrop) pullFile(remoteName, localPath string) error {
 	logger := kd.logger.With("method", "pull-file")
 	sess := kd.rpcSession()
 	if sess == nil {
@@ -407,6 +421,11 @@ func (kd *KeibiDrop) PullFile(remoteName, localPath string) error {
 
 	if bitmap != nil && bitmap.IsComplete() {
 		os.Remove(bitmapPath)
+		// A complete file must leave the registry, or the next auto-resume
+		// takes it for a fresh download and truncates it.
+		if kd.dlRegistry != nil {
+			kd.dlRegistry.Unregister(bitmapPath)
+		}
 		logger.Info("File already fully downloaded")
 		goto updateTracker
 	}
@@ -634,6 +653,28 @@ func (kd *KeibiDrop) unregisterDownload(name string) {
 	kd.activeDownloadsMu.Lock()
 	delete(kd.activeDownloads, name)
 	delete(kd.activeBitmaps, name)
+	kd.activeDownloadsMu.Unlock()
+}
+
+// claimPull marks localPath as being pulled. It returns false if a pull of that
+// file is already running. A second pull finds no .kdbitmap until the first one
+// saves it, takes the file for a fresh download and truncates the written bytes.
+func (kd *KeibiDrop) claimPull(localPath string) bool {
+	kd.activeDownloadsMu.Lock()
+	defer kd.activeDownloadsMu.Unlock()
+	if _, busy := kd.pulling[localPath]; busy {
+		return false
+	}
+	if kd.pulling == nil {
+		kd.pulling = make(map[string]struct{})
+	}
+	kd.pulling[localPath] = struct{}{}
+	return true
+}
+
+func (kd *KeibiDrop) releasePull(localPath string) {
+	kd.activeDownloadsMu.Lock()
+	delete(kd.pulling, localPath)
 	kd.activeDownloadsMu.Unlock()
 }
 
