@@ -61,6 +61,15 @@ func (r *downloadRegistry) Unregister(bitmapPath string) {
 	r.save()
 }
 
+// Has reports whether bitmapPath is still registered. A pull that finished has
+// removed its entry.
+func (r *downloadRegistry) Has(bitmapPath string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.entries[filepath.Clean(bitmapPath)]
+	return ok
+}
+
 func (r *downloadRegistry) ForPeer(tag [16]byte) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

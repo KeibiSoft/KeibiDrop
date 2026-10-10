@@ -637,8 +637,18 @@ func (kd *KeibiDrop) resumePartialDownloads(logger *slog.Logger) {
 		}
 		kd.SyncTracker.RemoteFilesMu.Unlock()
 
+		// Resume only a pull that is not running and is still registered. A
+		// running pull owns the file, and a pull that finished has left the
+		// registry before it released the file. A second pull would truncate it.
+		if !kd.claimPull(localPath) {
+			continue
+		}
+		if !kd.dlRegistry.Has(bitmapPath) {
+			kd.releasePull(localPath)
+			continue
+		}
 		logger.Info("Auto-resuming download", "remoteName", remoteName)
-		err := kd.PullFile(remoteName, localPath)
+		err := kd.pullFile(remoteName, localPath)
 		if err != nil {
 			logger.Warn("Resume failed, peer may have deleted file", "remoteName", remoteName, "err", err)
 			// The peer no longer has the file. Clean up.
@@ -648,6 +658,7 @@ func (kd *KeibiDrop) resumePartialDownloads(logger *slog.Logger) {
 				os.Remove(localPath)
 			}
 		}
+		kd.releasePull(localPath)
 	}
 }
 
