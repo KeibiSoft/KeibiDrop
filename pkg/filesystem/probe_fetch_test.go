@@ -5,10 +5,13 @@ package filesystem
 
 import (
 	"bytes"
+	"context"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/KeibiSoft/KeibiDrop/pkg/types"
 )
 
 // A read outside a proven stream fetches one ProbeFetch unit, and twenty such
@@ -101,6 +104,77 @@ func TestProbeFetch_SequentialStreamFetchesEveryByteOnce(t *testing.T) {
 	}
 	if r := prov.reads.Load(); r != int64(ReadAheadBlock/ProbeFetch)+4 {
 		t.Fatalf("fetches=%d, want %d: block 0 in units, four window blocks", r, ReadAheadBlock/ProbeFetch+4)
+	}
+}
+
+// gateProvider serves like countingProvider, but holds the fetch that starts at
+// gateAt until open closes, so a test can act while that fetch is in flight.
+type gateProvider struct {
+	countingProvider
+	gateAt int64
+	open   chan struct{}
+}
+
+func (p *gateProvider) OpenRemoteFile(_ context.Context, _ uint64, _ string) (types.RemoteFileStream, error) {
+	return &gateStream{countingStream: countingStream{p: &p.countingProvider}, g: p}, nil
+}
+
+type gateStream struct {
+	countingStream
+	g *gateProvider
+}
+
+func (s *gateStream) ReadAt(ctx context.Context, offset int64, size int64) ([]byte, error) {
+	if offset == s.g.gateAt {
+		select {
+		case <-s.g.open:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return s.countingStream.ReadAt(ctx, offset, size)
+}
+
+// The window fetches its blocks one after another. While it is busy with one,
+// a parallel read (a FUSE worker, the kernel's look-ahead) lands the first unit
+// of the next. The window then starts that block after the landed unit. It
+// fetched the block from its start, and those 2 MiB moved twice.
+func TestProbeFetch_WindowSkipsAUnitAReadLanded(t *testing.T) {
+	const blocks = 4
+	fileSize := blocks * ReadAheadBlock
+	content := makePattern(fileSize)
+	prov := &gateProvider{countingProvider: countingProvider{content: content}, gateAt: int64(ReadAheadBlock), open: make(chan struct{})}
+	root, fh, cleanup := newReadAheadFileWith(t, int64(fileSize), prov)
+	defer cleanup()
+	root.ReadAheadWindowBlocks = 4
+	f := root.OpenFileHandlers[fh].File
+
+	buf := make([]byte, 128*1024)
+	read := func(off int) {
+		if n := root.Read("/f.bin", buf, int64(off), fh); n != len(buf) || !bytes.Equal(buf, content[off:off+len(buf)]) {
+			t.Fatalf("read at %d returned %d bytes or wrong bytes", off, n)
+		}
+	}
+
+	// A stream proves itself in block 0. The window takes blocks 1 to 4 and
+	// holds on block 1.
+	for off := 0; off <= ReadAheadBlock/2; off += len(buf) {
+		read(off)
+	}
+	waitFor(t, 3*time.Second, func() bool { return root.raPrefetchCalls.Load() == 1 })
+
+	// A read lands the first unit of block 2 while the window holds on block 1.
+	read(2 * ReadAheadBlock)
+	waitFor(t, 3*time.Second, func() bool { return f.Bitmap.HasRange(int64(2*ReadAheadBlock), ProbeFetch) })
+
+	close(prov.open)
+	got := readSeq(root, fh, fileSize, 128)
+	waitFor(t, 5*time.Second, func() bool { return inflightEmpty(f) })
+	if !bytes.Equal(got, content) {
+		t.Fatalf("content mismatch")
+	}
+	if b := prov.bytesIn.Load(); b != int64(fileSize) {
+		t.Fatalf("bytes fetched %d, want %d: the window fetched the unit the read landed again", b, fileSize)
 	}
 }
 

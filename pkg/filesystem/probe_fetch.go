@@ -32,22 +32,34 @@ func (d *Dir) fetchUnit() int64 {
 }
 
 // beginFetchSpan makes the caller the leader for the units of [start, end)
-// that nobody owns yet, starting at start, and returns the end of what it
-// owns. It stops before a unit another fetch owns or that already landed; the
-// caller fetches [start, owned) and, when its request runs past that, waits
-// for the other owner (see fetchAt). When the first unit is already owned the
-// caller joins that fetch instead (leader false, owned 0).
-func (f *File) beginFetchSpan(start, end, unit int64, bm *ChunkBitmap) (bf *blockFetch, leader bool, owned int64) {
+// that nobody owns yet and returns the range it owns, [from, owned). It skips
+// leading units that already landed: a fetch marks the bitmap before it leaves
+// inflight, so a read that checked the bitmap a moment earlier, or a read-ahead
+// block whose first unit an on-demand read landed, would fetch them again. It
+// stops before a unit another fetch owns or that already landed; the caller
+// fetches [from, owned) and, when its request runs past that, waits for the
+// other owner (see fetchAt). When the first missing unit is already owned the
+// caller joins that fetch instead (leader false). When every unit landed the
+// caller joins a fetch that has already finished, and reads the cache.
+func (f *File) beginFetchSpan(start, end, unit int64, bm *ChunkBitmap) (bf *blockFetch, leader bool, from, owned int64) {
 	f.fetchMu.Lock()
 	defer f.fetchMu.Unlock()
 	if f.inflight == nil {
 		f.inflight = make(map[int64]*blockFetch)
 	}
+	for bm != nil && start < end && bm.HasRange(start, int(min(unit, end-start))) {
+		start += unit
+	}
+	if start >= end {
+		bf = &blockFetch{done: make(chan struct{})}
+		bf.settle(nil)
+		return bf, false, end, end
+	}
 	if first := f.inflight[start]; first != nil {
-		return first, false, 0
+		return first, false, start, start
 	}
 	bf = &blockFetch{done: make(chan struct{})}
-	owned = start
+	from, owned = start, start
 	for u := start; u < end; u += unit {
 		if f.inflight[u] != nil {
 			break
@@ -59,7 +71,7 @@ func (f *File) beginFetchSpan(start, end, unit int64, bm *ChunkBitmap) (bf *bloc
 		bf.keys = append(bf.keys, u)
 		owned = min(u+unit, end)
 	}
-	return bf, true, owned
+	return bf, true, from, owned
 }
 
 // fetchAt returns the fetch that owns the unit at start, or nil.

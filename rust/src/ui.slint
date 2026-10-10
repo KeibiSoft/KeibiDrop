@@ -2699,18 +2699,21 @@ export component MainWindow inherits Window {
                 : "Sends your stars, your message, the reply address, the app version and the platform. Nothing else.";
         }
 
-        PillButton {
+        feedback-send := PillButton {
             x: 20px;
             y: 338px + feedback.logs-row;
-            width: 120px;
+            width: Theme.dialog-button-width;
             text: root.feedback_sending ? "Sending..." : "Send";
             enabled: !root.feedback_sending && root.feedback_message != "";
             clicked => { root.send_feedback(root.feedback_message, root.feedback_contact, root.feedback_rating, root.feedback_include_logs); }
         }
 
-        SmallOutlineButton {
-            x: 152px;
-            y: 343px + feedback.logs-row;
+        // Cancel is the size of Send, as in Save contact.
+        PillButton {
+            x: feedback-send.x + feedback-send.width + 10px;
+            y: feedback-send.y;
+            width: feedback-send.width;
+            plain: true;
             text: "Cancel";
             clicked => { root.feedback_visible = false; }
         }
@@ -2768,7 +2771,7 @@ export component MainWindow inherits Window {
         PillButton {
             x: 20px;
             y: 116px;
-            width: 155px;
+            width: Theme.dialog-button-width;
             text: "Save";
             enabled: root.save_contact_name != "";
             clicked => {
@@ -2780,9 +2783,9 @@ export component MainWindow inherits Window {
             }
         }
         PillButton {
-            x: 185px;
+            x: 30px + self.width;
             y: 116px;
-            width: 155px;
+            width: Theme.dialog-button-width;
             plain: true;
             text: "No thanks";
             clicked => {

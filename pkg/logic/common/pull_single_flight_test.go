@@ -8,6 +8,8 @@ package common
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	bindings "github.com/KeibiSoft/KeibiDrop/grpc_bindings"
+	"github.com/KeibiSoft/KeibiDrop/internal/testkit"
 	"github.com/KeibiSoft/KeibiDrop/pkg/config"
 	"github.com/KeibiSoft/KeibiDrop/pkg/filesystem"
 	"github.com/KeibiSoft/KeibiDrop/pkg/session"
@@ -95,15 +98,14 @@ func newPullTestKD(t *testing.T, cli bindings.KeibiServiceClient, name string, s
 	return kd, filepath.Join(kd.ToSave, name), cancel
 }
 
-// startHeldPull starts a pull and returns when it has written its first chunk and
-// waits for the rest. The pull is then in the download registry, where the reconnect
-// auto-resume finds it, and it has not saved a .kdbitmap yet.
-func startHeldPull(t *testing.T, kd *KeibiDrop, name, dst string) <-chan error {
+// startHeldPull starts a pull and returns its join once the pull has written its
+// first chunk and waits for the rest. The pull is then in the download registry,
+// where the reconnect auto-resume finds it, and it has not saved a .kdbitmap yet.
+func startHeldPull(t *testing.T, kd *KeibiDrop, name, dst string) func() error {
 	t.Helper()
-	done := make(chan error, 1)
-	go func() { done <- kd.PullFile(name, dst) }()
-	require.Eventually(t, func() bool { return kd.GetDownloadProgress(name) > 0 }, 5*time.Second, time.Millisecond)
-	return done
+	join := testkit.Go(func() error { return kd.PullFile(name, dst) })
+	testkit.Eventually(t, 5*time.Second, time.Millisecond, func() bool { return kd.GetDownloadProgress(name) > 0 }, "the pull's first chunk")
+	return join
 }
 
 func requireFileEquals(t *testing.T, path string, want []byte) {
@@ -112,7 +114,7 @@ func requireFileEquals(t *testing.T, path string, want []byte) {
 	require.NoError(t, err)
 	require.Equal(t, len(want), len(got), "file size")
 	if i := bytes.IndexByte(got, 0); i >= 0 {
-		t.Fatalf("file has a zero byte at offset %d: its bytes were truncated", i)
+		require.Failf(t, "zero bytes", "file has a zero byte at offset %d: its bytes were truncated", i)
 	}
 	require.True(t, bytes.Equal(want, got), "file bytes differ")
 }
@@ -123,23 +125,21 @@ func requireFileEquals(t *testing.T, path string, want []byte) {
 func TestPull_AutoResumeDuringAPullKeepsItsBytes(t *testing.T) {
 	data := twoChunks()
 	cli := &fakeStreamCli{data: data, release: make(chan struct{})}
-	kd, dst, cancel := newPullTestKD(t, cli, "f.bin", len(data))
-	done := startHeldPull(t, kd, "f.bin", dst)
+	kd, dst, _ := newPullTestKD(t, cli, "f.bin", len(data))
+	join := startHeldPull(t, kd, "f.bin", dst)
 
-	resumed := make(chan struct{})
-	go func() { kd.resumePartialDownloads(kd.logger); close(resumed) }()
-	select {
-	case <-resumed: // it left the running pull alone
-	case <-time.After(200 * time.Millisecond): // it is pulling the same file a second time
-	}
+	// It returns at once when it leaves the running pull alone. A second pull of
+	// the file truncates it and waits for its stream until the test context ends.
+	resumeErr := testkit.Within(200*time.Millisecond, "the auto-resume", func() error {
+		kd.resumePartialDownloads(kd.logger)
+		return nil
+	})
 
 	close(cli.release)
-	require.NoError(t, <-done)
+	require.NoError(t, join())
 	requireFileEquals(t, dst, data)
 	require.EqualValues(t, 1, cli.streams.Load(), "the auto-resume pulled a file that is still downloading")
-
-	cancel() // ends a second pull, if one started
-	<-resumed
+	require.NoError(t, resumeErr)
 }
 
 // TestPull_SecondPullOfARunningFileIsRefused: a second pull of the same local file
@@ -148,20 +148,21 @@ func TestPull_SecondPullOfARunningFileIsRefused(t *testing.T) {
 	data := twoChunks()
 	cli := &fakeStreamCli{data: data, release: make(chan struct{})}
 	kd, dst, cancel := newPullTestKD(t, cli, "f.bin", len(data))
-	done := startHeldPull(t, kd, "f.bin", dst)
+	join := startHeldPull(t, kd, "f.bin", dst)
 
-	second := make(chan error, 1)
-	go func() { second <- kd.PullFile("f.bin", dst) }()
-	select {
-	case err := <-second:
-		require.ErrorIs(t, err, ErrDownloadInProgress)
-	case <-time.After(5 * time.Second):
-		cancel()
-		t.Fatal("the second pull did not return: it started a parallel download of the same file")
+	err := testkit.Within(5*time.Second, "the second pull of a running file", func() error {
+		if err := kd.PullFile("f.bin", dst); !errors.Is(err, ErrDownloadInProgress) {
+			return fmt.Errorf("the second pull returned %v, want ErrDownloadInProgress", err)
+		}
+		return nil
+	})
+	if err != nil {
+		cancel() // ends a parallel download it started
 	}
+	require.NoError(t, err)
 
 	close(cli.release)
-	require.NoError(t, <-done)
+	require.NoError(t, join())
 	requireFileEquals(t, dst, data)
 	require.EqualValues(t, 1, cli.streams.Load(), "the second pull opened a stream")
 }
