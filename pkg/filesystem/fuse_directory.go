@@ -3277,6 +3277,17 @@ func (d *Dir) Read(path string, buff []byte, offset int64, fh uint64) (errCode i
 			var leader bool
 			var owned int64
 			bf, leader, owned = f.beginFetchSpan(fetchStart, fetchEnd, unit, bitmap)
+			if leader && bitmap != nil && bitmap.HasRange(fetchStart, int(min(unit, owned-fetchStart))) {
+				// The unit landed after the scan above: its fetch marks the
+				// bitmap, then leaves the singleflight. Fetching it again moves
+				// its bytes twice. Release it, then serve or scan again.
+				f.finishFetch(bf, nil)
+				bf = nil
+				if bitmap.HasRange(offset, len(buff)) {
+					return d.preadCached(logger, fd, buff, offset, remoteFileSize)
+				}
+				continue
+			}
 			if leader {
 				isLeader = true
 				fetchEnd = owned
