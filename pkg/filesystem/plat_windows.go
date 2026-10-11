@@ -20,6 +20,20 @@ import (
 const platENODATA = syscall.ENOENT // ENODATA does not exist on Windows. Map to ENOENT.
 const platDiskModeIsAuthoritative = false
 
+// openFileShared opens a cache file with delete sharing (platOpen). Plain
+// os.OpenFile passes none: a fill, a copy or a landing that held the file
+// made a delete of it fail with "being used by another process".
+func openFileShared(name string, flag int, perm os.FileMode) (*os.File, error) {
+	fd, err := platOpen(name, flag, uint32(perm))
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: name, Err: err}
+	}
+	return os.NewFile(uintptr(fd), name), nil
+}
+
+// isDirNotEmpty reports an rmdir or rename refused for a directory not empty.
+func isDirNotEmpty(err error) bool { return errors.Is(err, windows.ERROR_DIR_NOT_EMPTY) }
+
 func platTruncate(path string, size int64) error {
 	return os.Truncate(path, size)
 }

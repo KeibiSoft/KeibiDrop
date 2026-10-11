@@ -154,3 +154,50 @@ func TestSidecar_TruncateAndUnlinkDropIt(t *testing.T) {
 	_, err = os.Stat(BitmapPath(cache))
 	require.True(t, os.IsNotExist(err), "unlink removes the sidecar with the file")
 }
+
+// A friend's delete of a file this side had bytes land in: the landing armed
+// the sidecar timer, and the timer must not write the sidecar back once the
+// file is gone. The sidecar it wrote kept the folder from being removed
+// (rm -r go-fp: "File exists", 2026-10-11).
+func TestSidecar_PeerDeleteLeavesNoSidecar(t *testing.T) {
+	d := newTestDir(t.TempDir())
+	d.SetCtx(context.Background())
+	content := makePattern(2 * ChunkSize)
+	require.NoError(t, d.AddRemoteFileWithBase(nopLogger(), "/repo/index", "index",
+		remoteStat(int64(len(content)), time.Now().Add(-time.Hour)), 0))
+	cache := filepath.Join(d.LocalDownloadFolder, "repo", "index")
+	require.NoError(t, os.MkdirAll(filepath.Dir(cache), 0o755))
+	require.NoError(t, os.WriteFile(cache, content, 0o644))
+	d.RemoteFilesLock.RLock()
+	f := d.RemoteFiles["/repo/index"]
+	d.RemoteFilesLock.RUnlock()
+	f.Bitmap.Set(0)
+	f.noteLanded() // a landing with no handle open, as a warmed sibling's
+
+	require.Equal(t, 0, d.UnlinkFromPeer("/repo/index"))
+	time.Sleep(sidecarSaveDelay + 500*time.Millisecond)
+	_, err := os.Stat(BitmapPath(cache))
+	require.True(t, os.IsNotExist(err), "the timer wrote the sidecar of a deleted file back")
+	require.Equal(t, 0, d.Rmdir("/repo"), "the emptied folder is removable")
+}
+
+// A sidecar left in a folder (an older version, a crash) is this program's
+// own file, hidden from the mount: it must not keep the folder from being
+// removed. A real file still does, and says so with ENOTEMPTY.
+func TestRmdir_LeftoverSidecarDoesNotBlock(t *testing.T) {
+	d := newTestDir(t.TempDir())
+	git := filepath.Join(d.LocalDownloadFolder, "gfp", ".git")
+	require.NoError(t, os.MkdirAll(git, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(git, "index.kdbitmap"), []byte("KDBM"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(git, "index.kdbitmap.123.tmp"), []byte("KDBM"), 0o600))
+	require.Equal(t, 0, d.Rmdir("/gfp/.git"))
+	require.Equal(t, 0, d.Rmdir("/gfp"))
+
+	keep := filepath.Join(d.LocalDownloadFolder, "keep")
+	require.NoError(t, os.MkdirAll(keep, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(keep, "notes.txt"), []byte("x"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(keep, "notes.txt.kdbitmap"), []byte("KDBM"), 0o600))
+	require.Equal(t, -winfuse.ENOTEMPTY, d.Rmdir("/keep"))
+	_, err := os.Stat(filepath.Join(keep, "notes.txt.kdbitmap"))
+	require.NoError(t, err, "a folder that stays keeps its sidecars")
+}

@@ -8469,6 +8469,15 @@ extern "C" {
     pub fn KD_SetPreserveMetadata(v: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
 }
 extern "C" {
+    pub fn KD_SetSetting(
+        key: *mut ::std::os::raw::c_char,
+        value: *mut ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+extern "C" {
+    pub fn KD_ResetSettings() -> ::std::os::raw::c_int;
+}
+extern "C" {
     pub fn KD_SanitizeLogs(destPath: *mut ::std::os::raw::c_char) -> ::std::os::raw::c_int;
 }
 extern "C" {

@@ -195,16 +195,8 @@ func KD_Initialize(relayURL *C.char, inbound, outbound C.int, toMount, toSave *C
 	// Learn reachability now, so the first connect does not pay the direct-accept stall
 	// while discovering that nothing can reach this listener.
 	go kd.ProbeInboundReachability(ctx)
-	if cfg.StrictMode {
-		kd.StrictMode = true
-	}
-	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache for same-size live edits on macOS.
-	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
-	kd.ReadAheadWindowMB = cfg.ReadAheadWindowMB
-	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
-	kd.ShareReadOnly = cfg.ShareReadOnly
-	kd.MountReadOnly = cfg.MountReadOnly
-	kd.PreserveMetadata = cfg.PreserveMetadata
+	applySettings(cfg)
+	kd.PrefetchOnOpen = prefetch // An explicit argument wins over the config.
 	for _, warn := range cfg.Warnings() {
 		logger.Warn("config flag note", "note", warn)
 	}
@@ -959,11 +951,14 @@ func KD_GetConfigPath() *C.char {
 func KD_GetConfig() *C.char {
 	cfg, _ := config.Load()
 	return C.CString(fmt.Sprintf(
-		"relay=%s\nsave_path=%s\nmount_path=%s\nlog_file=%s\ninbound_port=%d\noutbound_port=%d\nbridge_addr=%s\nno_fuse=%v\nstrict_mode=%v\nscan_shared_on_start=%v\nauto_connect_peer=%s\nshare_read_only=%v\nmount_read_only=%v\npreserve_metadata=%v",
+		"relay=%s\nsave_path=%s\nmount_path=%s\nlog_file=%s\ninbound_port=%d\noutbound_port=%d\nbridge_addr=%s\nno_fuse=%v\nstrict_mode=%v\nscan_shared_on_start=%v\nauto_connect_peer=%s\nshare_read_only=%v\nmount_read_only=%v\npreserve_metadata=%v"+
+			"\nupdate_check=%v\nprefetch_on_open=%v\nlive_collab=%v\nread_ahead_window_mb=%d\nprefetch_auto_mb=%d\nrescan_shared_seconds=%d",
 		cfg.Relay, cfg.SavePath, cfg.MountPath, cfg.LogFile,
 		cfg.InboundPort, cfg.OutboundPort, cfg.BridgeAddr,
 		cfg.NoFUSE, cfg.StrictMode, cfg.ScanSharedOnStart, cfg.AutoConnectPeer,
 		cfg.ShareReadOnly, cfg.MountReadOnly, cfg.PreserveMetadata,
+		cfg.UpdateCheck, cfg.PrefetchOnOpen, cfg.LiveCollab,
+		cfg.ReadAheadWindowMB, cfg.PrefetchAutoMB, cfg.RescanSharedSeconds,
 	))
 }
 
@@ -1123,6 +1118,63 @@ func KD_SetPreserveMetadata(v C.int) C.int {
 	if kd != nil {
 		kd.PreserveMetadata = cfg.PreserveMetadata
 	}
+	return 0
+}
+
+// applySettings gives the running engine the Settings card values. It reads
+// most of them at the next connection or mount.
+func applySettings(cfg config.Config) {
+	if kd == nil {
+		return
+	}
+	kd.StrictMode = cfg.StrictMode
+	kd.AutoCache = cfg.LiveCollab // live_collab sets macFUSE auto_cache on macOS.
+	kd.PrefetchOnOpen = cfg.PrefetchOnOpen
+	kd.PrefetchAutoMB = cfg.PrefetchAutoMB
+	kd.ReadAheadWindowMB = cfg.ReadAheadWindowMB
+	kd.ScanSharedOnStart = cfg.ScanSharedOnStart
+	kd.RescanSharedSeconds = cfg.RescanSharedSeconds
+	kd.ShareReadOnly = cfg.ShareReadOnly
+	kd.MountReadOnly = cfg.MountReadOnly
+	kd.PreserveMetadata = cfg.PreserveMetadata
+}
+
+// KD_SetSetting saves one Settings card value and gives it to the running
+// engine. config.SetTunable checks it: a refused value saves nothing, and
+// the reason is the last error.
+//
+//export KD_SetSetting
+func KD_SetSetting(key, value *C.char) C.int {
+	cfg, err := config.Load()
+	if err == nil {
+		err = cfg.SetTunable(C.GoString(key), C.GoString(value))
+	}
+	if err == nil {
+		err = config.Save(cfg)
+	}
+	if err != nil {
+		setLastError(err)
+		return -1
+	}
+	applySettings(cfg)
+	return 0
+}
+
+// KD_ResetSettings puts the Settings card values back to their defaults.
+// Paths, servers, ports and the identity stay as they are.
+//
+//export KD_ResetSettings
+func KD_ResetSettings() C.int {
+	cfg, err := config.Load()
+	if err == nil {
+		cfg.ResetTunables()
+		err = config.Save(cfg)
+	}
+	if err != nil {
+		setLastError(err)
+		return -1
+	}
+	applySettings(cfg)
 	return 0
 }
 

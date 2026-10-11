@@ -26,6 +26,9 @@ func TestFlushPendingSidecarsWritesTheWaitingOnes(t *testing.T) {
 	require.NotNil(t, f)
 	sidecar := BitmapPath(filepath.Join(saveDir, "big.bin"))
 
+	// A landing writes into the cache copy first: the sidecar names its bytes,
+	// and a sidecar without its copy is not written.
+	require.NoError(t, os.WriteFile(filepath.Join(saveDir, "big.bin"), make([]byte, 64*1024), 0o644))
 	f.noteLanded() // what a warmed sibling's landing does: no handle, no Release
 	_, err := os.Stat(sidecar)
 	require.True(t, os.IsNotExist(err), "precondition: the sidecar waits on its timer")

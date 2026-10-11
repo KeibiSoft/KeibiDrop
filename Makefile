@@ -175,8 +175,11 @@ protoc:
 
 # ── Rust helpers ──────────────────────────────────────────
 
+# rust/build.rs writes rust/src/bindings.rs from libkeibidrop.h on every cargo
+# build, with the bindgen that rust/Cargo.lock pins. This target runs that same
+# generator, so it and build-rust always agree.
 rust-bindings: build-static-rust-bridge
-	bindgen libkeibidrop.h -o rust/src/bindings.rs
+	cd rust && cargo check
 
 slint-preview:
 	slint-viewer rust/src/ui.slint

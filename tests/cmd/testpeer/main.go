@@ -417,6 +417,19 @@ func main() {
 				fmt.Println("OK")
 			}
 
+		case "remove":
+			// remove <name> — delete a file or an empty folder inside the mount,
+			// with the real error (Windows del exits 0 when it fails).
+			if len(args) < 2 {
+				fmt.Println("ERR:usage: remove <name>")
+				continue
+			}
+			if err := os.Remove(filepath.Join(mountDir, args[1])); err != nil {
+				fmt.Println("ERR:" + err.Error())
+			} else {
+				fmt.Println("OK")
+			}
+
 		case "copy":
 			// copy <src> <dst> — byte copy through the mount (cp replacement).
 			if len(args) < 3 {

@@ -318,7 +318,7 @@ func (d *Dir) landWarmFile(c *warmClaim, data []byte) {
 		}
 		err = os.MkdirAll(filepath.Dir(realPath), 0o755)
 		if err == nil {
-			lf, err = os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, fileMode) // #nosec G304
+			lf, err = openFileShared(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
 		}
 		if err == nil {
 			if info, statErr := lf.Stat(); statErr == nil && info.Size() < c.size {

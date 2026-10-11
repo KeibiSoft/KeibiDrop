@@ -71,6 +71,146 @@ fn settings_bottom_rows_reachable_at_default_size() {
     app.set_settings_visible(true);
     assert_on_screen(&one(&app, "Buy relay credit"), "buy button");
     assert_on_screen(&one(&app, "Edit config file"), "edit-config button");
+    // Advanced settings open below them; the wheel brings their last row up.
+    open_advanced(&app);
+    assert_on_screen(&one(&app, "Reset to defaults"), "reset button");
+}
+
+// Opens Advanced settings (closed each time the card opens) and scrolls to
+// its end.
+fn open_advanced(app: &MainWindow) {
+    scroll_settings_to_end(app);
+    one(app, "Advanced settings").invoke_accessible_default_action();
+    scroll_settings_to_end(app);
+}
+
+#[test]
+fn advanced_settings_stay_closed_until_asked() {
+    let app = app();
+    app.set_settings_visible(true);
+    scroll_settings_to_end(&app);
+    let strict = || {
+        ElementHandle::find_by_accessible_label(&app, "Direct connections only")
+            .find(|e| e.accessible_checked().is_some())
+    };
+    assert!(strict().is_none(), "advanced settings open without a click");
+    one(&app, "Advanced settings").invoke_accessible_default_action();
+    scroll_settings_to_end(&app);
+    assert!(strict().is_some(), "Advanced settings did not open");
+
+    // Closing the card closes them again.
+    app.set_settings_visible(false);
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Edit config file").next().is_none(),
+        "the card stayed after closing"
+    );
+    app.set_settings_visible(true);
+    scroll_settings_to_end(&app);
+    assert!(strict().is_none(), "advanced settings stayed open across a reopen");
+}
+
+// The wheel over the Settings card, as far down as it goes.
+fn scroll_settings_to_end(app: &MainWindow) {
+    app.window().dispatch_event(WindowEvent::PointerScrolled {
+        position: slint::LogicalPosition::new(WIN_W as f32 / 2.0, WIN_H as f32 / 2.0),
+        delta_x: 0.0,
+        delta_y: -2000.0,
+    });
+}
+
+// The number field with this label; skips the name beside it.
+fn number_field(app: &MainWindow, label: &str) -> ElementHandle {
+    ElementHandle::find_by_accessible_label(app, label)
+        .find(|e| e.accessible_value().is_some())
+        .unwrap_or_else(|| panic!("no number field labeled {:?}", label))
+}
+
+fn record_settings(app: &MainWindow) -> Rc<RefCell<Vec<(String, String)>>> {
+    let sent = Rc::new(RefCell::new(Vec::<(String, String)>::new()));
+    let seen = sent.clone();
+    app.on_setting_changed(move |k, v| seen.borrow_mut().push((k.to_string(), v.to_string())));
+    sent
+}
+
+#[test]
+fn settings_switches_send_their_config_keys() {
+    let app = app();
+    app.set_settings_visible(true);
+    open_advanced(&app);
+    let sent = record_settings(&app);
+    for (label, key, value) in [
+        ("Direct connections only", "strict_mode", "true"),
+        ("Check for updates", "update_check", "false"),
+        ("Fetch every opened file in full", "prefetch_on_open", "true"),
+        ("Check files at each open (Mac)", "live_collab", "true"),
+        ("Share the whole save folder", "scan_shared_on_start", "true"),
+    ] {
+        toggle(&app, label).invoke_accessible_default_action();
+        assert_eq!(
+            sent.borrow().last(),
+            Some(&(key.to_string(), value.to_string())),
+            "{}",
+            label
+        );
+    }
+}
+
+#[test]
+fn settings_number_sends_its_value_on_enter() {
+    let app = app();
+    app.set_settings_visible(true);
+    open_advanced(&app);
+    let sent = record_settings(&app);
+    let field = number_field(&app, "Read ahead (MB)");
+    field.set_accessible_value("128");
+    let at = centre(&field);
+    press(&app, at);
+    release(&app, at);
+    let enter: slint::SharedString = slint::platform::Key::Return.into();
+    app.window().dispatch_event(WindowEvent::KeyPressed { text: enter.clone() });
+    app.window().dispatch_event(WindowEvent::KeyReleased { text: enter });
+    assert_eq!(
+        sent.borrow().last(),
+        Some(&("read_ahead_window_mb".to_string(), "128".to_string()))
+    );
+}
+
+#[test]
+fn settings_reset_fires_settings_reset() {
+    let app = app();
+    app.set_settings_visible(true);
+    open_advanced(&app);
+    let fired = Rc::new(Cell::new(false));
+    let f = fired.clone();
+    app.on_settings_reset(move || f.set(true));
+    one(&app, "Reset to defaults").invoke_accessible_default_action();
+    assert!(fired.get(), "reset did not fire settings_reset");
+}
+
+// Hovering a setting's name shows when to use it; leaving it hides it again.
+#[test]
+fn settings_name_explains_itself_on_hover() {
+    let app = app();
+    app.set_settings_visible(true);
+    open_advanced(&app);
+    let switch = toggle(&app, "Direct connections only");
+    let tip = switch
+        .accessible_description()
+        .expect("the switch carries its explanation")
+        .to_string();
+    let shown = || ElementHandle::find_by_accessible_label(&app, &tip).next();
+    assert!(shown().is_none(), "explanation shown before the hover");
+
+    // The name starts 48px right of the switch.
+    let p = switch.absolute_position();
+    let over_name = slint::LogicalPosition::new(p.x + 60.0, p.y + switch.size().height / 2.0);
+    app.window().dispatch_event(WindowEvent::PointerMoved { position: over_name });
+    assert_on_screen(&shown().expect("no explanation on hover"), "explanation");
+
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(5.0, 5.0),
+    });
+    assert!(shown().is_none(), "explanation stayed after the pointer left");
 }
 
 #[test]
@@ -114,6 +254,7 @@ fn toggle_invoked_twice_round_trips() {
 fn edit_config_button_fires_open_config() {
     let app = app();
     app.set_settings_visible(true);
+    scroll_settings_to_end(&app);
     let fired = Rc::new(Cell::new(false));
     let f = fired.clone();
     app.on_open_config(move || f.set(true));

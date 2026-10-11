@@ -1326,6 +1326,30 @@ ENVIRONMENT (for "kd start"):
                           daemon: two daemons sharing it load the same identity
                           and get identical fingerprints, which connect rejects.
 
+TUNING (for "kd start"). The defaults suit most people: change one only for a
+reason you know. The config file (kd config-path) explains every setting.
+  KD_STRICT=1                       Never use the relay. The same speed when a direct
+                                    path works; without one, connect fails. Default: off.
+  KEIBIDROP_READ_AHEAD_WINDOW_MB=N  Fetch up to N MB ahead while a file is read in
+                                    order. Higher: smoother far playback, and data that
+                                    may never be read. 0: video over a long link
+                                    pauses. 0 to 1024. Default: 64.
+  KEIBIDROP_PREFETCH_AUTO_MB=N      Fetch all of each opened file of N MB or more, in
+                                    the background. 0: only what is read. Default: 0.
+  KEIBIDROP_PREFETCH_ON_OPEN=1      Fetch every opened file in full. The most data:
+                                    programs open files to preview them. Default: off.
+  KEIBIDROP_LIVE_COLLAB=1           macOS: check a file's time at each open (macFUSE
+                                    auto_cache). Not needed to see the peer's changes.
+                                    Default: off.
+  KD_SCAN_SHARED_ON_START=1         Offer every file already in the save folder when a
+                                    session starts (names only until read). Default: off.
+  KD_RESCAN_SHARED_SECONDS=N        With that on, look for new files every N seconds:
+                                    a walk of the folder; only new files go out. 0 off,
+                                    else 5 to 86400. Default: 30.
+  KD_SHARE_READ_ONLY=1              Refuse every change the peer sends. Default: off.
+  KD_MOUNT_READ_ONLY=1              Programs here can read the mount, not change it.
+  KD_PRESERVE_METADATA=1            Saved files keep the origin's times and permissions.
+
 EXAMPLE (first connection):
   KD_SAVE_PATH=./received KD_NO_FUSE=1 kd start
   kd show fingerprint              # send this to your peer

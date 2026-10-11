@@ -428,6 +428,11 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	if fuseOpLog {
 		d.logger.Debug("oplog OpenEx", "path", path, "flags", fi.Flags)
+		// The handle the open got and what it told the kernel about its page cache.
+		defer func() {
+			d.logger.Debug("oplog OpenEx done", "path", path, "errc", errCode, "fh", fi.Fh,
+				"directIo", fi.DirectIo, "keepCache", fi.KeepCache)
+		}()
 	}
 	defer d.recoverPanic("OpenEx", &errCode)
 	if e := checkPath(path); e != 0 {
@@ -872,6 +877,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 
 // Destroy runs on unmount.
 func (d *Dir) Destroy() {
+	d.releaseKernelCache()
 	if p := d.onDestroy.Load(); p != nil {
 		(*p)()
 	}
@@ -939,6 +945,13 @@ func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) (errCode int) {
 }
 
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int) {
+	if fuseOpLog {
+		// The size and mtime the kernel gets for the path.
+		defer func() {
+			d.logger.Debug("oplog Getattr", "path", path, "fh", fh, "errc", errCode,
+				"size", stat.Size, "mtimeNs", stat.Mtim.Sec*1e9+stat.Mtim.Nsec)
+		}()
+	}
 	defer d.recoverPanic("Getattr", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
@@ -1174,7 +1187,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 func (d *Dir) Init() {
 	// d.logger.Info("Init", "inode", d.Inode)
 	// syscall.Chdir(d.LocalDownloadFolder)
-
+	d.captureKernelCache()
 }
 
 func (d *Dir) Link(oldpath string, newpath string) (errCode int) {
@@ -1918,6 +1931,11 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := syscall.Rmdir(cleanPath)
+	if err != nil && !os.IsNotExist(err) && dropSidecarsOnly(cleanPath) {
+		// Only sidecars kept it, which the mount hides: the folder looked
+		// empty, so rm -r saw nothing to remove.
+		err = syscall.Rmdir(cleanPath)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			if isRemoteDir {
@@ -2268,8 +2286,9 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 
 	// Try to unlink local file (may not exist if remote-only).
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	dropSidecar(cleanPath)
 	err := platUnlink(cleanPath)
+	// After the file: a sidecar write racing the unlink finds no copy.
+	dropSidecar(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// File doesn't exist locally.
@@ -2840,7 +2859,7 @@ func (d *Dir) seedFromLocal(f *File, oldBitmap, newBitmap *ChunkBitmap, seed str
 	if target == "" {
 		return
 	}
-	src, err := os.Open(seed) // #nosec G304 -- cache-internal path
+	src, err := openFileShared(seed, os.O_RDONLY, 0) // cache-internal path
 	if err != nil {
 		return
 	}
@@ -2852,7 +2871,7 @@ func (d *Dir) seedFromLocal(f *File, oldBitmap, newBitmap *ChunkBitmap, seed str
 	}
 	var dst *os.File
 	if filepath.Clean(target) != filepath.Clean(seed) {
-		dst, err = os.OpenFile(target, os.O_WRONLY|os.O_CREATE, 0o644) // #nosec G304
+		dst, err = openFileShared(target, os.O_WRONLY|os.O_CREATE, 0o644)
 		if err != nil {
 			return
 		}
@@ -4049,12 +4068,12 @@ func (d *Dir) UndoLocalDirMove(movedTo, movedFrom string) error {
 // copyFileContents copies src to dst. Fallback for a failed preserve rename;
 // O_EXCL because conflictNames guarantees a free name.
 func copyFileContents(src, dst string) error {
-	in, err := os.Open(src) // #nosec G304 -- both paths are cache-internal
+	in, err := openFileShared(src, os.O_RDONLY, 0) // both paths are cache-internal
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) // #nosec G304
+	out, err := openFileShared(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
@@ -4315,7 +4334,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 				return pErr
 			}
 			_ = os.Remove(BitmapPath(existing.RealPathOfFile))
-			if cf, cErr := os.OpenFile(existing.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
+			if cf, cErr := openFileShared(existing.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil {
 				_ = cf.Truncate(newSize)
 				_ = cf.Close()
 			}
@@ -4452,6 +4471,10 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		if conflictRel != "" {
 			d.registerConflictCopy(logger, conflictRel, conflictReal)
 		}
+		if sizeChanged || incomingMtime > existingMtime {
+			// The bitmap was reset: the kernel may still hold the old bytes.
+			d.invalidateKernelCache(path)
+		}
 		return nil
 	}
 
@@ -4549,7 +4572,7 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		if fileMode == 0 {
 			fileMode = 0644
 		}
-		lf, createErr := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
+		lf, createErr := openFileShared(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
 		if createErr != nil {
 			logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
 			return
@@ -4636,7 +4659,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	if fileMode == 0 {
 		fileMode = 0644
 	}
-	lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
+	lf, err := openFileShared(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
 	if err != nil {
 		logger.Warn("Prefetch: failed to open local file", "error", err)
 		return
@@ -4789,6 +4812,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 		d.AfmLock.Unlock()
 		// Metadata-only — the edited content is fetched on-demand on the next
 		// read (or prefetched on Open). Keeps live collab lightweight.
+		d.invalidateKernelCache(path)
 		return nil
 	}
 
@@ -4858,7 +4882,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 			return pErr
 		}
 		_ = os.Remove(BitmapPath(f.RealPathOfFile))
-		if cf, cErr := os.OpenFile(f.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
+		if cf, cErr := openFileShared(f.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil {
 			_ = cf.Truncate(newSize)
 			_ = cf.Close()
 		}
@@ -4918,5 +4942,6 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	if conflictRel != "" {
 		d.registerConflictCopy(logger, conflictRel, conflictReal)
 	}
+	d.invalidateKernelCache(path)
 	return nil
 }

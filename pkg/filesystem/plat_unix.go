@@ -5,6 +5,7 @@
 package filesystem
 
 import (
+	"errors"
 	"os"
 	"syscall"
 
@@ -12,6 +13,16 @@ import (
 )
 
 const platENODATA = syscall.ENODATA
+
+// openFileShared opens a cache file. POSIX lets a rename or delete through
+// an open handle, so it is plain os.OpenFile.
+func openFileShared(name string, flag int, perm os.FileMode) (*os.File, error) {
+	return os.OpenFile(name, flag, perm) // #nosec G304 -- cache-internal paths
+}
+
+// isDirNotEmpty reports an rmdir or rename refused for a directory not empty.
+func isDirNotEmpty(err error) bool { return errors.Is(err, syscall.ENOTEMPTY) }
+
 const platDiskModeIsAuthoritative = true
 
 func platTruncate(path string, size int64) error {
