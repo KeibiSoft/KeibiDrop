@@ -1931,6 +1931,11 @@ func (d *Dir) rmdirInternal(path string, notifyPeer bool) (errCode int) {
 
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
 	err := syscall.Rmdir(cleanPath)
+	if err != nil && !os.IsNotExist(err) && dropSidecarsOnly(cleanPath) {
+		// Only sidecars kept it, which the mount hides: the folder looked
+		// empty, so rm -r saw nothing to remove.
+		err = syscall.Rmdir(cleanPath)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			if isRemoteDir {
@@ -2281,8 +2286,9 @@ func (d *Dir) unlinkInternal(path string, notifyPeer bool) (errCode int) {
 
 	// Try to unlink local file (may not exist if remote-only).
 	cleanPath := filepath.Clean(filepath.Join(d.LocalDownloadFolder, path))
-	dropSidecar(cleanPath)
 	err := platUnlink(cleanPath)
+	// After the file: a sidecar write racing the unlink finds no copy.
+	dropSidecar(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// File doesn't exist locally.

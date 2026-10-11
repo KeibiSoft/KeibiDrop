@@ -11,6 +11,7 @@ package filesystem
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +53,12 @@ func (f *File) flushSidecar() {
 	meta := f.sidecarMetaLocked()
 	f.metaMu.RUnlock()
 	if bm == nil || real == "" {
+		return
+	}
+	// A sidecar names bytes in its cache copy. With the copy gone (a delete
+	// here or by the friend) a write now leaves a sidecar the mount hides,
+	// and the folder cannot be removed.
+	if _, err := os.Stat(real); os.IsNotExist(err) {
 		return
 	}
 	if meta.Ledger != nil {
@@ -228,6 +235,28 @@ func (d *Dir) adoptFromDisk(path string) *File {
 // dropSidecar removes the sidecar of a path that is being rewritten or removed.
 func dropSidecar(localPath string) {
 	_ = os.Remove(BitmapPath(localPath))
+}
+
+// dropSidecarsOnly removes the files of dir when each one is a sidecar or a
+// sidecar's temp (writeFileAtomic): this program's own state, which the mount
+// hides. When anything else is there it removes nothing and returns false.
+func dropSidecarsOnly(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return false
+	}
+	for _, e := range entries {
+		n := e.Name()
+		sidecar := strings.HasSuffix(n, ".kdbitmap") ||
+			(strings.Contains(n, ".kdbitmap.") && strings.HasSuffix(n, ".tmp"))
+		if !sidecar || !e.Type().IsRegular() {
+			return false
+		}
+	}
+	for _, e := range entries {
+		_ = os.Remove(filepath.Join(dir, e.Name()))
+	}
+	return true
 }
 
 // adoptForAnnounce gives an announce the cache copy a daemon restart left on

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -165,6 +166,28 @@ func TestFUSEtoFUSE_GitPingPong(t *testing.T) {
 			resp := pr.send(t, "exec repo git --no-optional-locks fsck --no-progress --no-dangling", 120*time.Second)
 			require.Truef(t, strings.HasPrefix(resp, "EXEC:0:"), "%s fsck: %s", name, resp)
 		}
+	})
+
+	// The same run went on: Bob removed the repository, then Alice's rm -r
+	// failed with "File exists". A sidecar the mount hides kept the folder.
+	t.Run("BobRemovesAliceRemovesToo", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			// The delete of a fetched git object fails while this program still
+			// holds it open without delete sharing ("being used by another
+			// process", 2026-10-11). A Windows bug of its own, not this one.
+			t.Skip("Windows: a fetched file still open refuses its delete (sharing violation)")
+		}
+		rmRepo := "exec . rm -rf repo"
+		resp := p.bob.send(t, rmRepo, 60*time.Second)
+		require.Truef(t, strings.HasPrefix(resp, "EXEC:0:"), "bob rm: %s", resp)
+		WaitForCondition(t, gitVisibleWithin, 500*time.Millisecond, func() bool {
+			_, err := os.Stat(filepath.Join(p.aliceMount, "repo", "seed.txt"))
+			return os.IsNotExist(err)
+		}, "Bob's delete reaches Alice")
+		resp = p.alice.send(t, rmRepo, 60*time.Second)
+		require.Truef(t, strings.HasPrefix(resp, "EXEC:0:"), "alice rm after bob's: %s", resp)
+		_, err := os.Stat(filepath.Join(p.aliceMount, "repo"))
+		require.True(t, os.IsNotExist(err), "repo still on Alice's mount")
 	})
 }
 

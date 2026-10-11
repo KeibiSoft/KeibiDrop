@@ -5,6 +5,7 @@
 package filesystem
 
 import (
+	"errors"
 	"os"
 	"syscall"
 
@@ -12,6 +13,10 @@ import (
 )
 
 const platENODATA = syscall.ENODATA
+
+// isDirNotEmpty reports an rmdir or rename refused for a directory not empty.
+func isDirNotEmpty(err error) bool { return errors.Is(err, syscall.ENOTEMPTY) }
+
 const platDiskModeIsAuthoritative = true
 
 func platTruncate(path string, size int64) error {

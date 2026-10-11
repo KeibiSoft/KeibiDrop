@@ -27,6 +27,10 @@ func convertOsErrToSyscallErrno(name string, err error) syscall.Errno {
 	// work on all platforms.
 	var posixErr syscall.Errno
 	switch {
+	case isDirNotEmpty(err):
+		// Before ErrExist, which Go also matches for a directory not empty.
+		posixErr = syscall.Errno(winfuse.ENOTEMPTY)
+		return -posixErr
 	case errors.Is(err, os.ErrExist):
 		posixErr = syscall.Errno(winfuse.EEXIST)
 		return -posixErr

@@ -20,6 +20,9 @@ import (
 const platENODATA = syscall.ENOENT // ENODATA does not exist on Windows. Map to ENOENT.
 const platDiskModeIsAuthoritative = false
 
+// isDirNotEmpty reports an rmdir or rename refused for a directory not empty.
+func isDirNotEmpty(err error) bool { return errors.Is(err, windows.ERROR_DIR_NOT_EMPTY) }
+
 func platTruncate(path string, size int64) error {
 	return os.Truncate(path, size)
 }
