@@ -592,7 +592,11 @@ remove-contact <fp>          Remove a saved contact
 quick-connect <fp>           Connect to a saved contact
 save-contact <name>          Save current peer as contact
 export-logs [dest]           Export sanitized logs
-exit                         Quit the CLI`)
+exit                         Quit the CLI
+
+Settings live in the config file ("show config" prints its path), each one
+explained there with its default and what it costs. The defaults suit most
+people: change one only for a reason you know.`)
 }
 
 func handleShow(kd *common.KeibiDrop, what string) {

@@ -2491,13 +2491,15 @@ export component MainWindow inherits Window {
         card-x: (root.width - 500px) / 2;
         card-y: (root.height - self.card-height) / 2;
         dismiss => { root.settings_visible = false; }
+        // Advanced settings: closed each time the card opens.
+        property <bool> advanced: false;
 
         ScrollView {
             x: 0;
             y: 0;
             width: settings.card-width;
             height: settings.card-height;
-            content-height: 1096px;
+            content-height: settings.advanced ? 1160px : 740px;
 
         Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Settings"; }
 
@@ -2635,105 +2637,10 @@ export component MainWindow inherits Window {
             buy => { root.tokens_buy(); }
         }
 
-        // The other settings, each explained on hover, and their reset.
-        Label { x: 20px; y: 680px; height: 14px; style: Theme.small; color: Theme.muted; text: "Connection"; }
-        SettingSwitch {
-            x: 20px;
-            y: 700px;
-            width: parent.width - 40px;
-            text: "Direct connections only";
-            tip: "Your files never go through the KeibiDrop relay. Turn it on when a rule says your data must not pass a third server. Two computers that both refuse incoming connections then cannot connect. Default: off. Takes effect at the next connection.";
-            checked <=> root.cfg_strict_mode;
-            toggled(v) => { root.setting_changed("strict_mode", v ? "true" : "false"); }
-        }
-        SettingSwitch {
-            x: 20px;
-            y: 732px;
-            width: parent.width - 40px;
-            text: "Check for updates";
-            tip: "At start, ask keibidrop.com for the newest version number and show a notice when this one is older. The request carries nothing about you. Turn it off on a computer that must not call out. Default: on. Takes effect at the next start.";
-            checked <=> root.cfg_update_check;
-            toggled(v) => { root.setting_changed("update_check", v ? "true" : "false"); }
-        }
-
-        Label { x: 20px; y: 768px; height: 14px; style: Theme.small; color: Theme.muted; text: "Teleport Folder"; }
-        SettingNumber {
-            x: 20px;
-            y: 788px;
-            width: parent.width - 40px;
-            text: "Read ahead (MB)";
-            tip: "While a video or a big file plays from start to end, fetch this much ahead so it does not stop. Raise it for a fast link to a far computer, lower it on a slow link. 0 turns it off. From 0 to 1024. Default: 64. Takes effect at the next connection.";
-            value <=> root.cfg_read_ahead_window_mb;
-            committed(v) => { root.setting_changed("read_ahead_window_mb", v); }
-        }
-        SettingNumber {
-            x: 20px;
-            y: 822px;
-            width: parent.width - 40px;
-            text: "Fetch whole files from (MB)";
-            tip: "When you open a file at least this big, fetch all of it in the background. Use it on a fast link for files you read to the end. 0 fetches only what you read. Default: 0. Takes effect at the next connection.";
-            value <=> root.cfg_prefetch_auto_mb;
-            committed(v) => { root.setting_changed("prefetch_auto_mb", v); }
-        }
-        SettingSwitch {
-            x: 20px;
-            y: 856px;
-            width: parent.width - 40px;
-            text: "Fetch every opened file in full";
-            tip: "Every file you open is fetched in full in the background, whatever its size. Only on a fast link: on a slow one, jumps in a video get slow. Default: off. Takes effect at the next connection.";
-            checked <=> root.cfg_prefetch_on_open;
-            toggled(v) => { root.setting_changed("prefetch_on_open", v ? "true" : "false"); }
-        }
-        SettingSwitch {
-            x: 20px;
-            y: 888px;
-            width: parent.width - 40px;
-            text: "Check files at each open (Mac)";
-            tip: "Mac only. The Mac checks a file's time each time a program opens it. KeibiDrop shows your friend's changes without it: turn it on only if a change still shows late. Leave it off when a database writes in the Teleport Folder. Default: off. Takes effect at the next connection.";
-            checked <=> root.cfg_live_collab;
-            toggled(v) => { root.setting_changed("live_collab", v ? "true" : "false"); }
-        }
-
-        Label { x: 20px; y: 924px; height: 14px; style: Theme.small; color: Theme.muted; text: "Save folder"; }
-        SettingSwitch {
-            x: 20px;
-            y: 944px;
-            width: parent.width - 40px;
-            text: "Share the whole save folder";
-            tip: "When a session starts, offer your friend every file already in the save folder, not only the files you add. Use it for a folder you serve, like a NAS. Default: off. Takes effect at the next connection.";
-            checked <=> root.cfg_scan_shared_on_start;
-            toggled(v) => { root.setting_changed("scan_shared_on_start", v ? "true" : "false"); }
-        }
-        SettingNumber {
-            x: 20px;
-            y: 976px;
-            width: parent.width - 40px;
-            enabled: root.cfg_scan_shared_on_start;
-            text: "Look for new files every (s)";
-            tip: "With the whole save folder shared, look this often for files that landed in it and offer them to your friend. 0 turns it off; else from 5 to 86400. Default: 30. Takes effect at the next connection.";
-            value <=> root.cfg_rescan_shared_seconds;
-            committed(v) => { root.setting_changed("rescan_shared_seconds", v); }
-        }
-
-        Rectangle {
-            x: 20px;
-            y: 1018px;
-            width: parent.width - 40px;
-            height: 26px;
-            SmallOutlineButton {
-                x: 0;
-                y: 0;
-                width: 150px;
-                text: "Reset to defaults";
-                clicked => { root.settings_reset(); }
-            }
-            Label { x: 160px; height: 26px; style: Theme.small; color: Theme.faint; text: "Folders, servers and identity stay as they are."; }
-        }
-
         // Config file editing
         Rectangle {
             x: 20px;
-            y: 1056px;
+            y: 664px;
             width: parent.width - 40px;
             height: 26px;
             SmallOutlineButton {
@@ -2744,6 +2651,135 @@ export component MainWindow inherits Window {
                 clicked => { root.open_config(); }
             }
             Label { x: 160px; height: 26px; style: Theme.small; color: Theme.faint; text: "All settings, with defaults. Changes apply at the next start."; }
+        }
+
+        // The other settings stay closed each time the card opens: the
+        // defaults suit most people.
+        Rectangle {
+            x: 20px;
+            y: 702px;
+            width: parent.width - 40px;
+            height: 26px;
+            SmallOutlineButton {
+                x: 0;
+                y: 0;
+                width: 150px;
+                text: settings.advanced ? "Hide advanced" : "Advanced settings";
+                clicked => { settings.advanced = !settings.advanced; }
+            }
+            Label { x: 160px; height: 26px; style: Theme.small; color: Theme.faint; text: "The defaults suit most people."; }
+        }
+        if settings.advanced: Rectangle {
+            x: 20px;
+            y: 742px;
+            width: parent.width - 40px;
+            height: 402px;
+
+            Label {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: 26px;
+                wrap: word-wrap;
+                vertical-alignment: top;
+                style: Theme.hint;
+                color: Theme.faint;
+                text: "Change one only when you know why. Hover a name to see what it does and what it costs.";
+            }
+
+            Label { x: 0; y: 40px; height: 14px; style: Theme.small; color: Theme.muted; text: "Connection"; }
+            SettingSwitch {
+                x: 0;
+                y: 60px;
+                width: parent.width;
+                text: "Direct connections only";
+                tip: "Your files never go through the KeibiDrop relay. Turn it on when a rule says your data must not pass a third server. Speed: the same when a direct path works, and no relay speed limit. Without a direct path the connection fails instead of using the relay. Default: off. Takes effect at the next connection.";
+                checked <=> root.cfg_strict_mode;
+                toggled(v) => { root.setting_changed("strict_mode", v ? "true" : "false"); }
+            }
+            SettingSwitch {
+                x: 0;
+                y: 92px;
+                width: parent.width;
+                text: "Check for updates";
+                tip: "At start, ask keibidrop.com for the newest version number and show a notice when this one is older. One small request that carries nothing about you, and no effect on transfers. Turn it off on a computer that must not call out. Default: on. Takes effect at the next start.";
+                checked <=> root.cfg_update_check;
+                toggled(v) => { root.setting_changed("update_check", v ? "true" : "false"); }
+            }
+
+            Label { x: 0; y: 128px; height: 14px; style: Theme.small; color: Theme.muted; text: "Teleport Folder"; }
+            SettingNumber {
+                x: 0;
+                y: 148px;
+                width: parent.width;
+                text: "Read ahead (MB)";
+                tip: "While a video or a big file plays from start to end, fetch this much ahead so it does not pause. Higher: smoother on a fast link to a far computer, and up to this much data fetched that you may never read. Lower or 0: less data, but video over a long link pauses. From 0 to 1024. Default: 64. Takes effect at the next connection.";
+                value <=> root.cfg_read_ahead_window_mb;
+                committed(v) => { root.setting_changed("read_ahead_window_mb", v); }
+            }
+            SettingNumber {
+                x: 0;
+                y: 182px;
+                width: parent.width;
+                text: "Fetch whole files from (MB)";
+                tip: "When you open a file at least this big, fetch all of it in the background, even if you read only a part. On a slow link it makes jumps in a video slow. 0 fetches only what you read. Default: 0. Takes effect at the next connection.";
+                value <=> root.cfg_prefetch_auto_mb;
+                committed(v) => { root.setting_changed("prefetch_auto_mb", v); }
+            }
+            SettingSwitch {
+                x: 0;
+                y: 216px;
+                width: parent.width;
+                text: "Fetch every opened file in full";
+                tip: "Every file you open is fetched in full in the background, whatever its size. The most data of all: Finder and other programs open files to show previews, and each open fetches the whole file. Only on a fast link. Default: off. Takes effect at the next connection.";
+                checked <=> root.cfg_prefetch_on_open;
+                toggled(v) => { root.setting_changed("prefetch_on_open", v ? "true" : "false"); }
+            }
+            SettingSwitch {
+                x: 0;
+                y: 248px;
+                width: parent.width;
+                text: "Check files at each open (Mac)";
+                tip: "Mac only. The Mac checks a file's time each time a program opens it. KeibiDrop shows your friend's changes without it. The same traffic for files that did not change, one fetch after a change. Leave it off when a database writes in the Teleport Folder. Default: off. Takes effect at the next connection.";
+                checked <=> root.cfg_live_collab;
+                toggled(v) => { root.setting_changed("live_collab", v ? "true" : "false"); }
+            }
+
+            Label { x: 0; y: 284px; height: 14px; style: Theme.small; color: Theme.muted; text: "Save folder"; }
+            SettingSwitch {
+                x: 0;
+                y: 304px;
+                width: parent.width;
+                text: "Share the whole save folder";
+                tip: "When a session starts, offer your friend every file already in the save folder, not only the files you add. Only file names go at first; the data moves when your friend reads a file. Use it for a folder you serve, like a NAS. Default: off. Takes effect at the next connection.";
+                checked <=> root.cfg_scan_shared_on_start;
+                toggled(v) => { root.setting_changed("scan_shared_on_start", v ? "true" : "false"); }
+            }
+            SettingNumber {
+                x: 0;
+                y: 336px;
+                width: parent.width;
+                enabled: root.cfg_scan_shared_on_start;
+                text: "Look for new files every (s)";
+                tip: "With the whole save folder shared, look this often for files that landed in it and offer them to your friend. Each look reads the folder on this disk; only new files go out. 0 turns it off; else from 5 to 86400. Default: 30. Takes effect at the next connection.";
+                value <=> root.cfg_rescan_shared_seconds;
+                committed(v) => { root.setting_changed("rescan_shared_seconds", v); }
+            }
+
+            Rectangle {
+                x: 0;
+                y: 376px;
+                width: parent.width;
+                height: 26px;
+                SmallOutlineButton {
+                    x: 0;
+                    y: 0;
+                    width: 150px;
+                    text: "Reset to defaults";
+                    clicked => { root.settings_reset(); }
+                }
+                Label { x: 160px; height: 26px; style: Theme.small; color: Theme.faint; text: "Folders, servers and identity stay as they are."; }
+            }
         }
         }
 

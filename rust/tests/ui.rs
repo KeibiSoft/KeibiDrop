@@ -70,10 +70,43 @@ fn settings_bottom_rows_reachable_at_default_size() {
     let app = app();
     app.set_settings_visible(true);
     assert_on_screen(&one(&app, "Buy relay credit"), "buy button");
-    // The card scrolls: the wheel brings its last rows up.
-    scroll_settings_to_end(&app);
-    assert_on_screen(&one(&app, "Reset to defaults"), "reset button");
     assert_on_screen(&one(&app, "Edit config file"), "edit-config button");
+    // Advanced settings open below them; the wheel brings their last row up.
+    open_advanced(&app);
+    assert_on_screen(&one(&app, "Reset to defaults"), "reset button");
+}
+
+// Opens Advanced settings (closed each time the card opens) and scrolls to
+// its end.
+fn open_advanced(app: &MainWindow) {
+    scroll_settings_to_end(app);
+    one(app, "Advanced settings").invoke_accessible_default_action();
+    scroll_settings_to_end(app);
+}
+
+#[test]
+fn advanced_settings_stay_closed_until_asked() {
+    let app = app();
+    app.set_settings_visible(true);
+    scroll_settings_to_end(&app);
+    let strict = || {
+        ElementHandle::find_by_accessible_label(&app, "Direct connections only")
+            .find(|e| e.accessible_checked().is_some())
+    };
+    assert!(strict().is_none(), "advanced settings open without a click");
+    one(&app, "Advanced settings").invoke_accessible_default_action();
+    scroll_settings_to_end(&app);
+    assert!(strict().is_some(), "Advanced settings did not open");
+
+    // Closing the card closes them again.
+    app.set_settings_visible(false);
+    assert!(
+        ElementHandle::find_by_accessible_label(&app, "Edit config file").next().is_none(),
+        "the card stayed after closing"
+    );
+    app.set_settings_visible(true);
+    scroll_settings_to_end(&app);
+    assert!(strict().is_none(), "advanced settings stayed open across a reopen");
 }
 
 // The wheel over the Settings card, as far down as it goes.
@@ -103,7 +136,7 @@ fn record_settings(app: &MainWindow) -> Rc<RefCell<Vec<(String, String)>>> {
 fn settings_switches_send_their_config_keys() {
     let app = app();
     app.set_settings_visible(true);
-    scroll_settings_to_end(&app);
+    open_advanced(&app);
     let sent = record_settings(&app);
     for (label, key, value) in [
         ("Direct connections only", "strict_mode", "true"),
@@ -126,7 +159,7 @@ fn settings_switches_send_their_config_keys() {
 fn settings_number_sends_its_value_on_enter() {
     let app = app();
     app.set_settings_visible(true);
-    scroll_settings_to_end(&app);
+    open_advanced(&app);
     let sent = record_settings(&app);
     let field = number_field(&app, "Read ahead (MB)");
     field.set_accessible_value("128");
@@ -146,7 +179,7 @@ fn settings_number_sends_its_value_on_enter() {
 fn settings_reset_fires_settings_reset() {
     let app = app();
     app.set_settings_visible(true);
-    scroll_settings_to_end(&app);
+    open_advanced(&app);
     let fired = Rc::new(Cell::new(false));
     let f = fired.clone();
     app.on_settings_reset(move || f.set(true));
@@ -159,7 +192,7 @@ fn settings_reset_fires_settings_reset() {
 fn settings_name_explains_itself_on_hover() {
     let app = app();
     app.set_settings_visible(true);
-    scroll_settings_to_end(&app);
+    open_advanced(&app);
     let switch = toggle(&app, "Direct connections only");
     let tip = switch
         .accessible_description()
