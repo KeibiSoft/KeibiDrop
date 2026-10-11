@@ -248,6 +248,142 @@ component ToggleRow inherits Rectangle {
     }
 }
 
+// A Settings name with a "?" mark. Hovering it shows when to use the setting,
+// in a box above the line: the lines above are drawn before it, so the box
+// covers them, where the lines below would cover a box under the line.
+component SettingName inherits Rectangle {
+    in property <string> text;
+    in property <string> tip;
+
+    name := Label {
+        x: 0;
+        height: root.height;
+        silent: true;
+        style: Theme.switch-label;
+        color: Theme.switch-ink;
+        text: root.text;
+    }
+    mark := Rectangle {
+        x: name.preferred-width + 8px;
+        y: (root.height - self.height) / 2;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: hover.has-hover ? Theme.switch-ink : Theme.faint;
+        Label {
+            width: parent.width;
+            height: parent.height;
+            horizontal-alignment: center;
+            silent: true;
+            style: Theme.small;
+            color: hover.has-hover ? Theme.switch-ink : Theme.faint;
+            text: "?";
+        }
+    }
+    hover := TouchArea {
+        x: 0;
+        width: min(root.width, mark.x + mark.width + 4px);
+        mouse-cursor: help;
+    }
+    if hover.has-hover: Box {
+        kind: BoxKind.list;
+        x: 0;
+        y: -self.height - 6px;
+        width: min(root.width, 380px);
+        height: tip-text.preferred-height + 16px;
+
+        tip-text := Label {
+            x: 10px;
+            y: 8px;
+            width: parent.width - 20px;
+            wrap: word-wrap;
+            vertical-alignment: top;
+            style: Theme.hint;
+            color: Theme.switch-ink;
+            text: root.tip;
+        }
+    }
+}
+
+// A Settings switch with its name and its hover explanation.
+component SettingSwitch inherits Rectangle {
+    in property <string> text;
+    in property <string> tip;
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    height: 24px;
+
+    ToggleSwitch {
+        x: 0;
+        y: 2px;
+        accessible-label: root.text;
+        accessible-description: root.tip;
+        checked <=> root.checked;
+        enabled: root.enabled;
+        toggled(v) => { root.toggled(v); }
+    }
+    SettingName {
+        x: 48px;
+        width: root.width - 48px;
+        height: root.height;
+        text: root.text;
+        tip: root.tip;
+    }
+}
+
+// A Settings whole number with its name and its hover explanation. Enter or
+// leaving the field sends the text; the engine checks it.
+component SettingNumber inherits Rectangle {
+    in property <string> text;
+    in property <string> tip;
+    in-out property <string> value;
+    in property <bool> enabled: true;
+    callback committed(string);
+
+    height: 26px;
+
+    Box {
+        kind: BoxKind.field;
+        x: 0;
+        y: 1px;
+        width: 64px;
+        height: 24px;
+        opacity: root.enabled ? 1 : 0.4;
+
+        TextInput {
+            x: 8px;
+            width: parent.width - 16px;
+            height: parent.height;
+            enabled: root.enabled;
+            input-type: number;
+            single-line: true;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            font-size: Theme.label.size;
+            color: Theme.text;
+            accessible-label: root.text;
+            accessible-description: root.tip;
+            text <=> root.value;
+            accepted => { root.committed(self.text); }
+            changed has-focus => {
+                if (!self.has-focus) {
+                    root.committed(self.text);
+                }
+            }
+        }
+    }
+    SettingName {
+        x: 76px;
+        width: root.width - 76px;
+        height: root.height;
+        text: root.text;
+        tip: root.tip;
+    }
+}
+
 // Her Connect, two states: at rest a blue line and a blue label (her nearby
 // device rows), pressed or busy filled blue with a white label (Figma NEW
 // 2.0). plain: a grey one for the second choice (Cancel, No thanks, Quit).
@@ -1381,6 +1517,19 @@ export component MainWindow inherits Window {
     callback mount_read_only_toggled(bool);
     callback preserve_metadata_toggled(bool);
 
+    // The other Settings values, persisted to config (Rust: KD_SetSetting with
+    // the config key; KD_ResetSettings puts them back to their defaults).
+    in-out property<bool> cfg_strict_mode: false;
+    in-out property<bool> cfg_update_check: true;
+    in-out property<string> cfg_read_ahead_window_mb: "64";
+    in-out property<string> cfg_prefetch_auto_mb: "0";
+    in-out property<bool> cfg_prefetch_on_open: false;
+    in-out property<bool> cfg_live_collab: false;
+    in-out property<bool> cfg_scan_shared_on_start: false;
+    in-out property<string> cfg_rescan_shared_seconds: "30";
+    callback setting_changed(string, string); // config key, value
+    callback settings_reset();
+
     in-out property<bool> help_visible: false;
     in-out property<bool> settings_visible: false;
 
@@ -2348,7 +2497,7 @@ export component MainWindow inherits Window {
             y: 0;
             width: settings.card-width;
             height: settings.card-height;
-            content-height: 700px;
+            content-height: 1096px;
 
         Label { x: 20px; y: 16px; height: 20px; style: Theme.heading-medium; text: "Settings"; }
 
@@ -2486,10 +2635,105 @@ export component MainWindow inherits Window {
             buy => { root.tokens_buy(); }
         }
 
+        // The other settings, each explained on hover, and their reset.
+        Label { x: 20px; y: 680px; height: 14px; style: Theme.small; color: Theme.muted; text: "Connection"; }
+        SettingSwitch {
+            x: 20px;
+            y: 700px;
+            width: parent.width - 40px;
+            text: "Direct connections only";
+            tip: "Your files never go through the KeibiDrop relay. Turn it on when a rule says your data must not pass a third server. Two computers that both refuse incoming connections then cannot connect. Default: off. Takes effect at the next connection.";
+            checked <=> root.cfg_strict_mode;
+            toggled(v) => { root.setting_changed("strict_mode", v ? "true" : "false"); }
+        }
+        SettingSwitch {
+            x: 20px;
+            y: 732px;
+            width: parent.width - 40px;
+            text: "Check for updates";
+            tip: "At start, ask keibidrop.com for the newest version number and show a notice when this one is older. The request carries nothing about you. Turn it off on a computer that must not call out. Default: on. Takes effect at the next start.";
+            checked <=> root.cfg_update_check;
+            toggled(v) => { root.setting_changed("update_check", v ? "true" : "false"); }
+        }
+
+        Label { x: 20px; y: 768px; height: 14px; style: Theme.small; color: Theme.muted; text: "Teleport Folder"; }
+        SettingNumber {
+            x: 20px;
+            y: 788px;
+            width: parent.width - 40px;
+            text: "Read ahead (MB)";
+            tip: "While a video or a big file plays from start to end, fetch this much ahead so it does not stop. Raise it for a fast link to a far computer, lower it on a slow link. 0 turns it off. From 0 to 1024. Default: 64. Takes effect at the next connection.";
+            value <=> root.cfg_read_ahead_window_mb;
+            committed(v) => { root.setting_changed("read_ahead_window_mb", v); }
+        }
+        SettingNumber {
+            x: 20px;
+            y: 822px;
+            width: parent.width - 40px;
+            text: "Fetch whole files from (MB)";
+            tip: "When you open a file at least this big, fetch all of it in the background. Use it on a fast link for files you read to the end. 0 fetches only what you read. Default: 0. Takes effect at the next connection.";
+            value <=> root.cfg_prefetch_auto_mb;
+            committed(v) => { root.setting_changed("prefetch_auto_mb", v); }
+        }
+        SettingSwitch {
+            x: 20px;
+            y: 856px;
+            width: parent.width - 40px;
+            text: "Fetch every opened file in full";
+            tip: "Every file you open is fetched in full in the background, whatever its size. Only on a fast link: on a slow one, jumps in a video get slow. Default: off. Takes effect at the next connection.";
+            checked <=> root.cfg_prefetch_on_open;
+            toggled(v) => { root.setting_changed("prefetch_on_open", v ? "true" : "false"); }
+        }
+        SettingSwitch {
+            x: 20px;
+            y: 888px;
+            width: parent.width - 40px;
+            text: "Check files at each open (Mac)";
+            tip: "Mac only. The Mac checks a file's time each time a program opens it. KeibiDrop shows your friend's changes without it: turn it on only if a change still shows late. Leave it off when a database writes in the Teleport Folder. Default: off. Takes effect at the next connection.";
+            checked <=> root.cfg_live_collab;
+            toggled(v) => { root.setting_changed("live_collab", v ? "true" : "false"); }
+        }
+
+        Label { x: 20px; y: 924px; height: 14px; style: Theme.small; color: Theme.muted; text: "Save folder"; }
+        SettingSwitch {
+            x: 20px;
+            y: 944px;
+            width: parent.width - 40px;
+            text: "Share the whole save folder";
+            tip: "When a session starts, offer your friend every file already in the save folder, not only the files you add. Use it for a folder you serve, like a NAS. Default: off. Takes effect at the next connection.";
+            checked <=> root.cfg_scan_shared_on_start;
+            toggled(v) => { root.setting_changed("scan_shared_on_start", v ? "true" : "false"); }
+        }
+        SettingNumber {
+            x: 20px;
+            y: 976px;
+            width: parent.width - 40px;
+            enabled: root.cfg_scan_shared_on_start;
+            text: "Look for new files every (s)";
+            tip: "With the whole save folder shared, look this often for files that landed in it and offer them to your friend. 0 turns it off; else from 5 to 86400. Default: 30. Takes effect at the next connection.";
+            value <=> root.cfg_rescan_shared_seconds;
+            committed(v) => { root.setting_changed("rescan_shared_seconds", v); }
+        }
+
+        Rectangle {
+            x: 20px;
+            y: 1018px;
+            width: parent.width - 40px;
+            height: 26px;
+            SmallOutlineButton {
+                x: 0;
+                y: 0;
+                width: 150px;
+                text: "Reset to defaults";
+                clicked => { root.settings_reset(); }
+            }
+            Label { x: 160px; height: 26px; style: Theme.small; color: Theme.faint; text: "Folders, servers and identity stay as they are."; }
+        }
+
         // Config file editing
         Rectangle {
             x: 20px;
-            y: 664px;
+            y: 1056px;
             width: parent.width - 40px;
             height: 26px;
             SmallOutlineButton {

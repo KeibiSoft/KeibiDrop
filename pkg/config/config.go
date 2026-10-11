@@ -219,14 +219,12 @@ no_fuse = %v
 # prefetch_on_open = false
 # push_on_write = false
 #
-# live_collab: see a peer's in-place edits immediately even when the edited
-# file keeps the same byte length. Default false = git-safe: files written via
-# mmap (notably git's index) stay intact, and same-size live edits are NOT
-# reflected until the next size change (macOS/macFUSE limitation). Set true to
-# prioritize live collaboration: on macOS this enables the auto_cache mount
-# option, which can corrupt mmap-written files such as git's index, so only
-# enable it on machines used for document/code collaboration, not git work.
-# On Linux and Windows both work regardless of this setting.
+# live_collab: on macOS, enable the auto_cache mount option, which checks a
+# file's time at each open. Default false: a peer's edit shows anyway, same
+# byte length included, because KeibiDrop drops the kernel's cached copy of
+# the file it accepted. auto_cache can corrupt files written via mmap (some
+# databases), so leave it off unless an edit still shows late.
+# On Linux and Windows this setting changes nothing.
 # live_collab = false
 #
 # scan_shared_on_start: announce files already in save_path when a session
@@ -323,12 +321,10 @@ prefetch_on_open = %v
 # (a slow reader stays well below it; a bulk reader pipelines the link); 0 disables.
 read_ahead_window_mb = %v
 
-# Prioritize live collaboration over local mmap-write integrity (default false).
-# false = git-safe: mmap writes (git's index) stay intact; on macOS a peer's
-# same-size in-place edit is not seen live until the next size change.
-# true = on macOS enables the auto_cache mount option so same-size edits show up
-# live, at the risk of corrupting mmap-written files (git). Linux/Windows handle
-# both regardless. Leave false unless this machine is for document/code collab.
+# macOS only: enable the auto_cache mount option (default false). A peer's
+# edit shows without it, same byte length included: KeibiDrop drops the
+# kernel's cached copy of each file it accepts. auto_cache can corrupt files
+# written via mmap (some databases). Linux/Windows: no effect.
 live_collab = %v
 
 # Announce files already in save_path when a session starts. Off by default:

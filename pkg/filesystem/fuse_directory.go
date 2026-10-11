@@ -428,6 +428,11 @@ func (d *Dir) CreateEx(path string, mode uint32, fi *winfuse.FileInfo_t) (errCod
 func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 	if fuseOpLog {
 		d.logger.Debug("oplog OpenEx", "path", path, "flags", fi.Flags)
+		// The handle the open got and what it told the kernel about its page cache.
+		defer func() {
+			d.logger.Debug("oplog OpenEx done", "path", path, "errc", errCode, "fh", fi.Fh,
+				"directIo", fi.DirectIo, "keepCache", fi.KeepCache)
+		}()
 	}
 	defer d.recoverPanic("OpenEx", &errCode)
 	if e := checkPath(path); e != 0 {
@@ -872,6 +877,7 @@ func (d *Dir) OpenEx(path string, fi *winfuse.FileInfo_t) (errCode int) {
 
 // Destroy runs on unmount.
 func (d *Dir) Destroy() {
+	d.releaseKernelCache()
 	if p := d.onDestroy.Load(); p != nil {
 		(*p)()
 	}
@@ -939,6 +945,13 @@ func (d *Dir) Fsyncdir(path string, datasync bool, fh uint64) (errCode int) {
 }
 
 func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int) {
+	if fuseOpLog {
+		// The size and mtime the kernel gets for the path.
+		defer func() {
+			d.logger.Debug("oplog Getattr", "path", path, "fh", fh, "errc", errCode,
+				"size", stat.Size, "mtimeNs", stat.Mtim.Sec*1e9+stat.Mtim.Nsec)
+		}()
+	}
 	defer d.recoverPanic("Getattr", &errCode)
 	if e := checkPath(path); e != 0 {
 		return e
@@ -1174,7 +1187,7 @@ func (d *Dir) Getattr(path string, stat *winfuse.Stat_t, fh uint64) (errCode int
 func (d *Dir) Init() {
 	// d.logger.Info("Init", "inode", d.Inode)
 	// syscall.Chdir(d.LocalDownloadFolder)
-
+	d.captureKernelCache()
 }
 
 func (d *Dir) Link(oldpath string, newpath string) (errCode int) {
@@ -4452,6 +4465,10 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 		if conflictRel != "" {
 			d.registerConflictCopy(logger, conflictRel, conflictReal)
 		}
+		if sizeChanged || incomingMtime > existingMtime {
+			// The bitmap was reset: the kernel may still hold the old bytes.
+			d.invalidateKernelCache(path)
+		}
 		return nil
 	}
 
@@ -4789,6 +4806,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 		d.AfmLock.Unlock()
 		// Metadata-only — the edited content is fetched on-demand on the next
 		// read (or prefetched on Open). Keeps live collab lightweight.
+		d.invalidateKernelCache(path)
 		return nil
 	}
 
@@ -4918,5 +4936,6 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 	if conflictRel != "" {
 		d.registerConflictCopy(logger, conflictRel, conflictReal)
 	}
+	d.invalidateKernelCache(path)
 	return nil
 }

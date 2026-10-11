@@ -624,6 +624,42 @@ unsafe fn config_auto_connect_peer() -> String {
     String::new()
 }
 
+/// Puts the config's values on the Settings card: at start, after a refused
+/// value (the field shows the saved value again) and after Reset.
+unsafe fn load_settings(app: &MainWindow) {
+    let ptr = bindings::KD_GetConfig();
+    if ptr.is_null() {
+        return;
+    }
+    let blob = CStr::from_ptr(ptr).to_string_lossy().to_string();
+    for line in blob.lines() {
+        let Some((key, val)) = line.split_once('=') else {
+            continue;
+        };
+        let val = val.trim();
+        let on = val == "true";
+        let text = slint::SharedString::from(val);
+        match key.trim() {
+            "relay" => app.set_cfg_relay(text),
+            "save_path" => app.set_cfg_save_path(text),
+            "mount_path" => app.set_cfg_mount_path(text),
+            "log_file" => app.set_cfg_log_file(text),
+            "share_read_only" => app.set_cfg_share_read_only(on),
+            "mount_read_only" => app.set_cfg_mount_read_only(on),
+            "preserve_metadata" => app.set_cfg_preserve_metadata(on),
+            "strict_mode" => app.set_cfg_strict_mode(on),
+            "update_check" => app.set_cfg_update_check(on),
+            "prefetch_on_open" => app.set_cfg_prefetch_on_open(on),
+            "live_collab" => app.set_cfg_live_collab(on),
+            "scan_shared_on_start" => app.set_cfg_scan_shared_on_start(on),
+            "read_ahead_window_mb" => app.set_cfg_read_ahead_window_mb(text),
+            "prefetch_auto_mb" => app.set_cfg_prefetch_auto_mb(text),
+            "rescan_shared_seconds" => app.set_cfg_rescan_shared_seconds(text),
+            _ => {}
+        }
+    }
+}
+
 /// Friends the person said No thanks to saving, one code per line beside
 /// config.toml, so the first-connect offer is not repeated.
 unsafe fn contact_offer_declined_path() -> Option<std::path::PathBuf> {
@@ -1431,24 +1467,7 @@ fn main() {
         refresh_tokens_status(&app);
 
         // Settings: populate from Go config
-        let config_ptr = bindings::KD_GetConfig();
-        if !config_ptr.is_null() {
-            let config_str = CStr::from_ptr(config_ptr).to_string_lossy().to_string();
-            for line in config_str.lines() {
-                if let Some((key, val)) = line.split_once('=') {
-                    match key.trim() {
-                        "relay" => app.set_cfg_relay(slint::SharedString::from(val.trim())),
-                        "save_path" => app.set_cfg_save_path(slint::SharedString::from(val.trim())),
-                        "mount_path" => app.set_cfg_mount_path(slint::SharedString::from(val.trim())),
-                        "log_file" => app.set_cfg_log_file(slint::SharedString::from(val.trim())),
-                        "share_read_only" => app.set_cfg_share_read_only(val.trim() == "true"),
-                        "mount_read_only" => app.set_cfg_mount_read_only(val.trim() == "true"),
-                        "preserve_metadata" => app.set_cfg_preserve_metadata(val.trim() == "true"),
-                        _ => {}
-                    }
-                }
-            }
-        }
+        load_settings(&app);
 
         // Adopt the engine-resolved save path (the single source of truth) so
         // every UI save-folder operation below uses it, not an empty/unresolved
@@ -2259,6 +2278,35 @@ fn main() {
                 }
                 show_toast(&weak_pm, "Could not save the setting.");
             }
+        });
+
+        // ---- The other Settings values (the engine checks each one) ----
+
+        let weak_set = app.as_weak();
+        app.on_setting_changed(move |key, value| {
+            let (Ok(k), Ok(v)) = (CString::new(key.as_str()), CString::new(value.trim())) else {
+                return;
+            };
+            if bindings::KD_SetSetting(k.as_ptr() as *mut i8, v.as_ptr() as *mut i8) != 0 {
+                let why = get_last_error_raw();
+                if let Some(app) = weak_set.upgrade() {
+                    load_settings(&app);
+                }
+                show_toast(&weak_set, &format!("Not saved: {}.", why));
+            }
+        });
+
+        let weak_reset = app.as_weak();
+        app.on_settings_reset(move || {
+            if bindings::KD_ResetSettings() != 0 {
+                let why = get_last_error_raw();
+                show_toast(&weak_reset, &format!("Could not reset the settings: {}.", why));
+                return;
+            }
+            if let Some(app) = weak_reset.upgrade() {
+                load_settings(&app);
+            }
+            show_toast(&weak_reset, "Settings are back to their defaults.");
         });
 
         let weak_oc = app.as_weak();

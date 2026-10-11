@@ -122,7 +122,8 @@ func getMountOptions(autoCache bool) []string {
 	// auto_cache discards dirty mmap pages before writeback and corrupts files
 	// written via mmap (git's index). It is therefore off by default (git-safe).
 	// The per-file KeepCache=false in OpenEx covers Linux without this hazard
-	// but is a no-op on macFUSE, so the same-size case needs auto_cache here.
+	// but is a no-op on macFUSE: kernel_cache.go drops the pages of each file
+	// a peer changes instead, so the default needs no auto_cache.
 	if autoCache {
 		opts = append(opts, "-o", "auto_cache")
 	}
