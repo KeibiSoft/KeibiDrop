@@ -10,7 +10,7 @@
   <a href="https://keibidrop.com">Website</a> · <a href="https://github.com/KeibiSoft/KeibiDrop/releases">Download</a> · <a href="https://keibisoft.com/blog.html">Blog</a>
 </p>
 
-<h2 align="center">Open files on another computer<br>without downloading them first.</h2>
+<h2 align="center">Open files on another computer without downloading them first</h2>
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=9Wt0NMx2_I8">
@@ -19,37 +19,36 @@
   <br><sub><b>Mac to Windows, one folder, nothing to download first.</b> Two computers side by side. Click to watch on YouTube, with sound.</sub>
 </p>
 
-Another computer's files show up as a folder on yours. Open and edit them in your own apps, with nothing to download first.
+Another computer's files show up as a folder on yours, and you open and edit them in your own apps with nothing to download first.
 
-- Open a 40 GB file and start working instantly. Your edits sync back.
-- End-to-end encrypted (post-quantum). No cloud, and the relay never reads your files.
-- Same network: one click. Over the internet: swap a code once, then save the contact.
-- Their files become a real folder on your machine. Open, edit, `git clone`, anything.
-- macOS, Linux, Windows, Android. iOS coming soon. Open source (AGPL-3.0).
+- A big file opens right away, because only the parts you read cross the network, and your edits save back.
+- No cloud stores your files, and the relay that connects you cannot read them, because they are end-to-end encrypted with protection against future quantum computers.
+- On the same network you connect with one click. Over the internet you swap a code once and then save the contact.
+- With Teleport on, your friend's files are a real folder on your computer, so any app works with them, `git clone` included.
+- It runs on macOS, Linux, Windows and Android, and iOS is on the way. The code is open source under the AGPL-3.0.
 
-**Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop-0.4.8-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop-0.4.8-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop_0.4.8_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html)
+**Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop-0.4.8-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop-0.4.8-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.4.8/keibidrop_0.4.8_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html) · or [try it on the web](https://web.keibidrop.com)
 
-**Three steps:** install it on both computers. Connect once: same Wi-Fi, turn on the switch; anywhere else, send your code in any chat and paste theirs. Then drop a file in, or open their files as a folder. [How to use it, with a short clip for each step.](https://keibidrop.com/how-to-use.html) [The clips as a YouTube playlist.](https://www.youtube.com/playlist?list=PLB-moSLYtzF0)
+**Getting started:** install it on both computers and connect once. On the same Wi-Fi, turn on Local mode; anywhere else, send your code in any chat and paste your friend's code. Then drop a file in, or open their files with Teleport. Each step has a [short clip](https://keibidrop.com/how-to-use.html), and the clips are also a [YouTube playlist](https://www.youtube.com/playlist?list=PLB-moSLYtzF0).
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=2fIOOnN9HhQ">
     <img src="demo-photos/how-to-use.gif" alt="Connecting two computers with a code: Copy my code, paste it in a chat, paste the other code, press Connect on both sides. Click to watch the two minute video on YouTube." width="700">
   </a>
-  <br><sub>Copy your code, send it in any chat, paste theirs, both press Connect. <b>Every step, click by click.</b></sub>
+  <br><sub>Copy your code, send it in any chat, paste your friend's code, and both of you press Connect.</sub>
 </p>
 
 <p align="center">
   <img src="demo-photos/initial-screen.png" alt="KeibiDrop connection screen" width="700">
 </p>
 
-| Direct Transfer | Virtual Folder (FUSE) |
+| With direct transfer, you drag files in and your friend saves the ones they need. | With Teleport, your friend's files appear as a folder that any app can open. |
 |:---:|:---:|
-| <img src="demo-photos/connected-in-direct-transfer-mode.png" alt="Direct transfer mode" width="450"> | <img src="demo-photos/connected-as-virtual-filesystem.png" alt="Virtual filesystem mode" width="450"> |
-| Drag files in. Your peer saves what they need. | Peer files appear as a folder. Open in any app. |
+| <img src="demo-photos/connected-in-direct-transfer-mode.png" alt="The app in direct transfer mode" width="450"> | <img src="demo-photos/connected-as-virtual-filesystem.png" alt="The app with Teleport on" width="450"> |
 
-| Finder | Terminal (git) |
+| Finder shows the Teleport Folder like any other folder. | git works inside the Teleport Folder. |
 |:---:|:---:|
-| <img src="demo-photos/as-filesystem-accessible-from-finder.png" alt="Shared files in Finder" width="450"> | <img src="demo-photos/as-filesystem-git-ops-work.png" alt="Git on FUSE mount" width="450"> |
+| <img src="demo-photos/as-filesystem-accessible-from-finder.png" alt="Shared files in Finder" width="450"> | <img src="demo-photos/as-filesystem-git-ops-work.png" alt="git in the Teleport Folder" width="450"> |
 
 ---
 
@@ -99,48 +98,45 @@ make build-rust     # Desktop UI (needs Rust + Slint)
 
 ## Quick start
 
-**Same network (LAN):**
-1. Both peers launch KeibiDrop
-2. Devices discover each other automatically
-3. One click to connect
-4. Share files
+**On the same network:**
+1. You and your friend both open KeibiDrop and turn on Local mode.
+2. Your computers find each other.
+3. Click your friend's computer to connect.
+4. Share files.
 
 **Over the internet:**
-1. Both peers launch KeibiDrop
-2. Copy your fingerprint and send it to your peer (Signal, Telegram, anything)
-3. Paste each other's fingerprints and connect
-4. Share files
+1. You and your friend both open KeibiDrop.
+2. Copy your code and send it to your friend in any chat.
+3. Paste each other's codes and both press Connect.
+4. Share files.
 
-Save a peer as a contact to skip the fingerprint exchange next time. On the same network, saved contacts connect with one click using pseudonyms.
+Save your friend as a contact to skip the code exchange next time.
 
-It works through firewalls automatically. If direct connection fails, KeibiDrop falls back to an encrypted relay. No port forwarding, no router configuration.
-
----
-
-## Two modes
-
-| | Direct Transfer | Virtual Folder (FUSE) |
-|--|--|--|
-| Speed | Up to ~660 MB/s | Up to ~276 MB/s |
-| How it works | Add files, peer pulls them | Peer's files appear as a local folder |
-| Setup | Nothing extra | Install [macFUSE](https://macfuse.github.io/), [fuse3](https://github.com/libfuse/libfuse), or [WinFsp](https://winfsp.dev/) |
-| Best for | Sending large files | Working on shared files, git repos |
+KeibiDrop works through firewalls. When a direct connection fails, it uses an encrypted relay, so you need no port forwarding and no router setup.
 
 ---
 
-## How it works
+## Direct transfer and Teleport
 
-1. Peers exchange fingerprints (or discover each other on LAN)
-2. KeibiDrop finds the fastest path: LAN, direct IPv6, or encrypted relay
-3. Files transfer over an encrypted channel the relay cannot read
-4. Keys rotate automatically for forward secrecy
+With direct transfer you add files and your friend saves the ones they need. It needs nothing extra and suits sending large files.
+
+With Teleport your friend's files appear as a folder on your computer, which suits working on shared files and git repositories. It needs a driver installed once: [macFUSE](https://macfuse.github.io/) on a Mac, [fuse3](https://github.com/libfuse/libfuse) on Linux or [WinFsp](https://winfsp.dev/) on Windows.
+
+---
+
+## Connection and encryption
+
+1. The two computers exchange codes, or find each other on the local network.
+2. KeibiDrop picks the fastest path: the local network, a direct connection or the encrypted relay.
+3. Files cross an encrypted channel that the relay cannot read.
+4. Keys rotate during the session for forward secrecy.
 
 The encryption is post-quantum (ML-KEM-1024 + X25519) with AES-256-GCM or ChaCha20-Poly1305. Full protocol details in [Security.md](./Security.md).
 
 ---
 
 <details>
-<summary><strong>Three interfaces</strong></summary>
+<summary><strong>Interfaces</strong></summary>
 
 **Desktop UI** (Rust/Slint)
 ```bash
@@ -177,9 +173,9 @@ KeibiDrop reads `~/.config/keibidrop/config.toml`. Environment variables overrid
 | Relay server | `KD_RELAY` | `https://keibidroprelay.keibisoft.com/` |
 | Bridge relay | `KD_BRIDGE` | `bridge.keibisoft.com:26600` |
 | Save folder | `KD_SAVE_PATH` | `~/KeibiDrop/Received/` |
-| FUSE mount | `KD_MOUNT_PATH` | `~/KeibiDrop/Mount/` |
+| Teleport Folder | `KD_MOUNT_PATH` | `~/KeibiDrop/Mount/` |
 | Inbound port | `KD_INBOUND_PORT` | 26431 |
-| Disable FUSE | `KD_NO_FUSE` | false |
+| Teleport off | `KD_NO_FUSE` | false |
 
 </details>
 
@@ -188,7 +184,7 @@ KeibiDrop reads `~/.config/keibidrop/config.toml`. Environment variables overrid
 
 Post-quantum hybrid key exchange prevents future quantum computers from decrypting recorded traffic. Forward secrecy via periodic re-keying limits exposure if a session key is ever compromised.
 
-By default, identity persists across sessions (so saved contacts keep working), encrypted with a per-install master key stored in the OS keychain (macOS Keychain Services, Linux Secret Service, Windows Credential Manager). Headless setups fall back to `~/.config/keibidrop/.master.key` (mode 0600). Optional passphrase protection via Argon2id for users who back up config to the cloud. Incognito mode switches to ephemeral keys: a fresh keypair each session, anonymous, unlinkable, nothing written to disk.
+By default, identity persists across sessions (so saved contacts keep working), encrypted with a per-install master key stored in the OS keychain (macOS Keychain Services, Linux Secret Service, Windows Credential Manager). Headless setups fall back to `~/.config/keibidrop/.master.key` (mode 0600). A passphrase (Argon2id) can protect it for users who back up the config to a cloud. Incognito mode uses a new key pair for each session and writes nothing to disk, so two sessions cannot be linked.
 
 Full protocol description: [Security.md](./Security.md)
 
@@ -230,22 +226,22 @@ Mount an evidence share read only across NAT and extract the artifact set you ne
   <a href="https://www.youtube.com/watch?v=k8b_6quIqx0">
     <img src="demo-photos/resolve-nas-demo.gif" alt="DaVinci Resolve playing a clip that lives on a NAS 400 km away, then jumping to the next clip, which is there when the playhead lands on it. Click to watch the two minute demo on YouTube." width="700">
   </a>
-  <br><sub><b>How to edit in DaVinci Resolve, Premiere Pro or Final Cut while traveling.</b> Your footage stays on the studio NAS, you open it on demand from the app, no waiting for a download or an upload. Click for the two minute demo.</sub>
+  <br><sub>Your footage stays on the studio NAS, and DaVinci Resolve opens it on demand while you travel, with no download or upload to wait for. Click for the two minute demo.</sub>
 </p>
 
-[Mount the camera originals](https://keibidrop.com/for/post-production.html). No proxy transcode before the handoff, and no relink after it. [The Resolve setup, step by step](https://keibidrop.com/docs/how-to/edit-from-a-nas-in-davinci-resolve.html).
+[Mount the camera originals](https://keibidrop.com/for/post-production.html) and skip the proxy transcode before the handoff and the relink after it. The [Resolve setup](https://keibidrop.com/docs/how-to/edit-from-a-nas-in-davinci-resolve.html) goes step by step.
 
 ### Datasets on a rented GPU box
 
-[Mount the workstation that holds the data](https://keibidrop.com/for/ml.html). No bucket, and no upload before the first batch.
+[Mount the workstation that holds the data](https://keibidrop.com/for/ml.html), with no bucket and no upload before the first batch.
 
-### An always-on box: NAS, mini PC, home server
+### An always-on box, such as a NAS
 
 <p align="center">
   <img src="demo-photos/nas-demo.gif" alt="Two terminals. Left: a container on a NAS prints its code and Peer connected. Right: a laptop adds the box as a contact, connects, lists the shared folder and hashes one photo through the mount" width="900">
 </p>
 
-A session needs both machines online, and a NAS, a mini PC or a home server is online all the time. The container in `docker/` runs the serving side on that box from plain Docker with the stock kernel. Your laptop mounts the folder from anywhere and reads on demand, so only the bytes a program reads cross the wire. In that run the box, a container on a server in Timisoara, served 161 files to a laptop in Bucharest; the laptop paired once, listed the folder and hashed one photo. Setup is one compose file, in the [guide](https://keibidrop.com/docs/how-to/run-on-a-nas.html). An Unraid template is in `docker/unraid/`.
+A session needs both machines online, and a NAS or a home server stays online all the time. The container in `docker/` runs the serving side on that box from plain Docker with the stock kernel. Your laptop mounts the folder from anywhere and reads on demand, so only the bytes a program reads cross the wire. In that run the box, a container on a server in Timisoara, served 161 files to a laptop in Bucharest; after it paired once, the laptop listed the folder and hashed one photo. Setup is one compose file, in the [guide](https://keibidrop.com/docs/how-to/run-on-a-nas.html). An Unraid template is in `docker/unraid/`.
 
 ### Photographers and editors
 
@@ -257,7 +253,7 @@ The raws and the footage stay on the box at the studio. The laptop mounts the fo
   <img src="demo-photos/agents-mcp-demo.gif" alt="Two agents pairing over MCP: the laptop offers a 2,184 file dataset in place, the gpu box lists it and reads shards off the mount" width="900">
 </p>
 
-Two agents, one per machine, each driving a KeibiDrop peer through the MCP server. The laptop offers a folder where it sits. The gpu box mounts it, lists 2,184 files six folders deep, and checksums 24 shards. In that run 88,581 bytes crossed the network out of 6,784,286 on disk, because that is what it opened. The whole thing, pairing included, took 12.5 seconds.
+Two agents, one per machine, each drive a KeibiDrop peer through the MCP server. The laptop offers a folder where it sits, and the gpu box mounts it and checksums 24 shards out of 2,184 files six folders deep. In that run 88,581 bytes crossed the network out of 6,784,286 on disk, because that is what it opened. The whole thing, pairing included, took 12.5 seconds.
 
 Build it with `make build-kdmcp`, then `kdmcp install` prints the config snippet for your MCP client. Sending stays off until `KD_SHARE_ROOT` names one directory to send from, so a receiving agent cannot be talked into shipping files out.
 
@@ -266,9 +262,9 @@ Build it with `make build-kdmcp`, then `kdmcp install` prints the config snippet
 - [Website](https://keibidrop.com)
 - [Documentation](https://keibidrop.com/docs/)
 - [Compared with sshfs](https://keibidrop.com/compare/sshfs.html) - measured on a 200 ms link
-- [Compared with sixteen tools](https://keibidrop.com/compare/) - LucidLink, Strada, Syncthing, Resilio Sync, rclone, WeTransfer, LocalSend, PairDrop, KDE Connect and more, one table each
+- [Compared with other tools](https://keibidrop.com/compare/), such as LucidLink, Syncthing, Resilio Sync, rclone, WeTransfer, LocalSend, PairDrop and KDE Connect, one table each
 - [Technical deep dive](https://keibisoft.com/tools/keibidrop.html)
-- [Blog posts](https://keibisoft.com/blog.html) (53 posts on FUSE, crypto, performance)
+- [Engineering blog](https://keibisoft.com/blog.html)
 - [FAQ](https://keibisoft.com/tools/keibidrop-faq.html)
 - [Comparison with alternatives](https://keibisoft.com/tools/keibidrop-vs-alternatives.html)
 - [About and credentials](https://keibidrop.com/about.html)
