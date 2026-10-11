@@ -300,6 +300,8 @@ bridge_addr = %q
 no_fuse = %v
 
 # Set to true to disable data relay fallback (direct connections only).
+# The same speed when a direct path works, and no relay speed limit; without
+# a direct path the connection fails instead of using the relay.
 strict_mode = %v
 
 # Set to true to force ephemeral keys every session (no persistent identity).

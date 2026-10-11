@@ -26,6 +26,12 @@ import (
 // notify lands in about a second. A stale view never lands at all.
 const gitVisibleWithin = 20 * time.Second
 
+// headCommit names the commit HEAD points at, read from the commit object, as
+// git log does. rev-parse only resolves the ref: it answers before the object
+// arrived, and the next git command then finds no commit ("a branch yet to be
+// born", CI 2026-10-11).
+const headCommit = "log -1 --format=%H"
+
 // TestFUSEtoFUSE_SameSizeReplaceSeen replaces a file the reader holds with new
 // bytes of the same length, in the two ways git and editors do it: a temp
 // renamed over the file (git's lock file) and a rewrite in place. The reader
@@ -97,7 +103,9 @@ func TestFUSEtoFUSE_GitPingPong(t *testing.T) {
 		resp := p.alice.send(t, "exec . git "+gitFlags("alice")+" clone -q "+origin+" repo", 120*time.Second)
 		require.Truef(t, strings.HasPrefix(resp, "EXEC:0:"), "clone: %s", resp)
 		WaitForFileOnMount(t, filepath.Join(p.bobMount, "repo", ".git", "refs", "heads", "main"), 30*time.Second)
-		waitGit(t, p.bob, "rev-parse HEAD", gitOn(t, p.alice, "rev-parse HEAD"))
+		waitGit(t, p.bob, headCommit, gitOn(t, p.alice, "rev-parse HEAD"))
+		// The whole checkout arrived: the index, the tree and the files.
+		waitGit(t, p.bob, "--no-optional-locks status --porcelain", "")
 	})
 
 	t.Run("BobBranchesAliceCommits", func(t *testing.T) {
@@ -108,7 +116,7 @@ func TestFUSEtoFUSE_GitPingPong(t *testing.T) {
 		gitOn(t, p.bob, "add rap.txt")
 		waitGit(t, p.alice, "--no-optional-locks status --porcelain", "A  rap.txt")
 		gitOn(t, p.alice, "commit -q -m Bobr")
-		waitGit(t, p.bob, "rev-parse HEAD", gitOn(t, p.alice, "rev-parse HEAD"))
+		waitGit(t, p.bob, headCommit, gitOn(t, p.alice, "rev-parse HEAD"))
 		waitGit(t, p.bob, "--no-optional-locks status --porcelain", "")
 	})
 
@@ -116,18 +124,18 @@ func TestFUSEtoFUSE_GitPingPong(t *testing.T) {
 		require.Equal(t, "OK", p.alice.send(t, "write_file repo/cahca.txt chechacha", 10*time.Second))
 		gitOn(t, p.alice, "add cahca.txt")
 		gitOn(t, p.alice, "commit -q -m alice-one")
-		waitGit(t, p.bob, "rev-parse HEAD", gitOn(t, p.alice, "rev-parse HEAD"))
+		waitGit(t, p.bob, headCommit, gitOn(t, p.alice, "rev-parse HEAD"))
 		waitGit(t, p.bob, "--no-optional-locks status --porcelain", "")
 	})
 
 	t.Run("BobCommitsOnAlicesCommit", func(t *testing.T) {
 		parent := gitOn(t, p.alice, "rev-parse HEAD")
-		waitGit(t, p.bob, "rev-parse HEAD", parent)
+		waitGit(t, p.bob, headCommit, parent)
 		require.Equal(t, "OK", p.bob.send(t, "write_file repo/bob.txt from-bob", 10*time.Second))
 		gitOn(t, p.bob, "add bob.txt")
 		gitOn(t, p.bob, "commit -q -m bob-one")
 		require.Equal(t, parent, gitOn(t, p.bob, "rev-parse HEAD~1"), "Bob committed on a stale parent")
-		waitGit(t, p.alice, "rev-parse HEAD", gitOn(t, p.bob, "rev-parse HEAD"))
+		waitGit(t, p.alice, headCommit, gitOn(t, p.bob, "rev-parse HEAD"))
 		waitGit(t, p.alice, "--no-optional-locks status --porcelain", "")
 	})
 
@@ -147,7 +155,7 @@ func TestFUSEtoFUSE_GitPingPong(t *testing.T) {
 		require.Equal(t, "OK", p.alice.send(t, "write_file repo/seed.txt version-two", 10*time.Second))
 		gitOn(t, p.alice, "add seed.txt")
 		gitOn(t, p.alice, "commit -q -m same-length")
-		waitGit(t, p.bob, "rev-parse HEAD", gitOn(t, p.alice, "rev-parse HEAD"))
+		waitGit(t, p.bob, headCommit, gitOn(t, p.alice, "rev-parse HEAD"))
 		waitForContent(t, p.bob, "repo/seed.txt", "version-two", gitVisibleWithin)
 		waitGit(t, p.bob, "--no-optional-locks status --porcelain", "")
 	})

@@ -248,8 +248,8 @@ func TestFUSEtoFUSE_PijulPull(t *testing.T) {
 			"SAVE_DIR":      t.TempDir(),
 			"USE_FUSE":      "1",
 			"LOG_FILE":      filepath.Join(logDir, filepath.Base(mount)+".log"),
-			// The supported pijul profile: in-place edit visibility needs auto_cache on macOS.
-			"KEIBIDROP_LIVE_COLLAB": "1",
+			// The default mode, the one people run; KEIBIDROP_LIVE_COLLAB=1 runs live_collab.
+			"KEIBIDROP_LIVE_COLLAB": os.Getenv("KEIBIDROP_LIVE_COLLAB"),
 		}
 	}
 	alice := spawnPeer(t, binary, peerEnv(
@@ -323,7 +323,9 @@ func TestFUSEtoFUSE_PijulPull(t *testing.T) {
 		deadline := time.Now().Add(90 * time.Second)
 		var log string
 		for time.Now().Before(deadline) {
-			ex(t, alice, "proj-alice", "pijul pull --all ../proj", 60*time.Second)
+			// A pull can meet the friend's pristine before its new change file
+			// arrived ("No such file or directory"): try again until the deadline.
+			alice.send(t, "exec proj-alice pijul pull --all ../proj", 60*time.Second)
 			if log = ex(t, alice, "proj-alice", "pijul log", 30*time.Second); strings.Contains(log, "second") {
 				break
 			}
@@ -342,7 +344,7 @@ func TestFUSEtoFUSE_PijulPull(t *testing.T) {
 		deadline := time.Now().Add(90 * time.Second)
 		var log string
 		for time.Now().Before(deadline) {
-			ex(t, bob, "proj", "pijul pull --all ../proj-alice", 60*time.Second)
+			bob.send(t, "exec proj pijul pull --all ../proj-alice", 60*time.Second)
 			if log = ex(t, bob, "proj", "pijul log", 30*time.Second); strings.Contains(log, "third") {
 				break
 			}

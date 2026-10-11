@@ -29,19 +29,23 @@ static void *kd_libfuse(void) {
 	return 0;
 }
 
-// kd_kernel_cache_handles gives the mount's struct fuse and fuse_invalidate_path.
-// Call it on a FUSE thread: fuse_get_context is valid only there. macFUSE and
-// libfuse 3 have fuse_invalidate_path; libfuse 2 on Linux has none.
-static void kd_kernel_cache_handles(void **self, void **inval) {
-	*self = 0;
-	*inval = 0;
+// The mount's struct fuse and fuse_invalidate_path, returned by value: Go
+// passes no pointer of its own to C.
+typedef struct { void *self; void *inval; } kd_handles;
+
+// kd_kernel_cache_handles gives the mount's handles. Call it on a FUSE
+// thread: fuse_get_context is valid only there. macFUSE and libfuse 3 have
+// fuse_invalidate_path; libfuse 2 on Linux has none.
+static kd_handles kd_kernel_cache_handles(void) {
+	kd_handles out = {0, 0};
 	void *h = kd_libfuse();
-	if (!h) return;
+	if (!h) return out;
 	kd_get_context_fn get = (kd_get_context_fn)dlsym(h, "fuse_get_context");
 	struct kd_fuse_context *c = get ? get() : 0;
-	*self = c ? c->fuse : 0;
-	*inval = dlsym(h, "fuse_invalidate_path");
+	out.self = c ? c->fuse : 0;
+	out.inval = dlsym(h, "fuse_invalidate_path");
 	dlclose(h); // cgofuse holds its own reference to the library.
+	return out;
 }
 
 static int kd_invalidate_path(void *inval, void *self, const char *path) {
@@ -69,8 +73,8 @@ var kernelCache struct {
 // captureKernelCache keeps the handles for invalidateKernelCache. Init calls
 // it on a FUSE thread.
 func (d *Dir) captureKernelCache() {
-	var self, inval unsafe.Pointer
-	C.kd_kernel_cache_handles(&self, &inval)
+	h := C.kd_kernel_cache_handles()
+	self, inval := unsafe.Pointer(h.self), unsafe.Pointer(h.inval)
 	kernelCache.mu.Lock()
 	kernelCache.self, kernelCache.inval = self, inval
 	kernelCache.mu.Unlock()
