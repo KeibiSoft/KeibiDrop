@@ -69,6 +69,7 @@
   },
   "tools": [
     { "name": "kd_setup", "description": "Provision the local environment and report FUSE or copy mode" },
+    { "name": "kd_invite", "description": "Return this peer's code as invite links a person can open" },
     { "name": "kd_create_share", "description": "Return this peer's pairing code" },
     { "name": "kd_accept_peer", "description": "Accept the other peer's code and connect in the background" },
     { "name": "kd_join", "description": "Join with the other peer's code and wait for the session" },
