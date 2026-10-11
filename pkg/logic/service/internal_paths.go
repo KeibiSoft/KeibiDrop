@@ -41,5 +41,5 @@ func (kd *KeibidropServiceImpl) openServeRead(path string) (*os.File, error) {
 	if kd.ShareReadOnly {
 		return openReadNoAtime(path)
 	}
-	return os.Open(path) // #nosec G304
+	return openReadShared(path)
 }

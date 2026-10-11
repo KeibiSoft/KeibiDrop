@@ -171,13 +171,10 @@ func TestFUSEtoFUSE_GitPingPong(t *testing.T) {
 	// The same run went on: Bob removed the repository, then Alice's rm -r
 	// failed with "File exists". A sidecar the mount hides kept the folder.
 	t.Run("BobRemovesAliceRemovesToo", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			// The delete of a fetched git object fails while this program still
-			// holds it open without delete sharing ("being used by another
-			// process", 2026-10-11). A Windows bug of its own, not this one.
-			t.Skip("Windows: a fetched file still open refuses its delete (sharing violation)")
-		}
 		rmRepo := "exec . rm -rf repo"
+		if runtime.GOOS == "windows" {
+			rmRepo = "exec . cmd /c rmdir /s /q repo"
+		}
 		resp := p.bob.send(t, rmRepo, 60*time.Second)
 		require.Truef(t, strings.HasPrefix(resp, "EXEC:0:"), "bob rm: %s", resp)
 		WaitForCondition(t, gitVisibleWithin, 500*time.Millisecond, func() bool {

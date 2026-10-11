@@ -13,3 +13,9 @@ import "os"
 func openReadNoAtime(path string) (*os.File, error) {
 	return os.Open(path) // #nosec G304
 }
+
+// openReadShared opens path read-only to serve a peer. POSIX lets the owner
+// delete or rename a file a reader holds open.
+func openReadShared(path string) (*os.File, error) {
+	return os.Open(path) // #nosec G304
+}

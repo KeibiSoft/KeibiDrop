@@ -2859,7 +2859,7 @@ func (d *Dir) seedFromLocal(f *File, oldBitmap, newBitmap *ChunkBitmap, seed str
 	if target == "" {
 		return
 	}
-	src, err := os.Open(seed) // #nosec G304 -- cache-internal path
+	src, err := openFileShared(seed, os.O_RDONLY, 0) // cache-internal path
 	if err != nil {
 		return
 	}
@@ -2871,7 +2871,7 @@ func (d *Dir) seedFromLocal(f *File, oldBitmap, newBitmap *ChunkBitmap, seed str
 	}
 	var dst *os.File
 	if filepath.Clean(target) != filepath.Clean(seed) {
-		dst, err = os.OpenFile(target, os.O_WRONLY|os.O_CREATE, 0o644) // #nosec G304
+		dst, err = openFileShared(target, os.O_WRONLY|os.O_CREATE, 0o644)
 		if err != nil {
 			return
 		}
@@ -4068,12 +4068,12 @@ func (d *Dir) UndoLocalDirMove(movedTo, movedFrom string) error {
 // copyFileContents copies src to dst. Fallback for a failed preserve rename;
 // O_EXCL because conflictNames guarantees a free name.
 func copyFileContents(src, dst string) error {
-	in, err := os.Open(src) // #nosec G304 -- both paths are cache-internal
+	in, err := openFileShared(src, os.O_RDONLY, 0) // both paths are cache-internal
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) // #nosec G304
+	out, err := openFileShared(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
@@ -4334,7 +4334,7 @@ func (d *Dir) AddRemoteFileWithBase(logger *slog.Logger, path string, name strin
 				return pErr
 			}
 			_ = os.Remove(BitmapPath(existing.RealPathOfFile))
-			if cf, cErr := os.OpenFile(existing.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
+			if cf, cErr := openFileShared(existing.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil {
 				_ = cf.Truncate(newSize)
 				_ = cf.Close()
 			}
@@ -4572,7 +4572,7 @@ func (d *Dir) startPrefetch(logger *slog.Logger, f *File, path string) {
 		if fileMode == 0 {
 			fileMode = 0644
 		}
-		lf, createErr := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
+		lf, createErr := openFileShared(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
 		if createErr != nil {
 			logger.Warn("Prefetch: failed to create cache file", "path", realPath, "error", createErr)
 			return
@@ -4659,7 +4659,7 @@ func (d *Dir) prefetchFile(ctx context.Context, logger *slog.Logger, f *File, pa
 	if fileMode == 0 {
 		fileMode = 0644
 	}
-	lf, err := os.OpenFile(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
+	lf, err := openFileShared(realPath, os.O_CREATE|os.O_WRONLY, fileMode)
 	if err != nil {
 		logger.Warn("Prefetch: failed to open local file", "error", err)
 		return
@@ -4882,7 +4882,7 @@ func (d *Dir) EditRemoteFileWithBase(logger *slog.Logger, path string, name stri
 			return pErr
 		}
 		_ = os.Remove(BitmapPath(f.RealPathOfFile))
-		if cf, cErr := os.OpenFile(f.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil { // #nosec G304
+		if cf, cErr := openFileShared(f.RealPathOfFile, os.O_CREATE|os.O_WRONLY, 0o644); cErr == nil {
 			_ = cf.Truncate(newSize)
 			_ = cf.Close()
 		}

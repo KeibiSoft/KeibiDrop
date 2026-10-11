@@ -14,6 +14,7 @@ import (
 // with a problem report, so a name that survives here leaves the machine.
 func TestSanitizeLogContent(t *testing.T) {
 	t.Setenv("HOME", "/Users/tester")
+	t.Setenv("USERPROFILE", "/Users/tester") // os.UserHomeDir on Windows
 	fp := strings.Repeat("Ab3_-", 17) + "x"
 	cases := []struct{ name, in, want string }{
 		{"quoted path with spaces",
@@ -68,6 +69,7 @@ func TestSanitizeLogContent(t *testing.T) {
 // The newest lines across the rotated file and the current one, sanitized.
 func TestSanitizedLogTailReadsAcrossTheRotation(t *testing.T) {
 	t.Setenv("HOME", "/Users/tester")
+	t.Setenv("USERPROFILE", "/Users/tester") // os.UserHomeDir on Windows
 	dir := t.TempDir()
 	log := filepath.Join(dir, "keibidrop.log")
 	older := "time=1 msg=a\ntime=2 msg=b remote=10.0.0.7:26001\n"
