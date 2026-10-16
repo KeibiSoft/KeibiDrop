@@ -214,6 +214,12 @@ package-macos: $(DIST)
 	  -ov -format UDZO \
 	  $(DIST)/keibidrop-$(VERSION)-darwin-$(GOARCH).dmg
 	rm -rf $(DIST)/dmg-staging
+	# Sign the .dmg too. Up to 0.5.0 only the app inside was signed, and the
+	# image itself showed "code object is not signed at all".
+	@if [ -n "$(CODESIGN_IDENTITY)" ]; then \
+		codesign --force --sign "$(CODESIGN_IDENTITY)" --timestamp $(DIST)/keibidrop-$(VERSION)-darwin-$(GOARCH).dmg; \
+		echo "Signed the .dmg with $(CODESIGN_IDENTITY)"; \
+	fi
 	@echo "Created $(DIST)/keibidrop-$(VERSION)-darwin-$(GOARCH).dmg"
 
 # Linux .tar.gz — universal fallback

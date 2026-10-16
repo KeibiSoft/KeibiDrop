@@ -294,17 +294,19 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
+          # make package-macos signs the .dmg, so it goes to the notary as it
+          # is and the stapled ticket covers the signed image. The last two
+          # lines fail the job unless the image is signed and notarized.
           for pkg in dist/*.dmg; do
             [ -f "$pkg" ] || continue
-            ZIP_PATH="${pkg}.zip"
-            zip -j "$ZIP_PATH" "$pkg"
-            xcrun notarytool submit "$ZIP_PATH" \
+            xcrun notarytool submit "$pkg" \
               --apple-id "$APPLE_ID" \
               --team-id "$APPLE_TEAM_ID" \
               --password "$APPLE_APP_PASSWORD" \
               --wait --timeout 10m
             xcrun stapler staple "$pkg"
-            rm -f "$ZIP_PATH"
+            codesign --verify --strict --verbose=2 "$pkg"
+            spctl --assess --type open --context context:primary-signature --verbose "$pkg"
           done
 
       # overwrite: a rerun of one build job replaces its artifact. Without it
