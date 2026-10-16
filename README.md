@@ -29,7 +29,7 @@ Another computer's files show up as a folder on yours, and you open and edit the
 
 **Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.0/keibidrop-0.5.0-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.0/keibidrop-0.5.0-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.0/keibidrop_0.5.0_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html) · or [try it on the web](https://web.keibidrop.com)
 
-**Getting started:** install it on both computers and connect once. On the same Wi-Fi, turn on Local mode; anywhere else, send your code in any chat and paste your friend's code. Then drop a file in, or open their files with Teleport. Each step has a [short clip](https://keibidrop.com/how-to-use.html), and the clips are also a [YouTube playlist](https://www.youtube.com/playlist?list=PLB-moSLYtzF0).
+**Getting started:** install it on both computers and connect once. On the same Wi-Fi, turn on Local mode; anywhere else, send your code in any chat and paste your friend's code. Then drop a file in, or open their files with Teleport. Each step has a [short clip](https://keibidrop.com/how-to-use.html), and the clips are also a [YouTube playlist](https://www.youtube.com/playlist?list=PLB-moSLYtzF0). To open the files on a NAS or a home server, see [Run it on a NAS](#run-it-on-a-nas).
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=2fIOOnN9HhQ">
@@ -121,6 +121,21 @@ KeibiDrop works through firewalls. When a direct connection fails, it uses an en
 With direct transfer you add files and your friend saves the ones they need. It needs nothing extra and suits sending large files.
 
 With Teleport your friend's files appear as a folder on your computer, which suits working on shared files and git repositories. It needs a driver installed once: [macFUSE](https://macfuse.github.io/) on a Mac, [fuse3](https://github.com/libfuse/libfuse) on Linux or [WinFsp](https://winfsp.dev/) on Windows.
+
+---
+
+## Run it on a NAS
+
+A NAS or a home server stays online, so it can serve a folder to your computer all the time. The box runs the KeibiDrop container. Your computer opens the box's folder with Teleport, from anywhere, and reads only what it opens.
+
+1. On your computer, install KeibiDrop and the Teleport driver. Open the app, keep Local mode off and press **Copy my code**.
+2. On the box, save [docker-compose.yml](docker/docker-compose.yml), set the folder to share and paste your computer's code into `KD_PEER`.
+3. Run `docker compose up -d`, then `docker compose logs -f`. The log prints the box's code.
+4. On your computer, turn on **Teleport**, paste the box's code and press **Connect**.
+5. Press **Save contact** and turn on **Auto** on the contact's row. From then on both sides reconnect by themselves.
+6. The box's files now show in your Teleport Folder, `~/KeibiDrop/Mount` by default. Open the files from there in any app. For DaVinci Resolve, follow the [Resolve setup](https://keibidrop.com/docs/how-to/edit-from-a-nas-in-davinci-resolve.html).
+
+The image is `ghcr.io/keibisoft/keibidrop`, for amd64 and arm64. The container's settings, the Unraid template and the limits are in [docker/README.md](docker/README.md), and the full guide is [Run KeibiDrop on a NAS](https://keibidrop.com/docs/how-to/run-on-a-nas.html).
 
 ---
 
@@ -241,7 +256,7 @@ Mount an evidence share read only across NAT and extract the artifact set you ne
   <img src="demo-photos/nas-demo.gif" alt="Two terminals. Left: a container on a NAS prints its code and Peer connected. Right: a laptop adds the box as a contact, connects, lists the shared folder and hashes one photo through the mount" width="900">
 </p>
 
-A session needs both machines online, and a NAS or a home server stays online all the time. The container in `docker/` runs the serving side on that box from plain Docker with the stock kernel. Your laptop mounts the folder from anywhere and reads on demand, so only the bytes a program reads cross the wire. In that run the box, a container on a server in Timisoara, served 161 files to a laptop in Bucharest; after it paired once, the laptop listed the folder and hashed one photo. Setup is one compose file, in the [guide](https://keibidrop.com/docs/how-to/run-on-a-nas.html). An Unraid template is in `docker/unraid/`.
+A session needs both machines online, and a NAS or a home server stays online all the time. The container in `docker/` runs the serving side on that box from plain Docker with the stock kernel. Your laptop mounts the folder from anywhere and reads on demand, so only the bytes a program reads cross the wire. In that run the box, a container on a server in Timisoara, served 161 files to a laptop in Bucharest; after it paired once, the laptop listed the folder and hashed one photo. The setup steps are in [Run it on a NAS](#run-it-on-a-nas).
 
 ### Photographers and editors
 

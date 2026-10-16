@@ -16,8 +16,9 @@ services:
     # through the bridge.
     network_mode: host
     environment:
-      # Your computer's 86-character code (Settings, Identity, in the app;
-      # or `kd show fingerprint`). Leave empty and pair later with
+      # Your computer's 86-character code: press Copy my code in the app
+      # with Local mode off, or run `kd show fingerprint`. Leave empty and
+      # pair later with
       # `docker exec keibidrop kd add-contact laptop <code>`.
       KD_PEER: ""
       KD_PEER_NAME: laptop

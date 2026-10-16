@@ -8,42 +8,70 @@ The container holds the serving side only. It needs no FUSE, no `/dev/fuse`
 and no extra capabilities. The machine that reads the files runs the desktop
 app or `kd` with its own driver (macFUSE, fuse3 or WinFsp).
 
-Setup guide with the pairing steps: https://keibidrop.com/docs/how-to/run-on-a-nas.html
+Full guide: https://keibidrop.com/docs/how-to/run-on-a-nas.html
 
-## Run it
+## Set it up
 
-```yaml
-services:
-  keibidrop:
-    image: ghcr.io/keibisoft/keibidrop:latest
-    container_name: keibidrop
-    restart: unless-stopped
-    network_mode: host
-    environment:
-      KD_PEER: ""            # your computer's 86-character code, or pair later
-      KD_PEER_NAME: laptop
-      KD_SHARE_READ_ONLY: "false"
-    volumes:
-      - /path/to/your/files:/shares
-      - keibidrop-config:/config
-volumes:
-  keibidrop-config:
+1. On your computer, install KeibiDrop and the Teleport driver: macFUSE on a
+   Mac, WinFsp on Windows, fuse3 on Linux. Open the app, keep Local mode off
+   and press **Copy my code**. That is your computer's code.
+2. On the box, save this as `docker-compose.yml`. Set the folder to share and
+   paste your computer's code into `KD_PEER`:
+
+   ```yaml
+   services:
+     keibidrop:
+       image: ghcr.io/keibisoft/keibidrop:latest
+       container_name: keibidrop
+       restart: unless-stopped
+       network_mode: host
+       environment:
+         KD_PEER: ""            # your computer's code, from Copy my code
+         KD_PEER_NAME: laptop
+         KD_SHARE_READ_ONLY: "false"
+       volumes:
+         - /path/to/your/files:/shares
+         - keibidrop-config:/config
+   volumes:
+     keibidrop-config:
+   ```
+
+3. Start it and read the log. The log prints the box's code.
+
+   ```
+   docker compose up -d
+   docker compose logs -f
+   ```
+
+4. On your computer, turn on **Teleport**, paste the box's code and press
+   **Connect**.
+5. When it connects, press **Save contact** and turn on **Auto** on the
+   contact's row. From then on both sides reconnect by themselves after a
+   drop.
+6. The box's files now show in your Teleport Folder, `~/KeibiDrop/Mount`
+   unless you changed it. Settings shows the path. Open the files from there in any
+   app.
+
+If the box started with `KD_PEER` empty, give it your computer's code while it
+runs:
+
+```
+docker exec keibidrop kd add-contact laptop <your computer's code>
 ```
 
-```
-docker compose up -d
-docker compose logs -f
-```
+## Use it in your apps
 
-The log prints this box's code and the three pairing steps. After pairing,
-the box keeps the contact connected on its own: connect from your computer
-whenever you like, and after a drop the box reconnects by itself.
+Point the app at the Teleport Folder. For DaVinci Resolve: Preferences,
+System, Media Storage; keep a local disk as the first entry, add the Teleport
+Folder, and leave Direct I/O off. Step by step:
+https://keibidrop.com/docs/how-to/edit-from-a-nas-in-davinci-resolve.html
 
-Pair later, without restarting:
+## Check it
 
-```
-docker exec keibidrop kd add-contact laptop <your 86-character code>
-```
+When your computer connects, the box's log prints `Peer connected` and the
+path: `direct`, `bridge` (through the relay, which forwards encrypted bytes it
+cannot read) or `lan`. `docker exec keibidrop kd status` prints the session as
+JSON.
 
 ## Settings
 
