@@ -10,6 +10,15 @@ app or `kd` with its own driver (macFUSE, fuse3 or WinFsp).
 
 Full guide: https://keibidrop.com/docs/how-to/run-on-a-nas.html
 
+## Get the image
+
+- On Unraid, open the Apps tab and search for KeibiDrop in Community Applications.
+- On Synology Container Manager, QNAP Container Station or any other Docker host,
+  use `keibisoft/keibidrop` from Docker Hub.
+- Any registry client can also pull `ghcr.io/keibisoft/keibidrop`.
+
+Both registries carry the same image for linux/amd64 and linux/arm64.
+
 ## Set it up
 
 1. On your computer, install KeibiDrop and the Teleport driver: macFUSE on a
@@ -117,8 +126,8 @@ From the repository root:
 docker build -f docker/Dockerfile -t keibidrop:dev .
 ```
 
-The release workflow publishes `ghcr.io/keibisoft/keibidrop` for linux/amd64
-and linux/arm64 on every tag.
+The release workflow publishes `ghcr.io/keibisoft/keibidrop` and Docker Hub's
+`keibisoft/keibidrop` for linux/amd64 and linux/arm64 on every tag.
 
 ## Limits
 

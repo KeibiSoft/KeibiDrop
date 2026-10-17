@@ -29,6 +29,8 @@ Another computer's files show up as a folder on yours, and you open and edit the
 
 **Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.0/keibidrop-0.5.0-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.0/keibidrop-0.5.0-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.0/keibidrop_0.5.0_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html) · or [try it on the web](https://web.keibidrop.com)
 
+**Jump to:** [Install](#install) · [Quick start](#quick-start) · [Direct transfer and Teleport](#direct-transfer-and-teleport) · [NAS](#run-it-on-a-nas) · [Encryption](#connection-and-encryption) · [By trade](#by-trade) · [Troubleshooting](#troubleshooting)
+
 **Getting started:** install it on both computers and connect once. On the same Wi-Fi, turn on Local mode; anywhere else, send your code in any chat and paste your friend's code. Then drop a file in, or open their files with Teleport. Each step has a [short clip](https://keibidrop.com/how-to-use.html), and the clips are also a [YouTube playlist](https://www.youtube.com/playlist?list=PLB-moSLYtzF0). To open the files on a NAS or a home server, see [Run it on a NAS](#run-it-on-a-nas).
 
 <p align="center">
@@ -84,6 +86,10 @@ We host our own F-Droid repository. Open [fdroid.keibisoft.com](https://fdroid.k
 
 To add it by hand, use `https://fdroid.keibisoft.com/fdroid/repo` in F-Droid under Settings, Repositories. The fingerprint to check is on the same page.
 
+### NAS or home server
+
+On Unraid, open the Apps tab and search for KeibiDrop in Community Applications. On Synology Container Manager, QNAP Container Station or any other Docker host, use `keibisoft/keibidrop` from Docker Hub, or `ghcr.io/keibisoft/keibidrop`. The setup is in [Run it on a NAS](#run-it-on-a-nas).
+
 ### Build from source
 
 ```bash
@@ -135,7 +141,7 @@ A NAS or a home server stays online, so it can serve a folder to your computer a
 5. Press **Save contact** and turn on **Auto** on the contact's row. From then on both sides reconnect by themselves.
 6. The box's files now show in your Teleport Folder, `~/KeibiDrop/Mount` by default. Open the files from there in any app. For DaVinci Resolve, follow the [Resolve setup](https://keibidrop.com/docs/how-to/edit-from-a-nas-in-davinci-resolve.html).
 
-The image is `ghcr.io/keibisoft/keibidrop`, for amd64 and arm64. The container's settings, the Unraid template and the limits are in [docker/README.md](docker/README.md), and the full guide is [Run KeibiDrop on a NAS](https://keibidrop.com/docs/how-to/run-on-a-nas.html).
+The image is on Docker Hub as `keibisoft/keibidrop` and on GHCR as `ghcr.io/keibisoft/keibidrop`, for amd64 and arm64, and Unraid installs it from Community Applications. The container's settings and the limits are in [docker/README.md](docker/README.md), and the full guide is [Run KeibiDrop on a NAS](https://keibidrop.com/docs/how-to/run-on-a-nas.html).
 
 ---
 
