@@ -421,16 +421,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Docker Hub copy: Synology and QNAP registry search only looks there.
+      - uses: docker/login-action@v3
+        with:
+          username: keibisoft
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       # latest follows stable tags only, like the release pointer above.
       - name: Image tags
         id: tags
         run: |
-          IMAGE=ghcr.io/keibisoft/keibidrop
-          TAGS="$IMAGE:${{ steps.version.outputs.version }}"
-          if [[ "${{ steps.version.outputs.tag }}" != *"-"* ]]; then
-            TAGS="$TAGS,$IMAGE:latest"
-          fi
-          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          TAGS=""
+          for IMAGE in ghcr.io/keibisoft/keibidrop docker.io/keibisoft/keibidrop; do
+            TAGS="$TAGS,$IMAGE:${{ steps.version.outputs.version }}"
+            if [[ "${{ steps.version.outputs.tag }}" != *"-"* ]]; then
+              TAGS="$TAGS,$IMAGE:latest"
+            fi
+          done
+          echo "tags=${TAGS#,}" >> $GITHUB_OUTPUT
 
       - uses: docker/build-push-action@v6
         with:
