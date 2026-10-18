@@ -1,14 +1,34 @@
 name: keibidrop
 base: core22
 version: '0.5.0'
-summary: E2E encrypted peer-to-peer file sharing
+title: KEIBIDROP
+summary: Open another computer's folder as if it were local, end-to-end encrypted
 description: |
-  KeibiDrop is an end-to-end encrypted peer-to-peer file sharing tool with
-  post-quantum cryptography (ML-KEM + X25519). Transfer files directly between
-  devices with no cloud storage. Features FUSE virtual filesystem, desktop UI,
-  interactive CLI, and agent daemon.
+  KEIBIDROP opens a folder on another computer over the internet as if it were
+  a folder on your own computer. This mode is called Teleport: each file
+  streams when an application opens it, so you work on a large folder without
+  waiting for an upload or a download.
 
-grade: devel
+  KEIBIDROP also sends files between two devices with no account and no file
+  size limit, and a dropped connection resumes where it stopped. The other
+  person can use the app on Windows, macOS, Linux or Android, or join from a
+  browser at https://web.keibidrop.com.
+
+  Every connection is end-to-end encrypted with a post-quantum key exchange
+  (X25519 and ML-KEM-1024). Teleport needs FUSE, from the fuse3 package.
+
+  Commands: keibidrop (the desktop app), keibidrop.kd (the agent CLI),
+  keibidrop.keibidrop-cli (the interactive CLI) and keibidrop.kdmcp (the MCP
+  server).
+license: AGPL-3.0-only
+website: https://keibidrop.com
+source-code: https://github.com/KeibiSoft/KeibiDrop
+issues: https://github.com/KeibiSoft/KeibiDrop/issues
+icon: assets/icons/icon-256.png
+
+grade: stable
+# A FUSE mount made inside a strictly confined snap stays in the snap's mount
+# namespace, where no other application sees it. Teleport needs classic.
 confinement: classic
 
 architectures:
@@ -21,6 +41,8 @@ apps:
     command: bin/keibidrop-cli
   kd:
     command: bin/kd
+  kdmcp:
+    command: bin/kdmcp
 
 parts:
   keibidrop:
@@ -31,5 +53,4 @@ parts:
       keibidrop: bin/keibidrop
       keibidrop-cli: bin/keibidrop-cli
       kd: bin/kd
-    stage-packages:
-      - libfuse2
+      kdmcp: bin/kdmcp

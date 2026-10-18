@@ -1,0 +1,64 @@
+# Builds the snap for a published release and uploads it to the Snap Store.
+# The release workflow calls it once the release is up. Run it by hand for a
+# release that is already out, or when a release run did not reach the
+# upload:
+#
+#   gh workflow run snap.yml -f tag=v0.5.0
+#
+# The snap repacks the Linux tarball from the release, so the version in
+# snap/snapcraft.yaml must match the tag, and the snap is installed and run
+# before it is uploaded. Classic snaps are reviewed by hand, so an upload can
+# wait in the store's review queue before it reaches the stable channel.
+name: Snap
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, with the v prefix (v0.5.0)
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+    secrets:
+      SNAPCRAFT_STORE_CREDENTIALS:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  snap:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check that the snap version matches the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          HAVE=$(sed -n "s/^version: '\(.*\)'$/\1/p" snap/snapcraft.yaml)
+          if [ "$HAVE" != "${TAG#v}" ]; then
+            echo "::error::snap/snapcraft.yaml has $HAVE, the tag is $TAG"
+            exit 1
+          fi
+
+      - uses: snapcore/action-build@v1
+        id: build
+
+      - name: Install the snap and run it
+        run: |
+          sudo snap install --dangerous --classic "${{ steps.build.outputs.snap }}"
+          keibidrop.kd version
+          keibidrop.kdmcp version
+          test -f /var/lib/snapd/desktop/applications/keibidrop_keibidrop.desktop
+
+      - uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: stable

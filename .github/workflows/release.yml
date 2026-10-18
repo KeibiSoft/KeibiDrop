@@ -562,3 +562,15 @@ jobs:
       tag: ${{ github.ref_name }}
     secrets:
       CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
+
+  # The snap repacks the Linux tarball from the release, so it also waits for
+  # the release. The same workflow runs by hand for a release that is out.
+  snap:
+    needs: publish
+    if: ${{ !contains(github.ref_name, '-') }}
+    name: Upload the snap
+    uses: ./.github/workflows/snap.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}

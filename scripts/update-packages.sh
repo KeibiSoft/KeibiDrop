@@ -85,7 +85,7 @@ echo "==> Updating Snap..."
 sed -i '' "s/version: '.*'/version: '$VERSION'/" snap/snapcraft.yaml 2>/dev/null || \
 sed -i "s/version: '.*'/version: '$VERSION'/" snap/snapcraft.yaml
 echo "  Updated snap/snapcraft.yaml"
-echo "  To publish: snapcraft && snapcraft upload keibidrop_*.snap --release=edge"
+echo "  The release workflow uploads it to the Snap Store"
 
 # ── Version literals in the tree ──────────────────────────
 # make and the release workflow stamp the version from the tag. These three
@@ -145,4 +145,4 @@ fi
 
 echo ""
 echo "==> Done. Review changes, then commit and publish."
-echo "  Still by hand: apt (reprepro), Homebrew push, snap upload. Chocolatey and the MCP registry go out from the release workflow."
+echo "  Still by hand: apt (reprepro), Homebrew push. Chocolatey, the snap and the MCP registry go out from the release workflow."
