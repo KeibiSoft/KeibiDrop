@@ -1,5 +1,16 @@
 # Secure Synchronous File Transfer - Protocol Security Design (v0)
 
+## Reporting a vulnerability
+
+Report it privately, not in a public issue:
+
+* [Open a private report on GitHub](https://github.com/KeibiSoft/KeibiDrop/security/advisories/new), or
+* email marius@keibisoft.com.
+
+Include the version (`kd --version` or the About card), the platform, what you did, and what you saw. We confirm the report, fix it in a release, and credit you in the release notes if you want that. The latest release is the supported one. There is no bug bounty.
+
+## Design
+
 This document describes the current cryptographic design and security architecture implemented in the project as of version 0.
 
 ## Overview
