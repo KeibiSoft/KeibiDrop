@@ -15,7 +15,11 @@ description: |
   browser at https://web.keibidrop.com.
 
   Every connection is end-to-end encrypted with a post-quantum key exchange
-  (X25519 and ML-KEM-1024). Teleport needs FUSE, from the fuse3 package.
+  (X25519 and ML-KEM-1024).
+
+  The snap sends and receives files. Teleport, the folder, needs the .deb or
+  the apt package from https://keibidrop.com/install.html: a snap cannot show
+  a FUSE mount to the other applications on the computer.
 
   Commands: keibidrop (the desktop app), keibidrop.kd (the agent CLI),
   keibidrop.keibidrop-cli (the interactive CLI) and keibidrop.kdmcp (the MCP
@@ -27,9 +31,12 @@ issues: https://github.com/KeibiSoft/KeibiDrop/issues
 icon: assets/icons/icon-256.png
 
 grade: stable
-# A FUSE mount made inside a strictly confined snap stays in the snap's mount
-# namespace, where no other application sees it. Teleport needs classic.
-confinement: classic
+# Strict: the store grants classic only to compilers, IDEs, shells and the
+# like (reviewing-classic-confinement-snaps, "Supported"), and a FUSE mount
+# made inside a strict snap stays in the snap's mount namespace. So the snap
+# has no Teleport: the base holds no libfuse, the app finds none and starts
+# in normal mode by itself. The folder ships in the .deb and the apt package.
+confinement: strict
 
 architectures:
   - build-on: amd64
@@ -37,12 +44,19 @@ architectures:
 apps:
   keibidrop:
     command: bin/keibidrop
+    # gnome brings the GL, Wayland, X11, GTK dialog, D-Bus and font libraries
+    # the desktop binary links, from the platform snap.
+    extensions: [gnome]
+    plugs: [network, network-bind, home, removable-media]
   keibidrop-cli:
     command: bin/keibidrop-cli
+    plugs: [network, network-bind, home, removable-media]
   kd:
     command: bin/kd
+    plugs: [network, network-bind, home, removable-media]
   kdmcp:
     command: bin/kdmcp
+    plugs: [network, network-bind, home, removable-media]
 
 parts:
   keibidrop:
