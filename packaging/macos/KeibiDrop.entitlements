@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+Hardened runtime exceptions for every signed macOS binary.
+
+disable-library-validation: the hardened runtime refuses a dylib signed by
+another Team ID. macFUSE's libfuse.2.dylib is signed by its author, so
+without this entitlement dlopen fails on every Mac with SIP on, cgofuse
+panics with "cannot find FUSE", and the app dies with SIGABRT on the first
+teleport connect (issue #241, 2026-10-20). A Mac with SIP off does not
+enforce library validation, which is why the development machine never
+showed it.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

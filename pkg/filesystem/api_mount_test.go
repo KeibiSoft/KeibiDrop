@@ -39,6 +39,27 @@ func TestMount_TrailingSlashCleansToDot_ReturnsError(t *testing.T) {
 	}
 }
 
+// cgofuse panics instead of returning false when it cannot load the FUSE
+// library. The panic must become an error, not take the process down.
+func TestHostMount_PanicBecomesError(t *testing.T) {
+	ok, err := hostMount(func() bool { panic("cgofuse: cannot find FUSE") })
+	if ok {
+		t.Fatal("expected ok false after a panic")
+	}
+	if err == nil || !strings.Contains(err.Error(), "cannot find FUSE") {
+		t.Fatalf("expected the panic text as the error, got: %v", err)
+	}
+}
+
+func TestHostMount_PassesResultThrough(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		ok, err := hostMount(func() bool { return want })
+		if err != nil || ok != want {
+			t.Fatalf("hostMount(-> %v) = %v, %v", want, ok, err)
+		}
+	}
+}
+
 func TestIsWindowsDirMountPoint(t *testing.T) {
 	cases := []struct {
 		goos, p string

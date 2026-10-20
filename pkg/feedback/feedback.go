@@ -21,7 +21,10 @@ import (
 
 const DefaultEndpoint = "https://keibidrop.com/feedback"
 
-const maxMessage = 4000
+// maxMessage holds a whole macOS crash report (about 100 KB with every
+// thread). The 4000 cap before it cut the first report of issue #241 before
+// the crashed thread, so the stack that named the bug never arrived.
+const maxMessage = 256 << 10
 
 // MaxLogs caps the log a report carries: the newest 4 MiB of sanitized
 // text. The endpoint takes no more.

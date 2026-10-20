@@ -183,13 +183,16 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           IDENTITY="Developer ID Application: KEIBISOFT S.R.L. (74WXJSBRUQ)"
+          # The entitlements let the hardened runtime load macFUSE's libfuse,
+          # which another Team ID signs. See packaging/macos/KeibiDrop.entitlements.
+          ENTITLEMENTS=packaging/macos/KeibiDrop.entitlements
           for bin in keibidrop-cli kd kdmcp; do
             if [ -f "$bin" ]; then
-              codesign --force --options runtime --sign "$IDENTITY" --timestamp "./$bin"
+              codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" --timestamp "./$bin"
             fi
           done
           if [ -f "rust/target/release/keibidrop-rust" ]; then
-            codesign --force --options runtime --sign "$IDENTITY" --timestamp "rust/target/release/keibidrop-rust"
+            codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$IDENTITY" --timestamp "rust/target/release/keibidrop-rust"
           fi
 
       # Windows: Azure Artifact Signing (Trusted Signing). The three steps are

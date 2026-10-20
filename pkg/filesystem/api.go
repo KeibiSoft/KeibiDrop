@@ -260,14 +260,20 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	opts := getMountOptions(fs.AutoCache)
 
 	fs.logger.Warn("FUSE Mount calling host.Mount", "cleanMountPoint", cleanMountPoint, "opts", opts)
-	ok := host.Mount(cleanMountPoint, opts)
+	ok, err := hostMount(func() bool { return host.Mount(cleanMountPoint, opts) })
 	close(hostDone)
-	if !ok {
+	if err != nil || !ok {
 		// Reset host/Root so IsMounted() reports false. Otherwise a failed mount
 		// leaves them set. The next reconnect then takes the "already mounted,
 		// waiting" branch, never retries, and hangs the mount permanently.
 		fs.host.Store(nil)
 		fs.root.Store(nil)
+	}
+	if err != nil {
+		fs.logger.Error("FUSE library not loadable", "mountPoint", cleanMountPoint, "error", err)
+		return fmt.Errorf("FUSE mount failed for %s: %w; install macFUSE, or run with KD_NO_FUSE=1", cleanMountPoint, err)
+	}
+	if !ok {
 		fs.logger.Error("FUSE Mount failed", "mountPoint", cleanMountPoint)
 		hint := "ensure user_allow_other is set in /etc/fuse.conf, or run with KD_NO_FUSE=1"
 		if runtime.GOOS == "windows" {
@@ -281,6 +287,21 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	fs.root.Store(nil)
 	fs.logger.Warn("FUSE Mount completed", "mountPoint", cleanMountPoint)
 	return nil
+}
+
+// hostMount runs mount, which blocks for the life of the host, and returns a
+// panic from it as an error. cgofuse panics with "cannot find FUSE" when it
+// cannot dlopen the FUSE library: not installed, or refused by the hardened
+// runtime. Unrecovered, that panic ends the whole app with SIGABRT (seen
+// 2026-10-20 on a Mac with SIP on, issue #241). As an error the session goes
+// on without the folder.
+func hostMount(mount func() bool) (ok bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+	return mount(), nil
 }
 
 // isWindowsDirMountPoint reports whether p is a Windows directory mount path, not a drive ("K:").

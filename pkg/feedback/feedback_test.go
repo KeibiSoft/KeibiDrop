@@ -115,7 +115,7 @@ func TestSendCapsMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("KEIBIDROP_FEEDBACK_URL", srv.URL)
-	if err := Send(Report{Message: strings.Repeat("x", 9000)}); err != nil {
+	if err := Send(Report{Message: strings.Repeat("x", maxMessage+5000)}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if gotLen != maxMessage {

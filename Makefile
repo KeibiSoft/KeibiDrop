@@ -189,6 +189,11 @@ slint-preview:
 $(DIST):
 	mkdir -p $(DIST)
 
+# Hardened runtime exceptions for every signed macOS binary. Without them the
+# app cannot dlopen macFUSE's libfuse (another Team ID) on a Mac with SIP on,
+# and the first teleport connect ends in SIGABRT. The file says why.
+MACOS_ENTITLEMENTS := packaging/macos/KeibiDrop.entitlements
+
 # macOS .dmg — .app bundle with Applications symlink (drag-to-install)
 package-macos: $(DIST)
 	@echo "Packaging macOS .dmg for $(GOARCH)..."
@@ -204,7 +209,7 @@ package-macos: $(DIST)
 	sed 's/VERSION_PLACEHOLDER/$(VERSION)/g' assets/Info.plist.tmpl > $(DIST)/dmg-staging/KeibiDrop.app/Contents/Info.plist
 	# Sign .app bundle if CODESIGN_IDENTITY is set
 	@if [ -n "$(CODESIGN_IDENTITY)" ]; then \
-		codesign --deep --force --options runtime --sign "$(CODESIGN_IDENTITY)" --timestamp $(DIST)/dmg-staging/KeibiDrop.app; \
+		codesign --deep --force --options runtime --entitlements $(MACOS_ENTITLEMENTS) --sign "$(CODESIGN_IDENTITY)" --timestamp $(DIST)/dmg-staging/KeibiDrop.app; \
 		echo "Signed KeibiDrop.app with $(CODESIGN_IDENTITY)"; \
 	fi
 	# Applications symlink for drag-to-install
@@ -281,7 +286,7 @@ package-mcpb: $(DIST)
 	sed 's/__VERSION__/$(VERSION)/' packaging/mcpb/manifest.json \
 	  > $(DIST)/mcpb-staging/manifest.json
 ifneq ($(CODESIGN_IDENTITY),)
-	codesign --force --options runtime --sign "$(CODESIGN_IDENTITY)" --timestamp \
+	codesign --force --options runtime --entitlements $(MACOS_ENTITLEMENTS) --sign "$(CODESIGN_IDENTITY)" --timestamp \
 	  $(DIST)/mcpb-staging/server/kdmcp
 endif
 	cd $(DIST)/mcpb-staging && zip -qrD ../keibidrop-mcp.mcpb manifest.json server
