@@ -8,7 +8,7 @@ import (
 )
 
 var (
-	Version    = "0.5.0" // The release this code ships as. Build ldflags overwrite both values from the tag.
+	Version    = "0.5.1" // The release this code ships as. Build ldflags overwrite both values from the tag.
 	CommitHash = "dev"
 )
 

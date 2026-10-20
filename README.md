@@ -27,7 +27,7 @@ Another computer's files show up as a folder on yours, and you open and edit the
 - With Teleport on, your friend's files are a real folder on your computer, so any app works with them, `git clone` included.
 - It runs on macOS, Linux, Windows and Android, and iOS is on the way. The code is open source under the AGPL-3.0.
 
-**Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.0/keibidrop-0.5.0-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.0/keibidrop-0.5.0-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.0/keibidrop_0.5.0_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html) · or [try it on the web](https://web.keibidrop.com)
+**Get it:** [Mac](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.1/keibidrop-0.5.1-darwin-arm64.dmg) · [Windows](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.1/keibidrop-0.5.1-windows-amd64.zip) · [Linux](https://github.com/KeibiSoft/KeibiDrop/releases/download/v0.5.1/keibidrop_0.5.1_amd64.deb) · [Android](https://keibidrop.com/install.html#android) · [every click, per computer](https://keibidrop.com/install.html) · or [try it on the web](https://web.keibidrop.com)
 
 **Jump to:** [Install](#install) · [Quick start](#quick-start) · [Direct transfer and Teleport](#direct-transfer-and-teleport) · [NAS](#run-it-on-a-nas) · [Encryption](#connection-and-encryption) · [By trade](#by-trade) · [Troubleshooting](#troubleshooting)
 

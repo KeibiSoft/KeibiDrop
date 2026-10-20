@@ -1,6 +1,6 @@
 name: keibidrop
 base: core22
-version: '0.5.0'
+version: '0.5.1'
 title: KEIBIDROP
 summary: Open another computer's folder as if it were local, end-to-end encrypted
 description: |
