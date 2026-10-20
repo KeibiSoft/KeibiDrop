@@ -271,15 +271,11 @@ func (fs *FS) Mount(mountPoint string, isSecond bool, downloadPath string) error
 	}
 	if err != nil {
 		fs.logger.Error("FUSE library not loadable", "mountPoint", cleanMountPoint, "error", err)
-		return fmt.Errorf("FUSE mount failed for %s: %w; install macFUSE, or run with KD_NO_FUSE=1", cleanMountPoint, err)
+		return fmt.Errorf("FUSE mount failed for %s: %w. %s", cleanMountPoint, err, fuseInstallHint())
 	}
 	if !ok {
 		fs.logger.Error("FUSE Mount failed", "mountPoint", cleanMountPoint)
-		hint := "ensure user_allow_other is set in /etc/fuse.conf, or run with KD_NO_FUSE=1"
-		if runtime.GOOS == "windows" {
-			hint = "ensure WinFSP is installed and the mount point does not already exist, or run with KD_NO_FUSE=1"
-		}
-		return fmt.Errorf("FUSE mount failed for %s: %s", cleanMountPoint, hint)
+		return fmt.Errorf("FUSE mount failed for %s: %s", cleanMountPoint, fuseMountHint())
 	}
 	// The host returned: the volume is gone, whether by Unmount or from outside
 	// (a Finder eject, diskutil). Drop the root like Unmount does, so IsMounted
@@ -302,6 +298,34 @@ func hostMount(mount func() bool) (ok bool, err error) {
 		}
 	}()
 	return mount(), nil
+}
+
+// fuseMountHint tells a person what to do when the driver refused the mount.
+// The desktop shows it in a notification, so the macOS line is for someone
+// who has never heard of FUSE: the usual cause there is the macFUSE system
+// extension still blocked after the install (seen 2026-10-20).
+func fuseMountHint() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "macOS blocked the macFUSE driver. Open System Settings, Privacy & Security, click Allow next to macFUSE, then restart your Mac"
+	case "windows":
+		return "ensure WinFSP is installed and the mount point does not already exist, or run with KD_NO_FUSE=1"
+	default:
+		return "ensure user_allow_other is set in /etc/fuse.conf, or run with KD_NO_FUSE=1"
+	}
+}
+
+// fuseInstallHint tells a person what to do when the FUSE library itself
+// could not be loaded.
+func fuseInstallHint() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "Install macFUSE from macfuse.github.io, then connect again"
+	case "windows":
+		return "Install WinFsp from winfsp.dev, then connect again"
+	default:
+		return "Install FUSE (for example: sudo apt install fuse3), then connect again"
+	}
 }
 
 // isWindowsDirMountPoint reports whether p is a Windows directory mount path, not a drive ("K:").
